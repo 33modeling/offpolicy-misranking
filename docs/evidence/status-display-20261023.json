@@ -1,0 +1,35 @@
+{
+  "baseline_commit": "09f1498882f65babd678ab6f6f238d0437aceb7b",
+  "user_correction": "Display current results and GPU time in status; do not save or overwrite JSON snapshot files.",
+  "scope": "CPU status regressions using synthetic fixtures; no real GPU experiment or training restart",
+  "regression": {
+    "passed": 192,
+    "failed": 0,
+    "elapsed_seconds": 68.25,
+    "tests": [
+      "test_status_current.py",
+      "test_qwen_status.py",
+      "test_model_status.py",
+      "test_gemma_it_status.py",
+      "test_node_activity.py",
+      "test_worker_history.py",
+      "test_switch_status.py",
+      "test_gpu_time_status.py",
+      "test_submission_time.py"
+    ],
+    "raw_log": "/home/kms/reports/status-display-20261023/verification.log"
+  },
+  "verified": [
+    "per-seed/arm result and GPU-hours displayed on status screen",
+    "no automatic JSON snapshot writes",
+    "repeated reads do not add costs or modify files",
+    "old incorrect snapshot and full scientific results preserved",
+    "unknown, partial, zero and invalid values kept distinct",
+    "training and final/checkpoint eval progress retained",
+    "TTY and explicit JSON stdout retained"
+  ],
+  "frozen_digests_unchanged": {
+    "adapter": "adb962509386e02d8ed4265d1b7f3e82f9ea6b2ff124feb8d49e706eb6c33d82",
+    "engine": "12cf5ef830ebfd92fa8a87ea62dc7df734cd9ceab57fbce18fc4b2548385f960"
+  }
+}

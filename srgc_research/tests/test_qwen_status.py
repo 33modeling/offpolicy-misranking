@@ -111,10 +111,7 @@ def test_one_command_renders_dashboard_and_shortcut_without_gpu_packages(prepare
                             cwd="/tmp", env=prepared.env, capture_output=True, text=True, timeout=20, check=False)
     assert result.returncode == 0, result.stderr
     assert "On-policy" in result.stdout and "0/60 completed" in result.stdout
-    after = files(prepared.root.parent.parent)
-    assert set(after) - set(before) == {"status/qwen35-latest.json"}
-    assert {name: after[name] for name in before} == before
-    assert json.loads(after["status/qwen35-latest.json"])["dataset_scope"] == "all"
+    assert files(prepared.root.parent.parent) == before
 
 
 def test_running_prefix_counts_only_completed_updates_and_deduplicates_shared_node(prepared):

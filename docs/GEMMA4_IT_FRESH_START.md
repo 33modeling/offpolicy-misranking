@@ -78,10 +78,10 @@ keeping `status --json` stdout valid JSON; raw output is retained in `startup-lo
 Concurrent inspections share one preparation lease; an active run's preparation
 or a recorded stop request is respected. Once plans exist, status reads experiment
 artifacts on CPU and does not need the model Python or model dependencies.
-Each status call replaces `$OM_WORK/status/gemma4_it-latest.json` with the current
-GPU-time/result snapshot. It does not append status history or add a previous
-snapshot's costs. The terminal shows current tasks, nodes and training/evaluation
-progress; full GPU-time and restart tables remain in the explicit results tools.
+The terminal shows current tasks, nodes, training/evaluation progress, and a compact
+per-seed/arm results and GPU-time table. Status does not save, overwrite or append a
+GPU-time/result snapshot. `--json` writes JSON to stdout only. Full attempt/stage
+and restart tables remain in the explicit results tools.
 The old PT files are preserved when selecting the IT model.
 
 `status` immediately prints the model and root being read, skips a full

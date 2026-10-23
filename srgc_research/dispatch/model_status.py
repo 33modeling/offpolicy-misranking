@@ -1,4 +1,4 @@
-"""Load current model status and replace its GPU-time/result snapshot."""
+"""Display current model status, results and GPU time without saving status files."""
 
 import argparse
 import hashlib
@@ -318,21 +318,13 @@ def main(argv=None):
         snapshots = load_reports(args.model, args.dataset, root, os.environ)
         from .model_chain import snapshot as chain_snapshot
         from .qwen_status import node_rows
-        from .status_current import print_current, save_current
+        from .status_current import print_current
 
         coordinators = chain_snapshot()
-        destination, save_error = None, None
-        try:
-            destination = save_current(args.model, args.dataset, root, snapshots, os.environ)
-        except (OSError, ValueError, TypeError) as error:
-            save_error = str(error)
-            print(f"STATUS SAVE ERROR: {error}", file=sys.stderr, flush=True)
         if args.json:
             adapter = importlib.import_module(CONFIGS[args.model][0])
             print(json.dumps({"model": adapter.MODEL, "root": str(root.resolve()),
                               "datasets": snapshots, "model_chain": coordinators,
-                              "saved_results": str(destination) if destination else None,
-                              **({"save_error": save_error} if save_error else {}),
                               "nodes": node_rows(snapshots, coordinators=coordinators,
                                                  model=args.model, root=root)}, indent=2))
         else:
@@ -340,10 +332,8 @@ def main(argv=None):
 
             text = render(snapshots, root.resolve(), model=LABELS[args.model],
                           status_model=args.model, coordinators=coordinators)
-            if destination:
-                text += f"\nSaved GPU time/results: {destination}"
             print_current(text)
-        return int(bool(save_error) or any(report["errors"] for report in snapshots))
+        return int(any(report["errors"] for report in snapshots))
     except KeyboardInterrupt:
         print("STATUS: Gemma initialization stopped", file=sys.stderr, flush=True)
         return 130

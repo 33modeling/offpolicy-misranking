@@ -411,6 +411,9 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
                     info["first_sr_update"] if info["first_sr_update"] is not None else "-",
                     info["selector"]])
             lines += table(("Seed", "Decision", "Switch after update", "First SR update", "Selector"), decisions)
+        from .status_current import render_results
+
+        lines.extend(render_results(report))
     running = [(report["label"], row) for report in snapshots for row in report["tasks"]
                if row["status"] == "running"]
     if running:
@@ -459,30 +462,19 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         snapshots = load_reports(args.dataset, args.root, os.environ)
-        from .status_current import print_current, save_current
-
-        destination, save_error = None, None
-        try:
-            destination = save_current("qwen35", args.dataset, args.root, snapshots, os.environ)
-        except (OSError, ValueError, TypeError) as error:
-            save_error = str(error)
-            print(f"STATUS SAVE ERROR: {error}", file=sys.stderr, flush=True)
+        from .status_current import print_current
         if args.json:
             from .model_chain import snapshot as chain_snapshot
 
             coordinators = chain_snapshot()
             print(json.dumps({"model": "Qwen/Qwen3.5-9B", "root": str(args.root.resolve()),
                               "datasets": snapshots, "model_chain": coordinators,
-                              "saved_results": str(destination) if destination else None,
-                              **({"save_error": save_error} if save_error else {}),
                               "nodes": node_rows(snapshots, coordinators=coordinators,
                                                  model="qwen35", root=args.root)}, indent=2))
         else:
             text = render(snapshots, args.root.resolve())
-            if destination:
-                text += f"\nSaved GPU time/results: {destination}"
             print_current(text)
-        return int(bool(save_error) or any(report["errors"] for report in snapshots))
+        return int(any(report["errors"] for report in snapshots))
     except (OSError, ValueError, KeyError, TypeError) as exc:
         print(f"STATUS ERROR: {exc}", file=sys.stderr)
         return 2

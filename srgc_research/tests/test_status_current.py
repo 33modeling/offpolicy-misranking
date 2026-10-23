@@ -1,4 +1,4 @@
-"""Current status keeps progress visible and replaces one time/result snapshot."""
+"""Status displays current GPU times, results and progress without writing files."""
 
 import json
 import os
@@ -32,29 +32,22 @@ def inspect(cohort, capsys, *, as_json=True, dataset="all"):
     return json.loads(captured.out) if as_json else captured.out
 
 
-def test_status_replaces_latest_time_and_results_without_adding_previous_values(cohort, capsys):
+def test_status_displays_results_without_writing_or_adding_previous_values(cohort, capsys):
     folder = finish(cohort, "math", reward=.3)
     timer = progress(folder, "on_policy")
     full_result = cohort.work / "results" / f"{cohort.model}-results.json"
     atomic_json(full_result, {"reward_curves": ["retained scientific evidence"]})
-    full_bytes = full_result.read_bytes()
-    before = saved(cohort)
+    old_snapshot = cohort.work / "status" / f"{cohort.model}-latest.json"
+    atomic_json(old_snapshot, {"gpu_seconds": 999999., "history": ["old incorrect snapshot"]})
+    before = {p: p.read_bytes() for p in cohort.work.rglob("*") if p.is_file()}
     value = inspect(cohort, capsys)
-    destination = cohort.work / "status" / f"{cohort.model}-latest.json"
-    assert value["saved_results"] == str(destination)
-    initial = json.loads(destination.read_text())
-    task = next(row for row in initial["datasets"]["math"]["tasks"] if row["task"] == "seed-5.on_policy")
-    assert task["reward_percent"] == 30.
-    assert task["gpu_time"]["gpu_seconds"]["primary"] == 1400.
-    assert saved(cohort) == before
-    # An old snapshot must never be an input to the next cost/result snapshot.
-    destination.write_text(json.dumps({"history": [initial] * 5, "gpu_seconds": 999999.}))
-    inspect(cohort, capsys)
-    repeated = json.loads(destination.read_text())
-    assert repeated["datasets"] == initial["datasets"]
-    assert "history" not in repeated
-    assert list(destination.parent.iterdir()) == [destination]
-    assert saved(cohort) == before
+    assert "saved_results" not in value and "save_error" not in value
+    first = inspect(cohort, capsys, as_json=False)
+    repeated = inspect(cohort, capsys, as_json=False)
+    for output in (first, repeated):
+        assert "RESULTS / GPU TIME" in output and "30.0" in output and "0.389" in output
+        assert "999999" not in output and "Saved GPU time/results:" not in output
+    assert {p: p.read_bytes() for p in cohort.work.rglob("*") if p.is_file()} == before
 
     document = json.loads(timer.read_text())
     for update in document["history"]:
@@ -62,31 +55,31 @@ def test_status_replaces_latest_time_and_results_without_adding_previous_values(
     atomic_json(timer, document)
     finish(cohort, "math", reward=.6)
     updated_source = saved(cohort)
-    inspect(cohort, capsys)
-    updated = json.loads(destination.read_text())
-    task = next(row for row in updated["datasets"]["math"]["tasks"] if row["task"] == "seed-5.on_policy")
-    assert task["reward_percent"] == 60.
-    assert task["gpu_time"]["gpu_seconds"]["primary"] == 2400.
+    updated = inspect(cohort, capsys, as_json=False)
+    assert "60.0" in updated and "0.667" in updated and "1.056" not in updated
     assert saved(cohort) == updated_source
-    assert full_result.read_bytes() == full_bytes
+    assert full_result.read_bytes() == before[full_result]
+    assert old_snapshot.read_bytes() == before[old_snapshot]
 
 
-def test_dataset_filter_replaces_scope_without_retaining_other_dataset(cohort, capsys):
+def test_dataset_filter_only_displays_selected_dataset_and_creates_no_status_file(cohort, capsys):
+    before = {p: p.read_bytes() for p in cohort.work.rglob("*") if p.is_file()}
     inspect(cohort, capsys)
     value = inspect(cohort, capsys, dataset="math")
-    current = json.loads((cohort.work / "status" / f"{cohort.model}-latest.json").read_text())
-    assert len(value["datasets"]) == 1
-    assert current["dataset_scope"] == "math" and set(current["datasets"]) == {"math"}
+    assert len(value["datasets"]) == 1 and value["datasets"][0]["label"] == "MATH"
+    assert not (cohort.work / "status").exists()
+    assert {p: p.read_bytes() for p in cohort.work.rglob("*") if p.is_file()} == before
 
 
-def test_terminal_shows_current_state_without_cost_history_tables(cohort, capsys):
+def test_terminal_shows_current_results_and_gpu_time_without_cost_history_tables(cohort, capsys):
     folder = finish(cohort, "math", reward=.3)
     progress(folder, "on_policy")
     text = inspect(cohort, capsys, as_json=False)
     assert "Tasks" in text and "DONE" in text
-    assert "Saved GPU time/results:" in text
+    assert "MATH RESULTS / GPU TIME" in text and "Result (%)" in text and "GPU-h" in text
+    assert "30.0" in text and "0.389" in text
     for historical in ("GPU TIMES", "GPU STAGES", "RECORDED WORK", "SUBMITTED OLMO TIME BASIS",
-                       "RESTART", "HISTORY", "all recorded attempts", "30.0%"):
+                       "RESTART", "HISTORY", "all recorded attempts", "Saved GPU time/results:"):
         assert historical not in text
 
 
@@ -125,6 +118,28 @@ def test_unknown_training_progress_is_not_reported_as_zero_percent():
     text = qwen_status.progress({"status": "running", "arm": "on_policy", "total_steps": 275,
                                  "completed_steps": None, "phase_stage": "training"})
     assert "TRAIN ?/275 completed" in text and "0.0%" not in text
+
+
+def test_gpu_results_keep_unknown_partial_zero_and_invalid_values_distinct():
+    from srgc_research.dispatch.status_current import render_results
+
+    rows = [
+        {"seed": 5, "arm": "on_policy", "status": "running", "reward_percent": None,
+         "submission_timing": {"record": "PARTIAL", "known_recorded_subtotal_gpu_seconds": 3600}},
+        {"seed": 6, "arm": "on_policy", "status": "complete", "reward_percent": 50.,
+         "submission_timing": {"record": "COMPLETE", "gpu_hours": {"primary": 0.}}},
+        {"seed": 7, "arm": "on_policy", "status": "invalid", "reward_percent": 99.,
+         "submission_timing": {"record": "COMPLETE", "gpu_hours": {"primary": 2.}}},
+        {"seed": 8, "arm": "on_policy", "status": "complete", "reward_percent": 30.},
+    ]
+    original = json.dumps(rows, sort_keys=True)
+    output = "\n".join(render_results({"label": "MATH", "tasks": rows}))
+    lines = {line.split()[0]: line.split() for line in output.splitlines() if line and line.split()[0].isdigit()}
+    assert lines["5"][-2:] == ["-", ">=1.000"]
+    assert lines["6"][-2:] == ["50.0", "0.000"]
+    assert lines["7"][-2:] == ["-", "-"]
+    assert lines["8"][-2:] == ["30.0", "-"]
+    assert json.dumps(rows, sort_keys=True) == original
 
 
 def test_current_checkpoint_eval_uses_its_step_and_ignores_past_eval_after_training_resumes(cohort, capsys):
@@ -180,16 +195,14 @@ def test_corrupt_checkpoint_progress_does_not_relabel_valid_inputs_as_invalid(tm
     assert not any(row["status"] == "invalid" for row in output["datasets"][0]["tasks"])
 
 
-def test_snapshot_write_failure_does_not_hide_current_status(tmp_path, capsys):
+def test_prepared_status_does_not_call_json_writer(tmp_path, capsys):
     cohort = make_cohort("gemma4_it", tmp_path)
     with patch.dict(os.environ, cohort.env, clear=True), \
-            patch("srgc_research.dispatch.status_current.atomic_json",
-                  side_effect=PermissionError("read-only status directory")):
-        code = model_status.main([cohort.model, "--root", str(cohort.root)])
+            patch("srgc_rebuttal.runtime.atomic_json", side_effect=AssertionError("status attempted a write")):
+        assert model_status.main([cohort.model, "--root", str(cohort.root)]) == 0
     output = capsys.readouterr()
-    assert code == 1 and "Tasks" in output.out
-    assert "STATUS SAVE ERROR" in output.err
-    assert "read-only status directory" in output.err
+    assert "Tasks" in output.out and "RESULTS / GPU TIME" in output.out
+    assert not (cohort.work / "status").exists()
 
 
 def test_tty_replaces_screen_and_json_has_no_terminal_escape_codes(tmp_path, capsys):
@@ -200,4 +213,4 @@ def test_tty_replaces_screen_and_json_has_no_terminal_escape_codes(tmp_path, cap
         assert output.out.startswith("\x1b[H\x1b[2J")
         assert model_status.main([cohort.model, "--root", str(cohort.root), "--json"]) == 0
         output = capsys.readouterr()
-        assert "\x1b" not in output.out and json.loads(output.out)["saved_results"]
+        assert "\x1b" not in output.out and "saved_results" not in json.loads(output.out)

@@ -1,47 +1,41 @@
-"""Replace one current GPU-time/result snapshot without reading older snapshots."""
+"""Display current measured results and GPU times without saving status files."""
 
-import importlib
-from pathlib import Path
+import math
 import sys
-import time
-
-from srgc_rebuttal.runtime import atomic_json
 
 
-def save_current(model, dataset, root, snapshots, environment):
-    from .model_status import CONFIGS
+def render_results(report):
+    from .qwen_status import table
 
-    storage = importlib.import_module(CONFIGS[model][1])
-    adapter = importlib.import_module(CONFIGS[model][0])
-    _, work = storage.group_work(environment)
-    destination = work / "status" / f"{model}-latest.json"
-    if not destination.resolve().is_relative_to(work):
-        raise ValueError("status destination escapes the experiment workspace")
-    datasets = {}
-    for report in snapshots:
-        tasks = []
-        for row in report["tasks"]:
-            shared = row["arm"] in {"cache", "prefix"}
-            timing = row.get("timing" if shared else "submission_timing", {"record": "MISSING"})
-            measured = {key: timing[key] for key in (
-                "record", "gpu_seconds", "gpu_hours", "recorded_updates", "expected_updates",
-                "known_recorded_subtotal_gpu_seconds", "source", "preparation_source", "error") if key in timing}
-            tasks.append({"seed": row["seed"], "arm": row["arm"], "task": row["task"],
-                          "status": row["status"],
-                          "reward_percent": row.get("reward_percent") if row["status"] == "complete" else None,
-                          "switched_at": row.get("switched_at"), "gpu_time": measured,
-                          "time_basis": "shared cache/prefix receipts" if shared else "retained-update timers"})
-        name = "math" if report["label"] == "MATH" else "mbpp"
-        datasets[name] = {"complete": report["complete"], "tasks": tasks,
-                          "plan_path": str(Path(root).resolve() / "experiments" / f"{CONFIGS[model][2]}-{name}.json"),
-                          "initial_candidate_accuracy": report.get("initial_candidate_accuracy", []),
-                          "errors": report["errors"]}
-    atomic_json(destination, {"schema": "model-status-results-v1", "experiment": model,
-                             "model": adapter.MODEL, "model_revision": adapter.REVISION,
-                             "source_root": str(Path(root).resolve()), "dataset_scope": dataset,
-                             "generated": time.time(), "datasets": datasets,
-                             "units": "reward percent; allocated GPU-seconds and GPU-hours; missing values are null"})
-    return destination
+    def measured(value):
+        return type(value) in (int, float) and math.isfinite(value) and value >= 0
+
+    cells = []
+    for row in report["tasks"]:
+        shared = row["arm"] in {"cache", "prefix"}
+        timing = row.get("timing" if shared else "submission_timing", {})
+        record = timing.get("record", "MISSING")
+        if row["status"] not in {"complete", "running", "invalid", "failed"} and record == "MISSING":
+            continue
+        reward = row.get("reward_percent")
+        reward = f"{reward:.1f}" if row["status"] == "complete" and measured(reward) and reward <= 100 else "-"
+        hours, partial = None, False
+        if row["status"] != "invalid" and record in {"COMPLETE", "PARTIAL"}:
+            hours = timing.get("gpu_hours", {}).get("phases" if shared else "primary")
+            if hours is None and not shared:
+                subtotal = timing.get("known_recorded_subtotal_gpu_seconds")
+                if measured(subtotal):
+                    hours, partial = subtotal / 3600, True
+            partial = partial or record == "PARTIAL"
+        gpu = ((">=" if partial else "") + f"{hours:.3f}") if measured(hours) else "-"
+        cells.append([row["seed"], row["arm"], reward, gpu])
+    lines = ["", f"{report['label']} RESULTS / GPU TIME"]
+    if cells:
+        lines.extend(table(("Seed", "Arm", "Result (%)", "GPU-h"), cells))
+        lines.append("GPU-h: retained training + selection + prep; Cache/Prefix shared. >= recorded subtotal; - unmeasured.")
+    else:
+        lines.append("No recorded results or GPU times yet.")
+    return lines
 
 
 def print_current(text):
