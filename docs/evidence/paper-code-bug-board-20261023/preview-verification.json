@@ -1,0 +1,38 @@
+[
+  {
+    "width": 320,
+    "incidents": 25,
+    "allCommitRecords": 1094,
+    "search": true,
+    "statusFilter": true,
+    "fullHistory": true,
+    "download": true,
+    "noDeleteControl": true,
+    "overflow": false,
+    "errors": []
+  },
+  {
+    "width": 390,
+    "incidents": 25,
+    "allCommitRecords": 1094,
+    "search": true,
+    "statusFilter": true,
+    "fullHistory": true,
+    "download": true,
+    "noDeleteControl": true,
+    "overflow": false,
+    "errors": []
+  },
+  {
+    "width": 1440,
+    "incidents": 25,
+    "allCommitRecords": 1094,
+    "search": true,
+    "statusFilter": true,
+    "fullHistory": true,
+    "download": true,
+    "noDeleteControl": true,
+    "overflow": false,
+    "errors": []
+  }
+]

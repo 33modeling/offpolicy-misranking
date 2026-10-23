@@ -1,0 +1,25 @@
+{
+  "baseline": "b27cf1a3-ca79-4c82-a2ad-14538d207f23",
+  "old_files_preserved": true,
+  "unrelated_file_hashes_unchanged": true,
+  "changed": [
+    "app-directory.json",
+    "assets/game-covers/catalog-vivid-v1/manifest.json",
+    "catalog-navigation.json",
+    "index.html",
+    "sitemap.xml",
+    "tools-routes.js"
+  ],
+  "added": [
+    "paper-code-bugs/app.js",
+    "paper-code-bugs/archive/2026-10-23-initial.json",
+    "paper-code-bugs/commits.json",
+    "paper-code-bugs/data.json",
+    "paper-code-bugs/incidents.json",
+    "paper-code-bugs/index.html",
+    "paper-code-bugs/styles.css"
+  ],
+  "files": 4665,
+  "app_count": 70,
+  "cards": 75
+}

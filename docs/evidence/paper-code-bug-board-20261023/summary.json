@@ -1,0 +1,19 @@
+{
+  "detailed_incidents": 25,
+  "fix_commit_records": 98,
+  "all_commit_records": 1094,
+  "first_commit": "510ceca",
+  "first_gemma_commit": "a15d3f114438cdd38ec1d959b94d3ad881172854",
+  "audited_code": "9588bf85ba582c1ef316b337fe6ad52c21095ea0",
+  "reported_scores_are_verified": false,
+  "status_regressions_passed": 154,
+  "retention_tests_passed": 6,
+  "preview_widths": [
+    320,
+    390,
+    1440
+  ],
+  "retention_policy": "append corrections/events, keep resolved incidents and original archive; no delete UI",
+  "source_endpoint": "https://77modeling.pages.dev/paper-code-bugs/",
+  "actual_remote_learning_health": null
+}

@@ -1,0 +1,808 @@
+[
+  {
+    "id": "GEMMA-001",
+    "title": "Gemma 초기 성공률 1%대 보고와 원인 미확정",
+    "area": "모델·성능",
+    "severity": "high",
+    "first_reported": "기존 문서·커밋 기준 / 아래 근거 참조",
+    "cause": "사용자가 초기 1%대, 이후 10%대·83%를 보고했다. 원격 원시 응답과 동일 조건 비교가 확보되지 않았다.",
+    "impact": "수치가 바뀐 이유와 실험 비교 가능성을 확인하지 못한 채 재실행 부담이 발생했다.",
+    "introduction_commit": null,
+    "attribution": "도입 커밋의 작성 도구는 명시된 증거가 없으면 미확인. 이번 기록 작성자는 Codex.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "GEMMA4_INITIAL_POLICY_AUDIT_2026-10-21.md",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/4943ec70092b017902ad38ab99da527535dedbef/docs/GEMMA4_INITIAL_POLICY_AUDIT_2026-10-21.md"
+      },
+      {
+        "kind": "source",
+        "label": "GEMMA4_PRETRAINED_REPRODUCTION_2026-10-21.md",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/4943ec70092b017902ad38ab99da527535dedbef/docs/GEMMA4_PRETRAINED_REPRODUCTION_2026-10-21.md"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "recorded",
+        "status": "open",
+        "text": "최초 감사 문서는 1%대 원인을 확정하지 않았으며 400×8 집계에서 퍼센트 이중 환산은 재현되지 않았다고 기록한다.",
+        "evidence_kind": "user_report"
+      }
+    ]
+  },
+  {
+    "id": "GEMMA-002",
+    "title": "지시 모델을 기대한 실험에 Gemma PT 선택",
+    "area": "모델·설정",
+    "severity": "high",
+    "first_reported": "기존 문서·커밋 기준 / 아래 근거 참조",
+    "cause": "최초 Gemma runner는 google/gemma-4-12B PT를 명시적으로 선택했다. 이후 사용자는 IT가 의도한 기준이라고 정정했다.",
+    "impact": "PT와 IT는 초기 정책이 달라 결과를 같은 모델의 수정 전후 정확도로 단순 비교할 수 없다.",
+    "introduction_commit": "a15d3f114438cdd38ec1d959b94d3ad881172854",
+    "attribution": "도입 커밋의 작성 도구는 명시된 증거가 없으면 미확인. 이번 기록 작성자는 Codex.",
+    "evidence": [
+      {
+        "kind": "commit",
+        "label": "a15d3f1",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/a15d3f1"
+      },
+      {
+        "kind": "commit",
+        "label": "67a6663",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/67a6663"
+      },
+      {
+        "kind": "source",
+        "label": "GEMMA4_IT_FRESH_START.md",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/4943ec70092b017902ad38ab99da527535dedbef/docs/GEMMA4_IT_FRESH_START.md"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "recorded",
+        "status": "code_fixed",
+        "text": "a15d3f1 최초 소스와 모델 이름을 확인했다. IT 전환은 새 root/입력/모델 revision으로 분리됐다.",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "GEMMA-003",
+    "title": "공식 특수 토큰 억제 제거로 이미지 토큰 반복",
+    "area": "생성·채점",
+    "severity": "high",
+    "first_reported": "기존 문서·커밋 기준 / 아래 근거 참조",
+    "cause": "GenerationConfig 재생성 중 공식 image/audio 토큰 억제 설정이 제거됐다.",
+    "impact": "실제 PT 응답이 이미지 특수 토큰을 반복하고 decode에서는 빈 문자열처럼 보였다.",
+    "introduction_commit": null,
+    "attribution": "도입 커밋의 작성 도구는 명시된 증거가 없으면 미확인. 이번 기록 작성자는 Codex.",
+    "evidence": [
+      {
+        "kind": "commit",
+        "label": "a81537c",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/a81537c"
+      },
+      {
+        "kind": "commit",
+        "label": "63e2120",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/63e2120"
+      },
+      {
+        "kind": "source",
+        "label": "GEMMA4_PRETRAINED_REPRODUCTION_2026-10-21.md",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/4943ec70092b017902ad38ab99da527535dedbef/docs/GEMMA4_PRETRAINED_REPRODUCTION_2026-10-21.md"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "recorded",
+        "status": "code_fixed",
+        "text": "실제 12B PT에서 줄바꿈+image 토큰 63개를 재현했다. 억제 복원 후 반복은 사라졌지만 전체 1%대 원인을 모두 설명한 것은 아니다.",
+        "evidence_kind": "actual_model_probe"
+      }
+    ]
+  },
+  {
+    "id": "GEMMA-004",
+    "title": "PT가 풀이 대신 지시문을 이어 쓰는 입력 형식",
+    "area": "입력·프롬프트",
+    "severity": "high",
+    "first_reported": "기존 문서·커밋 기준 / 아래 근거 참조",
+    "cause": "PT 응답 시작 cue가 충분하지 않아 지시문을 완성하거나 답 없이 EOS를 생성하는 사례가 있었다.",
+    "impact": "MATH/MBPP에서 실제 문제 풀이가 생성되지 않거나 verifier가 0을 기록했다.",
+    "introduction_commit": null,
+    "attribution": "도입 커밋의 작성 도구는 명시된 증거가 없으면 미확인. 이번 기록 작성자는 Codex.",
+    "evidence": [
+      {
+        "kind": "commit",
+        "label": "85c514c",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/85c514c"
+      },
+      {
+        "kind": "source",
+        "label": "GEMMA4_TEXT_RUN_2026-10-21.md",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/4943ec70092b017902ad38ab99da527535dedbef/docs/GEMMA4_TEXT_RUN_2026-10-21.md"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "recorded",
+        "status": "code_fixed",
+        "text": "풀이 시작 cue와 MBPP 형식 예제를 사용한 실제 단일 문제 회귀를 기록했다. 전체 정확도 회복 측정은 아니다.",
+        "evidence_kind": "actual_model_probe"
+      }
+    ]
+  },
+  {
+    "id": "GEMMA-005",
+    "title": "MBPP 코드 fence 언어 표기 처리 누락",
+    "area": "생성·채점",
+    "severity": "high",
+    "first_reported": "기존 문서·커밋 기준 / 아래 근거 참조",
+    "cause": "여는 fence 다음 줄의 python 언어 표기를 코드로 해석하는 경우를 처리했다.",
+    "impact": "올바른 응답 형식을 코드 추출 과정에서 잘못 처리할 수 있었다.",
+    "introduction_commit": null,
+    "attribution": "도입 커밋의 작성 도구는 명시된 증거가 없으면 미확인. 이번 기록 작성자는 Codex.",
+    "evidence": [
+      {
+        "kind": "commit",
+        "label": "63e2120",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/63e2120"
+      },
+      {
+        "kind": "commit",
+        "label": "85c514c",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/85c514c"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "recorded",
+        "status": "code_fixed",
+        "text": "실제 코드를 사후 수정하지 않고 언어 표기만 분리하도록 전용 verifier 경로를 수정했다.",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "GEMMA-006",
+    "title": "PT가 Answer 뒤에 새 질문·답을 계속 생성",
+    "area": "생성·채점",
+    "severity": "high",
+    "first_reported": "기존 문서·커밋 기준 / 아래 근거 참조",
+    "cause": "PT가 요청한 마지막 답 뒤에도 EOS 없이 다음 질문과 풀이를 이어 썼다.",
+    "impact": "마지막 답 추출이 원래 문제의 답을 놓칠 수 있었다.",
+    "introduction_commit": null,
+    "attribution": "도입 커밋의 작성 도구는 명시된 증거가 없으면 미확인. 이번 기록 작성자는 Codex.",
+    "evidence": [
+      {
+        "kind": "commit",
+        "label": "55028e2",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/55028e2"
+      },
+      {
+        "kind": "source",
+        "label": "GEMMA4_ANSWER_STOP_2026-10-22.md",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/4943ec70092b017902ad38ab99da527535dedbef/docs/GEMMA4_ANSWER_STOP_2026-10-22.md"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "recorded",
+        "status": "code_fixed",
+        "text": "요청된 답 형식 완성 시 중지하도록 text-v4를 분리했다. 문서의 약14%는 사용자 보고이며 수정 후 전체 init은 미측정으로 남겼다.",
+        "evidence_kind": "actual_model_probe"
+      }
+    ]
+  },
+  {
+    "id": "GEMMA-007",
+    "title": "64개 중 한 응답만 맞아도 통과하던 preflight",
+    "area": "사전 검사",
+    "severity": "high",
+    "first_reported": "기존 문서·커밋 기준 / 아래 근거 참조",
+    "cause": "기존 작은 패널 gate는 올바른 응답이 하나라도 있으면 통과할 수 있었다.",
+    "impact": "저하된 초기 정책을 전체 캐시·학습으로 보낼 수 있었다.",
+    "introduction_commit": null,
+    "attribution": "도입 커밋의 작성 도구는 명시된 증거가 없으면 미확인. 이번 기록 작성자는 Codex.",
+    "evidence": [
+      {
+        "kind": "commit",
+        "label": "67a6663",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/67a6663"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "recorded",
+        "status": "code_fixed",
+        "text": "IT gate는 고정8문제×8응답, 25% 이상 및 빈 응답 없음으로 강화했다. 이 기준은 70% 성능 보장이 아니다.",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "GEMMA-008",
+    "title": "동일 실패 preflight로 GPU 시작을 반복",
+    "area": "실행·재시작",
+    "severity": "high",
+    "first_reported": "기존 문서·커밋 기준 / 아래 근거 참조",
+    "cause": "이미 실패한 진단이 같은 조건인데도 비싼 시작 단계를 다시 거칠 수 있었다.",
+    "impact": "실패 상태에서 불필요한 GPU 준비와 재시도 비용이 발생할 수 있었다.",
+    "introduction_commit": null,
+    "attribution": "도입 커밋의 작성 도구는 명시된 증거가 없으면 미확인. 이번 기록 작성자는 Codex.",
+    "evidence": [
+      {
+        "kind": "commit",
+        "label": "80e1357",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/80e1357"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "recorded",
+        "status": "code_fixed",
+        "text": "동일 실패 receipt를 CPU에서 확인해 GPU admission 전에 멈추도록 수정했다. 실제 절약 시간은 미측정이다.",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "GEMMA-009",
+    "title": "입력 준비 중 stop이 자식 준비 프로세스를 중지하지 못함",
+    "area": "실행·중지",
+    "severity": "high",
+    "first_reported": "기존 문서·커밋 기준 / 아래 근거 참조",
+    "cause": "준비 자식에 중지 확인이 없고 plan 생성 전 stop 경로도 불완전했다.",
+    "impact": "중지 요청 뒤에도 준비가 계속되거나 없는 plan 때문에 제어 명령이 실패했다.",
+    "introduction_commit": null,
+    "attribution": "도입 커밋의 작성 도구는 명시된 증거가 없으면 미확인. 이번 기록 작성자는 Codex.",
+    "evidence": [
+      {
+        "kind": "commit",
+        "label": "0877258",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/0877258"
+      },
+      {
+        "kind": "source",
+        "label": "GEMMA4_OPERATIONAL_AUDIT_2026-10-21.md",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/4943ec70092b017902ad38ab99da527535dedbef/docs/GEMMA4_OPERATIONAL_AUDIT_2026-10-21.md"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "recorded",
+        "status": "code_fixed",
+        "text": "실제 CPU 자식 프로세스의 종료와 plan 보존을 검증했다. 학습 실측 검증은 아니다.",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "GEMMA-010",
+    "title": "한 데이터셋만 준비됐을 때 다른 plan을 읽다가 stop 실패",
+    "area": "실행·중지",
+    "severity": "high",
+    "first_reported": "기존 문서·커밋 기준 / 아래 근거 참조",
+    "cause": "MATH/MBPP 양쪽 plan이 이미 존재한다고 가정한 중지 경로가 있었다.",
+    "impact": "제어 명령이 중지 처리 전에 실패했다.",
+    "introduction_commit": null,
+    "attribution": "도입 커밋의 작성 도구는 명시된 증거가 없으면 미확인. 이번 기록 작성자는 Codex.",
+    "evidence": [
+      {
+        "kind": "commit",
+        "label": "933b525",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/933b525"
+      },
+      {
+        "kind": "commit",
+        "label": "0877258",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/0877258"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "recorded",
+        "status": "code_fixed",
+        "text": "한쪽 plan·queue만 있는 공개 shell 명령을 재현해 수정했다.",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "GEMMA-011",
+    "title": "action 생략 옵션·도움말의 모델 실행 경로 오분기",
+    "area": "실행·명령",
+    "severity": "high",
+    "first_reported": "기존 문서·커밋 기준 / 아래 근거 참조",
+    "cause": "all --root 등 옵션 형태가 모델 체인을 우회하거나 help가 실행기로 전달될 수 있었다.",
+    "impact": "같은 명령 의도가 다른 실행 흐름으로 이어졌다.",
+    "introduction_commit": null,
+    "attribution": "도입 커밋의 작성 도구는 명시된 증거가 없으면 미확인. 이번 기록 작성자는 Codex.",
+    "evidence": [
+      {
+        "kind": "commit",
+        "label": "0877258",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/0877258"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "recorded",
+        "status": "code_fixed",
+        "text": "공백 root, 옵션만 있는 실행, help와 세 모델 인수 전달을 검사했다.",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "GEMMA-012",
+    "title": "MATH가 MBPP 초기 캐시·preflight를 기다리는 장벽",
+    "area": "실행·큐",
+    "severity": "high",
+    "first_reported": "기존 문서·커밋 기준 / 아래 근거 참조",
+    "cause": "모든 초기 캐시를 먼저 만드는 배정 변경이 MATH와 무관한 MBPP 준비까지 대기하게 했다.",
+    "impact": "MATH 준비가 끝났어도 학습 진입이 늦어졌다.",
+    "introduction_commit": "64ea3b5d5e5571f1013173dca05c4e798ffdebb3",
+    "attribution": "도입 커밋의 작성 도구는 명시된 증거가 없으면 미확인. 이번 기록 작성자는 Codex.",
+    "evidence": [
+      {
+        "kind": "commit",
+        "label": "64ea3b5",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/64ea3b5"
+      },
+      {
+        "kind": "commit",
+        "label": "095c027",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/095c027"
+      },
+      {
+        "kind": "source",
+        "label": "GEMMA4_MATH_CACHE_HANDOFF_2026-10-22.md",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/4943ec70092b017902ad38ab99da527535dedbef/docs/GEMMA4_MATH_CACHE_HANDOFF_2026-10-22.md"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "recorded",
+        "status": "code_fixed",
+        "text": "MATH 초기 캐시가 끝나면 MATH 학습을 즉시 허용하는 분기를 검사했다.",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "GEMMA-013",
+    "title": "gemma4-12b-it-math.json 누락과 불완전한 준비 안내",
+    "area": "준비·JSON",
+    "severity": "high",
+    "first_reported": "기존 문서·커밋 기준 / 아래 근거 참조",
+    "cause": "IT runtime plan은 git에 있는 정적 파일이 아니라 준비 과정에서 생성되는데, 빈 root 조회·시작 경로가 이를 충분히 처리하지 못했다.",
+    "impact": "사용자는 JSON 파일 없음 오류와 별도 준비 명령을 반복해서 겪었다.",
+    "introduction_commit": null,
+    "attribution": "도입 커밋의 작성 도구는 명시된 증거가 없으면 미확인. 이번 기록 작성자는 Codex.",
+    "evidence": [
+      {
+        "kind": "commit",
+        "label": "8c94f7b",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/8c94f7b"
+      },
+      {
+        "kind": "commit",
+        "label": "5f5dcd5",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/5f5dcd5"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "recorded",
+        "status": "code_fixed",
+        "text": "빈 저장소에서 공개 status/results가 누락 plan과 실제 입력을 자동 준비하도록 수정했다. 기존 작업이 있는 root에는 plan을 임의 재생성하지 않는다.",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "GEMMA-014",
+    "title": "IT 선택 뒤 기존 generic PT 모델 경로가 남는 문제",
+    "area": "모델·경로",
+    "severity": "high",
+    "first_reported": "기존 문서·커밋 기준 / 아래 근거 참조",
+    "cause": "일반 Gemma 모델 경로 override가 기존 PT snapshot을 가리킬 수 있었다.",
+    "impact": "IT를 선택했는데 PT 경로를 다시 읽거나 준비가 막힐 수 있었다.",
+    "introduction_commit": null,
+    "attribution": "도입 커밋의 작성 도구는 명시된 증거가 없으면 미확인. 이번 기록 작성자는 Codex.",
+    "evidence": [
+      {
+        "kind": "commit",
+        "label": "67a6663",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/67a6663"
+      },
+      {
+        "kind": "commit",
+        "label": "5f5dcd5",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/5f5dcd5"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "recorded",
+        "status": "code_fixed",
+        "text": "IT 명시 경로 우선, 기존 generic PT override의 자동 배제와 pinned 모델 파일 검증을 기록했다.",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "GEMMA-015",
+    "title": "준비·preflight 중 status가 비어 보임",
+    "area": "Status",
+    "severity": "high",
+    "first_reported": "기존 문서·커밋 기준 / 아래 근거 참조",
+    "cause": "긴 준비 단계가 status 초기 출력·진행 표시와 충분히 연결되지 않았다.",
+    "impact": "진행 여부와 실패 원인을 사용자가 볼 수 없었다.",
+    "introduction_commit": null,
+    "attribution": "도입 커밋의 작성 도구는 명시된 증거가 없으면 미확인. 이번 기록 작성자는 Codex.",
+    "evidence": [
+      {
+        "kind": "commit",
+        "label": "00086ae",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/00086ae"
+      },
+      {
+        "kind": "commit",
+        "label": "5f5dcd5",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/5f5dcd5"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "recorded",
+        "status": "code_fixed",
+        "text": "모델/root, 준비 lease와 고정 패널 저장 수를 먼저 표시하도록 수정했다.",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "GEMMA-016",
+    "title": "실행 노드·launcher와 active 집계 누락",
+    "area": "Status",
+    "severity": "high",
+    "first_reported": "기존 문서·커밋 기준 / 아래 근거 참조",
+    "cause": "데이터셋 worker만 집계하고 task lease/모델 체인 등록 전 상태를 빠뜨렸다.",
+    "impact": "실행 중인데 local node와 active 수에 나타나지 않았다.",
+    "introduction_commit": null,
+    "attribution": "도입 커밋의 작성 도구는 명시된 증거가 없으면 미확인. 이번 기록 작성자는 Codex.",
+    "evidence": [
+      {
+        "kind": "commit",
+        "label": "e1c3bde",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/e1c3bde"
+      },
+      {
+        "kind": "source",
+        "label": "GEMMA4_NODE_ACTIVITY_2026-10-22.md",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/4943ec70092b017902ad38ab99da527535dedbef/docs/GEMMA4_NODE_ACTIVITY_2026-10-22.md"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "recorded",
+        "status": "code_fixed",
+        "text": "worker receipt가 없어도 live task lease와 coordinator heartbeat를 읽도록 수정했다.",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "GEMMA-017",
+    "title": "status에 결과를 표시하라는 요청을 JSON 자동 저장으로 구현",
+    "area": "Status·출력",
+    "severity": "high",
+    "first_reported": "기존 문서·커밋 기준 / 아래 근거 참조",
+    "cause": "현재 결과·GPU 시간을 화면에 표시하라는 요구를 별도 snapshot 파일 저장으로 잘못 구현했다.",
+    "impact": "불필요한 JSON 파일과 오래된 값·현재 값 혼동을 만들었다.",
+    "introduction_commit": "09f1498882f65babd678ab6f6f238d0437aceb7b",
+    "attribution": "도입 커밋의 작성 도구는 명시된 증거가 없으면 미확인. 이번 기록 작성자는 Codex.",
+    "evidence": [
+      {
+        "kind": "commit",
+        "label": "09f1498",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/09f1498"
+      },
+      {
+        "kind": "commit",
+        "label": "20d15e5",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/20d15e5"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "recorded",
+        "status": "code_fixed",
+        "text": "자동 snapshot 쓰기를 제거했다. 기존 파일과 raw 기록은 보존했다.",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "GEMMA-018",
+    "title": "중간 평가 전에 완료 update의 복구 checkpoint 미저장",
+    "area": "체크포인트·복구",
+    "severity": "high",
+    "first_reported": "기존 문서·커밋 기준 / 아래 근거 참조",
+    "cause": "긴 중간 평가가 끝나야 경계 update의 복구 파일이 저장됐다.",
+    "impact": "평가 중 끊기면 25/50 완료 기록이 있어도 24/49에서 다시 시작할 수 있었다.",
+    "introduction_commit": null,
+    "attribution": "도입 커밋의 작성 도구는 명시된 증거가 없으면 미확인. 이번 기록 작성자는 Codex.",
+    "evidence": [
+      {
+        "kind": "commit",
+        "label": "81bb40c",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/81bb40c"
+      },
+      {
+        "kind": "source",
+        "label": "gemma-boundary-resume-20261023.json",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/4943ec70092b017902ad38ab99da527535dedbef/docs/evidence/gemma-boundary-resume-20261023.json"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "recorded",
+        "status": "code_fixed",
+        "text": "실제 작은 CPU AdamW에서 중단을 재현했다. 학습 기록 뒤 복구 파일을 먼저 저장하고 복원 시 미완료 평가를 처리한다. 원격 반복의 직접 원인인지는 미확인이다.",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "GEMMA-019",
+    "title": "학습 51 진행 기록을 과거 EVAL 50으로 덮는 status 판정",
+    "area": "Status",
+    "severity": "high",
+    "first_reported": "기존 문서·커밋 기준 / 아래 근거 참조",
+    "cause": "파일 mtime 순서를 실제 update 순서보다 우선했다.",
+    "impact": "학습 기록이 전진해도 화면이 과거 평가로 돌아가 보였다.",
+    "introduction_commit": null,
+    "attribution": "도입 커밋의 작성 도구는 명시된 증거가 없으면 미확인. 이번 기록 작성자는 Codex.",
+    "evidence": [
+      {
+        "kind": "commit",
+        "label": "4943ec7",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/4943ec7"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "recorded",
+        "status": "code_fixed",
+        "text": "동일 합성 파일을 수정 전후 reader로 재생했다. 파일은 바뀌지 않았고 표시만 바로잡혔다. 실제 원격 학습 상태는 미확인이다.",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "GEMMA-020",
+    "title": "최종 결과 저장 뒤에도 계속 EVAL로 표시",
+    "area": "Status",
+    "severity": "high",
+    "first_reported": "기존 문서·커밋 기준 / 아래 근거 참조",
+    "cause": "유효한 endpoint와 worker lease 해제 대기를 구분하지 않았다.",
+    "impact": "실제로 평가 결과가 저장돼도 평가를 반복하는 것처럼 보였다.",
+    "introduction_commit": null,
+    "attribution": "도입 커밋의 작성 도구는 명시된 증거가 없으면 미확인. 이번 기록 작성자는 Codex.",
+    "evidence": [
+      {
+        "kind": "commit",
+        "label": "4943ec7",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/4943ec7"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "recorded",
+        "status": "code_fixed",
+        "text": "검증된 결과는 정리 단계로 분리했다. lease가 해제된 뒤 DONE을 표시한다.",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "GEMMA-021",
+    "title": "MODEL QUEUE 하단에 다른 root·PT·Qwen 실행기 혼합",
+    "area": "Status",
+    "severity": "high",
+    "first_reported": "기존 문서·커밋 기준 / 아래 근거 참조",
+    "cause": "노드 표와 달리 하단 모델 큐에는 현재 실험 범위 필터가 없었다.",
+    "impact": "다른 실행의 상태를 현재 Gemma의 진행으로 오인할 수 있었다.",
+    "introduction_commit": null,
+    "attribution": "도입 커밋의 작성 도구는 명시된 증거가 없으면 미확인. 이번 기록 작성자는 Codex.",
+    "evidence": [
+      {
+        "kind": "commit",
+        "label": "4943ec7",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/4943ec7"
+      },
+      {
+        "kind": "source",
+        "label": "gemma-status-diagnosis-20261023.json",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/4943ec70092b017902ad38ab99da527535dedbef/docs/evidence/gemma-status-diagnosis-20261023.json"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "recorded",
+        "status": "code_fixed",
+        "text": "모델·프로토콜·root 필터를 하단에도 동일하게 적용했다.",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "GEMMA-022",
+    "title": "On-policy 일반 평가 위치에 @ 표기를 붙여 SR 전환과 혼동",
+    "area": "Status·표기",
+    "severity": "high",
+    "first_reported": "기존 문서·커밋 기준 / 아래 근거 참조",
+    "cause": "이번 Codex 수정에서 일반 평가 update를 @로 표기했다. 실제 SR 전환을 나타내는 SW@와 구분이 불명확했다.",
+    "impact": "On-policy 정책이 SR로 바뀌었는지 사용자가 판단할 수 없었다.",
+    "introduction_commit": "81bb40c0f069c7feff11014084ed5cbfca87884c",
+    "attribution": "이 세션 Codex가 일반 평가 위치에 @ 표기를 추가했다. 도입 커밋81bb40c.",
+    "evidence": [
+      {
+        "kind": "commit",
+        "label": "81bb40c",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/81bb40c"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "recorded",
+        "status": "in_progress",
+        "text": "@ 일반 평가 표기를 제거하고 실행 상태·단계·학습 수·평가 수를 분리하는 수정 중이다. 이는 정책 전환 계산을 변경하는 작업이 아니다.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "fixed",
+        "status": "code_fixed",
+        "text": "실행 State=RUN과 Phase를 분리하고 Train/Eval/Attempt를 별도 표시했다. 일반 평가 @는 제거했다. 실제 Switch의 SW@만 유지했다. status 회귀154개 통과. 원격 학습 정상 여부는 별도 미확인이다.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/9588bf85ba582c1ef316b337fe6ad52c21095ea0"
+      }
+    ]
+  },
+  {
+    "id": "GEMMA-023",
+    "title": "RUN 실행 상태와 EVAL 단계를 같은 칸에서 번갈아 표시",
+    "area": "Status·판정",
+    "severity": "high",
+    "first_reported": "기존 문서·커밋 기준 / 아래 근거 참조",
+    "cause": "실행 lease 상태 RUN을 현재 평가 단계 EVAL로 대체해 표시했다.",
+    "impact": "동일 실행의 단계 변화와 실제 실패 후 재실행을 구분하기 어려웠다.",
+    "introduction_commit": null,
+    "attribution": "도입 커밋의 작성 도구는 명시된 증거가 없으면 미확인. 이번 기록 작성자는 Codex.",
+    "evidence": [],
+    "events": [
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "recorded",
+        "status": "in_progress",
+        "text": "실행 State와 Phase를 분리하고 Train/Eval 분모 및 Attempt 번호를 별도 표로 표시하는 수정 중이다.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "fixed",
+        "status": "code_fixed",
+        "text": "실행 State=RUN과 Phase를 분리하고 Train/Eval/Attempt를 별도 표시했다. 일반 평가 @는 제거했다. 실제 Switch의 SW@만 유지했다. status 회귀154개 통과. 원격 학습 정상 여부는 별도 미확인이다.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/9588bf85ba582c1ef316b337fe6ad52c21095ea0"
+      }
+    ]
+  },
+  {
+    "id": "GEMMA-024",
+    "title": "원격 원인 분류 전에 실행기 재시작부터 안내",
+    "area": "검증·안내",
+    "severity": "high",
+    "first_reported": "기존 문서·커밋 기준 / 아래 근거 참조",
+    "cause": "CPU에서 찾은 복구 문제와 사용자 원격 정체를 연결할 증거가 없는데 재시작 절차를 먼저 안내했다.",
+    "impact": "사용자가 학습 오류인지 status 오류인지 판단하지 못한 채 추가 조치를 떠안았다.",
+    "introduction_commit": null,
+    "attribution": "도입 커밋의 작성 도구는 명시된 증거가 없으면 미확인. 이번 기록 작성자는 Codex.",
+    "evidence": [],
+    "events": [
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "recorded",
+        "status": "open",
+        "text": "실제 GPU 노드의 commit/root/step/원래 오류가 이 세션에 없다. 미확인 상태를 유지하고 status 수정에는 학습·노드 재시작이 불필요하다고 정정했다.",
+        "evidence_kind": "user_report"
+      }
+    ]
+  },
+  {
+    "id": "GEMMA-025",
+    "title": "중간 reward·checkpoint 보존과 컴팩트 결과 내보내기 누락",
+    "area": "실험 기록",
+    "severity": "high",
+    "first_reported": "기존 문서·커밋 기준 / 아래 근거 참조",
+    "cause": "일부 내보내기는 최종 held-out 결과만 보여 기존 중간 학습 보상을 충분히 드러내지 못했다.",
+    "impact": "OLMo seed3/4와 다른 모델의 reward curve 비교·재현이 어려워졌다.",
+    "introduction_commit": null,
+    "attribution": "도입 커밋의 작성 도구는 명시된 증거가 없으면 미확인. 이번 기록 작성자는 Codex.",
+    "evidence": [
+      {
+        "kind": "commit",
+        "label": "e63c115",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/e63c115"
+      },
+      {
+        "kind": "commit",
+        "label": "d56f5f6",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/d56f5f6"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-23",
+        "actor": "Codex",
+        "type": "recorded",
+        "status": "code_fixed",
+        "text": "25-update 이상 간격으로 raw 학습 reward와 fixed held-out을 분리 기록하고 필요한 checkpoint를 보존하는 recorder/export 확장을 추가했다. 과거 미측정 held-out 값은 만들지 않는다.",
+        "evidence_kind": "code_test"
+      }
+    ]
+  }
+]
