@@ -36,6 +36,23 @@ endpoint 파일이 바뀌면 준비 완료로 표시하지 않는다. lease를 �
 **이번 status 수정 적용에는 학습이나 노드 재시작이 필요 없다.** 저장소에서
 `git pull --ff-only` 후 기존 `bash scripts/run_srgc_gemma4.sh status`만 다시 실행한다.
 
+## 후속 정정: 실행 상태와 단계를 분리하고 일반 평가의 @ 제거
+
+사용자는 On-policy에 붙은 `@`와 `RUN → EVAL` 반복 표시 때문에 실제 재실행과
+단계 변화를 구분할 수 없다고 보고했다. 일반 평가 위치의 `@`는 이 세션 Codex가
+`81bb40c`에서 추가한 표시이며 실제 SR 전환의 `SW@N`과 혼동을 만들었다.
+일반 평가 `@`는 제거했다. 실제 Switch arm의 기록된 전환에만 `SW@N`을 유지한다.
+
+실행 `State`는 lease가 살아 있는 동안 `RUN`으로 유지한다. `Phase`는 별도로
+TRAIN/CHECKPOINT EVAL/FINAL EVAL/FINALIZING을 표시한다. 현재 작업 표에서 완료 학습
+update/전체 update, 저장된 평가 prompt/전체 prompt, 실제 launch attempt를 서로 다른
+열에 놓는다. 평가 분모 300을 학습 분모 275의 진행률처럼 바꿔 표시하지 않는다.
+이 표시만으로 실제 원격 학습 정상·실패를 단정하지 않는다.
+
+관련 status 회귀 154개가 373.00초에 통과했다. 원시 로그는
+`/home/kms/reports/paper-code-bug-board-20261023/status-tests.log`다.
+검사 범위는 코드이며 optimizer, 학습 조건, 모델, 실제 정책 전환 로직은 변경하지 않았다.
+
 사용자 보고: Gemma가 `RUN → EVAL → RUN → EVAL`을 반복하고 학습 진행 및 `DONE` 도달이 막혔다.
 기준 코드는 `20d15e58dd861e2b2418996e32a8866653c2d99d`다.
 

@@ -125,7 +125,8 @@ def test_status_distinguishes_checkpoint_eval_from_final_eval_and_task_completio
            "completed_steps": 50, "total_steps": 275, "evaluation_step": 50,
            "attempt": 3, "final_evaluation": {"saved_prompts": 300,
                                                 "total_prompts": 300, "responses_per_prompt": 8}}
-    assert qwen_status.cell(row) == "EVAL 300/300 saved @50"
+    assert qwen_status.cell(row) == "RUN 50/275"
+    assert qwen_status.phase_cell(row) == "CHECKPOINT EVAL"
     text = qwen_status.progress(row)
     assert "checkpoint eval at update 50/275" in text
     assert "then resume training at update 51" in text and "attempt 3" in text
@@ -133,7 +134,8 @@ def test_status_distinguishes_checkpoint_eval_from_final_eval_and_task_completio
 
     del row["evaluation_step"]
     row["completed_steps"] = 275
-    assert qwen_status.cell(row) == "FINAL EVAL 300/300 saved @275"
+    assert qwen_status.cell(row) == "RUN 275/275"
+    assert qwen_status.phase_cell(row) == "FINAL EVAL"
     text = qwen_status.progress(row)
     assert "final eval at update 275/275" in text and "awaiting endpoint" in text
     assert "then resume training" not in text and "DONE" not in text

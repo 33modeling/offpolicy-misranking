@@ -55,19 +55,9 @@ def _cell(task):
         reward = task.get("reward_percent")
         return "DONE" if reward is None else f"DONE {reward:.1f}%"
     if state == "running":
-        if task.get("phase_stage") == "finalizing":
-            return "FINALIZING"
         if task["arm"] == "cache" and "cache_saved_prompts" in task:
             count = max(task["cache_saved_prompts"], task["cache_exported_prompts"])
             return f"RUN {count}/{task['cache_total_prompts']}"
-        if task.get("phase_stage") == "evaluation":
-            evaluation = task.get("final_evaluation", {})
-            saved = evaluation.get("saved_prompts")
-            label = "EVAL" if task.get("evaluation_step") is not None else "FINAL EVAL"
-            step = task.get("evaluation_step", task.get("completed_steps"))
-            suffix = f" @{step}" if type(step) is int else ""
-            return (f"{label} {saved}/{evaluation['total_prompts']} saved{suffix}"
-                    if saved is not None else label + suffix)
         done, total = task.get("completed_steps"), task.get("total_steps")
         return f"RUN {done}/{total}" if done is not None and total else "RUN"
     if state.startswith("waiting_for_"):
@@ -80,6 +70,14 @@ def _cell(task):
 
 def cell(task):
     return "-" if task is None else live.switch_cell(task, _cell(task))
+
+
+def phase_cell(task):
+    if task.get("phase_stage") == "evaluation":
+        return "CHECKPOINT EVAL" if task.get("evaluation_step") is not None else "FINAL EVAL"
+    return {"training": "TRAIN", "selection": "SELECT", "checkpoint_save": "SAVE",
+            "checkpoint_load": "LOAD", "finalizing": "FINALIZING",
+            "startup": "STARTUP", "preparation": "PREP"}.get(task.get("phase_stage"), "-")
 
 
 def worker_error(node):
@@ -377,9 +375,10 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
                 current = str(node["active_dataset"])
                 reason = "shared worker is running the other dataset"
             rows.append([("* " if node.get("host") == host else "") + node.get("host", "-"), state,
+                         phase_cell(node["task_row"]) if node["task_row"] else "-",
                          current, cell(node["task_row"]).removeprefix("RUN ") if node["task_row"] else "-",
                          heartbeat, reason])
-        lines += table(("Node", "State", "Task", "Progress", "Heartbeat", "Wait reason"), rows)
+        lines += table(("Node", "State", "Phase", "Task", "Progress", "Heartbeat", "Wait reason"), rows)
     else:
         lines += ["", "NODES  no worker records"]
     for report in snapshots:
@@ -440,6 +439,16 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
                if row["status"] == "running"]
     if running:
         lines += ["", "RUNNING"]
+        details = []
+        for label, row in running:
+            done, total = row.get("completed_steps"), row.get("total_steps")
+            train = f"{done if done is not None else '?'}/{total}" if total else "-"
+            evaluation = row.get("final_evaluation")
+            eval_count = (f"{evaluation['saved_prompts'] if evaluation['saved_prompts'] is not None else '?'}/{evaluation['total_prompts']}"
+                          if evaluation and row.get("phase_stage") == "evaluation" else "-")
+            details.append([label, row["task"], "RUN", phase_cell(row), train, eval_count,
+                            row.get("attempt", "-")])
+        lines += table(("Dataset", "Task", "State", "Phase", "Train", "Eval", "Attempt"), details)
         for label, row in running:
             lines.append(f"  {label} {row['task']} | node {row.get('host') or '-'} | {progress(row)}")
     pending = [(report["label"], row) for report in snapshots for row in report["tasks"]
@@ -466,7 +475,8 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
     warnings = [(report["label"], warning) for report in snapshots for warning in dict.fromkeys(report["warnings"])]
     if warnings:
         lines += ["", "WARNINGS", *(f"  {label} | {warning}" for label, warning in warnings)]
-    lines += ["", "TRAIN = completed updates; EVAL = saved prompts. ? = progress not recorded.",
+    lines += ["", "State RUN = live execution lease. Phase TRAIN/EVAL can change within the same attempt.",
+              "Train = completed updates; Eval = saved prompts. They use separate totals. ? = progress not recorded.",
               "FINALIZING = validated result saved; waiting for worker/lease release.",
               "RUN = active lease; LAUNCH/WAIT/HANDOFF = live dispatcher. SW@N = switch after update N.",
               f"Root: {root}"]

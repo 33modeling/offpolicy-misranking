@@ -66,7 +66,8 @@ def test_saved_valid_endpoint_is_finalizing_while_writer_still_holds_lease(cohor
         assert row["saved_reward_percent"] == 50.
         assert row["completed_steps"] == 275 and row["current_step"] is None
         assert "final_evaluation" not in row
-        assert status.cell(row) == "FINALIZING"
+        assert status.cell(row) == "RUN 275/275"
+        assert status.phase_cell(row) == "FINALIZING"
         assert "result saved 50.0%" in status.progress(row)
         assert "lease release" in status.progress(row)
         from srgc_research.dispatch.status_current import render_results
@@ -110,3 +111,19 @@ def test_model_queue_footer_does_not_mix_other_roots_and_model_protocols(tmp_pat
     text = status.render([], root, status_model="gemma4_it", coordinators=coordinators)
     assert "current-gemma-node" in text
     assert "other-root-node" not in text and "old-pt-node" not in text and "qwen-node" not in text
+
+
+@pytest.mark.parametrize("arm", ["on_policy", "sr", "random"])
+def test_execution_state_does_not_flip_to_eval_or_show_switch_marker_for_other_arms(arm):
+    row = {"arm": arm, "status": "running", "completed_steps": 50, "total_steps": 275,
+           "phase_stage": "training", "attempt": 1, "switched_at": 50}
+    assert status.cell(row) == "RUN 50/275"
+    row.update(phase_stage="evaluation", evaluation_step=50,
+               final_evaluation={"saved_prompts": 17, "total_prompts": 300, "responses_per_prompt": 8})
+    assert status.cell(row) == "RUN 50/275"
+    assert status.phase_cell(row) == "CHECKPOINT EVAL"
+    assert "@" not in status.cell(row) and "@" not in status.progress(row)
+    row.update(phase_stage="training", current_step=51)
+    assert status.cell(row) == "RUN 50/275" and status.phase_cell(row) == "TRAIN"
+    row.update(arm="switch", switched_at=50)
+    assert "SW@50" in status.cell(row)

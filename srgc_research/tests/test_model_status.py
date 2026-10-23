@@ -157,8 +157,8 @@ def test_final_evaluation_counts_only_this_stream_and_waits_for_valid_endpoint(c
         assert task["reward_percent"] is None and not report["complete"]
         assert task["final_evaluation"] == {
             "saved_prompts": expected, "total_prompts": len(ids), "responses_per_prompt": 8}
-        assert status.cell(task) == ("FINAL EVAL @275" if expected is None
-                                     else f"FINAL EVAL {expected}/300 saved @275")
+        assert status.cell(task) == "RUN 275/275"
+        assert status.phase_cell(task) == "FINAL EVAL"
         assert "evaluation" in status.progress(task) and "8 responses/prompt" in status.progress(task)
         assert saved(cohort) == before
 
@@ -190,7 +190,8 @@ def test_final_evaluation_counts_only_this_stream_and_waits_for_valid_endpoint(c
         task = next(row for row in value["datasets"][0]["tasks"] if row["task"] == "seed-5.on_policy")
         assert code == 0 and task["status"] == "running" and task["endpoint_ready"]
         assert task["phase_stage"] == "finalizing" and "final_evaluation" not in task
-        assert task["saved_reward_percent"] == 50. and status.cell(task) == "FINALIZING"
+        assert task["saved_reward_percent"] == 50. and status.cell(task) == "RUN 275/275"
+        assert status.phase_cell(task) == "FINALIZING"
         assert saved(cohort) == before
     before = saved(cohort)
     code, value = read_status(cohort, capsys)

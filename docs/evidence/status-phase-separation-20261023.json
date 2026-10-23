@@ -1,0 +1,21 @@
+{
+  "baseline_commit": "4943ec70092b017902ad38ab99da527535dedbef",
+  "scope": "CPU status display regressions; no training/model/GPU changes",
+  "introduced_ambiguous_eval_at_marker": "81bb40c0f069c7feff11014084ed5cbfca87884c",
+  "passed": 154,
+  "failed": 0,
+  "seconds": 373.0,
+  "raw_log": "/home/kms/reports/paper-code-bug-board-20261023/status-tests.log",
+  "verified": [
+    "RUN state remains RUN across TRAIN/EVAL within one live lease",
+    "separate Phase, Train, Eval and Attempt columns",
+    "no @ on on_policy, sr or random evaluation",
+    "SW@N only for actual recorded Switch arm decisions"
+  ],
+  "frozen_digests_unchanged": {
+    "adapter": "adb962509386e02d8ed4265d1b7f3e82f9ea6b2ff124feb8d49e706eb6c33d82",
+    "engine": "12cf5ef830ebfd92fa8a87ea62dc7df734cd9ceab57fbce18fc4b2548385f960"
+  },
+  "actual_remote_learner_health": null,
+  "training_restart_required_for_display_fix": false
+}

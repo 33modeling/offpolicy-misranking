@@ -63,8 +63,11 @@ training-batch rewards separately from fixed held-out reward curves.
 Boundary optimizer checkpoints are saved before the long intermediate evaluation.
 After interruption, restoring that boundary completes its missing evaluation before
 training continues, including the already-exhausted update-25 prefix loop.
-The status table distinguishes checkpoint `EVAL … @50` from `FINAL EVAL … @275`;
-only a validated endpoint becomes `DONE`. See the
+The status table keeps execution `State` separate from `Phase`: an active task
+stays `RUN` during training and evaluation. The active-task table has separate
+`Train`, `Eval`, and `Attempt` columns. Ordinary evaluation never uses `@`;
+`SW@N` is reserved for a recorded Switch-to-SR decision. Only a released task
+with a validated endpoint becomes `DONE`. See the
 [boundary-resume verification](GEMMA4_EVAL_RESUME_2026-10-23.md).
 
 ```sh
