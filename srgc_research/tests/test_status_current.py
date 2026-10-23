@@ -210,6 +210,7 @@ def test_current_checkpoint_eval_uses_its_step_and_ignores_past_eval_after_train
 def test_corrupt_checkpoint_progress_does_not_relabel_valid_inputs_as_invalid(tmp_path, capsys):
     cohort = make_cohort("gemma4_it", tmp_path)
     folder = finish(cohort, "math")
+    (folder / "on_policy-endpoint.json").unlink()
     queue = folder.parent / ".queue"
     atomic_json(queue / "tasks/seed-5.on_policy.json", {
         "task": "seed-5.on_policy", "status": "running", "started": time.time() - 10})

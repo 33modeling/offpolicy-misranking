@@ -55,6 +55,8 @@ def _cell(task):
         reward = task.get("reward_percent")
         return "DONE" if reward is None else f"DONE {reward:.1f}%"
     if state == "running":
+        if task.get("phase_stage") == "finalizing":
+            return "FINALIZING"
         if task["arm"] == "cache" and "cache_saved_prompts" in task:
             count = max(task["cache_saved_prompts"], task["cache_exported_prompts"])
             return f"RUN {count}/{task['cache_total_prompts']}"
@@ -100,6 +102,15 @@ def heartbeat_age(row):
     return value if isinstance(value, (int, float)) and math.isfinite(value) and value >= 0 else float("inf")
 
 
+def scoped_coordinators(rows, *, model, root):
+    family = "gemma4" if model and model.startswith("gemma4") else model
+    return [row for row in rows
+            if family is not None and row.get("model") == family
+            and row.get("status_model") in {None, model}
+            and (not row.get("root") or root is not None
+                 and Path(row["root"]).resolve() == Path(root).resolve())]
+
+
 def node_rows(snapshots, *, coordinators=(), model=None, root=None):
     """Merge worker, held-task and coordinator evidence once per host."""
     sessions = {}
@@ -141,14 +152,7 @@ def node_rows(snapshots, *, coordinators=(), model=None, root=None):
                              "status": "running", "source": "task_lease",
                              "heartbeat_stale": bool(worker) and heartbeat_age(worker) > 60,
                              "task": task["task"], "task_row": task, "label": report["label"]}
-    family = "gemma4" if model and model.startswith("gemma4") else model
-    for coordinator in coordinators:
-        if coordinator.get("model") != family or family is None:
-            continue
-        if coordinator.get("status_model") not in {None, model}:
-            continue
-        if coordinator.get("root") and (root is None or Path(coordinator["root"]).resolve() != Path(root).resolve()):
-            continue
+    for coordinator in scoped_coordinators(coordinators, model=model, root=root):
         state = {"running": "launching", "waiting": "waiting", "switching": "switching",
                  "stale": "heartbeat_stale", "finished": "complete",
                  "stopped": "stopped", "failed": "failed"}.get(coordinator["status"])
@@ -201,6 +205,10 @@ def progress(task):
             if write_age is not None:
                 parts.append(f"last write {age(write_age)} ago")
     else:
+        if task.get("phase_stage") == "finalizing":
+            reward = task.get("saved_reward_percent")
+            parts.append("result saved" + (f" {reward:.1f}%" if reward is not None else ""))
+            parts.append("waiting for worker/lease release")
         evaluating = task.get("phase_stage") == "evaluation"
         evaluation = task.get("final_evaluation")
         if evaluating:
@@ -320,6 +328,7 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
     from .model_chain import snapshot as chain_snapshot
 
     coordinators = chain_snapshot(now=now) if coordinators is None else coordinators
+    coordinators = scoped_coordinators(coordinators, model=status_model, root=root)
     nodes = node_rows(snapshots, coordinators=coordinators, model=status_model, root=root)
     local = next((row for row in nodes if row["host"] == host), None)
     local_state = (f"ACTIVE ({local['status'].upper()})" if local["status"] in LIVE_WORKERS
@@ -458,6 +467,7 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
     if warnings:
         lines += ["", "WARNINGS", *(f"  {label} | {warning}" for label, warning in warnings)]
     lines += ["", "TRAIN = completed updates; EVAL = saved prompts. ? = progress not recorded.",
+              "FINALIZING = validated result saved; waiting for worker/lease release.",
               "RUN = active lease; LAUNCH/WAIT/HANDOFF = live dispatcher. SW@N = switch after update N.",
               f"Root: {root}"]
     from .model_chain import render_status

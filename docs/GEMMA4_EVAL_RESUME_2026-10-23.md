@@ -6,6 +6,36 @@
 확인한 코드 변경, 실행 근거의 부재 및 실제 노드에서 확인해야 할 종결 조건을 기록했다.
 아래 CPU 복구 검사를 이 운영 문제의 해결 증거로 사용하지 않는다.
 
+## 추가 분류: status 오류 재현
+
+사용자는 이후 **학습 오류인지 status 오류인지 먼저 구분하라**, **status 자체가
+엉망이다**라고 정정했다. 원격 학습 장애로 단정하지 않고 조회 코드만 분리해서 검사했다.
+기준 `e82cb60a6ad6789e91b501b1287f5494e2ac7102`와 수정한 status를 같은 합성 실행
+파일에 적용해 다음 표시 오류를 재현했다. 조회 전후 원시 실행 파일은 동일했다.
+
+| 원시 기록 | 기존 표시 | 수정 표시 |
+| --- | --- | --- |
+| training checkpoint 50 started: 50회 완료, update 51 진행 중. 과거 eval 50 파일의 mtime이 같거나 더 최신 | EVAL @50 | RUN 50/275, update 51 진행 중 |
+| 유효한 최종 endpoint가 저장됐지만 실행기 lease가 아직 유지됨 | FINAL EVAL @275 | FINALIZING, result saved, 실행기 종료 대기 |
+| 다른 root/PT/Qwen 실행기 기록이 함께 존재 | 현재 Gemma의 MODEL QUEUE 하단에 섞임 | 현재 모델·프로토콜·root와 맞는 실행기만 표시 |
+
+첫 오류는 실제 update 증거보다 mtime 비교를 우선한 상태 판정 문제다. 두 번째는
+평가 완료와 프로세스 정리 대기를 구분하지 않은 표시 문제다. 최종 결과는 기존
+reporter의 plan/input/implementation/prefix/300개 reward 검증을 재사용하고, 조회 중
+endpoint 파일이 바뀌면 준비 완료로 표시하지 않는다. lease를 해제하거나 완료 task를
+조작하지 않는다. 결과가 없거나 잘못되면 `FINALIZING`/`DONE`을 만들지 않는다.
+
+이 수정은 `model_status.py`, `qwen_status.py`, `status_current.py`의 조회 경로만 바꾼다.
+학습·평가·재시도 실행기, frozen adapter/engine, checkpoint 및 실험 조건은 변경하지 않는다.
+[재현 검사](../srgc_research/tests/test_status_phase_diagnosis.py)와
+[상태 분류 증거](evidence/gemma-status-diagnosis-20261023.json)에 코드 검증을 기록한다.
+수정 전 동일한 17개 조건에서 13개가 실패하고, 수정 후 전체 status 회귀 **151개가
+65.31초에 통과**했다. 검증 원시 로그는 `/home/kms/reports/gemma-status-diagnosis-2026-10-23/`에 보존했다.
+이는 실제 GPU 노드가 정상 학습 중이거나 고장 났다는 판정이 아니다.
+
+**이번 status 수정 적용에는 학습이나 노드 재시작이 필요 없다.** 저장소에서
+`git pull --ff-only` 후 기존 `bash scripts/run_srgc_gemma4.sh status`만 다시 실행한다.
+
 사용자 보고: Gemma가 `RUN → EVAL → RUN → EVAL`을 반복하고 학습 진행 및 `DONE` 도달이 막혔다.
 기준 코드는 `20d15e58dd861e2b2418996e32a8866653c2d99d`다.
 

@@ -1,0 +1,97 @@
+{
+  "baseline_commit": "e82cb60a6ad6789e91b501b1287f5494e2ac7102",
+  "scope": "Same synthetic run records replayed through old/new status readers. No optimizer, generation or GPU process was run.",
+  "records": [
+    {
+      "case": "training_51_with_old_eval_50",
+      "baseline": {
+        "status": "running",
+        "phase_stage": "evaluation",
+        "completed_steps": 50,
+        "current_step": null,
+        "evaluation_step": 50,
+        "endpoint_ready": null,
+        "saved_reward_percent": null
+      },
+      "fixed": {
+        "status": "running",
+        "phase_stage": "training",
+        "completed_steps": 50,
+        "current_step": 51,
+        "evaluation_step": null,
+        "endpoint_ready": null,
+        "saved_reward_percent": null
+      },
+      "same_run_files_unchanged": true
+    },
+    {
+      "case": "endpoint_saved_with_lease_held",
+      "baseline": {
+        "status": "running",
+        "phase_stage": "evaluation",
+        "completed_steps": 275,
+        "current_step": null,
+        "evaluation_step": null,
+        "endpoint_ready": null,
+        "saved_reward_percent": null
+      },
+      "fixed": {
+        "status": "running",
+        "phase_stage": "finalizing",
+        "completed_steps": 275,
+        "current_step": null,
+        "evaluation_step": null,
+        "endpoint_ready": true,
+        "saved_reward_percent": 50.0
+      },
+      "same_run_files_unchanged": true
+    }
+  ],
+  "actual_remote_learner_health": null,
+  "user_correction": "First determine whether this is a training error or a status error. The status display itself is broken.",
+  "classification": "Status-code defects reproduced independently of learning; actual remote learner health remains unverified.",
+  "verified_fixes": [
+    "do not let stale or tied-mtime checkpoint evaluations override a logically later training update",
+    "show validated saved endpoint with live writer as FINALIZING, not EVAL",
+    "show validated saved result while worker cleanup is pending",
+    "scope terminal MODEL QUEUE footer to current model/protocol/root"
+  ],
+  "new_regression_cases": 17,
+  "baseline_with_corrected_fixture": {
+    "failed": 13,
+    "passed": 4,
+    "raw_log": "/home/kms/reports/gemma-status-diagnosis-2026-10-23/baseline-corrected-fixture.log"
+  },
+  "final_regression": {
+    "passed": 151,
+    "failed": 0,
+    "seconds": 65.31,
+    "raw_log": "/home/kms/reports/gemma-status-diagnosis-2026-10-23/final-regression.log",
+    "files": [
+      "test_status_phase_diagnosis.py",
+      "test_status_current.py",
+      "test_model_status.py",
+      "test_qwen_status.py",
+      "test_node_activity.py",
+      "test_gemma_it_status.py",
+      "test_worker_history.py"
+    ]
+  },
+  "frozen_digests_unchanged": {
+    "adapter": "adb962509386e02d8ed4265d1b7f3e82f9ea6b2ff124feb8d49e706eb6c33d82",
+    "engine": "12cf5ef830ebfd92fa8a87ea62dc7df734cd9ceab57fbce18fc4b2548385f960"
+  },
+  "learner_or_experiment_changes": false,
+  "restarts_or_gpu_jobs_performed": false,
+  "application": [
+    "git pull --ff-only",
+    "bash scripts/run_srgc_gemma4.sh status"
+  ],
+  "training_restart_required_for_this_status_fix": false,
+  "raw_prior_failures_retained": [
+    "before-fix.log: initial assertions included test-created lock files",
+    "after-fix.log: same test fixture lock-file comparison issue",
+    "regression.log: old EVAL expectation after endpoint publication and corrupt-current-eval fixture with an already complete endpoint",
+    "final-status-tests.log: same corrupt-current-eval fixture; corrected in final regression"
+  ]
+}

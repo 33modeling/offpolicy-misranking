@@ -133,7 +133,8 @@ def checkpoint_evaluation_progress(report, plan, seed):
     """Observe this task's separate checkpoint evaluator, never an older attempt."""
     folder = Path(report["output_root"]) / f"seed-{seed}"
     for row in report["tasks"]:
-        if row["seed"] != seed or row["status"] != "running" or row["arm"] == "cache":
+        if (row["seed"] != seed or row["status"] != "running" or row["arm"] == "cache"
+                or row.get("endpoint_ready")):
             continue
         path = Path(report["output_root"]) / ".queue/tasks" / f"{row['task']}.json"
         if not path.is_file():
@@ -152,12 +153,58 @@ def checkpoint_evaluation_progress(report, plan, seed):
         step = event.get("checkpoint")
         if (event.get("phase") != "evaluation" or event.get("state") not in {"started", "finished"}
                 or type(step) is not int or not 0 < step < plan["total_updates"]
-                or step % 25 or (directory / f"step-{step}.json").is_file()
-                or (primary is not None and primary[1] > modified)):
+                or step % 25 or (directory / f"step-{step}.json").is_file()):
             continue
+        if primary is not None:
+            current = primary[0]
+            checkpoint = current.get("checkpoint")
+            if type(checkpoint) is int:
+                # A later optimizer update is stronger evidence than file
+                # modification order, which can tie or lag on shared storage.
+                completed = checkpoint + int(current.get("phase") == "training"
+                                             and current.get("state") == "finished")
+                next_update = (checkpoint >= step
+                               and current.get("phase") in {"selection", "training"})
+                if completed > step or next_update:
+                    continue
         row.update(phase_stage="evaluation", step=step, completed_steps=step, current_step=None,
                    evaluation_step=step, progress_source="checkpoint_evaluation_receipt",
                    progress_age_seconds=max(0, time.time() - modified))
+
+
+def finalizing_progress(report, plan_path, plan):
+    """A validated endpoint with a live writer is cleanup, not another eval."""
+    candidates = {}
+    for row in report["tasks"]:
+        if row["status"] != "running" or row["arm"] not in plan["arms"]:
+            continue
+        path = Path(report["output_root"]) / f"seed-{row['seed']}" / f"{row['arm']}-endpoint.json"
+        try:
+            st = path.stat()
+            candidates[row["task"]] = path, (st.st_ino, st.st_size, st.st_mtime_ns)
+        except FileNotFoundError:
+            continue
+    if not candidates:
+        return
+    # Reuse the frozen reporter's full identity/prefix/reward validation. Only
+    # this read ignores leases; scheduling and the original RUN state stay intact.
+    with patch.object(reports, "locked", return_value=False):
+        settled = reports.snapshot(plan_path)
+    verified = {row["task"]: row for row in settled["tasks"] if row["status"] == "complete"}
+    for row in report["tasks"]:
+        if row["task"] not in candidates or row["task"] not in verified:
+            continue
+        path, version = candidates[row["task"]]
+        try:
+            st = path.stat()
+        except FileNotFoundError:
+            continue
+        if version != (st.st_ino, st.st_size, st.st_mtime_ns):
+            continue
+        row.update(endpoint_ready=True, phase_stage="finalizing", step=plan["total_updates"],
+                   completed_steps=plan["total_updates"], current_step=None, last_observed_step=None,
+                   saved_reward_percent=verified[row["task"]]["reward_percent"],
+                   progress_source="validated_endpoint_with_active_lease")
 
 
 def final_evaluation_progress(report, plan, seed, data):
@@ -215,6 +262,7 @@ def load_reports(model, dataset, root, environment):
             plan = adapter.validate_extension(path, read_only=True)
             with patch.object(reports, "code_digest", return_value=identity):
                 report = live.snapshot(reports.snapshot, path)
+                finalizing_progress(report, path, plan)
         except (OSError, ValueError, KeyError, TypeError) as error:
             report = {"dataset": name, "output_root": str(root / "runs" / name), "tasks": [],
                       "workers": [], "errors": [str(error)], "warnings": [], "complete": False,

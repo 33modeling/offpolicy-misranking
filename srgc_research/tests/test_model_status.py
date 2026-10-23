@@ -183,8 +183,15 @@ def test_final_evaluation_counts_only_this_stream_and_waits_for_valid_endpoint(c
         # Cleanup precedes the endpoint write, so its absence cannot imply 0/300.
         check_pending(None)
         endpoint.write_bytes(endpoint_bytes)
-        # An active lease still means the worker has not finished the task.
-        check_pending(None)
+        # The result is now validated; a held lease means worker cleanup,
+        # rather than another evaluation or a completed/released task.
+        before = saved(cohort)
+        code, value = read_status(cohort, capsys)
+        task = next(row for row in value["datasets"][0]["tasks"] if row["task"] == "seed-5.on_policy")
+        assert code == 0 and task["status"] == "running" and task["endpoint_ready"]
+        assert task["phase_stage"] == "finalizing" and "final_evaluation" not in task
+        assert task["saved_reward_percent"] == 50. and status.cell(task) == "FINALIZING"
+        assert saved(cohort) == before
     before = saved(cohort)
     code, value = read_status(cohort, capsys)
     task = next(row for row in value["datasets"][0]["tasks"] if row["task"] == "seed-5.on_policy")

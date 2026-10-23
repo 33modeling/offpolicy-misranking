@@ -17,8 +17,10 @@ def render_results(report):
         record = timing.get("record", "MISSING")
         if row["status"] not in {"complete", "running", "invalid", "failed"} and record == "MISSING":
             continue
-        reward = row.get("reward_percent")
-        reward = f"{reward:.1f}" if row["status"] == "complete" and measured(reward) and reward <= 100 else "-"
+        ready = row.get("endpoint_ready") is True and row["status"] == "running"
+        reward = row.get("saved_reward_percent") if ready else row.get("reward_percent")
+        reward = (f"{reward:.1f}" if (row["status"] == "complete" or ready)
+                  and measured(reward) and reward <= 100 else "-")
         hours, partial = None, False
         if row["status"] != "invalid" and record in {"COMPLETE", "PARTIAL"}:
             hours = timing.get("gpu_hours", {}).get("phases" if shared else "primary")
