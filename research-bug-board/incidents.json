@@ -802,6 +802,15 @@
         "status": "code_fixed",
         "text": "25-update 이상 간격으로 raw 학습 reward와 fixed held-out을 분리 기록하고 필요한 checkpoint를 보존하는 recorder/export 확장을 추가했다. 과거 미측정 held-out 값은 만들지 않는다.",
         "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-10-28",
+        "actor": "Codex",
+        "type": "user_policy_override",
+        "status": "code_fixed",
+        "text": "사용자가최종결과를먼저보기위해동기중간평가생략을명시했다.25업데이트checkpoint와매업데이트학습보상을계속보존하고생략한held-out은미측정으로남긴다. 과거평가와원본기록은삭제하지않는다.",
+        "evidence_kind": "user_report",
+        "commit": "daccb4237a204098198fc2abc7b0140c22899767"
       }
     ]
   },
@@ -824,6 +833,16 @@
         "status": "open",
         "text": "사용자: 논문v7 Gemma가25에서진행되지않고업데이트가느리다. 25스텝평가대신체크포인트만저장하고총결과를먼저보도록수정하라. 학습보상·기존평가·checkpoint보존;원격진행은별도검증한다.",
         "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-10-28",
+        "actor": "Codex",
+        "type": "code_fix_verified",
+        "status": "code_fixed",
+        "text": "사용자요청에따라기본중간held-out평가를생략하고25업데이트checkpoint·옵티마이저재개·학습보상·원래최종평가를보존했다. CPU코드검사205개통과및origin/master정확한커밋확인. 실제GPU노드의25→26와속도·보상은미검증이며기존원격정체이슈는열어둔다.",
+        "evidence_kind": "code_test",
+        "commit": "daccb4237a204098198fc2abc7b0140c22899767",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/daccb4237a204098198fc2abc7b0140c22899767"
       }
     ]
   }

@@ -11652,6 +11652,46 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "9dd5b1083bbe77504f5ca384f6189b6eab4d23c7",
+      "at": "2026-10-23T15:34:30+09:00",
+      "author": "33modeling",
+      "title": "Preserve Gemma incidents and complete historical commits in a permanent paper-code bug board",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/9dd5b1083bbe77504f5ca384f6189b6eab4d23c7",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": true
+    },
+    {
+      "hash": "8420b26183431c7d0ca61bf239ca0b2a71b8803a",
+      "at": "2026-10-23T15:37:10+09:00",
+      "author": "33modeling",
+      "title": "Retain raw failing and passing checks alongside the permanent bug history",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/8420b26183431c7d0ca61bf239ca0b2a71b8803a",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "7c93b3882c8888f88a1b90fd6de5a6eb93f7a89a",
+      "at": "2026-10-23T15:42:30+09:00",
+      "author": "33modeling",
+      "title": "Record live paper-code bug board verification and preservation of existing history",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/7c93b3882c8888f88a1b90fd6de5a6eb93f7a89a",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "daccb4237a204098198fc2abc7b0140c22899767",
+      "at": "2026-10-28T16:49:01+09:00",
+      "author": "33modeling",
+      "title": "Fix25-step reporting stalls by defaulting to final-only evaluation",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/daccb4237a204098198fc2abc7b0140c22899767",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }
