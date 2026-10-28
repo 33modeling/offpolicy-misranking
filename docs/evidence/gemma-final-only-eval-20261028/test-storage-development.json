@@ -1,0 +1,6 @@
+{
+  "reason": "Broad CPU regression was dominated by journaling fsync waits for thousands of synthetic tiny checkpoints (/proc wchan jbd2_log_wait_commit). Interrupted only our pytest process after69completed tests;no training job was touched.",
+  "oldLog": "regression-first.log",
+  "nextTestStorage": "Unique /dev/shm temporary directory;functional CPU tests,not disk durability or GPU performance measurement",
+  "recordedAt": "2026-10-28T07:43:34.788610+00:00"
+}

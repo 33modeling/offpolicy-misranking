@@ -1,0 +1,4 @@
+{
+  "path": "/dev/shm/gemma-final-eval-kms-hajbp8sg",
+  "scope": "RAM temporary filesystem for CPU functional/optimizer tests;not power-loss durability measurement"
+}

@@ -1,12 +1,13 @@
-"""Durable scalar rewards and separately metered held-out checkpoint curves.
+"""Durable rewards/checkpoints with final-only reporting evaluation by default.
 
-This operational extension does not modify the frozen learner or its identity.
-Measurement settings stay fixed; recording implementations have separate receipts.
+The frozen learner and final evaluator retain their identities. Optional periodic
+measurements retain their original settings; skipped evaluations have no reward.
 """
 
 import hashlib
 import json
 import math
+import os
 import random
 from contextlib import contextmanager
 from pathlib import Path
@@ -16,6 +17,14 @@ from srgc_rebuttal.runtime import Busy, atomic_json, lease
 SCHEMA = "srgc-reward-curve-v1"
 INTERVAL = 25
 RESPONSES = 8
+
+
+def intermediate_evaluation_enabled():
+    """Checkpoint every 25 updates; reporting evaluation is explicitly opt-in."""
+    value = os.environ.get("SRGC_INTERMEDIATE_EVAL", "0")
+    if value not in {"0", "1"}:
+        raise ValueError("SRGC_INTERMEDIATE_EVAL must be 0 (final only) or 1 (periodic)")
+    return value == "1"
 
 
 def fingerprint(value):
@@ -213,6 +222,7 @@ def recording_engine(base, folder, task, plan_path, plan, data, *, save_resume=N
 
     folder = Path(folder)
     writer = extension_digest()
+    intermediate_evaluation = intermediate_evaluation_enabled()
 
     class RecordingEngine(base):
         recording_extension_sha256 = writer
@@ -221,8 +231,8 @@ def recording_engine(base, folder, task, plan_path, plan, data, *, save_resume=N
             result = super().load_state_dict(state, **kwargs)
             if save_resume is not None:
                 # A boundary checkpoint can precede its held-out measurement.
-                # Finish that measurement even when the runner's training loop
-                # is already exhausted (notably prefix update 25).
+                # Record that boundary even when the training loop is exhausted
+                # (notably prefix update 25); evaluate only when explicitly enabled.
                 self.capture_boundary()
             return result
 
@@ -259,26 +269,35 @@ def recording_engine(base, folder, task, plan_path, plan, data, *, save_resume=N
                     return
                 protocol = self.protocol(name)
                 point_path = directory / f"step-{self.step}.json"
+                deferred_path = directory / f"step-{self.step}.deferred.json"
                 checkpoint = directory / f"step-{self.step}.pt"
                 binding = {"protocol_sha256": fingerprint(protocol), "step": self.step}
 
                 def existing():
-                    if point_path.exists():
-                        row = json.loads(point_path.read_text())
+                    path = point_path if point_path.exists() else deferred_path
+                    if path.exists():
+                        row = json.loads(path.read_text())
                         recording_extension(directory, protocol, row)
                         if any(row.get(k) != v for k, v in binding.items()) or not checkpoint.exists() or row.get("checkpoint_sha256") != digest(checkpoint):
                             raise ValueError("saved reward curve point/checkpoint binding changed")
-                        validate_evaluation(row, data["evaluation_ids"])
+                        if path == point_path:
+                            validate_evaluation(row, data["evaluation_ids"])
+                        elif (row.get("schema") != "srgc-deferred-evaluation-v1"
+                              or row.get("kind") != "checkpoint_only"
+                              or row.get("arm") != name or row.get("seed") != self.config.seed
+                              or "held_out_reward" not in row or row["held_out_reward"] is not None):
+                            raise ValueError("invalid deferred evaluation receipt")
                         import torch
                         archived = torch.load(checkpoint, map_location="cpu", weights_only=False)
                         current = self.backend.state_dict()
                         current.pop("optimizer", None)
                         if archived.get("reward_curve_binding") != binding or not equal_state(archived["backend"], current):
                             raise ValueError("saved reward curve weights differ from the resumed learner")
-                        return True
-                    return False
+                        return "evaluated" if path == point_path else "checkpoint"
+                    return None
 
-                if primary(existing):
+                saved = primary(existing)
+                if saved == "evaluated":
                     return
                 receipts = directory / "cost-receipts" / f"step-{self.step}"
                 meter = torch_meter(lambda event: PhaseLedger(receipts).record(event),
@@ -286,31 +305,22 @@ def recording_engine(base, folder, task, plan_path, plan, data, *, save_resume=N
 
                 # A checkpoint without a completed point may be a partial write
                 # from a failed attempt. Replace it from these actual weights.
-                with meter.phase("checkpoint_save", self.step, self.backend.gpu_count):
-                    state = self.state_dict()
-                    # Archive learner weights and scalar history for future
-                    # evaluation. Optimizer recovery stays in *-latest.pt.
-                    state["backend"].pop("optimizer", None)
-                    state["evaluation_only"] = True
-                    state["reward_curve_binding"] = binding
-                    state["recording_extension_sha256"] = writer
-
-                    def write():
-                        import os
-
-                        import torch
-                        temporary = checkpoint.with_suffix(".tmp")
-                        try:
-                            with temporary.open("wb") as handle:
-                                torch.save(state, handle)
-                                handle.flush()
-                                os.fsync(handle.fileno())
-                            temporary.replace(checkpoint)
-                        finally:
-                            temporary.unlink(missing_ok=True)
-                    primary(write)
-                # Reuse the unchanged runner's final evaluation at 275.
+                if saved is None:
+                    self.archive_checkpoint(checkpoint, binding, meter)
+                # The frozen runner still performs its original final evaluation.
                 if self.step == plan["total_updates"]:
+                    return
+                if not intermediate_evaluation:
+                    if saved is None:
+                        primary(lambda: atomic_json(deferred_path, {
+                            **binding, "schema": "srgc-deferred-evaluation-v1",
+                            "arm": name, "seed": self.config.seed, "kind": "checkpoint_only",
+                            "recording_extension_sha256": writer,
+                            "checkpoint_sha256": digest(checkpoint),
+                            "held_out_reward": None,
+                            "reason": "periodic evaluation disabled; final runner evaluation retained"}))
+                        primary(lambda: print(f"CHECKPOINT ONLY seed={self.config.seed} arm={name} "
+                                              f"step={self.step} intermediate_eval=disabled", flush=True))
                     return
                 original_meter = self.backend.cost_meter
                 self.backend.cost_meter = meter
@@ -333,11 +343,36 @@ def recording_engine(base, folder, task, plan_path, plan, data, *, save_resume=N
                 primary(lambda: print(f"REWARD CURVE seed={self.config.seed} arm={name} step={self.step} "
                                       f"held_out={100 * point['reward']:.4f}% saved={point_path}", flush=True))
 
+        def archive_checkpoint(self, checkpoint, binding, meter):
+            with meter.phase("checkpoint_save", self.step, self.backend.gpu_count):
+                state = self.state_dict()
+                # Archive learner weights and scalar history for future
+                # evaluation. Optimizer recovery stays in *-latest.pt.
+                state["backend"].pop("optimizer", None)
+                state["evaluation_only"] = True
+                state["reward_curve_binding"] = binding
+                state["recording_extension_sha256"] = writer
+
+                def write():
+                    import os
+
+                    import torch
+                    temporary = checkpoint.with_suffix(".tmp")
+                    try:
+                        with temporary.open("wb") as handle:
+                            torch.save(state, handle)
+                            handle.flush()
+                            os.fsync(handle.fileno())
+                        temporary.replace(checkpoint)
+                    finally:
+                        temporary.unlink(missing_ok=True)
+                primary(write)
+
         def update(self):
             # Validate before any sampling/optimizer work, including on resumes.
             self.protocol(task)
-            # A resumed boundary may predate this extension or have interrupted
-            # its measurement. Evaluate its actual weights before changing them.
+            # Archive/validate resumed boundary weights before changing them.
+            # The optional periodic evaluator is separate from this checkpoint.
             self.capture_boundary()
             from .rollout_records import capture, save
             meter = self.backend.cost_meter
@@ -358,7 +393,7 @@ def recording_engine(base, folder, task, plan_path, plan, data, *, save_resume=N
             self.save_training_rewards()
             if save_resume is not None and self.step % INTERVAL == 0:
                 # Raw training groups and scalars are durable. Persist the
-                # optimizer before the long evaluation, so an interrupted eval
+                # optimizer before any optional evaluation, so an interruption
                 # resumes these weights rather than redoing the last update.
                 save_resume(self)
             self.capture_boundary()

@@ -229,3 +229,9 @@ def test_shared_prefix_training_reward_is_included_at_step_25(cohort):
     assert [p["step"] for p in row["training_rewards"]] == list(range(1, 26))
     assert all(p["shared_prefix"] for p in row["training_rewards"])
     assert row["training_windows_25"][0]["end_step"] == 25
+
+
+@pytest.fixture(autouse=True)
+def periodic_evaluation_compatibility(monkeypatch):
+    """These legacy measurements explicitly exercise the opt-in evaluation path."""
+    monkeypatch.setenv("SRGC_INTERMEDIATE_EVAL", "1")

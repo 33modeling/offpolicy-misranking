@@ -804,5 +804,27 @@
         "evidence_kind": "code_test"
       }
     ]
+  },
+  {
+    "id": "GEMMA-026",
+    "title": "25스텝 중간 held-out 평가로 최종 결과 확인이 지연됨",
+    "area": "실행·평가 주기",
+    "severity": "high",
+    "first_reported": "2026-10-28",
+    "cause": "운영 reward recorder가25업데이트 경계마다 별도8응답/질문 held-out 평가를 동기 실행한다. 현재 실제 원격 정체의 유일 원인인지는 미검증이다.",
+    "impact": "사용자가 Gemma25스텝 정체와 느린 진행을 보고하고 중간평가 대신 체크포인트 보존·최종평가를 우선하도록 명시했다.",
+    "introduction_commit": null,
+    "attribution": "이번 검토/수정 작성자는 Codex. 과거 도입은 원본 커밋 기록으로 구별한다.",
+    "evidence": [],
+    "events": [
+      {
+        "at": "2026-10-28",
+        "actor": "Codex",
+        "type": "user_request",
+        "status": "open",
+        "text": "사용자: 논문v7 Gemma가25에서진행되지않고업데이트가느리다. 25스텝평가대신체크포인트만저장하고총결과를먼저보도록수정하라. 학습보상·기존평가·checkpoint보존;원격진행은별도검증한다.",
+        "evidence_kind": "user_report"
+      }
+    ]
   }
 ]

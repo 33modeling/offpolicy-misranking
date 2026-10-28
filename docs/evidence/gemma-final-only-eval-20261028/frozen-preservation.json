@@ -1,0 +1,33 @@
+{
+  "baselineCommit": "7c93b3882c8888f88a1b90fd6de5a6eb93f7a89a",
+  "branch": "master",
+  "files": [
+    {
+      "file": "srgc_rebuttal/srgc.py",
+      "sha256": "d2dc8e3b83df63139f06f97574009e03b1f6bf26f47c3013dedf98e1076516e7",
+      "unchanged": true
+    },
+    {
+      "file": "srgc_rebuttal/run_experiment.py",
+      "sha256": "9f2dc57536fdb5f6f5a7f5016129a6814120089bf8135431d1f8bd4da804e885",
+      "unchanged": true
+    },
+    {
+      "file": "srgc_research/dispatch/gemma4_it/adapter.py",
+      "sha256": "0ebbf7f1639209012008659d7d06ecf835286d26d24687e41e09ac049ba040d2",
+      "unchanged": true
+    },
+    {
+      "file": "srgc_research/dispatch/gemma4_it/protocol.py",
+      "sha256": "77807ba10bf8194680be7fa7824d889a69ea9dfd2615b4fd1d5ced9b7344be6b",
+      "unchanged": true
+    }
+  ],
+  "actualGemmaReward": null,
+  "actualGemma25to26Observed": false,
+  "actualGpuTimeSavingMeasured": false,
+  "missingEvaluationRewardsInterpolated": false,
+  "oldCheckpointsDeleted": false,
+  "resetUsed": false,
+  "localServicesStarted": false
+}

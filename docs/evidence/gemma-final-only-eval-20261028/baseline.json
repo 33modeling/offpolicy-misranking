@@ -1,0 +1,6 @@
+{
+  "sourceCommit": "7c93b38",
+  "request": "Default final-only held-out evaluation;retain25step checkpoints/training rewards and original final endpoint evaluation",
+  "unrelatedDirtyFilesPreserved": true,
+  "remoteGemmaRunAccessible": false
+}

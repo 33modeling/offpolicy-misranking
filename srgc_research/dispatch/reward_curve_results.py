@@ -18,7 +18,7 @@ from .reward_curves import (
 
 def collect(folder, arm, plan, expected, ids, read, *, live=False):
     directory = folder / "reward-curves" / arm
-    points, sources, held_out, costs = [], [], {}, []
+    points, sources, held_out, costs, deferred = [], [], {}, [], []
     progress_path = folder / f"{arm}-progress.json"
     progress = read(progress_path)
     if progress is not None:
@@ -112,6 +112,24 @@ def collect(folder, arm, plan, expected, ids, read, *, live=False):
             path = folder / "reward-curves" / name / f"step-{step}.json"
             row = read(path)
             if row is None:
+                deferred_path = path.with_name(f"step-{step}.deferred.json")
+                receipt = read(deferred_path)
+                if receipt is not None:
+                    checkpoint = path.with_suffix(".pt")
+                    if (receipt.get("schema") != "srgc-deferred-evaluation-v1" or
+                            receipt.get("protocol_sha256") != fingerprint(bound) or
+                            receipt.get("arm") != name or receipt.get("seed") != expected["seed"] or
+                            receipt.get("step") != step or receipt.get("kind") != "checkpoint_only" or
+                            "held_out_reward" not in receipt or receipt["held_out_reward"] is not None or
+                            not checkpoint.is_file()):
+                        raise ValueError("deferred evaluation differs from its checkpoint protocol")
+                    writer = recording_extension(path.parent, bound, receipt, read)
+                    if not live and receipt.get("checkpoint_sha256") != digest(checkpoint):
+                        raise ValueError("deferred evaluation checkpoint is missing or changed")
+                    deferred.append({"step": step, "status": "not_measured",
+                                     "shared_prefix": name == "prefix", "checkpoint": str(checkpoint),
+                                     "source": str(deferred_path), "extension_sha256": writer,
+                                     "checkpoint_hash_verified": not live})
                 continue
             from .reward_curves import validate_evaluation
 
@@ -180,6 +198,7 @@ def collect(folder, arm, plan, expected, ids, read, *, live=False):
             "shared_prefix_training_recorded_updates": len(prefix_points),
             "training_windows_25": windows(all_points), "training_sources": sources,
             "held_out_rewards": list(held_out.values()), "diagnostic_costs": costs,
+            "deferred_held_out_evaluations": deferred,
             "rollout_groups": rollout_groups, "rollout_sources": rollout_sources,
             "missing_training_rollout_steps": [p["step"] for p in all_points if not any(
                 g["phase"] == "training" and g["update"] == p["step"] for g in rollout_groups)],

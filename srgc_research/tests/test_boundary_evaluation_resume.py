@@ -142,7 +142,9 @@ def test_failed_training_scalar_export_cannot_advance_boundary_checkpoint(tmp_pa
     assert torch.load(checkpoint, weights_only=False)["step"] == 49
 
 
-def test_original_runner_publishes_done_for_all_arms_and_recovers_final_endpoint_failure(tmp_path):
+@pytest.mark.parametrize("periodic", [False, True])
+def test_original_runner_publishes_done_for_all_arms_and_recovers_final_endpoint_failure(tmp_path, monkeypatch, periodic):
+    monkeypatch.setenv("SRGC_INTERMEDIATE_EVAL", "1" if periodic else "0")
     from srgc_rebuttal import reports, run_experiment as runner, torch_backend
     from srgc_rebuttal.plan import DEFAULT_PLAN
     from srgc_research.dispatch.qwen_status import cell
@@ -208,6 +210,16 @@ def test_original_runner_publishes_done_for_all_arms_and_recovers_final_endpoint
         assert len(backends[-1].training) == 0  # Last attempt only restored 275 and evaluated.
         assert len(backends[-1].evaluations) == 1
         assert json.loads((folder / "run.json").read_text())["status"] == "complete"
+    if not periodic:
+        assert all(seed == stream_seed(5, 275, "reporting-evaluation")
+                   for backend in backends for seed, _ in backend.evaluations)
+        assert not list((folder / "reward-curves").glob("*/step-25.json"))
         report = reports.snapshot(path)
         assert report["complete"] and report["errors"] == []
         assert all(cell(row).startswith("DONE") for row in report["tasks"])
+
+
+@pytest.fixture(autouse=True)
+def periodic_evaluation_compatibility(monkeypatch):
+    """These legacy measurements explicitly exercise the opt-in evaluation path."""
+    monkeypatch.setenv("SRGC_INTERMEDIATE_EVAL", "1")

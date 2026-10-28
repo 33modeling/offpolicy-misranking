@@ -179,3 +179,9 @@ def test_public_export_reads_new_recorder_receipts_for_every_model(cohort):
     receipt.write_text('{}\n')
     assert model_results.export(cohort.model, 'math', environment=cohort.env) == 1
     assert read_result(cohort)['errors']
+
+
+@pytest.fixture(autouse=True)
+def periodic_evaluation_compatibility(monkeypatch):
+    """These legacy measurements explicitly exercise the opt-in evaluation path."""
+    monkeypatch.setenv("SRGC_INTERMEDIATE_EVAL", "1")

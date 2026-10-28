@@ -1,0 +1,55 @@
+{
+  "hypothesis": "Synchronous held-out generation at25-update boundaries blocks the next training update;omit those calls while preserving checkpoint/optimizer state and final evaluation.",
+  "testKind": "CPU code regression with tiny actual AdamW optimizer and synthetic backend;not a scientific model experiment",
+  "model": "Synthetic small linear network;Gemma12B not executed",
+  "data": "Synthetic candidate/reference/held-out IDs;not measured MATH/MBPP outcomes",
+  "transformation": "None;reporting schedule only",
+  "controls": [
+    "Explicit periodic-evaluation mode versus final-only mode with identical CPU initialization,updates andoptimizer state",
+    "Original final evaluator/learner andGemma protocol hashes unchanged"
+  ],
+  "seeds": [
+    5
+  ],
+  "updates": [
+    25,
+    26,
+    50,
+    51,
+    275
+  ],
+  "arms": [
+    "prefix",
+    "random",
+    "sr",
+    "on_policy",
+    "switch"
+  ],
+  "metrics": {
+    "cpuTestCounts": "See final log receipts",
+    "actualGemmaReward": null,
+    "actualGemmaGpuTime": null,
+    "actualGemma25to26Observed": false
+  },
+  "checkpointProvenance": "CPU fixture archives andoptimizer recovery states under functional-test-storage.json;real remote experiment root unavailable",
+  "sourceBaseline": "7c93b3882c8888f88a1b90fd6de5a6eb93f7a89a",
+  "rawLogs": [
+    "before-fix.log",
+    "after-fix-first.log",
+    "regression-first.log",
+    "regression-final.log",
+    "export-status-regression.log",
+    "scoped-export-regression.log"
+  ],
+  "failedAndInterruptedRunsRetained": true,
+  "intermediateEvaluationPolicy": "Skipped values explicitly unmeasured;training rewards remain separate;25-step archives retained",
+  "actualRemoteIssueStatus": "OPEN;no real-run completion claimed",
+  "codeChecksPassed": 205,
+  "coreChecksPassed": 113,
+  "exportStatusRetentionChecksPassed": 92,
+  "initialNewRegressionFailed": 7,
+  "initialNewRegressionPassed": 1,
+  "initialCorrectedRegressionPassed": 8,
+  "finalCoreLog": "regression-final.log",
+  "finalExportLog": "scoped-export-regression.log"
+}

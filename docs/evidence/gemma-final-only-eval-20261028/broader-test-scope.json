@@ -1,0 +1,4 @@
+{
+  "interrupted": "Extra unchanged Gemma framework suite stalled in cold package import before collection;removed from scoped verification. Original model/adapter code hashes are unchanged. No model weights downloaded or real GPU run claimed.",
+  "replacement": "Run results/export/status regressions for the changed recording/export paths;retain import-interruption output."
+}
