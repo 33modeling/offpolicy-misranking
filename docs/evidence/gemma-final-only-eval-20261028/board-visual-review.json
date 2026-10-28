@@ -1,0 +1,15 @@
+{
+  "imagesActuallyViewed": 2,
+  "images": [
+    {
+      "file": "board-preview-390.png",
+      "sha256": "374139b7940c2a1aad6ec930bed0ac5a7754ea838c93088a9cba2b4f9b3eaea0"
+    },
+    {
+      "file": "board-live-390.png",
+      "sha256": "ecaff00e4b4bc4de14e60bb0e51879072872fd5bbcf3341e1649ecc17012ba5a"
+    }
+  ],
+  "review": "새GEMMA-026사건과원격미검증범위가실제두화면에나타난다.초기캡처는다른과거행을보여검색으로새사건만표시한뒤다시확인했다.",
+  "earlierFocusAttemptsRetained": true
+}

@@ -1,0 +1,34 @@
+{
+  "allPassed": true,
+  "url": "https://77modeling.pages.dev/paper-code-bugs/",
+  "files": [
+    {
+      "file": "data.json",
+      "status": 200,
+      "sha256": "57ec70fd1287841abb1d65a129150906fe32c738fad5ce266ef6f111cf2fdc57"
+    },
+    {
+      "file": "commits.json",
+      "status": 200,
+      "sha256": "7a5c346ec75d075a1f98e80df946000ff29177fa37ee8084087cd824a5adb486"
+    },
+    {
+      "file": "incidents.json",
+      "status": 200,
+      "sha256": "dce9809486a57833dc3a3391776d7975fb44c9d51742e270ea88da5b1b822e11"
+    },
+    {
+      "file": "archive/2026-10-23-initial.json",
+      "status": 200,
+      "sha256": "1bf732dc3ae8edb6833fd790e25240d5adf8eb447bd65362fe83dd10370006cb"
+    }
+  ],
+  "unauthenticatedStatus": 401,
+  "authenticatedStatus": 200,
+  "incidents": 26,
+  "availableHistory": 1098,
+  "initialArchivePreserved": true,
+  "localArcadeExternalIndexLinkPreserved": true,
+  "codeFix": "daccb4237a204098198fc2abc7b0140c22899767",
+  "actualGemmaRuntimeVerified": false
+}

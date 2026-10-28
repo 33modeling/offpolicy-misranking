@@ -1,0 +1,24 @@
+{
+  "allPassed": true,
+  "states": [
+    {
+      "width": 1024,
+      "incidents": 26,
+      "history": 1098,
+      "currentFixAndRuntimeLimitsVisible": true
+    },
+    {
+      "width": 390,
+      "incidents": 26,
+      "history": 1098,
+      "currentFixAndRuntimeLimitsVisible": true
+    },
+    {
+      "width": 320,
+      "incidents": 26,
+      "history": 1098,
+      "currentFixAndRuntimeLimitsVisible": true
+    }
+  ],
+  "serversStarted": 0
+}

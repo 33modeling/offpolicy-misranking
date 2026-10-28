@@ -1,0 +1,12 @@
+{
+  "success": true,
+  "sourceCommit": "02309599d3463014c12914ef8b103b1af1a9c63c",
+  "expectedJsonHashes": {
+    "data.json": "57ec70fd1287841abb1d65a129150906fe32c738fad5ce266ef6f111cf2fdc57",
+    "commits.json": "7a5c346ec75d075a1f98e80df946000ff29177fa37ee8084087cd824a5adb486",
+    "incidents.json": "dce9809486a57833dc3a3391776d7975fb44c9d51742e270ea88da5b1b822e11"
+  },
+  "url": "https://77modeling.pages.dev/paper-code-bugs/",
+  "deployedAt": "2026-10-28T07:59:21.247116+00:00",
+  "actualGemmaRuntimeVerified": false
+}

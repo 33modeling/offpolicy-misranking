@@ -1,0 +1,31 @@
+{
+  "fixCommit": "daccb4237a204098198fc2abc7b0140c22899767",
+  "sourceMetadataCommit": "eee9c7d5ff73656b93269c0f82d68e44b2966cbf",
+  "hostBoardCommit": "02309599d3463014c12914ef8b103b1af1a9c63c",
+  "publicUrl": "https://77modeling.pages.dev/paper-code-bugs/#GEMMA-026",
+  "deployment": "https://234e0d79.77modeling.pages.dev",
+  "codeChecksPassed": 205,
+  "additionalLedgerChecksPassed": 6,
+  "boardBrowserWidths": [
+    1024,
+    390,
+    320
+  ],
+  "initialArchiveHashVerified": true,
+  "oldIncidentsEventsAnd1098HistoryRecordsPreserved": true,
+  "incidents": 26,
+  "defaultIntermediateHeldOutEvaluation": false,
+  "checkpointIntervalUpdates": 25,
+  "finalEvaluationPreserved": true,
+  "trainingRewardsAndOldMeasurementsPreserved": true,
+  "skippedHeldOutRewards": null,
+  "actualGemma25to26Observed": false,
+  "actualGemmaSpeedOrFinalRewardMeasured": false,
+  "realRunIssueStillOpen": true,
+  "localArcadeIndexLinkVerified": true,
+  "localServersStarted": false,
+  "resetCreditsUsed": 0,
+  "original128WorkResumed": true,
+  "completed128": 22,
+  "remaining128": 106
+}

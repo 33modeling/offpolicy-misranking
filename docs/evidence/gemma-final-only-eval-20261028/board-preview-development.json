@@ -1,0 +1,5 @@
+{
+  "initialFailure": "Preview adapter served shared.mjs asapplication/octet-stream;browser rejectedmodule andboard rows neverloaded.",
+  "correction": "Add.mjs JavaScript MIME tothe read-only request adapter;hostcode/data wereunchanged.",
+  "productRuntimeBug": false
+}
