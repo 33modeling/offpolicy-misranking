@@ -1,18 +1,14 @@
-<!doctype html>
-<html lang="ko">
-<head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#18263d"><meta name="description" content="실험 코드의 문제, 영향 범위, 수정 커밋과 검증 기록.">
-  <title>논문 코드 버그 현황판</title><link rel="stylesheet" href="styles.css">
-</head>
-<body>
-  <header class="topbar"><a class="brand" href="/">77<span> / 연구 기록</span></a><nav><a href="/bug-board/">일반 버그 현황판 ↗</a><a href="https://github.com/33modeling/offpolicy-misranking" target="_blank" rel="noopener">원본 저장소 ↗</a></nav></header>
-  <main>
-    <section class="intro"><div><p class="eyebrow">PAPER CODE / INCIDENT RECORD</p><h1>논문 코드 버그 현황판</h1><p class="lead">실험 코드의 문제, 영향 범위, 수정 커밋과 검증 기록.</p></div><aside class="retention"><span class="red-dot"></span><strong>기록 보존</strong><p>원인·영향·수정 커밋·검증 범위를 함께 기록합니다. 정정은 새 이력으로 추가합니다.</p><p class="small" id="coverage">기록을 불러오는 중…</p></aside></section>
-    <section class="stats" id="stats" aria-label="기록 요약"></section>
-    <section class="report-strip" aria-label="Gemma 수치 보고"><strong>Gemma 초기 보고</strong><div id="scores"></div><p id="score-note"></p></section>
-    <div class="toolbar"><div class="tabs" role="tablist" aria-label="기록 종류"><button role="tab" aria-selected="true" data-view="incidents">상세 사건 <span id="incident-count"></span></button><button role="tab" aria-selected="false" data-view="fixes">과거 수정커밋 <span id="fix-count"></span></button><button role="tab" aria-selected="false" data-view="commits">커밋 전체 <span id="commit-count"></span></button></div><button class="download" id="download" title="전체 기록 JSON 내려받기" aria-label="전체 기록 JSON 내려받기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/></svg></button></div>
-    <div class="workspace"><aside class="filters"><label for="q">기록 검색</label><input id="q" type="search" placeholder="1%, JSON, status, 커밋…" autocomplete="off"><label for="area">분야</label><select id="area"><option value="">모든 분야</option></select><label for="state">상태</label><select id="state"><option value="">모든 상태 · 수정 기록 포함</option><option value="open">미해결·미확인</option><option value="in_progress">수정 중</option><option value="code_fixed">코드 수정</option><option value="verified">범위 검증 완료</option></select><label for="sort">순서</label><select id="sort"><option value="oldest">처음부터 · 오래된 순</option><option value="newest">최신 순</option></select><button id="clear" class="secondary">검색 조건 초기화</button><div class="legend"><strong>기록을 읽는 기준</strong><p><b>사용자 보고</b>는 원격 원시 기록과 대조되지 않은 관측입니다.</p><p><b>코드 검사</b>와 <b>실제 모델 측정</b>을 나눕니다. 코드 테스트 통과만으로 원격 학습 정상·성능 회복을 확정하지 않습니다.</p><p>커밋 작성자와 Codex·Claude 등 작성 도구는 별도입니다. 명시된 근거가 없으면 도구는 <b>미확인</b>으로 기록합니다.</p></div></aside><section class="records" aria-live="polite"><div class="list-heading"><h2 id="view-title">상세 사건</h2><span id="result-count"></span></div><div id="records"><p>기록을 불러오는 중…</p></div><button id="more" class="secondary" hidden>다음 기록 더 보기</button></section></div>
-    <footer><span id="recorded-at"></span><a href="data.json" download>사건 원본</a><a href="commits.json" download>커밋 원본</a><a href="https://github.com/33modeling/offpolicy-misranking/issues/1" target="_blank" rel="noopener">현재 status 추적 이슈 ↗</a></footer>
-  </main><noscript>이 화면은 JavaScript로 기록을 읽습니다. <a href="data.json">사건 원본</a>과 <a href="commits.json">전체 커밋 원본</a>에서도 기록을 확인할 수 있습니다.</noscript><script type="module" src="app.js"></script>
-</body></html>
+<!doctype html><html class="sk" lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#f5f6f8"><meta name="description" content="실험 코드의 문제, 영향 범위, 수정 커밋과 검증 기록."><title>논문 코드 버그 현황판 · 77modeling</title><link rel="stylesheet" href="../assets/status-kit/status.css"><link rel="stylesheet" href="styles.css"></head>
+<body><div id="top"></div><main class="sk-main" id="sk-main">
+<div class="sk-head"><div><h1>논문 코드 버그 현황판</h1><p class="sk-sub">실험 코드의 문제, 영향 범위, 수정 커밋과 검증 기록.</p></div><span id="fresh"></span></div>
+<div id="tiles" class="sk-tiles"></div>
+<section id="changes" class="sk-callout warn pcb-changes" aria-live="polite" hidden></section>
+<div id="scores"></div>
+<div class="sk-toolbar"><label class="sk-search"><span class="sk-skip">검색</span><input id="q" type="search" maxlength="80" placeholder="1%, JSON, status, 커밋 검색" autocomplete="off"></label><select id="sort" class="sk-select" aria-label="순서"><option value="oldest">오래된 순</option><option value="newest">최신 순</option><option value="updated">최근 이력 순</option></select></div>
+<div id="areas" class="sk-chips" style="margin:-6px 0 6px"></div>
+<div id="list"></div>
+<p style="text-align:center;margin-top:14px"><button id="more" class="sk-chip" hidden>기록 더 보기</button></p>
+<details class="sk-note pcb-legend"><summary>기록 구분과 범위</summary><p><b>사용자 보고</b>는 원격 원시 기록과 대조하지 않은 관측입니다. <b>코드 검사</b>와 <b>실제 모델 진단</b>은 따로 적습니다. 코드 테스트 통과만으로 원격 학습 정상이나 성능 회복을 확정하지 않습니다. 커밋 작성자와 작성 도구(Codex·Claude 등)는 따로 적습니다. 작성 도구는 근거가 없으면 미확인으로 둡니다.</p><p id="coverage"></p></details>
+</main><footer class="sk-foot"><span id="recorded-at"></span><span class="sk-links" style="margin:0"><a href="data.json" download>사건 원본</a><a href="commits.json" download>커밋 원본</a><button id="download" class="sk-chip" type="button">전체 기록 JSON 받기</button><a href="https://github.com/33modeling/offpolicy-misranking/issues/1" target="_blank" rel="noopener">status 추적 이슈 ↗</a><a href="https://github.com/33modeling/offpolicy-misranking" target="_blank" rel="noopener">원본 저장소 ↗</a></span></footer>
+<noscript>이 화면은 JavaScript로 기록을 읽습니다. 원본 파일: <a href="data.json">사건 원본</a>, <a href="commits.json">전체 커밋 원본</a>.</noscript>
+<script type="module" src="app.js"></script></body></html>

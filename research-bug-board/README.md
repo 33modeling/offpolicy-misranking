@@ -21,5 +21,7 @@ python3 -m pytest -q srgc_research/tests/test_paper_bug_retention.py
 ```
 
 사이트 소스 동기화는 33modeling-site/update-site.sh의 paper-code-bugs 대상으로 등록한다.
+화면 파일(index.html·app.js·styles.css)은 허브의 `/assets/status-kit/`(현황판 공통 모양·위쪽 현황판 바로가기)을
+불러오므로 허브 사본(`/paper-code-bugs/`)에서 확인한다. 2026-10-29 허브에만 있던 status-kit 판을 이 폴더로 옮겼다.
 77의 기존 일반 bug-board/D1 기록은 별도로 보존한다. 이 화면의 커밋 이력을 실제
 학습 성공 기록으로 사용하지 않는다.
