@@ -1,4 +1,4 @@
-"""Read-only terminal dashboard for Qwen SRGC queues and their recorded progress."""
+"""Read-only terminal status for SRGC queues and their recorded progress (Qwen entry; layout shared by all models)."""
 
 import argparse
 import json

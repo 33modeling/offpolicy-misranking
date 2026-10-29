@@ -5,7 +5,7 @@
 #   git pull --ff-only
 #   bash scripts/go_extensions.sh [profile] [stage ...]
 #
-#   profile : baseline (default) | h100   -- selects the registered run root
+#   profile : h100 (default) | baseline   -- selects the registered run root
 #   stages  : any of  synthetic rescore analyze curve downstream  (default: all,
 #             in that order). Every stage is idempotent and resumable.
 #

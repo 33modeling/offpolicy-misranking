@@ -1,14 +1,14 @@
 #!/bin/sh
 # Automatic extra experiments, seeds 5-9, same command on each empty 4-GPU node:
 #   sh scripts/run_srgc_sr_refresh.sh math|mbpp|all
-# Optional scope: math|mbpp|all support|switch_fixed200|replicate|candidates|switch_repeat|sr_hold|pool|direction
+# Optional scope: math|mbpp|all support|mechanism|switch_validation|timing|rules|switch_fixed200|replicate|candidates|switch_repeat|sr_hold|pool|direction|direction_removed|direction_magnitude|direction_replaced
 # Read-only status: math|mbpp|all status [scope]
 # Historical single-job interface (preserved, not required for automatic dispatch):
-#   sh scripts/run_srgc_sr_refresh.sh math|mbpp <seed> [candidates|pool|sr_hold]        # SR success-rate refresh / cached-SR control
-#   sh scripts/run_srgc_sr_refresh.sh math|mbpp <seed> switch_repeat|switch_fixed<N>    # repeated / fixed-schedule transitions
+#   sh scripts/run_srgc_sr_refresh.sh math|mbpp <seed> [candidates|pool|sr_hold|sr_refresh_matched]        # SR success-rate refresh / cached-SR control
+#   sh scripts/run_srgc_sr_refresh.sh math|mbpp <seed> switch_repeat|switch_single|switch_consecutive|switch_fixed<N>    # repeated / rule-based / fixed-schedule transitions
 #   sh scripts/run_srgc_sr_refresh.sh math|mbpp <seed> direction_removed|direction_magnitude|direction_replaced
 #   sh scripts/run_srgc_sr_refresh.sh math|mbpp <seed> replicate<k>-<random|sr|on_policy|switch|switch_fixed<N>>
-#   sh scripts/run_srgc_sr_refresh.sh math|mbpp results [--json]           # per-seed rewards next to the recorded arms
+#   sh scripts/run_srgc_sr_refresh.sh math|mbpp|all results [scope] [--json]           # per-seed rewards next to the recorded arms (--json needs math or mbpp)
 # The seed's shared prefix must already be complete in the group-storage run root.
 # Automatic planned repeats (same command on each empty node):
 #   sh scripts/run_srgc_sr_refresh.sh all replicate
