@@ -46,9 +46,14 @@ and normalized training log probabilities. These comparison settings differ
 from the model card's native top-k/top-p and thinking-enabled benchmarks.
 
 MATH initial caches finish first and immediately release MATH prefix/training.
-MATH never waits for MBPP caches, MBPP cache leases or MBPP preflight. MBPP caches
-and training follow MATH completion. This ordering also applies to direct and
-fresh-start commands without an outer model-chain phase. For each dataset,
+The MATH cache stage never waits for MBPP caches, MBPP cache leases or MBPP
+preflight. Since 2026-10-29 MBPP caches and prefixes may start before MATH
+completes: a MATH-training worker takes them after MATH errors, backlog, caches
+and prefixes and before fresh MATH arms, and runs the MBPP preflight in its
+admission if that panel has not run. MBPP arms follow MATH completion
+([early MBPP cache/prefix](GEMMA4_MBPP_EARLY_PREFIX_2026-10-29.md)). This ordering
+also applies to direct and fresh-start commands without an outer model-chain
+phase. For each dataset,
 the fixed eight-prompt/eight-response preflight must reach at least 25% success
 and contain no empty responses before full caching or training. One correct draw
 out of 64 no longer passes. This 25% floor is an operational guard against a

@@ -44,6 +44,36 @@ def phase_pending(manager, pending):
             and (phase is None or dataset_name(manager.tasks[key][0].plan) == phase)}
 
 
+def early_sibling(manager, queue, task, *, admitted=True):
+    """An MBPP cache/prefix a MATH-phase worker may take before MATH completes."""
+    return (task.arm in getattr(manager, "early_arms", ())
+            and manager.task_allowed(queue, task, admitted=admitted))
+
+
+def claim_order(manager, cohort, requested, siblings):
+    """Queues in claim order, each with the scope of tasks it may offer."""
+    early = [queue for queue in siblings if getattr(manager, "early_arms", ())
+             and manager.dataset_allowed(queue)]
+    if active_dataset_phase() != "math" or os.environ.get("SRGC_CACHE_ONLY") == "1" or not early:
+        return [(queue, "all" if queue in requested else "backlog") for queue in cohort]
+    # MATH keeps its errors, backlog, caches and prefixes first. New MBPP
+    # cache/prefix work then starts before fresh MATH arms, and an MBPP ERROR
+    # is retried only when this worker has no MATH task to run.
+    return ([(queue, "stages") for queue in requested] + [(queue, "early") for queue in early]
+            + [(queue, "all") for queue in requested] + [(queue, "early-retry") for queue in early])
+
+
+def in_scope(manager, queue, task, scope, pending):
+    key = (str(queue.plan_path.resolve()), task.key)
+    if scope == "backlog":
+        return key in pending
+    if scope == "stages":
+        return task.arm in manager.early_arms
+    if scope == "early":
+        return early_sibling(manager, queue, task) and manager.receipt(queue, task).get("status") != "failed"
+    return key in pending or early_sibling(manager, queue, task)
+
+
 def stop_code():
     from .model_chain import PAUSED, enabled
 
@@ -81,7 +111,8 @@ def runnable(manager, requested, pending, args):
             if os.environ.get("SRGC_CACHE_ONLY") == "1" and task.arm != "cache":
                 continue
             key = (str(queue.plan_path.resolve()), task.key)
-            if queue not in requested and key not in pending:
+            early = queue not in requested and early_sibling(manager, queue, task, admitted=False)
+            if queue not in requested and key not in pending and not early:
                 continue
             if (os.environ.get("SRGC_RESUME_ONLY") == "1"
                     and os.environ.get("SRGC_CACHE_ONLY") != "1" and key not in pending):
@@ -249,18 +280,18 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
         pending = None
         claimed = False
         waiting_on_gpu = False
-        for queue in cohort:
+        for queue, scope in claim_order(manager, cohort, requested, siblings):
             if cluster.stop_requested(queue) or not manager.dataset_allowed(queue):
                 continue
             # A dataset-only command can rescue old sibling work, but cannot
             # open a new sibling seed or continuation after the backlog clears.
+            # Only an early MBPP cache/prefix may start fresh in a MATH phase.
             tasks = queue.tasks
-            if queue in siblings:
-                if pending is None:
+            if scope != "all":
+                if pending is None and scope in {"backlog", "early-retry"}:
                     with lease(manager.marker.with_suffix(".lock"), wait=True):
                         pending = phase_pending(manager, manager.pending())
-                queue.tasks = [task for task in tasks
-                               if (str(queue.plan_path.resolve()), task.key) in pending]
+                queue.tasks = [task for task in tasks if in_scope(manager, queue, task, scope, pending)]
             try:
                 if not queue.tasks:
                     continue
@@ -336,7 +367,9 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
                         from .rank_failures import failure_details
 
                         print(failure_details(log, start=log_start), flush=True)
-                        if os.environ.get('SRGC_MODEL_CHAIN_CHILD') == '1':
+                        # An early MBPP cache/prefix ERROR stays queued for retry; the
+                        # MATH-phase child keeps running MATH instead of restarting.
+                        if os.environ.get('SRGC_MODEL_CHAIN_CHILD') == '1' and scope not in {"early", "early-retry"}:
                             # Release task/device contexts before the coordinator
                             # restarts this model. Later models remain blocked.
                             progress("failed", active=queue, task=task,

@@ -28,19 +28,50 @@ class ReadyClaims:
     def failure_counts(self):
         return FrozenResumeFirst.failure_counts(self)
 
-    def dataset_allowed(self, queue):
+    # MBPP stages that may start while MATH work remains. None by default;
+    # Gemma IT opts in for cache and prefix (2026-10-29 user request). Later
+    # MBPP arms keep the MATH barrier and every queue dependency.
+    early_arms = ()
+
+    def early_state(self, queue):
+        """Saved preflight of an early MBPP plan: "passed", "paused" or None (not run)."""
+        return None
+
+    def math_complete(self):
+        # A completed endpoint can still be owned while its writer exits.
+        # Do not cross the dataset barrier until those leases are released.
+        return all(q.complete(task) and not self.owned(q, task)
+                   for q, task in self.tasks.values() if dataset_name(q.plan) == "math")
+
+    def early_open(self, queue):
+        """MBPP cache/prefix may be assigned before MATH completes, never in cache-only stages."""
+        return (bool(self.early_arms) and dataset_name(queue.plan) == "mbpp"
+                and os.environ.get("SRGC_CACHE_ONLY") != "1"
+                and self.early_state(queue) != "paused")
+
+    def task_allowed(self, queue, task, *, math_done=None, admitted=True):
+        """Task-level dataset barrier. Before admission (admitted=False) an early
+        MBPP stage only needs a preflight that has not paused; a claim needs it passed."""
+        from .resume_drain import active_dataset_phase
+
+        if dataset_name(queue.plan) != "mbpp" or os.environ.get("SRGC_CACHE_ONLY") == "1":
+            return True
+        if active_dataset_phase() != "math" and (self.math_complete() if math_done is None else math_done):
+            return True
+        return (task.arm in self.early_arms and self.early_open(queue)
+                and (not admitted or self.early_state(queue) == "passed"))
+
+    def dataset_allowed(self, queue, *, math_done=None):
         from .resume_drain import active_dataset_phase
 
         phase = active_dataset_phase()
         if phase and dataset_name(queue.plan) != phase:
-            return False
+            # A MATH-phase worker may take only early MBPP stages (task_allowed).
+            return phase == "math" and self.early_open(queue)
         if os.environ.get("SRGC_CACHE_ONLY") == "1":
             return True
         if dataset_name(queue.plan) == "mbpp":
-            # A completed endpoint can still be owned while its writer exits.
-            # Do not cross the dataset barrier until those leases are released.
-            return all(q.complete(task) and not self.owned(q, task)
-                       for q, task in self.tasks.values() if dataset_name(q.plan) == "math")
+            return (self.math_complete() if math_done is None else math_done) or self.early_open(queue)
         return True
 
     def priorities(self, pending):
@@ -74,14 +105,20 @@ class ReadyClaims:
                 pending = self.pending()
                 if os.environ.get("SRGC_CACHE_ONLY") == "1":
                     pending = {key for key in pending if self.tasks[key][1].arm == "cache"}
+                math_done = self.math_complete()
+                if not math_done:
+                    # Before MATH completes, MBPP is not resume backlog: an early
+                    # MBPP stage (or its ERROR) never holds MATH work behind it.
+                    pending = {key for key in pending if dataset_name(self.tasks[key][0].plan) != "mbpp"}
                 priorities = self.priorities(pending)
                 failures = self.failure_counts()
                 allowed = {key for key, candidate_queue in self.queues.items()
-                           if self.dataset_allowed(candidate_queue)}
+                           if self.dataset_allowed(candidate_queue, math_done=math_done)}
                 backlog = {key for key in pending if key[0] in allowed
                            and not stop_requested(self.tasks[key][0])
                            and not self.tasks[key][0].complete(self.tasks[key][1])
-                           and not self.owned(*self.tasks[key])}
+                           and not self.owned(*self.tasks[key])
+                           and self.task_allowed(*self.tasks[key], math_done=math_done)}
                 runnable_priority = 1 if backlog and os.environ.get("SRGC_CACHE_ONLY") != "1" else 2
                 for key in pending:
                     candidate_queue, candidate = self.tasks[key]
@@ -89,7 +126,8 @@ class ReadyClaims:
                         continue
                     row = self.receipt(candidate_queue, candidate)
                     eligible = (not candidate_queue.complete(candidate) and
-                                not self.owned(candidate_queue, candidate) and candidate_queue.ready(candidate))
+                                not self.owned(candidate_queue, candidate) and candidate_queue.ready(candidate)
+                                and self.task_allowed(candidate_queue, candidate, math_done=math_done))
                     if eligible and (row.get("status") != "failed" or
                             (retry_failed and time.time() >= row.get("finished", 0) + retry_delay)):
                         runnable_priority = min(runnable_priority, priorities[key])
@@ -116,6 +154,8 @@ class ReadyClaims:
                     if stop_requested(queue):
                         break
                     if queue.complete(task) or not queue.ready(task) or self.owned(queue, task):
+                        continue
+                    if not self.task_allowed(queue, task, math_done=math_done):
                         continue
                     with ExitStack() as candidate_locks:
                         try:

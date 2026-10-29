@@ -13,18 +13,99 @@ from unittest.mock import patch
 from srgc_rebuttal.plan import load_plan
 from srgc_rebuttal.runtime import atomic_json, run_root
 
+from .gemma4_it.resume import GemmaITResumeFirst
 from .model_launch import admission_failure_footer, released_gpu_identity
+from .resume_drain import active_dataset_phase
 
 
-def check_saved_preflight(options):
-    """Do not repeat CUDA diagnostics for an unchanged failed baseline panel."""
+def saved_preflight(path):
+    """A saved fixed panel verified against its raw receipts on CPU; None if not run or partial."""
     from srgc_rebuttal.plan import input_path
 
     from .gemma4_it import adapter, preflight
 
-    datasets = ("math", "mbpp") if options.dataset == "all" else (options.dataset,)
-    from .resume_drain import active_dataset_phase
+    plan = adapter.validate_extension(path)
+    directory = preflight.folder(path, plan)
+    if not (directory / "summary.json").is_file():
+        return None
+    bundle = json.loads(input_path(path, plan, plan["seeds"][0]).read_text())
+    adapter.validate_bundle_model(bundle, plan, plan["seeds"][0])
+    protocol = preflight.identity(path, plan, bundle)
+    rows = [preflight.read_receipt(directory / f"{hashlib.sha256(candidate.encode()).hexdigest()}.json",
+                                   protocol, candidate)
+            for candidate in protocol["candidate_ids"]]
+    if any(row is None for row in rows):
+        return None
+    report = preflight.summarize(protocol, rows)
+    if json.loads((directory / "summary.json").read_text()) != report:
+        raise ValueError(f"Gemma preflight summary differs from its raw receipts: {directory}")
+    return SimpleNamespace(report=report, rows=rows, directory=directory, protocol=protocol)
 
+
+PANEL_STATES = {}
+
+
+def preflight_state(path):
+    """Saved panel state for dispatch: "passed", "paused" or None (not run or partial)."""
+    from .gemma4_it import preflight
+
+    path = Path(path)
+    summary = preflight.folder(path, load_plan(path)) / "summary.json"
+    try:
+        stat = summary.stat()
+    except FileNotFoundError:
+        return None
+    key = (str(path.resolve()), stat.st_ino, stat.st_mtime_ns, stat.st_size)
+    if key not in PANEL_STATES:
+        try:
+            saved = saved_preflight(path)
+        except (OSError, ValueError, TypeError, KeyError) as error:
+            # Keep MATH running; the MBPP phase reports this panel again.
+            print(f"GEMMA MBPP early start closed: {error}", flush=True)
+            PANEL_STATES[key] = "paused"
+        else:
+            PANEL_STATES[key] = None if saved is None else "passed" if saved.report["passed"] else "paused"
+    return PANEL_STATES[key]
+
+
+def early_enabled(environment=None):
+    return (os.environ if environment is None else environment).get("SRGC_GEMMA_MBPP_EARLY", "1") != "0"
+
+
+class GemmaITEarlyMBPP(GemmaITResumeFirst):
+    """MBPP cache and prefix may start while MATH work remains (2026-10-29).
+
+    Later MBPP arms keep the MATH barrier; each stage keeps its dependency and
+    the MBPP preflight that its rank checks again before caching or training."""
+
+    @property
+    def early_arms(self):
+        return ("cache", "prefix") if early_enabled() else ()
+
+    def early_state(self, queue):
+        return preflight_state(queue.plan_path)
+
+
+def early_preflight_plan(plans, environment):
+    """MBPP plan whose panel a MATH-training admission also runs, or None."""
+    from srgc_rebuttal import cluster
+
+    if (not early_enabled(environment) or active_dataset_phase(environment) != "math"
+            or environment.get("SRGC_CACHE_ONLY") == "1" or environment.get("SRGC_RESUME_ONLY") == "1"):
+        return None
+    for path in plans:
+        plan = load_plan(Path(path))
+        if plan["dataset"] != "mbpp":
+            continue
+        if cluster.stop_requested(SimpleNamespace(directory=run_root(Path(path), plan) / ".queue")):
+            return None
+        return path if preflight_state(path) is None else None
+    return None
+
+
+def check_saved_preflight(options):
+    """Do not repeat CUDA diagnostics for an unchanged failed baseline panel."""
+    datasets = ("math", "mbpp") if options.dataset == "all" else (options.dataset,)
     phase = active_dataset_phase()
     if phase is not None:
         datasets = tuple(name for name in datasets if name == phase)
@@ -32,23 +113,10 @@ def check_saved_preflight(options):
         path = options.root / "experiments" / f"gemma4-12b-it-{dataset}.json"
         if not path.is_file():
             continue
-        plan = adapter.validate_extension(path)
-        directory = preflight.folder(path, plan)
-        if not (directory / "summary.json").is_file():
+        saved = saved_preflight(path)
+        if saved is None or saved.report["passed"]:
             continue
-        bundle = json.loads(input_path(path, plan, plan["seeds"][0]).read_text())
-        adapter.validate_bundle_model(bundle, plan, plan["seeds"][0])
-        protocol = preflight.identity(path, plan, bundle)
-        rows = [preflight.read_receipt(directory / f"{hashlib.sha256(candidate.encode()).hexdigest()}.json",
-                                       protocol, candidate)
-                for candidate in protocol["candidate_ids"]]
-        if any(row is None for row in rows):
-            continue
-        report = preflight.summarize(protocol, rows)
-        if json.loads((directory / "summary.json").read_text()) != report:
-            raise ValueError(f"Gemma preflight summary differs from its raw receipts: {directory}")
-        if report["passed"]:
-            continue
+        report, rows, directory, protocol = saved.report, saved.rows, saved.directory, saved.protocol
         print(f"GEMMA PREFLIGHT {dataset}: {report['correct']:g}/{report['responses']} correct, "
               f"empty={report['empty_responses']}; saved results verified on CPU", flush=True)
         print(f"Raw responses: {directory}", flush=True)
@@ -67,19 +135,21 @@ def scoped_admission(original):
         from srgc_rebuttal import cluster
 
         plans = json.loads(environment.get("SRGC_GEMMA_PLANS", "null")) or [environment["SRGC_GEMMA_PLAN"]]
-        from .resume_drain import active_dataset_phase
-
+        early = early_preflight_plan(plans, environment)
         phase = active_dataset_phase(environment)
         if phase is not None:
             selected = "math_train" if phase == "math" else "mbpp"
             plans = [path for path in plans if load_plan(Path(path))["dataset"] == selected]
             if not plans:
                 raise ValueError(f"no {phase} plan for Gemma admission")
-        scoped = {"SRGC_GEMMA_PLAN": plans[0], "SRGC_GEMMA_PLANS": json.dumps(plans)}
+        # MBPP cache/prefix may start in this MATH worker, so its unrun fixed
+        # panel is checked here too. Stop receipts stay those of the MATH scope.
+        scoped = {"SRGC_GEMMA_PLAN": plans[0], "SRGC_GEMMA_PLANS": json.dumps(plans + ([early] if early else []))}
         previous = {key: environment.get(key) for key in scoped}
         queues = [SimpleNamespace(directory=run_root(Path(path), load_plan(Path(path))) / ".queue")
                   for path in plans]
         previous_stop = kwargs.get("should_stop", lambda: False)
+        stage = {"early": False}
 
         def stopping(*, boundary=False):
             return previous_stop() or any(cluster.stop_requested(queue, immediate=not boundary)
@@ -91,6 +161,7 @@ def scoped_admission(original):
             if stopping(boundary=True):
                 raise KeyboardInterrupt
             options["should_stop"] = lambda: stopping()
+            stage["early"] = early is not None and Path(log).name == f"gemma-preflight-{Path(early).stem}.log"
             return run_child(command, log, env, **options)
 
         try:
@@ -99,8 +170,22 @@ def scoped_admission(original):
             environment.update(scoped)
             if stopping(boundary=True):
                 raise KeyboardInterrupt
-            return original(base, root, environment, child,
-                            **{**kwargs, "should_stop": lambda: stopping()})
+            try:
+                return original(base, root, environment, child,
+                                **{**kwargs, "should_stop": lambda: stopping()})
+            except Exception as error:
+                if not stage["early"]:
+                    raise
+                # MATH passed its smoke and panel. A failed or interrupted MBPP
+                # panel keeps MBPP behind its preflight; MATH is admitted alone.
+                print(f"GEMMA MBPP early preflight did not pass ({type(error).__name__}: {error}); "
+                      "MATH continues and MBPP cache/prefix stay closed", flush=True)
+                stage["early"] = False
+                environment.update({"SRGC_GEMMA_PLANS": json.dumps(plans)})
+                if stopping(boundary=True):
+                    raise KeyboardInterrupt from None
+                return original(base, root, environment, child,
+                                **{**kwargs, "should_stop": lambda: stopping()})
         except KeyboardInterrupt:
             # The frozen helper's finally block records timings. Preserve those
             # and successful stages, but distinguish cancellation from failure.
@@ -164,7 +249,6 @@ def run(argv=None):
     from srgc_rebuttal import cluster
 
     from .gemma4 import worker
-    from .gemma4_it.resume import GemmaITResumeFirst
     from .model_chain import enabled
     from .model_resume import failure_footer
     from .resume_drain import resume_worker
@@ -180,7 +264,7 @@ def run(argv=None):
             # Installing only the inner drain hook leaves the old startup and
             # its unfiltered MATH/MBPP completion check active.
             stack.enter_context(resume_worker(
-                worker, GemmaITResumeFirst, pattern="gemma4-12b-it-{dataset}.json",
+                worker, GemmaITEarlyMBPP, pattern="gemma4-12b-it-{dataset}.json",
                 env_key="SRGC_GEMMA_PLANS", label="GEMMA IT", result_model="gemma4_it"))
             stack.enter_context(patch.object(cli, "resume_first_worker", nullcontext))
             stack.enter_context(patch.object(guard, "OWNER_MARKERS", (
