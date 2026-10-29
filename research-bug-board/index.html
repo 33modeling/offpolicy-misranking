@@ -2,13 +2,13 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#18263d"><meta name="description" content="논문 실험 코드의 버그, 원인, 수정과 검증 이력을 지우지 않고 보존하는 현황판">
+  <meta name="theme-color" content="#18263d"><meta name="description" content="실험 코드의 문제, 영향 범위, 수정 커밋과 검증 기록.">
   <title>논문 코드 버그 현황판</title><link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="topbar"><a class="brand" href="/">77<span> / 연구 기록</span></a><nav><a href="/bug-board/">일반 버그 현황판 ↗</a><a href="https://github.com/33modeling/offpolicy-misranking" target="_blank" rel="noopener">원본 저장소 ↗</a></nav></header>
   <main>
-    <section class="intro"><div><p class="eyebrow">PAPER CODE / INCIDENT RECORD</p><h1>논문 코드<br><span>버그 현황판</span></h1><p class="lead">처음의 문제부터 수정 뒤의 확인까지.<br>고친 항목과 실패한 시도도 기록에 남깁니다.</p></div><aside class="retention"><span class="red-dot"></span><strong>기록 보존</strong><p>원인·영향·수정 커밋·검증 범위를 함께 기록합니다. 정정은 새 이력으로 추가합니다.</p><p class="small" id="coverage">기록을 불러오는 중…</p></aside></section>
+    <section class="intro"><div><p class="eyebrow">PAPER CODE / INCIDENT RECORD</p><h1>논문 코드 버그 현황판</h1><p class="lead">실험 코드의 문제, 영향 범위, 수정 커밋과 검증 기록.</p></div><aside class="retention"><span class="red-dot"></span><strong>기록 보존</strong><p>원인·영향·수정 커밋·검증 범위를 함께 기록합니다. 정정은 새 이력으로 추가합니다.</p><p class="small" id="coverage">기록을 불러오는 중…</p></aside></section>
     <section class="stats" id="stats" aria-label="기록 요약"></section>
     <section class="report-strip" aria-label="Gemma 수치 보고"><strong>Gemma 초기 보고</strong><div id="scores"></div><p id="score-note"></p></section>
     <div class="toolbar"><div class="tabs" role="tablist" aria-label="기록 종류"><button role="tab" aria-selected="true" data-view="incidents">상세 사건 <span id="incident-count"></span></button><button role="tab" aria-selected="false" data-view="fixes">과거 수정커밋 <span id="fix-count"></span></button><button role="tab" aria-selected="false" data-view="commits">커밋 전체 <span id="commit-count"></span></button></div><button class="download" id="download" title="전체 기록 JSON 내려받기" aria-label="전체 기록 JSON 내려받기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/></svg></button></div>
