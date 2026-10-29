@@ -393,7 +393,7 @@ def test_real_candidate_failure_is_not_misreported_as_failed_backward_smoke(tmp_
     assert report["gemma_initial_preflight"] == "failed"
 
 
-def test_corrected_training_records_all_25_update_boundaries_and_exports_separate_rewards(tmp_path):
+def test_corrected_training_records_all_25_update_boundaries_and_exports_separate_rewards(tmp_path, monkeypatch):
     from srgc_rebuttal.srgc import Engine
     from srgc_research.dispatch import model_results, reward_curves
     from srgc_research.dispatch.reward_curve_results import collect
@@ -406,6 +406,9 @@ def test_corrected_training_records_all_25_update_boundaries_and_exports_separat
         command = adapter.task_command(q, next(task for task in q.tasks if task.arm == "sr"))
     recorded = reward_curves.recording_command(command)
     assert recorded[recorded.index("--model") + 1] == "gemma4_text"
+    # Periodic held-out evaluation is opt-in since 2026-10-28 (final-only by
+    # default, test_final_only_evaluation.py); this test covers the opt-in path.
+    monkeypatch.setenv("SRGC_INTERMEDIATE_EVAL", "1")
     engine, _, plan, data, binding = make_engine(tmp_path / "recording", True)
     engine.run_until(275)
     folder = tmp_path / "recording"

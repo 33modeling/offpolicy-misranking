@@ -125,9 +125,9 @@ def test_public_status_reads_existing_receipts_without_results_or_model_packages
             patch.dict(sys.modules, {"torch": None, "transformers": None, "peft": None}):
         assert runner.main(["all", "status", "--root", str(cohort.root)]) == 0
     text = capsys.readouterr().out
-    assert text.count("GPU STAGES") == 2 and text.count("RECORDED WORK") == 2
-    assert "selection.candidate" in text and "selection.reference" in text
-    assert "generation_micro_batch=2" in text and ">=2.000" in text
-    assert "not measured GPU idle time" in text
+    # Since 2026-10-23 every runner's status screen is compact (model_status):
+    # per-arm results and submission GPU time. Stage costs and recorded settings
+    # stay in the status JSON checked above.
+    assert text.count("RESULTS / GPU TIME") == 2 and "GPU STAGES" not in text
     assert saved(cohort) == before and not (cohort.work / "results").exists()
     assert identities == (cohort.adapter.engine_digest(), cohort.adapter.adapter_digest())

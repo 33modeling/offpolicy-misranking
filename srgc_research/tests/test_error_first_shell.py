@@ -24,7 +24,8 @@ if sys.argv[1:3] == ['-m', 'srgc_research.dispatch.model_chain']:
     resume_inventory.signature = signature
     resume_inventory.failed_signature = signature
     original = chain.drain
-    chain.drain = lambda *args, **kwargs: original(*args, **kwargs, sleep=lambda _: None)
+    # main() passes its heartbeat-keeping sleep; replace it, never pass it twice.
+    chain.drain = lambda *args, **kwargs: original(*args, **{**kwargs, 'sleep': lambda _: None})
     raise SystemExit(chain.main(sys.argv[3:]))
 modules = {'srgc_research.dispatch.llama_run': 'llama31',
            'srgc_research.dispatch.gemma_run': 'gemma4',

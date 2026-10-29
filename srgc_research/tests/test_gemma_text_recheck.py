@@ -231,8 +231,11 @@ def test_stop_before_any_plan_blocks_startup_and_explicit_resume_can_prepare(tmp
     assert run.main(["stop", "--now", "--root", str(root)]) == 0
     assert not (root / "runs").exists()
     before = {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
+    # The public shell defaults to the IT protocol; select this text-v3 root's protocol.
     result = subprocess.run(["sh", str(REPO / "scripts/run_srgc_gemma4.sh"), "status", "--json",
-                             "--root", str(root)], env={**os.environ, "GEMMA_PYTHON": "/missing"},
+                             "--root", str(root)], env={**os.environ, "GEMMA_PYTHON": "/missing",
+                                                        "SRGC_GEMMA_IT_PROTOCOL": "0",
+                                                        "SRGC_GEMMA_TEXT_PROTOCOL": "1"},
                             capture_output=True, text=True, timeout=30, check=False)
     assert result.returncode == 1  # Plans remain unprepared, not completed.
     reports = json.loads(result.stdout)["datasets"]
