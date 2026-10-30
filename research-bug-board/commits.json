@@ -11692,6 +11692,96 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "eee9c7d5ff73656b93269c0f82d68e44b2966cbf",
+      "at": "2026-10-28T16:51:48+09:00",
+      "author": "33modeling",
+      "title": "Record final-only evaluation fix and preserve26Gemma incidents",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/eee9c7d5ff73656b93269c0f82d68e44b2966cbf",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": true
+    },
+    {
+      "hash": "e8d0fa69500c4490e7c89ed4ce59c98caee35809",
+      "at": "2026-10-28T17:05:02+09:00",
+      "author": "33modeling",
+      "title": "Record published Gemma fix evidence and explicit live-runtime limits",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/e8d0fa69500c4490e7c89ed4ce59c98caee35809",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": true
+    },
+    {
+      "hash": "7b98feea5940ab60ff600e6c8879f35028099dba",
+      "at": "2026-10-29T12:29:01+09:00",
+      "author": "33modeling",
+      "title": "Clarify research incident board introduction",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/7b98feea5940ab60ff600e6c8879f35028099dba",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "df7263c3c4ae3af976eb7b663695aa147db394db",
+      "at": "2026-10-29T17:22:51+09:00",
+      "author": "33modeling",
+      "title": "Let Gemma IT assign MBPP cache and prefix while MATH work remains",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/df7263c3c4ae3af976eb7b663695aa147db394db",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": true
+    },
+    {
+      "hash": "8f3813aff1d992e5529314fc886cd164042b8359",
+      "at": "2026-10-29T18:05:15+09:00",
+      "author": "33modeling",
+      "title": "Update stale Gemma tests to the current runner behavior",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/8f3813aff1d992e5529314fc886cd164042b8359",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": true
+    },
+    {
+      "hash": "a20da9a05777c3f6c6813293cc44dbf5963c9b52",
+      "at": "2026-10-29T18:31:24+09:00",
+      "author": "33modeling",
+      "title": "Correct stale usage comments and the shared status docstring",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/a20da9a05777c3f6c6813293cc44dbf5963c9b52",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "092e6e11f49cd90665c67171fd7bd6d575b83631",
+      "at": "2026-10-29T22:08:20+09:00",
+      "author": "33modeling",
+      "title": "Plain-Korean UI copy and filter features on the paper-code bug board page",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/092e6e11f49cd90665c67171fd7bd6d575b83631",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "1a48bc027f6dfcc6bbce8f5c0425259f091f2028",
+      "at": "2026-10-30T15:11:24+09:00",
+      "author": "33modeling",
+      "title": "Show final reward percent in completed seed cells and initial candidate success under the status table",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/1a48bc027f6dfcc6bbce8f5c0425259f091f2028",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "2f9d9e649214a6df212f2a5fe3ad59ca355ad6b2",
+      "at": "2026-10-30T21:42:31+09:00",
+      "author": "33modeling",
+      "title": "fix(dispatch): wait for occupied model-chain node leases",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/2f9d9e649214a6df212f2a5fe3ad59ca355ad6b2",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
     }
   ]
 }

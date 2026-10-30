@@ -845,5 +845,47 @@
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/daccb4237a204098198fc2abc7b0140c22899767"
       }
     ]
+  },
+  {
+    "id": "CHAIN-027",
+    "title": "체인 잠금 충돌에서 즉시 종료되어 재개를 기다리지 못함",
+    "area": "실행·재개",
+    "severity": "high",
+    "first_reported": "2026-10-30",
+    "cause": "같은 호스트·GPU 조합의 coordinator lease를 비차단 flock으로만 획득하고, 충돌 시 경로만 출력한 뒤75로 종료했다. 원격 보유 프로세스의 실제 상태는 미확인이다.",
+    "impact": "코드를 갱신해도 노드 실행 잠금은 별도로 유지되므로 새 체인이 대기·재개되지 않았다. 학습 속도나 GPU 성능 저하의 원인으로 단정하지 않는다.",
+    "introduction_commit": null,
+    "attribution": "기존 실행 보존 및 coordinator 대기 처리 수정. 실제 원격 작업 상태와 코드 검증은 구분한다.",
+    "evidence": [
+      {
+        "kind": "user_report",
+        "text": "MODEL CHAIN busy: /group-volume/minsoo3.kim/offpolicy-misranking/srgc-rebuttal/.model-chain/nodes/73bf7c061f0c39d3c74eecbce4624058f25fbc798536f6e6b638930f5ef9511f.lock\ngit pull: Already up to date."
+      },
+      {
+        "kind": "source",
+        "commit": "1a48bc027f6dfcc6bbce8f5c0425259f091f2028",
+        "path": "srgc_research/dispatch/model_chain.py"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-30",
+        "actor": "사용자 보고",
+        "type": "user_request",
+        "status": "open",
+        "text": "MODEL CHAIN busy: /group-volume/minsoo3.kim/offpolicy-misranking/srgc-rebuttal/.model-chain/nodes/73bf7c061f0c39d3c74eecbce4624058f25fbc798536f6e6b638930f5ef9511f.lock\ngit pull: Already up to date.\n사용자: 그냥 고쳐 좀; 다시점검해.",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-10-30",
+        "actor": "코드 검증",
+        "type": "code_fix_verified",
+        "status": "code_fixed",
+        "text": "기본 동작을 같은 lease의 interruptible 대기로 변경했다. 기존 coordinator 기록을 표시하고 실제 잠금을 얻은 뒤에만 작업을 시작한다. 대기 중 worker 기록·GPU 작업을 만들지 않으며 잠금 inode·기존 실행·checkpoint를 보존한다. WAIT=0은 기존75종료를 유지한다. 실제 CPU 프로세스로 이전75종료2건을 재현했고 수정 후 회귀96개 통과. 실제 원격 lease 해제·GPU 재개·속도는 미검증이다.",
+        "evidence_kind": "code_test",
+        "commit": "2f9d9e649214a6df212f2a5fe3ad59ca355ad6b2",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/2f9d9e649214a6df212f2a5fe3ad59ca355ad6b2"
+      }
+    ]
   }
 ]
