@@ -1,6 +1,7 @@
 """Drain Qwen, Llama and Gemma with isolated runtimes and existing shared task leases."""
 
 import argparse
+from contextlib import ExitStack, contextmanager
 import hashlib
 import json
 import math
@@ -25,6 +26,39 @@ PAUSED = 77
 
 def enabled(environment=None):
     return (os.environ if environment is None else environment).get('SRGC_MODEL_CHAIN_CHILD') == '1'
+
+
+def waiting_coordinator(environment):
+    """Describe receipt evidence; only the actual lease decides ownership."""
+    host = socket.gethostname()
+    devices = environment.get('CUDA_VISIBLE_DEVICES', '0,1,2,3')
+    rows = [row for row in snapshot(environment)
+            if row['host'] == host and row.get('devices', '') == devices]
+    if not rows:
+        return 'coordinator record unavailable'
+    row = max(rows, key=lambda item: item['started'])
+    child = f" child_pid={row['child_pid']}" if type(row.get('child_pid')) is int else ''
+    return (f"recorded coordinator pid={row.get('pid', '?')}{child} "
+            f"status={row['status'].upper()} model={row.get('model', '-')} "
+            f"dataset={row.get('active_dataset', row.get('dataset', '-'))} "
+            f"heartbeat_age={row['heartbeat_age_seconds']:.0f}s")
+
+
+@contextmanager
+def node_lease(path, environment, poll_seconds, *, wait=True):
+    """Wait interruptibly on the same inode without admitting duplicate work."""
+    with ExitStack() as stack:
+        while True:
+            try:
+                handle = stack.enter_context(lease(path))
+                break
+            except Busy:
+                if not wait:
+                    raise
+                print(f'MODEL CHAIN WAIT: {waiting_coordinator(environment)}; '
+                      f'lock={path}; retry in {poll_seconds:g}s', file=sys.stderr, flush=True)
+                time.sleep(poll_seconds)
+        yield handle
 
 
 def order_for(first, value=None):
@@ -257,6 +291,9 @@ def main(argv=None):
     poll = float(os.environ.get('SRGC_MODEL_POLL_SECONDS', '10'))
     if not 1 <= poll <= 60:
         parser.error('SRGC_MODEL_POLL_SECONDS must be between 1 and 60')
+    wait = os.environ.get('SRGC_MODEL_CHAIN_WAIT', '1')
+    if wait not in ('0', '1'):
+        parser.error('SRGC_MODEL_CHAIN_WAIT must be 0 or 1')
     from .llama31.storage import group_work, inside
     group, work = group_work(os.environ)
     common = inside(os.environ.get('SRGC_STORAGE_ROOT', str(work / 'srgc-rebuttal')), group)
@@ -311,7 +348,10 @@ def main(argv=None):
         raise KeyboardInterrupt
     previous = {sig:signal.signal(sig, interrupt) for sig in (signal.SIGINT, signal.SIGTERM)}
     try:
-        with lease(directory / 'nodes' / f'{key}.lock'):
+        with node_lease(directory / 'nodes' / f'{key}.lock', environment, poll, wait=wait == '1'):
+            # Waiting contenders must not supersede the actual coordinator in
+            # status, and their start time must reflect acquisition, not queuing.
+            metadata['started'] = time.time()
             try:
                 return drain(order, initial[0], initial, environment, update,
                              poll_seconds=poll, sleep=pause)
@@ -322,6 +362,10 @@ def main(argv=None):
             except BaseException as error:
                 update('failed', error=f'{type(error).__name__}: {error}')
                 raise
+    except KeyboardInterrupt:
+        code = 128 + stopped[-1] if stopped else 130
+        print('MODEL CHAIN WAIT stopped before acquiring the node lease', file=sys.stderr, flush=True)
+        return code
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)
