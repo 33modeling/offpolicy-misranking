@@ -32,3 +32,14 @@ status는 결과 JSON 파일을 새로 만들거나 덮어쓰지 않는다. 이�
 [검증 요약](evidence/status-display-20261023.json)에 범위와 원시 로그 경로를 기록했다.
 검사 수치는 CPU fixture이며 실제 GPU 실험 결과가 아니다. 학습 프로세스나 원격
 노드를 시작·재시작하지 않고, 학습 adapter/engine digest도 보존한다.
+
+## 2026-10-30 seed 표의 완료 칸과 초기 정답률
+
+사용자 지시: seed 표의 완료 칸을 `DONE`으로만 두지 말고 결과 퍼센트를 적고, 표 아래에
+초기 퍼센트를 적는다. 완료 칸은 검증된 최종 held-out 평가 보상을 `82.5%`처럼 표시하고,
+값이 없거나 범위를 벗어나면 기존처럼 `DONE`을 둔다. Switch 전환 표시 `SW@N`은 유지한다.
+
+표 바로 아래 `Init` 줄은 seed별 학습 전 정책의 후보 문제 정답률(문제당 8개 응답,
+기존 `initial_candidate_accuracy`)이다. 학습 후보 풀에서 잰 값이라 held-out 평가가
+아니며, 화면 설명 줄에 그 구분을 적었다. 측정되지 않은 seed는 `-`로 표시한다.
+같은 표를 쓰는 Gemma IT/PT, Qwen, Llama status에 함께 적용된다.

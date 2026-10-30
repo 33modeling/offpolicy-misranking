@@ -417,10 +417,20 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
                        f" | cache {finished['cache']}/{len(seeds)} | prefix {finished['prefix']}/{len(seeds)}")]
         lookup = {(row["seed"], row["arm"]): row for row in rows}
         def current_cell(row):
-            return live.switch_cell(row, "DONE") if row and row["status"] == "complete" else cell(row)
+            if not row or row["status"] != "complete":
+                return cell(row)
+            reward = row.get("reward_percent")
+            measured = type(reward) in (int, float) and math.isfinite(reward) and 0 <= reward <= 100
+            return live.switch_cell(row, f"{reward:.1f}%" if measured else "DONE")
 
         lines += table(("Seed", *HEADERS), [[seed, *(current_cell(lookup.get((seed, arm))) for arm in ARMS)]
                                             for seed in seeds])
+        initial = {item["seed"]: item["success_percent"]
+                   for item in report.get("initial_candidate_accuracy", [])}
+        if initial:
+            lines.append("Init  " + " | ".join(
+                f"seed {seed} {initial[seed]:.1f}%" if seed in initial else f"seed {seed} -"
+                for seed in seeds))
         switching = [row for row in rows if live.switch_info(row) is not None]
         if switching:
             lines.append(f"{report['label']} SWITCH DECISIONS")
@@ -478,6 +488,7 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
     lines += ["", "State RUN = live execution lease. Phase TRAIN/EVAL can change within the same attempt.",
               "Train = completed updates; Eval = saved prompts. They use separate totals. ? = progress not recorded.",
               "FINALIZING = validated result saved; waiting for worker/lease release.",
+              "Seed table % = held-out final eval reward. Init = initial policy on training candidates (not held-out).",
               "RUN = active lease; LAUNCH/WAIT/HANDOFF = live dispatcher. SW@N = switch after update N.",
               f"Root: {root}"]
     from .model_chain import render_status

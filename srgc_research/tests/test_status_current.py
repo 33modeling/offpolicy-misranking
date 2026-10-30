@@ -75,7 +75,8 @@ def test_terminal_shows_current_results_and_gpu_time_without_cost_history_tables
     folder = finish(cohort, "math", reward=.3)
     progress(folder, "on_policy")
     text = inspect(cohort, capsys, as_json=False)
-    assert "Tasks" in text and "DONE" in text
+    assert "Tasks" in text and "30.0%" in text
+    assert "Init  seed 5 50.0%" in text and "Init = initial policy on training candidates" in text
     assert "MATH RESULTS / GPU TIME" in text and "Result (%)" in text and "GPU-h" in text
     assert "30.0" in text and "0.389" in text
     for historical in ("GPU TIMES", "GPU STAGES", "RECORDED WORK", "SUBMITTED OLMO TIME BASIS",
@@ -141,6 +142,22 @@ def test_status_distinguishes_checkpoint_eval_from_final_eval_and_task_completio
     assert "then resume training" not in text and "DONE" not in text
     row.update(status="complete", reward_percent=50.)
     assert qwen_status.cell(row) == "DONE 50.0%"
+
+
+def test_completed_seed_cell_shows_reward_and_unmeasured_initial_is_dash(tmp_path):
+    report = {"label": "MATH", "prepared": True, "errors": [], "warnings": [], "workers": [],
+              "initial_candidate_accuracy": [{"seed": 0, "responses": 8, "success_percent": 41.3}],
+              "tasks": [{"task": "seed-0.random", "seed": 0, "arm": "random", "status": "complete",
+                         "reward_percent": 82.5},
+                        {"task": "seed-1.random", "seed": 1, "arm": "random", "status": "complete",
+                         "reward_percent": None}]}
+    with patch("srgc_research.dispatch.model_chain.render_status", return_value=[]), \
+            patch("srgc_research.dispatch.status_current.render_results", return_value=[]):
+        text = qwen_status.render([report], tmp_path)
+    rows = {line.split()[0]: line for line in text.splitlines() if line[:1] in ("0", "1")}
+    assert "82.5%" in rows["0"] and "DONE" not in rows["0"]
+    assert "DONE" in rows["1"]
+    assert "Init  seed 0 41.3% | seed 1 -" in text
 
 
 def test_prefix_checkpoint_eval_names_the_following_completion_step():
