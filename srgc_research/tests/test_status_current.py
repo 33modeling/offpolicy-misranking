@@ -76,7 +76,7 @@ def test_terminal_shows_current_results_and_gpu_time_without_cost_history_tables
     progress(folder, "on_policy")
     text = inspect(cohort, capsys, as_json=False)
     assert "Tasks" in text and "30.0%" in text
-    assert "Init  seed 5 50.0%" in text and "Init = initial policy on training candidates" in text
+    assert "Init  seed 5 50.0%" in text
     assert "MATH RESULTS / GPU TIME" in text and "Result (%)" in text and "GPU-h" in text
     assert "30.0" in text and "0.389" in text
     for historical in ("GPU TIMES", "GPU STAGES", "RECORDED WORK", "SUBMITTED OLMO TIME BASIS",

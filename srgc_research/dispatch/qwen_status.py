@@ -480,13 +480,6 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
                          current, cell(node["task_row"]).removeprefix("RUN ") if node["task_row"] else "-",
                          heartbeat, reason])
         lines += table(("Node", "State", "Phase", "Task", "Progress", "Heartbeat", "상태·대기 사유"), rows)
-        from .model_chain import launch_details
-
-        for node in nodes:
-            if node.get("source") == "model_chain":
-                details = launch_details(node)
-                if details:
-                    lines.append(f"  {node.get('host', '-')} launcher records: {details}")
     else:
         lines += ["", "NODES  no worker records"]
     for report in snapshots:
@@ -593,15 +586,9 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
     warnings = [(report["label"], warning) for report in snapshots for warning in dict.fromkeys(report["warnings"])]
     if warnings:
         lines += ["", "WARNINGS", *(f"  {label} | {warning}" for label, warning in warnings)]
-    lines += ["", "State RUN = live execution lease. Phase TRAIN/EVAL can change within the same attempt.",
-              "Train = completed updates; Eval = saved prompts. They use separate totals. ? = progress not recorded.",
-              "FINALIZING = validated result saved; waiting for worker/lease release.",
-              "Seed table % = held-out final eval reward. Init = initial policy on training candidates (not held-out).",
-              "RUN = active lease; LAUNCH/WAIT/HANDOFF = live dispatcher. SW@N = switch after update N.",
-              f"Root: {root}"]
-    from .model_chain import render_status
-    lines.extend(render_status(now=now, rows=[row for row in coordinators
-                                            if row["status"] in {"running", "switching", "waiting"}]))
+    # The legend and the MODEL QUEUE coordinator list repeated the NODES table
+    # and grew with every registered allocation (2026-10-31 user request).
+    lines += ["", f"Root: {root}"]
     return "\n".join(lines)
 
 
