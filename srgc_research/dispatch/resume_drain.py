@@ -3,6 +3,7 @@
 import copy
 import json
 import os
+import random
 import subprocess
 import sys
 import time
@@ -15,6 +16,11 @@ from srgc_rebuttal.runtime import Busy, lease
 
 from .datasets import dataset_name
 from .preemption import interruption_code, log_position
+
+
+IDLE_CLAIM_SECONDS = 60
+IDLE_JITTER_SECONDS = 15
+IDLE_HEARTBEAT_SECONDS = 10
 
 
 def active_dataset_phase(environment=None):
@@ -448,7 +454,18 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
             raise SystemExit(YIELD)
         progress("idle", idle_reason=reason)
         print(f"IDLE {label}: {reason}", flush=True)
-        time.sleep(min(args.poll_seconds, 30))
+        # Every idle worker scans all queues under one dispatch lock. Without
+        # the chain all of them stay resident, so space the scans out (with
+        # jitter) while refreshing the worker heartbeat that status reads.
+        wait = min(args.poll_seconds, 30)
+        if wait >= 1:  # production polling; sub-second test polling stays as given
+            wait = max(wait, IDLE_CLAIM_SECONDS) + random.uniform(0, IDLE_JITTER_SECONDS)
+        end = time.monotonic() + wait
+        while True:
+            time.sleep(max(0, min(IDLE_HEARTBEAT_SECONDS, end - time.monotonic())))
+            if time.monotonic() >= end or all(cluster.stop_requested(q) for q in requested):
+                break
+            progress("idle", idle_reason=reason)
 
 
 @contextmanager

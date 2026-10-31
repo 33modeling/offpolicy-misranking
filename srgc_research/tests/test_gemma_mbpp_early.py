@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -503,3 +503,44 @@ def test_gemma_it_opts_in_to_mbpp_arms_with_early_start(monkeypatch, setting, ex
     monkeypatch.setenv("SRGC_GEMMA_MBPP_EARLY", setting)
     manager = gemma_it_run.GemmaITEarlyMBPP.__new__(gemma_it_run.GemmaITEarlyMBPP)
     assert manager.late_mbpp is expected
+
+
+def test_direct_idle_worker_spaces_out_claim_scans_and_keeps_its_heartbeat(gemma, monkeypatch, capsys):
+    # Without the chain every idle worker stays resident; 2026-10-31 status
+    # stopped updating while all of them rescanned the shared queues each 10 s.
+    import time as clock
+
+    math, mbpp = gemma.queues
+    finish_fake(mbpp, Task(9, "prefix"))
+    finish_fake(mbpp, Task(9, "sr"))
+    gemma.options.poll_seconds = 10
+    now, slept, heartbeats = [1000.0], [], []
+
+    class Stop(Exception):
+        pass
+
+    def sleep(seconds):
+        slept.append(seconds)
+        now[0] += seconds
+        if sum(slept) > 200:
+            raise Stop()
+
+    monkeypatch.setattr(clock, "sleep", sleep)
+    monkeypatch.setattr(clock, "monotonic", lambda: now[0])
+    monkeypatch.setattr(resume_drain.random, "uniform", lambda low, high: 0)
+    original = gemma_worker.write_worker
+
+    def write_worker(queues, worker_id, state, **details):
+        heartbeats.append(state)
+        return original(queues, worker_id, state, **details)
+
+    monkeypatch.setattr(gemma_worker, "write_worker", write_worker)
+    with ExitStack() as locks:
+        for task in math.tasks:
+            locks.enter_context(lease(math.directory / "leases" / f"{task.key}.lock"))
+        with pytest.raises(Stop):
+            drain(gemma)
+    scans = capsys.readouterr().out.count("IDLE GEMMA")
+    assert scans == 4  # at t=0, 60, 120 and 180 s, not every 10 s
+    assert max(slept) <= resume_drain.IDLE_HEARTBEAT_SECONDS
+    assert heartbeats.count("idle") >= 18  # refreshed every 10 s while waiting

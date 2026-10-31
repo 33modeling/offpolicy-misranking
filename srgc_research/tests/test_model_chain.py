@@ -508,6 +508,11 @@ def test_public_training_shells_join_chain_and_keep_starting_model(model,args,tm
     name={'qwen35':'QWEN','llama31':'LLAMA','gemma4':'GEMMA'}[model]
     env={**os.environ,name+'_PYTHON':str(executable)}
     env.pop('SRGC_MODEL_CHAIN_CHILD',None);env.pop('SRGC_MODEL_CHAIN',None)
+    if model=='gemma4':
+        # Only Gemma remains (2026-10-31): its shell runs directly unless the chain is requested.
+        direct=subprocess.run(chain.child_command(model,'all',args),env=env,capture_output=True,text=True,check=True)
+        assert json.loads(direct.stdout)==['-m','srgc_research.dispatch.gemma_it_run',*(args or ['all'])]
+        env['SRGC_MODEL_CHAIN']='1'
     result=subprocess.run(chain.child_command(model,'all',args),env=env,capture_output=True,text=True,check=True)
     assert json.loads(result.stdout)==['-m','srgc_research.dispatch.model_chain','--start',model,*(args or ['all'])]
 
