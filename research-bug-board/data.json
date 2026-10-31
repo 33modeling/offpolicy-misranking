@@ -1,14 +1,14 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-10-31T21:13:24+09:00",
+  "recorded_at": "2026-10-31T22:12:25+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "6c852006f7c191ab6984194d4a631731990ecdc5",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/6c852006f7c191ab6984194d4a631731990ecdc5",
-    "all_available_commits": 1140,
+    "source_commit": "82f9c9ce5b7454d1504a3c3aa4fdb95ea25fd773",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/82f9c9ce5b7454d1504a3c3aa4fdb95ea25fd773",
+    "all_available_commits": 1148,
     "fix_commit_records": 115,
-    "gemma_named_commits": 46,
+    "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
     "first_commit_at": "2026-08-07T05:56:48+09:00",
     "first_gemma_commit": "a15d3f114438cdd38ec1d959b94d3ad881172854",
@@ -23,7 +23,7 @@
       "refs/heads/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:6c852006f7c191ab6984194d4a631731990ecdc5",
+      "refs/heads/master:82f9c9ce5b7454d1504a3c3aa4fdb95ea25fd773",
       "refs/remotes/origin/audit/codecheck-20260820:5dd447990296042e334679c85e7672477cd7c5d3",
       "refs/remotes/origin/audit/p1-integrity:5dfda89ec3be2cc4d60f8f0371eeaf00790f6644",
       "refs/remotes/origin/docs/mbpp-budget-incident-20260919:fa1c6897b2b26ef002dd165c94f58702b1f9e1ed",
@@ -32,7 +32,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:6c852006f7c191ab6984194d4a631731990ecdc5"
+      "refs/remotes/origin/master:82f9c9ce5b7454d1504a3c3aa4fdb95ea25fd773"
     ]
   },
   "incidents": [
@@ -1431,6 +1431,16 @@
           "evidence_kind": "code_test",
           "commit": "cd0cb20503bc0d7294b8be3dca138d18c180b262",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/cd0cb20503bc0d7294b8be3dca138d18c180b262"
+        },
+        {
+          "at": "2026-10-31",
+          "actor": "진단 정정",
+          "type": "diagnosis_correction",
+          "status": "open",
+          "text": "사용자 보고로 seed5 switch의 실제 종료는 CUDA OOM이었다(NCCL 대기 한도 아님). 6시간 대기 한도 수정은 유지하되 반복 종료의 원인 진단으로는 틀렸다. OOM 대응은 OOM-046.",
+          "evidence_kind": "user_report",
+          "commit": "f201ff9629b7695de48b93eccec1781963c04c8e",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/f201ff9629b7695de48b93eccec1781963c04c8e"
         }
       ]
     },
@@ -1877,6 +1887,213 @@
           "evidence_kind": "code_test",
           "commit": "6c852006f7c191ab6984194d4a631731990ecdc5",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/6c852006f7c191ab6984194d4a631731990ecdc5"
+        }
+      ]
+    },
+    {
+      "id": "OOM-046",
+      "title": "seed5 switch가 25번 검사에서 CUDA OOM을 무한 반복하며 빈 GPU를 계속 차지",
+      "area": "실행·재개",
+      "severity": "critical",
+      "first_reported": "2026-10-31",
+      "cause": "실패한 작업은 가장 먼저 재시도되고(462ef62), 재시도는 25번 검사 묶음의 gradient를 첫 문제부터 다시 계산했다. 같은 지점에서 다시 OOM이 나 60초마다 빈 노드가 같은 실패를 반복했다. OOM 자체의 원인(요청량·남은 메모리·다른 프로세스)은 원격 로그가 없어 미확인이다.",
+      "impact": "seed5 switch가 25/275에서 진행하지 못했고, 다른 작업이 배정될 GPU를 계속 가져갔다.",
+      "introduction_commit": null,
+      "attribution": "실패 우선 재시도 규칙과 검사 묶음 전체 재계산의 결합. 묶음 재개 캐시(9858dbc, Claude Code)는 rollout만 남기고 문제별 gradient를 남기지 않았다.",
+      "evidence": [
+        {
+          "kind": "user_report",
+          "text": "switch cuda out out memory\nseed5 switch는 무한 cuda oom\n무한 반복이야\n되다가 안되는거야 고쳐놔"
+        },
+        {
+          "kind": "source",
+          "commit": "f201ff9629b7695de48b93eccec1781963c04c8e",
+          "path": "srgc_research/dispatch/selection_resume.py"
+        },
+        {
+          "kind": "commit",
+          "label": "문제별 gradient 저장 후 이어서 계산",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/f201ff9629b7695de48b93eccec1781963c04c8e"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-10-31",
+          "actor": "배정 수정",
+          "type": "code_fix_verified",
+          "status": "code_fixed",
+          "text": "마지막 시도가 CUDA OOM이면 30분 배정 보류(1e44c8b). 이후 사용자 요청으로 보류를 없앴다(82f9c9c).",
+          "evidence_kind": "code_test",
+          "commit": "1e44c8b093c0124c2d34cc41e13d19a387237153",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/1e44c8b093c0124c2d34cc41e13d19a387237153"
+        },
+        {
+          "at": "2026-10-31",
+          "actor": "재개 수정",
+          "type": "code_fix_verified",
+          "status": "code_fixed",
+          "text": "검사 묶음을 GPU마다 한 문제씩 계산하고 끝난 문제의 gradient를 정책 지문과 함께 저장, 조각 사이 메모리 해제. 같은 가중치의 재시도는 저장된 문제 뒤에서 이어진다. rank별 문제·순서·seed 동일, 엔진 수준 switch 선택 결과가 기준과 동일. 중간 실패 재개 검사는 이전 코드에서 실패.",
+          "evidence_kind": "code_test",
+          "commit": "f201ff9629b7695de48b93eccec1781963c04c8e",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/f201ff9629b7695de48b93eccec1781963c04c8e"
+        },
+        {
+          "at": "2026-10-31",
+          "actor": "할당자 설정",
+          "type": "code_fix_verified",
+          "status": "code_fixed",
+          "text": "Gemma rank에서 CUDA expandable segments를 항상 켠다(상속된 설정이 이를 빼는 경우 대비). 할당 방식만 바뀐다.",
+          "evidence_kind": "code_test",
+          "commit": "03eaf666bb9c2a501a3f43bf7dce34de9a2b5331",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/03eaf666bb9c2a501a3f43bf7dce34de9a2b5331"
+        },
+        {
+          "at": "2026-10-31",
+          "actor": "status",
+          "type": "code_fix_verified",
+          "status": "open",
+          "text": "status ERROR·직전 시도 줄에 OOM 요청량·GPU 총량·남은 양·이 프로세스 사용량·다른 프로세스 수·코드 위치를 표시. OOM 근본 원인은 이 줄을 받기 전까지 미확인.",
+          "evidence_kind": "code_test",
+          "commit": "97e258c08f6568aa3ce200779afa5b6fb0a50cbd",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/97e258c08f6568aa3ce200779afa5b6fb0a50cbd"
+        }
+      ]
+    },
+    {
+      "id": "GUARD-047",
+      "title": "래퍼로 감싼 Gemma 학습 rank를 고아 정리기가 알아보지 못함",
+      "area": "실행·재개",
+      "severity": "high",
+      "first_reported": "2026-10-31",
+      "cause": "학습 rank는 rank_runtime → reward_curve_rank로 실행되어 명령줄에 srgc_research.dispatch.gemma4_it.rank가 없다(reward_curve_rank 감싸기 67a6663). 고정된 고아 정리기의 Gemma IT 대상 표시는 그 이름뿐이라, 죽은 시도의 rank가 정리되지 않을 수 있었다.",
+      "impact": "남은 rank가 GPU 메모리·GPU 잠금을 쥐면 다음 시도의 OOM이나 시작 지연이 생길 수 있다. 원격에서 실제로 남아 있었는지는 미확인.",
+      "introduction_commit": "67a66631ed18de0cb2ec048f77fb9f9b6d6a6174",
+      "attribution": "작성 도구 표시 없는 커밋(33modeling). 정리기 대상 표시를 래퍼에 맞추지 않음.",
+      "evidence": [
+        {
+          "kind": "source",
+          "commit": "dff44713e40c39ffc079a5e302997c7eca058ef1",
+          "path": "srgc_research/dispatch/gemma_it_run.py"
+        },
+        {
+          "kind": "commit",
+          "label": "감싼 rank도 정리 대상",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/dff44713e40c39ffc079a5e302997c7eca058ef1"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-10-31",
+          "actor": "정리기 수정",
+          "type": "code_fix_verified",
+          "status": "code_fixed",
+          "text": "Gemma IT 실행기가 --model gemma4_it인 rank_runtime·reward_curve_rank 프로세스도 정리 대상으로 본다. 실제 로컬 프로세스 검사: 수정 전 코드는 고아 rank를 찾지 못하고, 수정 후 찾아 끝내며 주인이 살아 있는 rank는 남긴다.",
+          "evidence_kind": "code_test",
+          "commit": "dff44713e40c39ffc079a5e302997c7eca058ef1",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/dff44713e40c39ffc079a5e302997c7eca058ef1"
+        }
+      ]
+    },
+    {
+      "id": "CHAIN-048",
+      "title": "Gemma만 남았는데 체인이 child를 10초마다 다시 띄우며 노드가 LAUNCH·PREPARING만 반복",
+      "area": "실행·재개",
+      "severity": "high",
+      "first_reported": "2026-10-31",
+      "cause": "체인 child는 맡을 작업이 없거나 작업 하나가 실패하면 끝나고 coordinator가 다시 띄운다. Gemma에 맡을 작업이 없으면(MATH switch만 남음) 시작 단계만 반복했다. 모델 순서 장벽(594eec9) 때문에 다른 모델로도 넘어가지 않았다.",
+      "impact": "모든 노드가 LAUNCH/PREPARING을 반복하고 작업이 배정되지 않는 것처럼 보였다.",
+      "introduction_commit": "594eec9a492d7e485a4f5d60ac43f563ac067ef2",
+      "attribution": "작성 도구 표시 없는 커밋(33modeling). 한 모델만 남은 경우를 고려하지 않은 체인 설계.",
+      "evidence": [
+        {
+          "kind": "user_report",
+          "text": "아직도 무한 런칭\n잡 할당 안되고 무한 런칭 고쳐\n체인 없애\n체인 필요 없어\ngemma 1개만 남음"
+        },
+        {
+          "kind": "commit",
+          "label": "Gemma 직접 실행 기본",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/829abc57caf91ebbf14aae887a13781c01179c74"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-10-31",
+          "actor": "실행 방식",
+          "type": "code_fix_verified",
+          "status": "code_fixed",
+          "text": "run_srgc_gemma4.sh 기본을 체인 없는 직접 실행으로(SRGC_MODEL_CHAIN=1이면 체인). 직접 worker는 할 일이 없으면 프로세스 안에서 기다리고 작업 실패 뒤에도 다음 작업을 잡는다. CPU 공개 경로 재현: MATH switch가 소유·OOM 상태일 때 MBPP arm 20개 배정 후 종료 없이 대기.",
+          "evidence_kind": "code_test",
+          "commit": "829abc57caf91ebbf14aae887a13781c01179c74",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/829abc57caf91ebbf14aae887a13781c01179c74"
+        },
+        {
+          "at": "2026-10-31",
+          "actor": "재기동",
+          "type": "code_fix_verified",
+          "status": "code_fixed",
+          "text": "직접 worker가 오류로 끝나면 스크립트가 60초 뒤 다시 실행(0·130·143은 종료).",
+          "evidence_kind": "code_test",
+          "commit": "b855283b09106853726d9e9a961d88ebac0b291b",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/b855283b09106853726d9e9a961d88ebac0b291b"
+        },
+        {
+          "at": "2026-10-31",
+          "actor": "잠금 부하",
+          "type": "code_fix_verified",
+          "status": "code_fixed",
+          "text": "상주 worker가 10초마다 전역 배정 잠금으로 전체 큐를 훑던 것을 60~75초로 늦추고 heartbeat는 10초마다 갱신.",
+          "evidence_kind": "code_test",
+          "commit": "7f2eb49ba46a9eef912d8575fbbabe71cf45e2a1",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/7f2eb49ba46a9eef912d8575fbbabe71cf45e2a1"
+        }
+      ]
+    },
+    {
+      "id": "STATUS-049",
+      "title": "status에 STALE·체인 순서·MODEL QUEUE가 쌓이고 LAUNCH 이유가 안 보임",
+      "area": "status",
+      "severity": "medium",
+      "first_reported": "2026-10-31",
+      "cause": "만료된 worker·coordinator 기록을 STALE로 계속 표시했고, 끝에 coordinator마다 MODEL QUEUE RUNNING 줄과 설명문·launcher records가 붙었다. LAUNCH 줄에는 직전 child가 왜 끝났는지 없었다.",
+      "impact": "노드 상태를 읽기 어려웠고 무한 LAUNCH의 원인이 status에 보이지 않았다.",
+      "introduction_commit": null,
+      "attribution": "표시 정책. 사용자 요청으로 정리.",
+      "evidence": [
+        {
+          "kind": "user_report",
+          "text": "야 status에 stale 표시하지마\n밑에 resume | gemma -> qwen -> llama 이거도 빼\n마지막에 running은 왜 쌓이는거야\nstatus 정리 안하냐"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-10-31",
+          "actor": "status",
+          "type": "code_fix_verified",
+          "status": "code_fixed",
+          "text": "STALE 줄·표시·개수, RESUME·모델 순서 표시 제거.",
+          "evidence_kind": "code_test",
+          "commit": "7bb0a9387e01f6657af1ab2e3f1828a518a3c18b",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/7bb0a9387e01f6657af1ab2e3f1828a518a3c18b"
+        },
+        {
+          "at": "2026-10-31",
+          "actor": "status",
+          "type": "code_fix_verified",
+          "status": "code_fixed",
+          "text": "LAUNCH 줄에 직전 child의 종료 단계·코드 또는 worker 종료 이유 표시.",
+          "evidence_kind": "code_test",
+          "commit": "f61bf099a1461640cd1bf89e5742c1a0ef8e818c",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/f61bf099a1461640cd1bf89e5742c1a0ef8e818c"
+        },
+        {
+          "at": "2026-10-31",
+          "actor": "status",
+          "type": "code_fix_verified",
+          "status": "code_fixed",
+          "text": "설명문·launcher records·MODEL QUEUE 제거, 끝에는 Root만.",
+          "evidence_kind": "code_test",
+          "commit": "e37ec437f225bdd964f6afaaa1105810006f686a",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/e37ec437f225bdd964f6afaaa1105810006f686a"
         }
       ]
     }

@@ -12112,6 +12112,86 @@
       "attribution": [],
       "is_fix": false,
       "gemma": true
+    },
+    {
+      "hash": "2460dc0309f1fcfc21a9868129c40ea52859378d",
+      "at": "2026-10-31T21:13:54+09:00",
+      "author": "33modeling",
+      "title": "Record pre-registration startup lock recovery and verification",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/2460dc0309f1fcfc21a9868129c40ea52859378d",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "97e258c08f6568aa3ce200779afa5b6fb0a50cbd",
+      "at": "2026-10-31T21:17:20+09:00",
+      "author": "33modeling",
+      "title": "Show CUDA OOM sizes and call site in the status error line",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/97e258c08f6568aa3ce200779afa5b6fb0a50cbd",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "829abc57caf91ebbf14aae887a13781c01179c74",
+      "at": "2026-10-31T21:23:34+09:00",
+      "author": "33modeling",
+      "title": "Run Gemma directly instead of through the model chain by default",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/829abc57caf91ebbf14aae887a13781c01179c74",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": true
+    },
+    {
+      "hash": "03eaf666bb9c2a501a3f43bf7dce34de9a2b5331",
+      "at": "2026-10-31T21:50:11+09:00",
+      "author": "33modeling",
+      "title": "Keep CUDA expandable segments on in Gemma ranks",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/03eaf666bb9c2a501a3f43bf7dce34de9a2b5331",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": true
+    },
+    {
+      "hash": "b855283b09106853726d9e9a961d88ebac0b291b",
+      "at": "2026-10-31T21:55:15+09:00",
+      "author": "33modeling",
+      "title": "Restart a direct Gemma worker that exits on an error",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/b855283b09106853726d9e9a961d88ebac0b291b",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": true
+    },
+    {
+      "hash": "7f2eb49ba46a9eef912d8575fbbabe71cf45e2a1",
+      "at": "2026-10-31T22:05:42+09:00",
+      "author": "33modeling",
+      "title": "Space out idle claim scans of resident Gemma workers",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/7f2eb49ba46a9eef912d8575fbbabe71cf45e2a1",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": true
+    },
+    {
+      "hash": "f201ff9629b7695de48b93eccec1781963c04c8e",
+      "at": "2026-10-31T22:07:26+09:00",
+      "author": "33modeling",
+      "title": "Keep finished prompt gradients of a scoring block across attempts",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/f201ff9629b7695de48b93eccec1781963c04c8e",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "82f9c9ce5b7454d1504a3c3aa4fdb95ea25fd773",
+      "at": "2026-10-31T22:11:26+09:00",
+      "author": "33modeling",
+      "title": "Retry an out-of-memory Gemma task without the 30-minute hold",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/82f9c9ce5b7454d1504a3c3aa4fdb95ea25fd773",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": true
     }
   ]
 }
