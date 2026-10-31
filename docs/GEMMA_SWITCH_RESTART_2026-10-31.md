@@ -38,3 +38,29 @@ Gemma plan의 adapter·engine 지문(`adapter_sha256`, `engine_sha256`)에 들�
 적용: 클러스터에서 `git pull --ff-only`. 다음에 뜨는 switch 시도부터 적용된다. 이미 끝난
 후보 묶음은 고치기 전 코드가 지웠으므로 첫 시도는 후보를 한 번 더 생성할 수 있다. 진행 중인
 묶음의 rollout은 이어서 쓴다.
+
+## 재시작이 반복되는 이유 (같은 날 추가)
+
+위 수정은 재시작마다 잃는 작업을 없앴지만, switch 시도가 왜 계속 끝나는지는 다루지 않았다.
+사용자가 이 진단이 부족하다고 지적해 코드를 다시 확인했다.
+
+switch만 다른 점은 검사 시점의 후보 묶음 크기다. rank 4개가 80문제를 20문제씩 나눠 채점하고
+마지막 `_gather`(`all_gather_object`)에서 서로를 기다린다. on_policy는 같은 시점에 40문제,
+rank당 10문제다. Gemma 응답은 문제마다 길이 차이가 커서 먼저 끝난 rank가 늦은 rank를 오래
+기다리고, 고정 코드 `srgc_rebuttal/distributed.py`의 NCCL 대기 한도 1800초(937b949,
+2026-09-28)를 넘으면 모든 rank가 끝난다. 늦은 rank는 30초마다 생성 진행을 기록하므로 worker의
+1800초 정지 판정에는 걸리지 않고, NCCL 한도에만 걸린다. rank당 문제 수가 두 배면 rank 사이
+시간 차이도 커지므로 switch에서만 반복된다는 사용자 관찰과 맞다. 실제 클러스터 로그로 확인한
+값은 아니다.
+
+수정:
+
+- Gemma rank에서만 운영 래퍼가 `torch.distributed.init_process_group`의 대기 한도를 6시간으로
+  올린다(`selection_resume.extend_collective_timeout`). 실제로 멈춘 rank는 진행 기록이 없어
+  worker의 1800초 정지 판정이 그대로 끝내고, 죽은 rank는 torchrun이 즉시 전체를 끝낸다.
+- status의 RUNNING 줄에 attempt가 2 이상이면 `previous attempt ended: …`로 이전 시도가 끝난
+  원인(rank 예외, NCCL Watchdog, TIMEOUT, 신호)을 작업 로그에서 찾아 보여 준다. 다음에 같은 일이
+  생기면 status만으로 원인이 보인다.
+
+실험 설정, seed, 선택 규칙, 학습 코드, Gemma plan 지문 파일은 바꾸지 않았다. NCCL 대기 한도는
+plan 필드가 아니다.

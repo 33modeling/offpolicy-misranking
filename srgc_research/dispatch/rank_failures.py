@@ -49,6 +49,26 @@ def last_error_line(path):
     return None
 
 
+def previous_attempt_line(path, *, max_bytes=4 * 1024 * 1024):
+    """Why the launch before the current one ended, for a task that is running again."""
+    try:
+        lines = attempt_lines(path, max_bytes=max_bytes)
+    except (OSError, TypeError):
+        return None
+    boundaries = [i for i, line in enumerate(lines) if line.startswith("SRGC CHILD START ")]
+    if len(boundaries) < 2:
+        return None
+    lines = lines[boundaries[-2]:boundaries[-1]]
+    errors = original_errors(lines)
+    if errors:
+        return errors[-1][:400]
+    for line in reversed(lines):
+        if re.search(r"Error|Exception|error:|out of memory|Killed|TIMEOUT|LAUNCH ERROR|GPU WAIT|"
+                     r"Signal \d+|exitcode\s*:\s*-\d+|Watchdog", line):
+            return line.strip()[:400]
+    return "no error recorded in its log"
+
+
 def failure_details(path, *, start=0):
     try:
         lines = attempt_lines(path, start=start)

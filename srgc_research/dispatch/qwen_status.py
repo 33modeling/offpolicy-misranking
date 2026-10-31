@@ -270,6 +270,11 @@ def progress(task):
         parts.append("starting; progress not recorded yet")
     if type(task.get("attempt")) is int and task["attempt"] > 0:
         parts.append(f"attempt {task['attempt']}")
+        if task["attempt"] > 1 and task.get("log"):
+            from .rank_failures import previous_attempt_line
+            ended = previous_attempt_line(task["log"])
+            if ended:
+                parts.append(f"previous attempt ended: {ended}")
     ranks = []
     for row in task.get("progress", []):
         updated = row.get("updated")

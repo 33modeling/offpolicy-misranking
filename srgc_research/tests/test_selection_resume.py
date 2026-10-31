@@ -189,10 +189,11 @@ def test_rank_wrapper_installs_for_gemma_only(monkeypatch):
 
     calls = []
     monkeypatch.setattr(selection_resume, "install", lambda: calls.append(True))
+    monkeypatch.setattr(selection_resume, "extend_collective_timeout", lambda: calls.append("timeout"))
     monkeypatch.setattr(rank_runtime.runpy, "run_module", lambda *a, **k: None)
     fake = SimpleNamespace(record=lambda function: function)
     monkeypatch.setitem(sys.modules, "torch.distributed.elastic.multiprocessing.errors", fake)
-    for model, expected in (("gemma4_it", 1), ("gemma4", 2), ("qwen35", 2), ("llama31", 2)):
+    for model, expected in (("gemma4_it", 2), ("gemma4", 4), ("qwen35", 4), ("llama31", 4)):
         monkeypatch.setattr(sys, "argv", ["rank_runtime", "--model", model, "--entry-module",
                                           "srgc_research.dispatch.reward_curve_rank", "--", "--model", model])
         rank_runtime.main()
@@ -294,3 +295,41 @@ def test_switch_check_restarts_reach_the_next_update_with_identical_decisions(tm
 def hashlib_digest(value):
     import hashlib
     return hashlib.sha256(repr(value).encode()).hexdigest()[:8]
+
+
+def test_gemma_ranks_wait_longer_than_the_pinned_nccl_limit(monkeypatch):
+    from datetime import timedelta
+
+    seen = []
+    fake = SimpleNamespace(init_process_group=lambda *a, **k: seen.append(k.get("timeout")))
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(distributed=fake))
+    monkeypatch.setitem(sys.modules, "torch.distributed", fake)
+    selection_resume.extend_collective_timeout()
+    selection_resume.extend_collective_timeout()  # idempotent
+    fake.init_process_group("nccl", timeout=timedelta(seconds=1800))
+    fake.init_process_group("nccl")
+    fake.init_process_group("nccl", timeout=timedelta(hours=12))
+    assert seen == [timedelta(hours=6), timedelta(hours=6), timedelta(hours=12)]
+
+
+def test_running_task_shows_why_its_previous_attempt_ended(tmp_path):
+    from srgc_research.dispatch import qwen_status
+    from srgc_research.dispatch.rank_failures import previous_attempt_line
+
+    log = tmp_path / "seed-5.switch.log"
+    log.write_text("SRGC CHILD START model=gemma4_it\n"
+                   "[rank2]: RuntimeError: Watchdog caught collective operation timeout: "
+                   "WorkNCCL(OpType=ALLGATHER, Timeout(ms)=1800000) ran for 1800321 milliseconds\n"
+                   "Root Cause (first observed failure):\n  exitcode  : -6 (pid: 7)\n"
+                   "SRGC CHILD START model=gemma4_it\nGEMMA generation progress\n")
+    line = previous_attempt_line(log)
+    assert line.startswith("[rank2]: RuntimeError: Watchdog caught collective operation timeout")
+    text = qwen_status.progress({"arm": "switch", "attempt": 3, "log": str(log)})
+    assert "attempt 3 | previous attempt ended: [rank2]: RuntimeError: Watchdog" in text
+    assert "previous attempt" not in qwen_status.progress({"arm": "switch", "attempt": 1, "log": str(log)})
+    single = tmp_path / "single.log"
+    single.write_text("SRGC CHILD START model=gemma4_it\n")
+    assert previous_attempt_line(single) is None
+    killed = tmp_path / "killed.log"
+    killed.write_text("SRGC CHILD START a\nGEMMA generation\nTIMEOUT: no progress for 1800s\nSRGC CHILD START b\n")
+    assert previous_attempt_line(killed) == "TIMEOUT: no progress for 1800s"

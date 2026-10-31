@@ -27,6 +27,12 @@ from pathlib import Path
 import numpy as np
 
 RESULT = "gathered-gradients.npz"
+# Ranks shard a scoring block by prompt and wait for each other at its gather.
+# A switch check gives each Gemma rank 20 candidate/SR prompts of very uneven
+# length; the pinned 1800 s NCCL limit then aborts every rank while one is still
+# generating. A rank that really hangs stops writing progress and the worker's
+# own 1800 s stall check still ends the attempt; a dead rank ends it at once.
+COLLECTIVE_TIMEOUT_SECONDS = 6 * 3600
 POLICY = "policy.sha256"
 MODELS = ("gemma4", "gemma4_text", "gemma4_it")
 
@@ -171,6 +177,27 @@ def patch_mixin(mixin):
     mixin.train = train
     mixin.selection_resume_installed = True
     return mixin
+
+
+def extend_collective_timeout(seconds=COLLECTIVE_TIMEOUT_SECONDS):
+    """Raise the pinned NCCL wait limit for this rank process only."""
+    from datetime import timedelta
+
+    import torch.distributed as dist
+
+    original = dist.init_process_group
+    if getattr(original, "selection_resume_timeout", None):
+        return original
+
+    def init_process_group(*args, **kwargs):
+        timeout = kwargs.get("timeout")
+        if timeout is None or timeout < timedelta(seconds=seconds):
+            kwargs["timeout"] = timedelta(seconds=seconds)
+        return original(*args, **kwargs)
+
+    init_process_group.selection_resume_timeout = seconds
+    dist.init_process_group = init_process_group
+    return init_process_group
 
 
 def install():

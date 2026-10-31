@@ -81,6 +81,7 @@ def main():
             # Before the pinned rank imports its backend: a restart reuses a
             # finished scoring block instead of regenerating it.
             selection_resume.install()
+            selection_resume.extend_collective_timeout()
         sys.argv = [args.entry_module or args.entry_script, *arguments]
         if args.entry_module:
             runpy.run_module(args.entry_module, run_name="__main__", alter_sys=True)
