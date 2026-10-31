@@ -13,3 +13,10 @@ Before repair, nine new CPU reproductions failed and two failure/pause controls 
 Final checks: **68 core tests passed in 51.74 seconds**; the other five related modules passed **271 tests with one explicit unavailable-tokenizer skip in 80.83 seconds**. There are no failures. The core test uses actual prepared five-seed Gemma IT queues, pinned MBPP verifier provenance and real local file leases: with three MATH Switch tasks held and 40 claim contenders, all 20 ready MBPP continuation arms are claimed exactly once. With early MBPP disabled, zero are claimed. Prefix bytes remain identical. These are CPU dispatch checks; the 20 claims are not 20 measured real GPU workers. Production source hashes match the verification-start snapshot; only the new test fixture was corrected during the separate neighbor-module run.
 
 The full 7,025-test CPU run from the preceding audit was on an earlier source state and is not represented as a full rerun of this change. Raw before/intermediate/final evidence is retained under /home/nsh/dev/mbpp-bootstrap-fix-20261031. Live remote application remains unverified until current SSH/status evidence is provided.
+
+Application clarification: this fix changes child-worker code. A live model chain
+that retries after child exit 75/76 launches a fresh shell/Python process from the
+same checkout. Pulling there is enough for the next child to read this fix; a
+manual coordinator restart is not required. Already running children keep their
+loaded code until they return, so this is not an immediate in-process hot patch.
+Keep running training intact. The earlier blanket restart instruction was incorrect.

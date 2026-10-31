@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-10-31T18:32:59+09:00",
+  "recorded_at": "2026-10-31T18:37:25+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
     "source_commit": "4c6d01a3df40f214b773b71f03cae27df0d74526",
@@ -1720,6 +1720,16 @@
           "evidence_kind": "code_test",
           "commit": "4c6d01a3df40f214b773b71f03cae27df0d74526",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/4c6d01a3df40f214b773b71f03cae27df0d74526"
+        },
+        {
+          "at": "2026-10-31T09:37:25+00:00",
+          "actor": "적용 안내 정정",
+          "type": "operational_guidance_correction",
+          "status": "code_fixed",
+          "text": "사용자 지적 “코드가 바뀌면서 그냥 다시 배정되는거 아니야?”가 맞다. coordinator가 같은 checkout의 자식을75/76 뒤 자동 재실행하는 경로에서는 pull 후 다음 자식이 수정된 MBPP 코드를 읽는다. 수동 coordinator 재시작을 필수로 안내한 것은 잘못이었다. 실행 중인 학습은 유지하며 메모리 hot patch나 실제 원격 적용 완료를 주장하지 않는다. model_chain.child_command/run_child/drain_phase의 새 subprocess 생성·대기 후 반복 경로를 다시 확인했다.",
+          "evidence_kind": "source_inspection",
+          "commit": "4c6d01a3df40f214b773b71f03cae27df0d74526",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/4c6d01a3df40f214b773b71f03cae27df0d74526/srgc_research/dispatch/model_chain.py"
         }
       ]
     }

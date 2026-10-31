@@ -11,9 +11,12 @@ MATH 캐시 전용 실행이 peer 소유 때문에 76을 반환하면 같은 coo
 사전 검증을 수행할 수 있지만, 통과 전에는 작업을 claim하지 않는다. 빈 MATH 복구 목록만으로
 실행을 끝내어 배정 가능한 MBPP를 놓치지 않는다.
 
-이 변경은 새로 시작한 worker에 적용된다. 이미 실행 중인 학습은 유지하고, 유휴 상태의
-이전 coordinator를 정상 종료한 뒤 `git pull --ff-only origin master` 및 원래 시작 명령으로
-재개한다. `reset`이나 잠금 파일 삭제는 필요하지 않다.
+이번 MBPP 수정은 새 자식 worker가 읽는 코드다. 같은 checkout에서
+`git pull --ff-only origin master`를 하면, 살아 있는 체인이 75/76 대기 후 다음 자식을
+자동 실행할 때 반영된다. 이 경우 coordinator의 수동 재시작은 필요하지 않다.
+실행 중인 학습은 유지한다. 이미 떠 있는 자식에 코드가 즉시 주입되는 것은 아니다.
+아래 과거 수정 중 coordinator 자체나 자동 반환하지 않는 구형 worker를 바꾼 경우의
+재시작 안내를 이번 자식 코드 수정의 필수 조건으로 해석하지 않는다.
 
 공개 학습 시작 명령은 **모델 단위**로 실행한다(2026-10-19 사용자 결정). 한 모델의 MATH와 MBPP를 모두 끝낸 뒤 다음 모델로 간다. Qwen 시작의 기본 순서는 `Qwen MATH → Qwen MBPP → Llama MATH → Llama MBPP → Gemma MATH → Gemma MBPP`다. Llama 시작은 `llama31 → gemma4 → qwen35`, Gemma 시작은 `gemma4 → qwen35 → llama31` 모델 순서를 따르며, 각 모델 안에서는 MATH 다음 MBPP다.
 
@@ -42,7 +45,7 @@ sh scripts/run_srgc_llama31.sh all
 
 필요할 때 `SRGC_MODEL_ORDER=qwen35,llama31,gemma4`로 등록된 모델의 순서를 정하거나 일부만 선택할 수 있다. 지정한 목록에는 시작 모델이 포함돼야 한다. `SRGC_MODEL_POLL_SECONDS`는 1~60초이며 기본 10초다. 의도적으로 한 모델만 실행하려면 `SRGC_MODEL_CHAIN=0`을 지정한다.
 
-이미 떠 있는 Python 프로세스에는 새 연결 로직이 자동 주입되지 않는다. 정상 학습 중인 작업을 중단하지 말고 다음 정상 시작 때 현재 공개 명령을 사용한다. 이전 코드로 IDLE인 worker는 종료 후 같은 명령으로 다시 실행해야 한다. 이 로컬 PC에는 원격 학습 노드의 `/group-volume`이 없으므로 원격 전환이 실제 적용됐다고 간주하지 않는다.
+이미 떠 있는 Python 프로세스의 메모리 코드는 바뀌지 않는다. 다만 살아 있는 model chain은 자식이 75/76으로 반환하면 새 프로세스를 자동 실행하므로, 같은 checkout에 pull한 이번 MBPP 수정은 다음 자식부터 적용된다. coordinator 자체의 변경이나 자동 반환하지 않는 구형 worker의 변경은 별도로 구분한다. 이 로컬 PC에는 원격 학습 노드의 `/group-volume`이 없으므로 원격 전환이 실제 적용됐다고 간주하지 않는다.
 
 ## 같은 노드에서 MODEL CHAIN 잠금이 사용 중일 때
 
