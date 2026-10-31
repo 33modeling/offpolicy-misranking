@@ -11972,6 +11972,46 @@
       "attribution": [],
       "is_fix": true,
       "gemma": true
+    },
+    {
+      "hash": "0cdf27dd44d8ba9aad10e6115898754e8634814b",
+      "at": "2026-10-31T18:33:18+09:00",
+      "author": "33modeling",
+      "title": "Record MBPP idle-worker dispatch failure and verified recovery",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/0cdf27dd44d8ba9aad10e6115898754e8634814b",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "624905f4bef7ed7859df1df649ea133203de80a5",
+      "at": "2026-10-31T18:37:27+09:00",
+      "author": "33modeling",
+      "title": "Clarify automatic worker reload without restarting coordinator",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/624905f4bef7ed7859df1df649ea133203de80a5",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "d7730f15a9bcb1b747924178ac340de6e3bbd150",
+      "at": "2026-10-31T18:53:11+09:00",
+      "author": "33modeling",
+      "title": "Register Gemma startup early and avoid serialized ready-plan preparation",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/d7730f15a9bcb1b747924178ac340de6e3bbd150",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": true
+    },
+    {
+      "hash": "46dda5a23a42f1d947af6530f28ff0ea8f6af945",
+      "at": "2026-10-31T18:56:06+09:00",
+      "author": "33modeling",
+      "title": "Keep startup heartbeat records bounded across automatic retries",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/46dda5a23a42f1d947af6530f28ff0ea8f6af945",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

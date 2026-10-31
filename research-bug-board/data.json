@@ -1,14 +1,14 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-10-31T18:37:25+09:00",
+  "recorded_at": "2026-10-31T18:56:08+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "4c6d01a3df40f214b773b71f03cae27df0d74526",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/4c6d01a3df40f214b773b71f03cae27df0d74526",
-    "all_available_commits": 1126,
+    "source_commit": "46dda5a23a42f1d947af6530f28ff0ea8f6af945",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/46dda5a23a42f1d947af6530f28ff0ea8f6af945",
+    "all_available_commits": 1130,
     "fix_commit_records": 113,
-    "gemma_named_commits": 41,
+    "gemma_named_commits": 42,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
     "first_commit_at": "2026-08-07T05:56:48+09:00",
     "first_gemma_commit": "a15d3f114438cdd38ec1d959b94d3ad881172854",
@@ -23,7 +23,7 @@
       "refs/heads/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:4c6d01a3df40f214b773b71f03cae27df0d74526",
+      "refs/heads/master:46dda5a23a42f1d947af6530f28ff0ea8f6af945",
       "refs/remotes/origin/audit/codecheck-20260820:5dd447990296042e334679c85e7672477cd7c5d3",
       "refs/remotes/origin/audit/p1-integrity:5dfda89ec3be2cc4d60f8f0371eeaf00790f6644",
       "refs/remotes/origin/docs/mbpp-budget-incident-20260919:fa1c6897b2b26ef002dd165c94f58702b1f9e1ed",
@@ -32,7 +32,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:4c6d01a3df40f214b773b71f03cae27df0d74526"
+      "refs/remotes/origin/master:46dda5a23a42f1d947af6530f28ff0ea8f6af945"
     ]
   },
   "incidents": [
@@ -1286,6 +1286,16 @@
           "evidence_kind": "code_test",
           "commit": "8dfc08559300d83721c70a9dbd342636e69647fc",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/8dfc08559300d83721c70a9dbd342636e69647fc"
+        },
+        {
+          "at": "2026-10-31T09:53:50+00:00",
+          "actor": "초기 등록·실행 경로 점검",
+          "type": "all_launch_followup",
+          "status": "open",
+          "text": "사용자의 전체 LAUNCH 보고에 대해 초기 등록·준비 단계와 읽기 전용 프로세스/잠금 진단을 추가했다. PREPARING은 실제 준비 기록이며 학습 RUN으로 바꾸지 않았다. 원격 노드의 현재 원인을 확인할 console/probe 출력이 없어 원래 미등록·정체 사건은 open 유지한다. 초기 등록·상태70개와 관련199개 CPU 회귀 통과, tokenizer1개 건너뜀. 처음137통과/1실패는 테스트가 만든 빈 lock 파일의 before snapshot 위치 오류였으며 수정했다. 실제 원격 노드의 등록·GPU 실행·사용률·현재 잠금 원인은 미확인이다.",
+          "evidence_kind": "code_test",
+          "commit": "d7730f15a9bcb1b747924178ac340de6e3bbd150",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/d7730f15a9bcb1b747924178ac340de6e3bbd150"
         }
       ]
     },
@@ -1730,6 +1740,65 @@
           "evidence_kind": "source_inspection",
           "commit": "4c6d01a3df40f214b773b71f03cae27df0d74526",
           "url": "https://github.com/33modeling/offpolicy-misranking/blob/4c6d01a3df40f214b773b71f03cae27df0d74526/srgc_research/dispatch/model_chain.py"
+        }
+      ]
+    },
+    {
+      "id": "STARTUP-044",
+      "title": "worker 등록 전 준비가 LAUNCH에 가려지고 기존 plan도 공용 생성 잠금에서 기다림",
+      "area": "시작·등록·공유 잠금",
+      "severity": "high",
+      "first_reported": "2026-10-31",
+      "cause": "기존 worker 등록은 모델·패키지·plan 준비 이후였다. 준비된 plan을 읽어 검증하는 시작도 원래 prepare_missing의 .start-prepare.lock을 먼저 얻어야 해서 다른 노드의 생성·검증 뒤에 줄을 섰다. 등록 전 진행 단계 기록이 없어 이 구간 전체가 LAUNCH로 보였다.",
+      "impact": "정상 준비와 잠금 정체를 구별하기 어려웠고 기존 plan의 불필요한 직렬 대기가 worker 등록을 지연시킬 수 있었다. 사용자 원격에서 실제 어떤 단계가 막힌 것인지는 LAUNCH 표시만으로 확정하지 않는다.",
+      "introduction_commit": null,
+      "attribution": "사용자 전체 LAUNCH 보고를 따라 준비 함수와 실제 file lock으로 재현했다. 동결 모델·adapter·학습·기존 입력·보상·checkpoint 파일은 보존했다.",
+      "evidence": [
+        {
+          "kind": "user_report",
+          "text": "아 씨발 지금 전부다 런칭인데\n고쳐봐 등록되게 실행되게 시발\n개씨발 빨리 고쳐"
+        },
+        {
+          "kind": "source",
+          "commit": "624905f4bef7ed7859df1df649ea133203de80a5",
+          "path": "srgc_research/dispatch/gemma4_it/cli.py"
+        },
+        {
+          "kind": "source",
+          "commit": "d7730f15a9bcb1b747924178ac340de6e3bbd150",
+          "path": "docs/STARTUP_REGISTRATION_2026-10-31.md"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-10-31T09:53:50+00:00",
+          "actor": "초기 등록·실행 경로 점검",
+          "type": "shared_lock_reproduced",
+          "status": "open",
+          "text": "수정하지 않은 원래 prepare_missing 함수에 기존 plan을 두고 다른 합성 프로세스가 준비 잠금을 보유하게 하면 실제 locks_lock_inode_wait에서 기다렸다. 새 운영 wrapper의 검사는 실제 동일 잠금을 잡은 채 완성된 유효 plan 검증을 통과하고 모델 identity 오류는 거절했다. 테스트 프로세스만 정리했고 실제 GPU 작업은 실행하지 않았다.",
+          "evidence_kind": "code_test",
+          "commit": "d7730f15a9bcb1b747924178ac340de6e3bbd150",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/d7730f15a9bcb1b747924178ac340de6e3bbd150"
+        },
+        {
+          "at": "2026-10-31T09:53:50+00:00",
+          "actor": "초기 등록·실행 경로 점검",
+          "type": "code_fix_verified",
+          "status": "code_fixed",
+          "text": "준비 작업 앞에서 별도 startup worker를 실제 등록하고 heartbeat·준비 단계를 PREPARING으로 표시한다. 진짜 큐 worker가 등록되면 startup 기록을 종료하며 RUN은 task lease로만 정한다. 준비된 plan은 같은 모델·package·입력 검증을 생성 잠금 밖에서 수행하고, 누락 plan의 peer 생성 대기는75로 반환해 체인이 재시도한다. 원시 실험은 수정하지 않는다. 초기 등록·상태70개와 관련199개 CPU 회귀 통과, tokenizer1개 건너뜀. 처음137통과/1실패는 테스트가 만든 빈 lock 파일의 before snapshot 위치 오류였으며 수정했다. 실제 원격 노드의 등록·GPU 실행·사용률·현재 잠금 원인은 미확인이다.",
+          "evidence_kind": "code_test",
+          "commit": "d7730f15a9bcb1b747924178ac340de6e3bbd150",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/d7730f15a9bcb1b747924178ac340de6e3bbd150"
+        },
+        {
+          "at": "2026-10-31T09:56:08+00:00",
+          "actor": "자동 재시도 기록 점검",
+          "type": "verification_followup",
+          "status": "code_fixed",
+          "text": "자동 재시도마다 uuid 파일이 누적되지 않도록 host·CUDA 설정별 최신 startup heartbeat 한 파일을 갱신한다. 실행 id는 매번 구분한다. 등록·종료·재시도·준비 잠금·모델 identity 검사11개를 최종 코드에서 다시 통과했다. 기존269개 결과와 겹치므로 합산하지 않는다. 과학적 입력·학습·실험 이력은 수정하지 않았다.",
+          "evidence_kind": "code_test",
+          "commit": "46dda5a23a42f1d947af6530f28ff0ea8f6af945",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/46dda5a23a42f1d947af6530f28ff0ea8f6af945"
         }
       ]
     }
