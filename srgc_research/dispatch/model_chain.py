@@ -464,9 +464,8 @@ def render_status(environment=None, *, now=None, rows=None):
     for row in sorted(rows, key=lambda r:r['host']):
         current = row.get('model') or '-'
         dataset = row.get('active_dataset') or row.get('dataset') or '-'
-        mode = ' RESUME' if row.get('resume_only') else ''
-        order = ' -> '.join(row.get('order') or [])
-        lines.append(f"{row['host']} {row['status'].upper()} model={current} dataset={dataset}{mode} | {order}")
+        # Recovery mode and model order are not printed (2026-10-31 user request).
+        lines.append(f"{row['host']} {row['status'].upper()} model={current} dataset={dataset}")
     return lines
 
 

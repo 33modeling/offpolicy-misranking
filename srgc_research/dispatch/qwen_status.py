@@ -135,9 +135,7 @@ def leased_task_text(node):
         text = f"{work} 결과 저장 완료 · 작업 종료/잠금 반환 대기"
     else:
         text = f"{work} 작업 확보 · " + (f"마지막 기록: {stage}" if stage else "실행 단계 미기록")
-    if node.get("heartbeat_stale"):
-        text += " · worker 응답 오래됨, 진행 미확인"
-    elif not math.isfinite(heartbeat_age(node)):
+    if not node.get("heartbeat_stale") and not math.isfinite(heartbeat_age(node)):
         text += " · worker 응답 미기록, 진행 미확인"
     return text
 
@@ -160,7 +158,7 @@ def launcher_text(node):
     return node["idle_reason"]
 
 
-def node_rows(snapshots, *, coordinators=(), model=None, root=None):
+def node_rows(snapshots, *, coordinators=(), model=None, root=None, hide_stale=False):
     """Merge worker, held-task and coordinator evidence once per host."""
     sessions = {}
     for report in snapshots:
@@ -241,6 +239,8 @@ def node_rows(snapshots, *, coordinators=(), model=None, root=None):
         return int(row["status"] in LIVE_WORKERS)
 
     for row in sessions.values():
+        if hide_stale and row["status"] == "heartbeat_stale":
+            continue
         host = row.get("host", "-")
         previous = nodes.get(host)
         if previous is None or (activity(row), -heartbeat_age(row)) > (
@@ -402,7 +402,9 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
 
     coordinators = chain_snapshot(now=now) if coordinators is None else coordinators
     coordinators = scoped_coordinators(coordinators, model=status_model, root=root)
-    nodes = node_rows(snapshots, coordinators=coordinators, model=status_model, root=root)
+    # Expired worker/coordinator records are not shown (2026-10-31 user request);
+    # their heartbeat age stays in the JSON snapshot.
+    nodes = node_rows(snapshots, coordinators=coordinators, model=status_model, root=root, hide_stale=True)
     local = next((row for row in nodes if row["host"] == host), None)
     local_state = (f"ACTIVE ({local['status'].upper()})" if local["status"] in LIVE_WORKERS
                    else local["status"].upper()) if local else "NOT REGISTERED"
@@ -422,24 +424,21 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
         lines.append(backlog_error)
     if nodes:
         live_nodes = sum(row["status"] in LIVE_WORKERS for row in nodes)
-        stale_nodes = sum(row["status"] == "heartbeat_stale" for row in nodes)
         node_counts = Counter(row["status"] for row in nodes)
-        lines += ["", (f"NODES  {live_nodes} active | {stale_nodes} stale | {len(nodes) - live_nodes - stale_nodes} stopped"
+        lines += ["", (f"NODES  {live_nodes} active | {len(nodes) - live_nodes} stopped"
                        f" | RUN {node_counts['running'] + node_counts['serving_other_dataset']} | IDLE {node_counts['idle']}"
                        f" | ADMISSION {node_counts['preflight']}"
                        f" | PREPARING {node_counts['preparing']} | LAUNCH {node_counts['launching']} | WAIT {node_counts['waiting']}"
                        f" | HANDOFF {node_counts['switching']}")]
         rows = []
         for node in nodes:
-            state = {"running": "RUN", "serving_other_dataset": "RUN OTHER", "preflight": "ADMISSION", "heartbeat_stale": "STALE"}.get(
+            state = {"running": "RUN", "serving_other_dataset": "RUN OTHER", "preflight": "ADMISSION"}.get(
                 node["status"], node["status"].upper())
             current = f"{node['label']} {node['task']}" if node.get("task") else "-"
             reason = idle_reason(node, snapshots, backlog) if node["status"] == "idle" else "-"
             heartbeat = age(node.get("heartbeat_age_seconds"))
             if node.get("source") == "task_lease":
                 reason = leased_task_text(node)
-                if node.get("heartbeat_stale"):
-                    heartbeat += " STALE"
             if node.get("source") == "model_chain":
                 current = f"{node['model']} {node['label']} launcher"
                 reason = launcher_text(node)
@@ -577,7 +576,7 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
               f"Root: {root}"]
     from .model_chain import render_status
     lines.extend(render_status(now=now, rows=[row for row in coordinators
-                                            if row["status"] in {"running", "switching", "waiting", "stale"}]))
+                                            if row["status"] in {"running", "switching", "waiting"}]))
     return "\n".join(lines)
 
 

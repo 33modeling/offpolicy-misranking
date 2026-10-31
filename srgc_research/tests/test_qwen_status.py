@@ -222,14 +222,16 @@ def test_failed_tasks_show_last_exception_and_log_path(prepared):
     assert f"log: {log}" in text
 
 
-def test_stale_worker_and_admission_failure_remain_visible(prepared):
+def test_expired_worker_is_hidden_and_admission_failure_remains_visible(prepared):
     root = prepared.root / "runs/math/.queue/workers"
     atomic_json(root / "stale.json", {"worker_id": "stale", "host": "h100-old", "heartbeat": time.time() - 120,
         "status": "running", "task": "seed-5.cache"})
     atomic_json(root / "failed.json", {"worker_id": "failed", "host": "h100-bad", "heartbeat": time.time() - 10,
         "status": "failed", "task": None, "error": "four-GPU admission failed; inspect /shared/preflight.log"})
     text = status.render(prepared.read("math"), prepared.root)
-    assert "0 active | 1 stale | 1 stopped" in text and "STALE" in text
+    # 2026-10-31 user request: expired records are not listed or labelled.
+    assert "0 active | 1 stopped" in text and "STALE" not in text and "| stale |" not in text
+    assert "h100-old" not in text
     assert "h100-bad" in text and "/shared/preflight.log" in text
 
 

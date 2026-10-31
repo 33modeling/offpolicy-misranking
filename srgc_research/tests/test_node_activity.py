@@ -58,7 +58,7 @@ def test_live_launcher_is_counted_before_dataset_worker_exists(cohort, capsys, s
     assert all(not row["workers"] for row in value["datasets"])
     assert not any(task["status"] == "running" for row in value["datasets"] for task in row["tasks"])
     text = inspect(cohort, capsys, as_json=False)
-    assert "NODES  1 active | 0 stale | 0 stopped | RUN 0" in text
+    assert "NODES  1 active | 0 stopped | RUN 0" in text
     assert "no worker records" not in text
     assert f"* {socket.gethostname()}" in text
     assert saved(cohort) == before and path.read_bytes() == receipt
@@ -84,7 +84,7 @@ def test_live_task_lease_keeps_local_node_active_when_heartbeat_is_missing_or_st
         assert node["source"] == "task_lease"
         assert node["heartbeat_stale"] is worker_receipt
         text = inspect(cohort, capsys, as_json=False)
-        assert "NODES  1 active | 0 stale | 0 stopped | RUN 1" in text
+        assert "NODES  1 active | 0 stopped | RUN 1" in text
         assert "초기 응답 캐시 작업 확보" in text
         assert saved(cohort) == before
 
