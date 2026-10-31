@@ -56,11 +56,11 @@ def claim_order(manager, cohort, requested, siblings):
              and manager.dataset_allowed(queue)]
     if active_dataset_phase() != "math" or os.environ.get("SRGC_CACHE_ONLY") == "1" or not early:
         return [(queue, "all" if queue in requested else "backlog") for queue in cohort]
-    # MATH keeps its errors, backlog, caches and prefixes first. New MBPP
-    # cache/prefix work then starts before fresh MATH arms, and an MBPP ERROR
-    # is retried only when this worker has no MATH task to run.
-    return ([(queue, "stages") for queue in requested] + [(queue, "early") for queue in early]
-            + [(queue, "all") for queue in requested] + [(queue, "early-retry") for queue in early])
+    # A free GPU takes MBPP cache/prefix first, then its ERROR retries
+    # (2026-10-31 user rule). MATH errors, backlog, caches, prefixes and arms
+    # follow in their previous order.
+    return ([(queue, "early") for queue in early] + [(queue, "early-retry") for queue in early]
+            + [(queue, "stages") for queue in requested] + [(queue, "all") for queue in requested])
 
 
 def in_scope(manager, queue, task, scope, pending):
@@ -114,10 +114,12 @@ def runnable(manager, requested, pending, args):
             early = queue not in requested and early_sibling(manager, queue, task, admitted=False)
             if queue not in requested and key not in pending and not early:
                 continue
-            if (os.environ.get("SRGC_RESUME_ONLY") == "1"
+            if (os.environ.get("SRGC_RESUME_ONLY") == "1" and not early
                     and os.environ.get("SRGC_CACHE_ONLY") != "1" and key not in pending):
                 continue
-            if active and key not in active:
+            # MATH backlog that cannot run now must not idle a GPU that could
+            # take an early MBPP cache/prefix.
+            if active and key not in active and not early:
                 continue
             if queue.complete(task) or not queue.ready(task) or manager.owned(queue, task):
                 continue

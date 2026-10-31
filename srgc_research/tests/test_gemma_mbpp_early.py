@@ -83,28 +83,65 @@ def drain(model, child=None):
         return model.worker.drain(model.queues, model.options, {}, (), "test", lambda *a, **kw: None)
 
 
-def test_math_phase_starts_mbpp_prefix_before_fresh_math_arms_and_never_mbpp_arms(gemma):
+def test_math_phase_starts_mbpp_prefix_first_and_never_mbpp_arms(gemma):
     math, mbpp = gemma.queues
     assert drain(gemma) is None
-    assert gemma.jobs == [("math", "seed-5.prefix"), ("mbpp", "seed-9.prefix"),
+    assert gemma.jobs == [("mbpp", "seed-9.prefix"), ("math", "seed-5.prefix"),
                           ("math", "seed-5.on_policy"), ("math", "seed-5.sr")]
     assert all(math.complete(task) for task in math.tasks)
     assert mbpp.complete(Task(9, "prefix")) and not mbpp.complete(Task(9, "sr"))
 
 
-def test_math_errors_stay_ahead_of_new_mbpp_stages(gemma):
+def test_new_mbpp_stages_go_ahead_of_math_errors(gemma):
     math, _ = gemma.queues
     abandoned(math, Task(5, "sr"), state="failed")
     drain(gemma)
-    assert gemma.jobs == [("math", "seed-5.sr"), ("mbpp", "seed-9.prefix"), ("math", "seed-5.on_policy")]
+    assert gemma.jobs == [("mbpp", "seed-9.prefix"), ("math", "seed-5.sr"), ("math", "seed-5.on_policy")]
 
 
-def test_failed_mbpp_prefix_retries_only_after_math_work(gemma):
+def test_failed_mbpp_prefix_retries_before_math_work(gemma):
     _, mbpp = gemma.queues
     abandoned(mbpp, Task(9, "prefix"), state="failed")
     drain(gemma)
-    assert gemma.jobs == [("math", "seed-5.prefix"), ("math", "seed-5.on_policy"),
-                          ("math", "seed-5.sr"), ("mbpp", "seed-9.prefix")]
+    assert gemma.jobs == [("mbpp", "seed-9.prefix"), ("math", "seed-5.prefix"),
+                          ("math", "seed-5.on_policy"), ("math", "seed-5.sr")]
+
+
+def test_failed_mbpp_prefix_in_retry_delay_lets_math_run(gemma):
+    _, mbpp = gemma.queues
+    abandoned(mbpp, Task(9, "prefix"), state="failed")
+    gemma.options.retry_delay = 3600
+    drain(gemma)
+    assert gemma.jobs[:3] == [("math", "seed-5.prefix"), ("math", "seed-5.on_policy"), ("math", "seed-5.sr")]
+
+
+def test_unclaimable_math_backlog_does_not_idle_a_gpu_with_mbpp_prefix(gemma, monkeypatch):
+    # The old gate counted every unowned MATH backlog task, even one waiting
+    # out its retry delay, and so held fresh MBPP stages: the GPU stayed idle.
+    math, mbpp = gemma.queues
+    finish_fake(math, Task(5, "prefix"))
+    abandoned(math, Task(5, "sr"), state="failed")
+    manager = EarlyGemma(gemma.queues)
+    with manager.claim(math, retry_failed=True, retry_delay=3600) as task:
+        assert task is None
+    with manager.claim(mbpp, retry_failed=True, retry_delay=3600) as task:
+        assert task == Task(9, "prefix")
+
+
+@pytest.mark.parametrize("resume_only", ("0", "1"))
+def test_chain_child_with_blocked_math_backlog_runs_mbpp_prefix(gemma, monkeypatch, resume_only):
+    math, mbpp = gemma.queues
+    finish_fake(math, Task(5, "prefix"))
+    abandoned(math, Task(5, "sr"), state="failed")
+    monkeypatch.setenv("SRGC_MODEL_CHAIN_CHILD", "1")
+    monkeypatch.setenv("SRGC_RESUME_ONLY", resume_only)
+    manager = EarlyGemma(gemma.queues)
+    pending = resume_drain.phase_pending(manager, manager.pending())
+    assert pending
+    args = SimpleNamespace(retry_delay=3600)
+    assert resume_drain.runnable(manager, [math], pending, args)
+    with manager.claim(mbpp, retry_failed=True, retry_delay=3600) as task:
+        assert task == Task(9, "prefix")
 
 
 def test_chain_child_keeps_math_running_after_an_mbpp_prefix_error(gemma, monkeypatch):
@@ -119,8 +156,8 @@ def test_chain_child_keeps_math_running_after_an_mbpp_prefix_error(gemma, monkey
 
     assert drain(gemma, child) is None
     assert failures == ["seed-9.prefix"]
-    assert gemma.jobs == [("math", "seed-5.prefix"), ("mbpp", "seed-9.prefix"), ("math", "seed-5.on_policy"),
-                          ("math", "seed-5.sr"), ("mbpp", "seed-9.prefix")]
+    assert gemma.jobs == [("mbpp", "seed-9.prefix"), ("mbpp", "seed-9.prefix"), ("math", "seed-5.prefix"),
+                          ("math", "seed-5.on_policy"), ("math", "seed-5.sr")]
 
 
 @pytest.mark.parametrize("panel", (None, "paused"))

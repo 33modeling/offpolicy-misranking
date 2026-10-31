@@ -110,17 +110,22 @@ class ReadyClaims:
                     # Before MATH completes, MBPP is not resume backlog: an early
                     # MBPP stage (or its ERROR) never holds MATH work behind it.
                     pending = {key for key in pending if dataset_name(self.tasks[key][0].plan) != "mbpp"}
+                early_claim = (not math_done and dataset_name(queue.plan) == "mbpp"
+                               and bool(self.early_arms) and self.early_open(queue))
+                # A free GPU takes early MBPP cache/prefix first (2026-10-31 user
+                # rule), so MATH backlog does not gate it.
+                gate = set() if early_claim else pending
                 priorities = self.priorities(pending)
                 failures = self.failure_counts()
                 allowed = {key for key, candidate_queue in self.queues.items()
                            if self.dataset_allowed(candidate_queue, math_done=math_done)}
-                backlog = {key for key in pending if key[0] in allowed
+                backlog = {key for key in gate if key[0] in allowed
                            and not stop_requested(self.tasks[key][0])
                            and not self.tasks[key][0].complete(self.tasks[key][1])
                            and not self.owned(*self.tasks[key])
                            and self.task_allowed(*self.tasks[key], math_done=math_done)}
                 runnable_priority = 1 if backlog and os.environ.get("SRGC_CACHE_ONLY") != "1" else 2
-                for key in pending:
+                for key in gate:
                     candidate_queue, candidate = self.tasks[key]
                     if stop_requested(candidate_queue) or key[0] not in allowed:
                         continue
@@ -146,7 +151,7 @@ class ReadyClaims:
                     if os.environ.get("SRGC_CACHE_ONLY") == "1" and task.arm != "cache":
                         continue
                     key = (str(queue.plan_path.resolve()), task.key)
-                    if (os.environ.get("SRGC_RESUME_ONLY") == "1"
+                    if (os.environ.get("SRGC_RESUME_ONLY") == "1" and not early_claim
                             and os.environ.get("SRGC_CACHE_ONLY") != "1" and key not in pending):
                         continue
                     if priorities[key] > runnable_priority:
