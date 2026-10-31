@@ -50,6 +50,12 @@ def early_sibling(manager, queue, task, *, admitted=True):
             and manager.task_allowed(queue, task, admitted=admitted))
 
 
+def late_sibling(manager, queue, task, *, admitted=True):
+    """An MBPP arm a MATH-phase worker may take once no MATH work is claimable."""
+    return (getattr(manager, "late_mbpp", False) and dataset_name(queue.plan) == "mbpp"
+            and task.arm not in manager.early_arms and manager.task_allowed(queue, task, admitted=admitted))
+
+
 def claim_order(manager, cohort, requested, siblings):
     """Queues in claim order, each with the scope of tasks it may offer."""
     early = [queue for queue in siblings if getattr(manager, "early_arms", ())
@@ -60,7 +66,8 @@ def claim_order(manager, cohort, requested, siblings):
     # (2026-10-31 user rule). MATH errors, backlog, caches, prefixes and arms
     # follow in their previous order.
     return ([(queue, "early") for queue in early] + [(queue, "early-retry") for queue in early]
-            + [(queue, "stages") for queue in requested] + [(queue, "all") for queue in requested])
+            + [(queue, "stages") for queue in requested] + [(queue, "all") for queue in requested]
+            + [(queue, "late") for queue in early])
 
 
 def in_scope(manager, queue, task, scope, pending):
@@ -69,6 +76,8 @@ def in_scope(manager, queue, task, scope, pending):
         return key in pending
     if scope == "stages":
         return task.arm in manager.early_arms
+    if scope == "late":
+        return late_sibling(manager, queue, task)
     if scope == "early":
         return early_sibling(manager, queue, task) and manager.receipt(queue, task).get("status") != "failed"
     return key in pending or early_sibling(manager, queue, task)
@@ -114,8 +123,9 @@ def runnable(manager, requested, pending, args):
             # Admission runs an unrun MBPP panel only outside resume-only mode
             # (early_preflight_plan). Otherwise a claim needs a passed panel, and
             # predicting more would admit, claim nothing and relaunch forever.
-            early = queue not in requested and early_sibling(
-                manager, queue, task, admitted=os.environ.get("SRGC_RESUME_ONLY") == "1")
+            admitted = os.environ.get("SRGC_RESUME_ONLY") == "1"
+            early = queue not in requested and (early_sibling(manager, queue, task, admitted=admitted)
+                                                or late_sibling(manager, queue, task, admitted=admitted))
             if queue not in requested and key not in pending and not early:
                 continue
             if (os.environ.get("SRGC_RESUME_ONLY") == "1" and not early
@@ -378,9 +388,9 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
                         from .rank_failures import failure_details
 
                         print(failure_details(log, start=log_start), flush=True)
-                        # An early MBPP cache/prefix ERROR stays queued for retry; the
+                        # An early MBPP stage or arm ERROR stays queued for retry; the
                         # MATH-phase child keeps running MATH instead of restarting.
-                        if os.environ.get('SRGC_MODEL_CHAIN_CHILD') == '1' and scope not in {"early", "early-retry"}:
+                        if os.environ.get('SRGC_MODEL_CHAIN_CHILD') == '1' and scope not in {"early", "early-retry", "late"}:
                             # Release task/device contexts before the coordinator
                             # restarts this model. Later models remain blocked.
                             progress("failed", active=queue, task=task,

@@ -264,7 +264,8 @@ def test_it_mbpp_cache_then_prefix_claimable_while_math_prefixes_remain(it_math)
     finish_math_caches(mbpp)
     with manager.claim(mbpp, retry_failed=True, retry_delay=0) as task:
         assert task == Task(5, "prefix")
-    assert not manager.task_allowed(mbpp, Task(5, "on_policy"))
+    # MBPP arms open too; drain offers them only after MATH work (scope "late").
+    assert manager.task_allowed(mbpp, Task(5, "on_policy"))
     with manager.claim(math, retry_failed=True, retry_delay=0) as task:
         assert task == Task(5, "prefix")
 
@@ -451,3 +452,55 @@ def test_requested_early_mbpp_panel_matches_admission_mode(gemma, monkeypatch, r
     pending = resume_drain.phase_pending(manager, manager.pending())
     expected = panel == "passed" or panel is None and resume_only == "0"
     assert resume_drain.runnable(manager, [mbpp], pending, SimpleNamespace(retry_delay=0)) is expected
+
+
+class LateGemma(EarlyGemma):
+    late_mbpp = True
+
+
+def test_math_phase_runs_mbpp_arms_after_its_math_work(gemma):
+    # 2026-10-31: MBPP prefix finished and its arms waited behind one MATH arm.
+    math, mbpp = gemma.queues
+    gemma.factory = LateGemma
+    assert drain(gemma) is None
+    assert gemma.jobs == [("mbpp", "seed-9.prefix"), ("math", "seed-5.prefix"), ("math", "seed-5.on_policy"),
+                          ("math", "seed-5.sr"), ("mbpp", "seed-9.sr")]
+    assert all(queue.complete(task) for queue in (math, mbpp) for task in queue.tasks)
+
+
+@pytest.mark.parametrize("resume_only", ("0", "1"))
+def test_gpu_with_math_owned_elsewhere_takes_an_mbpp_arm(gemma, monkeypatch, resume_only):
+    math, mbpp = gemma.queues
+    for task in (Task(5, "prefix"), Task(5, "on_policy")):
+        finish_fake(math, task)
+    finish_fake(mbpp, Task(9, "prefix"))
+    monkeypatch.setenv("SRGC_MODEL_CHAIN_CHILD", "1")
+    manager = LateGemma(gemma.queues)
+    # Another node runs the last MATH arm.
+    with manager.claim(math, retry_failed=True, retry_delay=0) as running:
+        assert running == Task(5, "sr")
+        monkeypatch.setenv("SRGC_RESUME_ONLY", resume_only)
+        pending = resume_drain.phase_pending(manager, manager.pending())
+        assert resume_drain.runnable(manager, [math], pending, SimpleNamespace(retry_delay=0))
+        order = resume_drain.claim_order(manager, [math, mbpp], [math], [mbpp])
+        assert order[-1] == (mbpp, "late")
+        assert [t for t in mbpp.tasks if resume_drain.in_scope(manager, mbpp, t, "late", pending)] == [Task(9, "sr")]
+        with manager.claim(mbpp, retry_failed=True, retry_delay=0) as task:
+            assert task == Task(9, "sr")
+
+
+@pytest.mark.parametrize("panel", (None, "paused"))
+def test_mbpp_arms_still_need_a_passed_panel(gemma, monkeypatch, panel):
+    _, mbpp = gemma.queues
+    finish_fake(mbpp, Task(9, "prefix"))
+    monkeypatch.setattr(EarlyGemma, "panel", panel)
+    manager = LateGemma(gemma.queues)
+    assert not manager.task_allowed(mbpp, Task(9, "sr"))
+    assert not resume_drain.late_sibling(manager, mbpp, Task(9, "sr"))
+
+
+@pytest.mark.parametrize("setting,expected", (("1", True), ("0", False)))
+def test_gemma_it_opts_in_to_mbpp_arms_with_early_start(monkeypatch, setting, expected):
+    monkeypatch.setenv("SRGC_GEMMA_MBPP_EARLY", setting)
+    manager = gemma_it_run.GemmaITEarlyMBPP.__new__(gemma_it_run.GemmaITEarlyMBPP)
+    assert manager.late_mbpp is expected

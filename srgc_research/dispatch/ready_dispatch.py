@@ -32,6 +32,10 @@ class ReadyClaims:
     # Gemma IT opts in for cache and prefix (2026-10-29 user request). Later
     # MBPP arms keep the MATH barrier and every queue dependency.
     early_arms = ()
+    # The remaining MBPP arms may also run while MATH remains, but only on a
+    # worker with no MATH work it can claim (2026-10-31 user report: MBPP
+    # prefix finished and its arms never started behind one MATH switch).
+    late_mbpp = False
 
     def early_state(self, queue):
         """Saved preflight of an early MBPP plan: "passed", "paused" or None (not run)."""
@@ -58,7 +62,7 @@ class ReadyClaims:
             return True
         if active_dataset_phase() != "math" and (self.math_complete() if math_done is None else math_done):
             return True
-        return (task.arm in self.early_arms and self.early_open(queue)
+        return ((task.arm in self.early_arms or self.late_mbpp) and self.early_open(queue)
                 and (not admitted or self.early_state(queue) == "passed"))
 
     def dataset_allowed(self, queue, *, math_done=None):

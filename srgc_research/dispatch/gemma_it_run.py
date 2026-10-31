@@ -82,6 +82,10 @@ class GemmaITEarlyMBPP(GemmaITResumeFirst):
     def early_arms(self):
         return ("cache", "prefix") if early_enabled() else ()
 
+    @property
+    def late_mbpp(self):
+        return early_enabled()
+
     def early_state(self, queue):
         return preflight_state(queue.plan_path)
 
