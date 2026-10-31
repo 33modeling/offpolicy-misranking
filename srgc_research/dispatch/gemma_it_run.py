@@ -5,7 +5,6 @@ import json
 import os
 import subprocess
 import sys
-import time
 from contextlib import ExitStack, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
@@ -109,50 +108,6 @@ class GemmaITEarlyMBPP(GemmaITResumeFirst):
 
     def early_state(self, queue):
         return preflight_state(queue.plan_path)
-
-    def task_allowed(self, queue, task, **kwargs):
-        return super().task_allowed(queue, task, **kwargs) and not self.oom_cooling(queue, task)
-
-    def oom_cooling(self, queue, task, now=None):
-        """A task whose last attempt ran out of GPU memory waits OOM_COOLDOWN.
-
-        A failed task is retried first, so a deterministic OOM otherwise takes
-        every free allocation after the 60 s retry delay and no other work is
-        assigned (2026-10-31). Only dispatch order changes."""
-        row = self.receipt(queue, task)
-        finished = row.get("finished")
-        if row.get("status") != "failed" or type(finished) not in (int, float):
-            return False
-        if (time.time() if now is None else now) >= finished + OOM_COOLDOWN:
-            return False
-        return last_attempt_oom(queue.directory / "logs" / f"{task.key}.log")
-
-
-OOM_COOLDOWN = 1800
-OOM_MARKERS = ("OutOfMemoryError", "CUDA out of memory")
-_OOM_LOGS = {}
-
-
-def last_attempt_oom(path):
-    """Whether the newest launch in a task log ended in a CUDA out-of-memory error."""
-    try:
-        stat = Path(path).stat()
-    except OSError:
-        return False
-    key = (str(path), stat.st_ino, stat.st_size, stat.st_mtime_ns)
-    if key not in _OOM_LOGS:
-        from .rank_failures import attempt_lines
-
-        try:
-            lines = attempt_lines(path)
-        except OSError:
-            return False
-        starts = [i for i, line in enumerate(lines) if line.startswith("SRGC CHILD START ")]
-        segment = lines[starts[-1]:] if starts else lines
-        if len(_OOM_LOGS) > 256:
-            _OOM_LOGS.clear()
-        _OOM_LOGS[key] = any(marker in line for line in segment for marker in OOM_MARKERS)
-    return _OOM_LOGS[key]
 
 
 def early_preflight_plan(plans, environment):

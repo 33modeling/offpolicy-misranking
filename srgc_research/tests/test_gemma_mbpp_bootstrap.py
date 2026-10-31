@@ -201,27 +201,16 @@ def ready_cohort(it_math):
     return cohort, math, mbpp
 
 
-@pytest.mark.parametrize("ending,cooling", [("torch.OutOfMemoryError: CUDA out of memory.", True),
-                                            ("RuntimeError: other failure", False)])
-def test_oom_switch_does_not_take_every_free_gpu(it_math, ending, cooling):
-    # 2026-10-31: a deterministic switch OOM was retried first by every free
-    # allocation after 60 s, so nothing else was ever assigned.
-    import time
-
+def test_oom_switch_is_retried_without_a_cooldown(it_math):
+    # 2026-10-31 user request: retry a switch that ran out of memory right away;
+    # its finished prompt gradients are kept, so the retry resumes after them.
     from srgc_research.tests.test_qwen_resume import abandoned
 
     cohort, math, mbpp = ready_cohort(it_math)
-    for seed in math.plan["seeds"]:
-        abandoned(math, Task(seed, "switch"), state="failed")
-        log = math.directory / "logs" / f"seed-{seed}.switch.log"
-        log.parent.mkdir(parents=True, exist_ok=True)
-        log.write_text("SRGC CHILD START model=gemma4_it\nolder attempt\n"
-                       "SRGC CHILD START model=gemma4_it\n" + ending + "\n")
+    abandoned(math, Task(5, "switch"), state="failed")
+    log = math.directory / "logs" / "seed-5.switch.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text("SRGC CHILD START model=gemma4_it\ntorch.OutOfMemoryError: CUDA out of memory.\n")
     manager = gemma_it_run.GemmaITEarlyMBPP([math, mbpp])
     with manager.claim(math, retry_failed=True, retry_delay=0) as task:
-        assert (task is None) is cooling
-    if cooling:
-        with manager.claim(mbpp, retry_failed=True, retry_delay=0) as task:
-            assert task is not None and task.arm not in {"cache", "prefix"}
-        row = manager.receipt(math, Task(5, "switch"))
-        assert not manager.oom_cooling(math, Task(5, "switch"), now=row["finished"] + gemma_it_run.OOM_COOLDOWN)
+        assert task == Task(5, "switch")
