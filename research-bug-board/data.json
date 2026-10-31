@@ -1,14 +1,14 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-10-31T13:15:16+09:00",
+  "recorded_at": "2026-10-31T13:38:47+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "9858dbc97d944f84080892b7b73375b8a4554731",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/9858dbc97d944f84080892b7b73375b8a4554731",
-    "all_available_commits": 1115,
+    "source_commit": "3d650ae3b611e31e52c8168a40195a607bb926b5",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/3d650ae3b611e31e52c8168a40195a607bb926b5",
+    "all_available_commits": 1116,
     "fix_commit_records": 109,
-    "gemma_named_commits": 35,
+    "gemma_named_commits": 36,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
     "first_commit_at": "2026-08-07T05:56:48+09:00",
     "first_gemma_commit": "a15d3f114438cdd38ec1d959b94d3ad881172854",
@@ -23,7 +23,7 @@
       "refs/heads/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:9858dbc97d944f84080892b7b73375b8a4554731",
+      "refs/heads/master:3d650ae3b611e31e52c8168a40195a607bb926b5",
       "refs/remotes/origin/audit/codecheck-20260820:5dd447990296042e334679c85e7672477cd7c5d3",
       "refs/remotes/origin/audit/p1-integrity:5dfda89ec3be2cc4d60f8f0371eeaf00790f6644",
       "refs/remotes/origin/docs/mbpp-budget-incident-20260919:fa1c6897b2b26ef002dd165c94f58702b1f9e1ed",
@@ -32,7 +32,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:9858dbc97d944f84080892b7b73375b8a4554731"
+      "refs/remotes/origin/master:3d650ae3b611e31e52c8168a40195a607bb926b5"
     ]
   },
   "incidents": [
@@ -1258,6 +1258,16 @@
           "evidence_kind": "code_test",
           "commit": "9858dbc97d944f84080892b7b73375b8a4554731",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/9858dbc97d944f84080892b7b73375b8a4554731"
+        },
+        {
+          "at": "2026-10-31",
+          "actor": "도입 커밋 확인",
+          "type": "recorded",
+          "status": "code_fixed",
+          "text": "도입: 40e187e (2026-09-30 01:43 KST, 'Save every rollout as it is produced so interrupted scoring/evaluation blocks resume'). 작성: Claude Fable 5.1 (Claude Code 세션, 커밋 트레일러 'Co-Authored-By: Claude Fable 5.1'), 커밋 계정 33modeling. 채점 묶음이 끝나면 rollout 캐시를 바로 지우는 shutil.rmtree 줄이 이 커밋에서 처음 생겼다(git log -S로 확인). 처음 기록할 때 도입 커밋을 null로 적은 것을 이 사건으로 바로잡는다.",
+          "evidence_kind": "code_test",
+          "commit": "40e187e4f8497678780dec46bb92ae5891affdfc",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/40e187e4f8497678780dec46bb92ae5891affdfc"
         }
       ]
     }

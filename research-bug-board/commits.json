@@ -11862,6 +11862,16 @@
       "attribution": [],
       "is_fix": true,
       "gemma": true
+    },
+    {
+      "hash": "3d650ae3b611e31e52c8168a40195a607bb926b5",
+      "at": "2026-10-31T13:15:29+09:00",
+      "author": "33modeling",
+      "title": "Record the Gemma switch-check restart loop incident",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/3d650ae3b611e31e52c8168a40195a607bb926b5",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": true
     }
   ]
 }

@@ -1221,6 +1221,16 @@
         "evidence_kind": "code_test",
         "commit": "9858dbc97d944f84080892b7b73375b8a4554731",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/9858dbc97d944f84080892b7b73375b8a4554731"
+      },
+      {
+        "at": "2026-10-31",
+        "actor": "도입 커밋 확인",
+        "type": "recorded",
+        "status": "code_fixed",
+        "text": "도입: 40e187e (2026-09-30 01:43 KST, 'Save every rollout as it is produced so interrupted scoring/evaluation blocks resume'). 작성: Claude Fable 5.1 (Claude Code 세션, 커밋 트레일러 'Co-Authored-By: Claude Fable 5.1'), 커밋 계정 33modeling. 채점 묶음이 끝나면 rollout 캐시를 바로 지우는 shutil.rmtree 줄이 이 커밋에서 처음 생겼다(git log -S로 확인). 처음 기록할 때 도입 커밋을 null로 적은 것을 이 사건으로 바로잡는다.",
+        "evidence_kind": "code_test",
+        "commit": "40e187e4f8497678780dec46bb92ae5891affdfc",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/40e187e4f8497678780dec46bb92ae5891affdfc"
       }
     ]
   }
