@@ -1,14 +1,14 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-10-31T20:37:05+09:00",
+  "recorded_at": "2026-10-31T21:13:24+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "dff44713e40c39ffc079a5e302997c7eca058ef1",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/dff44713e40c39ffc079a5e302997c7eca058ef1",
-    "all_available_commits": 1135,
-    "fix_commit_records": 114,
-    "gemma_named_commits": 43,
+    "source_commit": "6c852006f7c191ab6984194d4a631731990ecdc5",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/6c852006f7c191ab6984194d4a631731990ecdc5",
+    "all_available_commits": 1140,
+    "fix_commit_records": 115,
+    "gemma_named_commits": 46,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
     "first_commit_at": "2026-08-07T05:56:48+09:00",
     "first_gemma_commit": "a15d3f114438cdd38ec1d959b94d3ad881172854",
@@ -23,7 +23,7 @@
       "refs/heads/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:dff44713e40c39ffc079a5e302997c7eca058ef1",
+      "refs/heads/master:6c852006f7c191ab6984194d4a631731990ecdc5",
       "refs/remotes/origin/audit/codecheck-20260820:5dd447990296042e334679c85e7672477cd7c5d3",
       "refs/remotes/origin/audit/p1-integrity:5dfda89ec3be2cc4d60f8f0371eeaf00790f6644",
       "refs/remotes/origin/docs/mbpp-budget-incident-20260919:fa1c6897b2b26ef002dd165c94f58702b1f9e1ed",
@@ -32,7 +32,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:dff44713e40c39ffc079a5e302997c7eca058ef1"
+      "refs/remotes/origin/master:6c852006f7c191ab6984194d4a631731990ecdc5"
     ]
   },
   "incidents": [
@@ -1312,6 +1312,16 @@
           "actor": "repository audit",
           "evidence_kind": "source_inspection",
           "text": "바로 앞 모델 비교 감사 이벤트의21:30 시각은 수동 입력 오류다. 분석 추가 및 첫29개 검사・브라우저 검증은 이 정정 시각 이전에 끝났다. 원래 이벤트는 보존한다. 이후 최신 분석 revision만 표시해 중복 HTML 앵커를 막는 검사를 추가했으며 최종 검사 수는 별도로 기록한다."
+        },
+        {
+          "at": "2026-10-31T21:13:20+09:00",
+          "actor": "시작 잠금 재점검",
+          "type": "startup_peer_lock_followup",
+          "status": "open",
+          "evidence_kind": "code_test",
+          "commit": "6c852006f7c191ab6984194d4a631731990ecdc5",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/6c852006f7c191ab6984194d4a631731990ecdc5",
+          "text": "STARTUP-045에서 worker 등록 전 모델・패키지・session peer 잠금 대기를 재현하고75 자동 재시도와 구버전 child 선택 복구를 추가했다. 관련348개 검사 통과. 실제 원격 등록・배정 회복 근거가 없어 원래 사건은 open 유지한다. 기존 이력과 잠금 파일・학습 결과를 보존했다."
         }
       ]
     },
@@ -1815,6 +1825,58 @@
           "evidence_kind": "code_test",
           "commit": "46dda5a23a42f1d947af6530f28ff0ea8f6af945",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/46dda5a23a42f1d947af6530f28ff0ea8f6af945"
+        }
+      ]
+    },
+    {
+      "id": "STARTUP-045",
+      "title": "모델・패키지・session 잠금에서 worker 등록 전 child가 계속 대기",
+      "area": "실행·재개",
+      "severity": "high",
+      "first_reported": "2026-10-31",
+      "cause": "Gemma IT의 worker 등록 이전 패키지 overlay・snapshot 검증・session join이 blocking flock을 사용했다. peer 잠금이 유지되면 coordinator가 같은 child 종료를 계속 기다려 다음 코드나 worker 등록으로 넘어가지 못했다. 로컬에서 재현한 코드 결함이며 원격의 현재 정체 원인으로 확정하지 않는다.",
+      "impact": "새 allocation이 학습 큐에 등록되기 전에 LAUNCH에 오래 머물 수 있었다. 기존 plan 준비 잠금 fast path가 이 세 잠금까지 처리하지는 않았다.",
+      "introduction_commit": null,
+      "attribution": "시작 전 잠금 재시도 경로 누락. 과학적 모델・adapter・학습 설정은 보존했다.",
+      "evidence": [
+        {
+          "kind": "user_report",
+          "text": "버그 고쳐놔\n새로 잡 할당이 안되고 무한 런칭이야"
+        },
+        {
+          "kind": "source",
+          "commit": "e37ec437f225bdd964f6afaaa1105810006f686a",
+          "path": "srgc_research/dispatch/gemma4_it/model.py"
+        },
+        {
+          "kind": "source",
+          "commit": "6c852006f7c191ab6984194d4a631731990ecdc5",
+          "path": "srgc_research/dispatch/startup_locks.py"
+        },
+        {
+          "kind": "source",
+          "commit": "6c852006f7c191ab6984194d4a631731990ecdc5",
+          "path": "docs/STARTUP_LOCK_RETRY_2026-10-31.md"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-10-31T21:13:20+09:00",
+          "actor": "사용자 보고",
+          "type": "recurrence_report",
+          "status": "open",
+          "text": "새로 잡 할당이 안되고 무한 런칭이야",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-10-31T21:13:20+09:00",
+          "actor": "코드 검증",
+          "type": "startup_lock_retry_verified",
+          "status": "code_fixed",
+          "text": "실제 peer-held flock에서 패키지・모델 검증2개는 수정 전 각각5초 넘게 대기해 실패2/대조군4통과, session도 별도5초 제한을 넘었다. 수정 후 세 경로가75로 반환하고 잠금 해제 후 원래 검증을 거쳐 큐 callback에 도달했다. 잠금 inode・소유권은 그대로였고 잘못된 모델 바이트・패키지 버전은 거절했다. startup/등록/구버전 복구36개, 체인・node lease・패키지・MBPP・resume307개, 별도 reset5개로 서로 다른348개 검사 통과. 실제 신호 검사는 직접 만든 테스트 PID만 대상으로 했다. frozen adapter/engine92개 고유 파일은 dff44713과 같았다. 구버전 child 복구 도구는 실제 kernel waiting/FD identity・PID 시작 세대를 재확인하고 ranks가 있는 그룹을 제외한다. shell이 --dry-run/--help를 전달하게 했고 두 모드도 검증했다. 실제 원격 노드의 현재 원인・할당 회복・GPU 속도는 미확인이다.",
+          "evidence_kind": "code_test",
+          "commit": "6c852006f7c191ab6984194d4a631731990ecdc5",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/6c852006f7c191ab6984194d4a631731990ecdc5"
         }
       ]
     }

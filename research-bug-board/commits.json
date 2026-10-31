@@ -12062,6 +12062,56 @@
       "attribution": [],
       "is_fix": false,
       "gemma": true
+    },
+    {
+      "hash": "8cdd48157724ecb3409607352d16612bcbf51b70",
+      "at": "2026-10-31T20:37:39+09:00",
+      "author": "33modeling",
+      "title": "Document Qwen Llama and Gemma execution differences in bug dashboard",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/8cdd48157724ecb3409607352d16612bcbf51b70",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": true
+    },
+    {
+      "hash": "e119151e7b4d702d26416a23a0137c4e152bd332",
+      "at": "2026-10-31T20:43:16+09:00",
+      "author": "33modeling",
+      "title": "Expect stale-heartbeat workers to be hidden in the status text",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/e119151e7b4d702d26416a23a0137c4e152bd332",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "1e44c8b093c0124c2d34cc41e13d19a387237153",
+      "at": "2026-10-31T20:51:42+09:00",
+      "author": "33modeling",
+      "title": "Hold a Gemma IT task that ran out of GPU memory for 30 minutes",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/1e44c8b093c0124c2d34cc41e13d19a387237153",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": true
+    },
+    {
+      "hash": "e37ec437f225bdd964f6afaaa1105810006f686a",
+      "at": "2026-10-31T21:04:25+09:00",
+      "author": "33modeling",
+      "title": "Trim the status footer to the root path",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/e37ec437f225bdd964f6afaaa1105810006f686a",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "6c852006f7c191ab6984194d4a631731990ecdc5",
+      "at": "2026-10-31T21:12:26+09:00",
+      "author": "33modeling",
+      "title": "Yield peer-owned Gemma startup locks before worker registration",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/6c852006f7c191ab6984194d4a631731990ecdc5",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": true
     }
   ]
 }
