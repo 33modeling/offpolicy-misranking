@@ -365,3 +365,25 @@ def test_initial_candidate_accuracy_is_separate_from_held_out_scores(tmp_path, c
     assert show('math', root, env) == 0
     text = capsys.readouterr().out
     assert 'initial candidate success' in text and 'seed 5 80.0%' in text
+
+
+def test_direct_gemma_worker_is_restarted_after_an_error_exit(tmp_path):
+    # Without the model chain nothing else relaunches a worker that exits on an
+    # admission or GPU error; complete/stopped (0) and Ctrl+C (130) end the loop.
+    counter = tmp_path / "count"
+    python = tmp_path / "python"
+    python.write_text("#!/bin/sh\nn=$(cat \"$COUNTER\" 2>/dev/null || echo 0); n=$((n+1)); echo $n > \"$COUNTER\"\n"
+                      "echo \"$*\"\ncase $n in 1) exit 2;; 2) exit 1;; *) exit 0;; esac\n")
+    python.chmod(0o755)
+    env = {"PATH": os.environ["PATH"], "OM_WORK": str(tmp_path / "work"), "GEMMA_PYTHON": str(python),
+           "COUNTER": str(counter), "SRGC_GEMMA_RESTART_SECONDS": "0"}
+    result = subprocess.run(["sh", str(REPO / "scripts/run_srgc_gemma4.sh"), "all", "resume"],
+                            cwd="/tmp", env=env, capture_output=True, text=True, check=False)
+    assert result.returncode == 0
+    assert result.stdout.splitlines() == ["-m srgc_research.dispatch.gemma_it_run all resume",
+                                          "-m srgc_research.dispatch.gemma_it_run all run",
+                                          "-m srgc_research.dispatch.gemma_it_run all run"]
+    counter.write_text("0")
+    child = subprocess.run(["sh", str(REPO / "scripts/run_srgc_gemma4.sh"), "all"], cwd="/tmp",
+                           env={**env, "SRGC_MODEL_CHAIN_CHILD": "1"}, capture_output=True, text=True, check=False)
+    assert child.returncode == 2 and len(child.stdout.splitlines()) == 1

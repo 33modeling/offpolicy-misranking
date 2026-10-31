@@ -108,6 +108,24 @@ if [ "${SRGC_MODEL_CHAIN:-0}" = 1 ] && [ "${SRGC_MODEL_CHAIN_CHILD:-0}" != 1 ]; 
     esac
 fi
 if [ "${SRGC_GEMMA_IT_PROTOCOL:-0}" = 1 ]; then
+    case "${SRGC_MODEL_CHAIN_CHILD:-0}:${2:-run}" in
+        0:run|0:resume)
+            # Without the chain nothing relaunches a worker that exits on an
+            # admission or GPU error, so restart it here. 0 means complete or
+            # stopped; 130/143 mean interrupted. A resume clears stops only once.
+            while :; do
+                code=0
+                "$PY" -m srgc_research.dispatch.gemma_it_run "$@" || code=$?
+                case "$code" in 0|130|143) exit "$code" ;; esac
+                printf 'GEMMA worker exited %s; restarting in %ss (Ctrl+C stops)\n' "$code" "${SRGC_GEMMA_RESTART_SECONDS:-60}" >&2
+                sleep "${SRGC_GEMMA_RESTART_SECONDS:-60}"
+                if [ "${2:-run}" = resume ]; then
+                    DATASET=$1
+                    shift 2
+                    set -- "$DATASET" run "$@"
+                fi
+            done ;;
+    esac
     exec "$PY" -m srgc_research.dispatch.gemma_it_run "$@"
 fi
 if [ "${SRGC_GEMMA_TEXT_PROTOCOL:-0}" = 1 ]; then
