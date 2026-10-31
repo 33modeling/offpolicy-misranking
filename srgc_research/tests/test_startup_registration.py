@@ -132,3 +132,36 @@ def test_retries_reuse_one_latest_startup_record_per_allocation(tmp_path):
     assert len(set(identities)) == 3
     assert len(list(startup.directory(root).glob('*.json'))) == 1
     assert startup.snapshot(root) == []
+
+
+def test_launcher_row_shows_why_the_last_child_ended(tmp_path):
+    # 2026-10-31: every node cycled through LAUNCH and status gave no reason.
+    import time
+
+    root = tmp_path / 'experiment'
+    with pytest.raises(SystemExit), startup.registration(root):
+        startup.progress('plans_validate')
+        raise SystemExit(76)
+    host = json.loads(next(startup.directory(root).glob('*.json')).read_text())['host']
+    assert startup.recent_exits(root)[host][1] == '기존 plan·입력 검증 중 종료 (exit 76)'
+    coordinator = {'status': 'running', 'model': 'gemma4', 'status_model': 'gemma4_it', 'host': host,
+                   'root': str(root.resolve()), 'heartbeat_age_seconds': 0, 'active_dataset': 'math',
+                   'started': time.time()}
+    text = qwen_status.render([], root.resolve(), status_model='gemma4_it', coordinators=[coordinator])
+    assert '직전 child' in text and '기존 plan·입력 검증 중 종료 (exit 76)' in text
+
+
+def test_entry_return_code_is_recorded_as_the_exit(tmp_path):
+    root = tmp_path / 'experiment'
+    assert startup.wrap_entry(lambda args: 75, root)(['all']) == 75
+    assert [value[1] for value in startup.recent_exits(root).values()] == ['worker 초기 등록 중 종료 (exit 75)']
+
+
+def test_yielded_worker_reason_reaches_the_launcher_row():
+    snapshots = [{'workers': [
+        {'host': 'n1', 'status': 'yielded', 'heartbeat_age_seconds': 40,
+         'idle_reason': 'no claimable tasks; waiting to resume this model'},
+        {'host': 'n1', 'status': 'yielded', 'heartbeat_age_seconds': 4000, 'idle_reason': 'old'},
+        {'host': 'n2', 'status': 'running', 'heartbeat_age_seconds': 1, 'idle_reason': 'live'}]}]
+    exits = qwen_status.previous_exits(snapshots, None, 'qwen35')
+    assert exits == {'n1': (40, 'worker yielded (no claimable tasks; waiting to resume this model)')}

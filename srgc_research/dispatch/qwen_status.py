@@ -140,6 +140,27 @@ def leased_task_text(node):
     return text
 
 
+def previous_exits(snapshots, root, model, now=None, window=1800):
+    """Why the latest child on each host ended: its worker or startup record."""
+    exits = {}
+    for report in snapshots:
+        for worker in report["workers"]:
+            text = worker.get("idle_reason") or worker.get("error")
+            seconds = heartbeat_age(worker)
+            if worker.get("status") in LIVE_WORKERS or not text or seconds > window:
+                continue
+            host = worker.get("host", "-")
+            if host not in exits or seconds < exits[host][0]:
+                exits[host] = (seconds, f"worker {worker['status']} ({text})")
+    if model == "gemma4_it" and root is not None:
+        from .startup import recent_exits
+
+        for host, value in recent_exits(root, now=now, window=window).items():
+            if host not in exits or value[0] < exits[host][0]:
+                exits[host] = value
+    return exits
+
+
 def launcher_text(node):
     if node["status"] == "waiting":
         code = node.get("previous_exit_code", node.get("exit_code"))
@@ -430,6 +451,7 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
                        f" | ADMISSION {node_counts['preflight']}"
                        f" | PREPARING {node_counts['preparing']} | LAUNCH {node_counts['launching']} | WAIT {node_counts['waiting']}"
                        f" | HANDOFF {node_counts['switching']}")]
+        exits = previous_exits(snapshots, root, status_model, now)
         rows = []
         for node in nodes:
             state = {"running": "RUN", "serving_other_dataset": "RUN OTHER", "preflight": "ADMISSION"}.get(
@@ -442,6 +464,9 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
             if node.get("source") == "model_chain":
                 current = f"{node['model']} {node['label']} launcher"
                 reason = launcher_text(node)
+                if node.get("host") in exits:
+                    seconds, text = exits[node["host"]]
+                    reason += f" · 직전 child {age(seconds)} 전: {text}"
             if node.get("source") == "startup":
                 current = f"worker pid={node['pid']}"
                 reason = node["idle_reason"]

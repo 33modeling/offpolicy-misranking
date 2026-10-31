@@ -71,8 +71,12 @@ def registration(root):
     thread.start()
     try:
         yield
-    except BaseException:
-        value.update(status='ended')
+    except SystemExit as error:
+        # Status shows why a launch ended, so a relaunch loop is visible there.
+        value.update(status='ended', exit=f'exit {error.code}')
+        raise
+    except BaseException as error:
+        value.update(status='ended', exit=f'{type(error).__name__}: {error}'[:300])
         raise
     finally:
         value.stop.set()
@@ -98,7 +102,10 @@ def wrap_entry(original, root):
         with registration(root), \
                 patch.object(model, 'ensure_snapshot', step(model.ensure_snapshot, 'model_files')), \
                 patch.object(runtime, 'activate', step(runtime.activate, 'packages')):
-            return original(args)
+            code = original(args)
+            if code:
+                CURRENT.get().update(exit=f'exit {code}')
+            return code
     return launch
 
 
@@ -123,6 +130,28 @@ def snapshot(root, *, now=None):
                 continue
             rows.append({**row, 'heartbeat_age_seconds': age,
                          'status': 'preparing', 'idle_reason': LABELS[row['stage']]})
+        except (OSError, ValueError, TypeError, AttributeError):
+            continue
+    return rows
+
+
+def recent_exits(root, *, now=None, window=1800):
+    """Latest recorded startup exit per host within the window."""
+    now = time.time() if now is None else now
+    rows = {}
+    for path in directory(root).glob('*.json'):
+        try:
+            row = json.loads(path.read_text())
+            if (row.get('status') != 'ended' or not isinstance(row.get('exit'), str)
+                    or row.get('root') != str(Path(root).resolve()) or not isinstance(row.get('host'), str)
+                    or type(row.get('heartbeat')) not in (int, float) or not math.isfinite(row['heartbeat'])):
+                continue
+            age = now - row['heartbeat']
+            if not 0 <= age <= window:
+                continue
+            stage = LABELS.get(row.get('stage'), '시작 단계 미기록')
+            if row['host'] not in rows or age < rows[row['host']][0]:
+                rows[row['host']] = (age, f"{stage} 중 종료 ({row['exit']})")
         except (OSError, ValueError, TypeError, AttributeError):
             continue
     return rows
