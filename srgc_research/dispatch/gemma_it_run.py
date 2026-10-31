@@ -68,6 +68,26 @@ def preflight_state(path):
     return PANEL_STATES[key]
 
 
+# Training ranks run as rank_runtime -> reward_curve_rank, so their command line
+# never names gemma4_it.rank, the pinned orphan reaper's only Gemma IT marker.
+RANK_WRAPPERS = ("srgc_research.dispatch.rank_runtime", "srgc_research.dispatch.reward_curve_rank")
+
+
+def wrapped_rank_target(original):
+    """Also reap orphaned Gemma IT ranks launched through those wrappers (2026-10-31)."""
+    def is_target(cmdline, plan=None):
+        if original(cmdline, plan):
+            return True
+        from scripts import srgc_process_guard as guard
+
+        argv0 = os.path.basename(cmdline.split(" ", 1)[0]) if cmdline else ""
+        return (argv0.startswith("python") and (plan is None or plan in cmdline)
+                and any(marker in cmdline for marker in RANK_WRAPPERS)
+                and "--model gemma4_it" in cmdline
+                and not any(marker in cmdline for marker in guard.OWNER_MARKERS))
+    return is_target
+
+
 def early_enabled(environment=None):
     return (os.environ if environment is None else environment).get("SRGC_GEMMA_MBPP_EARLY", "1") != "0"
 
@@ -273,6 +293,7 @@ def run(argv=None):
             stack.enter_context(patch.object(cli, "resume_first_worker", nullcontext))
             stack.enter_context(patch.object(guard, "OWNER_MARKERS", (
                 *guard.OWNER_MARKERS, "srgc_research.dispatch.gemma_it_run")))
+            stack.enter_context(patch.object(guard, "is_target", wrapped_rank_target(guard.is_target)))
             stack.enter_context(patch.object(cluster, "gpu_identity", lambda: identity()
                 if enabled() else released_gpu_identity(identity, label="GEMMA")))
         try:
