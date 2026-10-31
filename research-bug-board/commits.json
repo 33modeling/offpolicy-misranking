@@ -11872,6 +11872,26 @@
       "attribution": [],
       "is_fix": false,
       "gemma": true
+    },
+    {
+      "hash": "72a9a33128c5d095c45fc11f8adf6180da732e9e",
+      "at": "2026-10-31T13:38:48+09:00",
+      "author": "33modeling",
+      "title": "Attribute the Gemma switch restart loop to its introducing commit",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/72a9a33128c5d095c45fc11f8adf6180da732e9e",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": true
+    },
+    {
+      "hash": "cd0cb20503bc0d7294b8be3dca138d18c180b262",
+      "at": "2026-10-31T13:59:28+09:00",
+      "author": "33modeling",
+      "title": "fix(gemma): stop the switch-check gather from hitting the NCCL wait limit and show why the previous attempt ended",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/cd0cb20503bc0d7294b8be3dca138d18c180b262",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": true
     }
   ]
 }

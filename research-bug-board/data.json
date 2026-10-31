@@ -1,14 +1,14 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-10-31T13:38:47+09:00",
+  "recorded_at": "2026-10-31T13:59:46+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "3d650ae3b611e31e52c8168a40195a607bb926b5",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/3d650ae3b611e31e52c8168a40195a607bb926b5",
-    "all_available_commits": 1116,
-    "fix_commit_records": 109,
-    "gemma_named_commits": 36,
+    "source_commit": "cd0cb20503bc0d7294b8be3dca138d18c180b262",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/cd0cb20503bc0d7294b8be3dca138d18c180b262",
+    "all_available_commits": 1118,
+    "fix_commit_records": 110,
+    "gemma_named_commits": 38,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
     "first_commit_at": "2026-08-07T05:56:48+09:00",
     "first_gemma_commit": "a15d3f114438cdd38ec1d959b94d3ad881172854",
@@ -23,7 +23,7 @@
       "refs/heads/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:3d650ae3b611e31e52c8168a40195a607bb926b5",
+      "refs/heads/master:cd0cb20503bc0d7294b8be3dca138d18c180b262",
       "refs/remotes/origin/audit/codecheck-20260820:5dd447990296042e334679c85e7672477cd7c5d3",
       "refs/remotes/origin/audit/p1-integrity:5dfda89ec3be2cc4d60f8f0371eeaf00790f6644",
       "refs/remotes/origin/docs/mbpp-budget-incident-20260919:fa1c6897b2b26ef002dd165c94f58702b1f9e1ed",
@@ -32,7 +32,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:3d650ae3b611e31e52c8168a40195a607bb926b5"
+      "refs/remotes/origin/master:cd0cb20503bc0d7294b8be3dca138d18c180b262"
     ]
   },
   "incidents": [
@@ -1268,6 +1268,63 @@
           "evidence_kind": "code_test",
           "commit": "40e187e4f8497678780dec46bb92ae5891affdfc",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/40e187e4f8497678780dec46bb92ae5891affdfc"
+        },
+        {
+          "at": "2026-10-31",
+          "actor": "사용자 지적",
+          "type": "recorded",
+          "status": "code_fixed",
+          "text": "사용자 지적: 진단이 잘못됐다. 이 수정은 재시작 때 잃는 작업만 없앴고 시도가 왜 끝나는지는 찾지 않았다. 반복 종료 원인 후보는 GEMMA-036에 기록하고 고쳤다.",
+          "evidence_kind": "user_report",
+          "commit": "cd0cb20503bc0d7294b8be3dca138d18c180b262",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/cd0cb20503bc0d7294b8be3dca138d18c180b262"
+        }
+      ]
+    },
+    {
+      "id": "GEMMA-036",
+      "title": "Gemma switch 검사 묶음의 rank 대기가 NCCL 1800초 한도를 넘어 시도가 반복 종료",
+      "area": "분산·재개",
+      "severity": "critical",
+      "first_reported": "2026-10-31",
+      "cause": "rank 4개가 switch 검사의 후보·SR 80문제를 20문제씩 채점하고 all_gather_object에서 서로를 기다린다. Gemma 응답 길이 차이로 먼저 끝난 rank가 1800초 넘게 기다리면 고정 코드 srgc_rebuttal/distributed.py의 NCCL 대기 한도에 걸려 모든 rank가 끝난다. 늦은 rank는 30초마다 진행을 기록해 worker 정지 판정에는 걸리지 않는다. on_policy는 rank당 10문제라 차이가 작다. 클러스터 로그로 확인하지 못한 코드 분석이다.",
+      "impact": "switch만 25번 검사에서 시도가 반복해서 끝나고 결과가 나오지 않았다. GEMMA-035와 겹쳐 매번 후보 생성을 처음부터 다시 했다.",
+      "introduction_commit": "937b9490170b71c2d8931d68d9b934d120cd8da3",
+      "attribution": "NCCL 대기 한도 1800초는 937b949(2026-09-28 'Harden H100 experiment admission and add status/results exports')에서 들어왔다. 커밋에 작성 도구 트레일러가 없어 작성 도구는 확인할 수 없다. 커밋 계정은 33modeling. GEMMA-035 첫 진단(Claude)이 반복 종료 원인을 찾지 않고 재시작 손실만 고친 것도 이 사건의 일부다.",
+      "evidence": [
+        {
+          "kind": "user_report",
+          "text": "야 진단 잘못했어 / 그거 때문 아닌거 같은데 다시 찾아봐 / 다시 모든 상황체크해서 버그 체크하고 현황판에 업데이트 하고 고쳐놔"
+        },
+        {
+          "kind": "source",
+          "commit": "937b9490170b71c2d8931d68d9b934d120cd8da3",
+          "path": "srgc_rebuttal/distributed.py"
+        },
+        {
+          "kind": "source",
+          "commit": "cd0cb20503bc0d7294b8be3dca138d18c180b262",
+          "path": "srgc_research/dispatch/selection_resume.py"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-10-31",
+          "actor": "사용자 보고",
+          "type": "user_request",
+          "status": "open",
+          "text": "야 진단 잘못했어 / 그거 때문 아닌거 같은데 다시 찾아봐 / 다시 모든 상황체크해서 버그 체크하고 현황판에 업데이트 하고 고쳐놔",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-10-31",
+          "actor": "코드 검증",
+          "type": "code_fix_verified",
+          "status": "code_fixed",
+          "text": "Gemma rank에서만 운영 래퍼가 init_process_group 대기 한도를 6시간으로 올린다. 실제로 멈춘 rank는 worker의 1800초 정지 판정, 죽은 rank는 torchrun이 끝낸다. status RUNNING 줄에 attempt 2 이상이면 'previous attempt ended: …'로 이전 시도의 종료 원인(rank 예외·NCCL Watchdog·TIMEOUT·신호)을 표시한다. 실험 설정·학습 코드·plan 지문 파일은 그대로. 새 검사 통과, 전체 1861 통과(실패 8·수집 오류 13은 수정 전과 같음, torch 없는 환경). 원격 미검증.",
+          "evidence_kind": "code_test",
+          "commit": "cd0cb20503bc0d7294b8be3dca138d18c180b262",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/cd0cb20503bc0d7294b8be3dca138d18c180b262"
         }
       ]
     }
