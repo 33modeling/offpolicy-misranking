@@ -1,3 +1,4 @@
+import {renderAnalysis} from './analysis.mjs';
 import {$, badge, bindRows, chip, esc, fresh, group, kv, press, row, stamp, tile, topBar} from '../assets/status-kit/status.mjs';
 
 const NAMES = {open: '미해결·미확인', in_progress: '수정 중', code_fixed: '코드 수정', verified: '범위 검증 완료'};
@@ -6,7 +7,7 @@ const TYPES = {code_test: '코드 검사', actual_model_probe: '실제 모델 �
 const status = (r) => r.events.at(-1)?.status ?? 'open';
 const safe = (url) => typeof url === 'string' && url.startsWith('https://github.com/33modeling/') ? url : '#';
 const day = (at) => at ? at.slice(0, 10) : '시각 미확인';
-let data, commits, view = 'incidents', filter = 'all', area = 'all', limit = 40;
+let data, commits, analysis, view = 'incidents', filter = 'all', area = 'all', limit = 40;
 // 지난번 본 뒤 새 기록: 사건마다 이력 수를 이 브라우저에 남겨 두고 견준다. 이력은 덧붙이기만 하므로 늘어난 수가 새 이력이다.
 const SEEN_KEY = 'paper-code-bugs:seen:v1';
 let changes = new Map(), since = '';
@@ -49,6 +50,10 @@ function commitRow(c) {
 
 function render() {
   const q = $('#q').value.trim().toLowerCase();
+  press('#views [data-view]', 'view', view === 'analysis' ? 'analysis' : 'incidents');
+  $('#sort').hidden = view === 'analysis';
+  $('#scores').hidden = view === 'analysis';
+  $('#q').placeholder = view === 'analysis' ? '모델·설정·변경·미해결 검색' : '1%, JSON, status, 커밋 검색';
   const incidents = data.incidents;
   const unresolved = incidents.filter((r) => ['open', 'in_progress'].includes(status(r)));
   $('#tiles').innerHTML = [
@@ -62,6 +67,12 @@ function render() {
   const areas = [...new Set(incidents.map((r) => r.area))];
   $('#areas').innerHTML = view === 'incidents' ? [chip('all', '모든 분야', null, 'area'), ...areas.map((a) => chip(a, a, incidents.filter((r) => r.area === a).length, 'area'))].join('') : '';
   press('#areas [data-area]', 'area', area);
+  if (view === 'analysis') {
+    $('#list').innerHTML = renderAnalysis(analysis, q);
+    $('#more').hidden = true;
+    writeUrl();
+    return;
+  }
   let rows = view === 'incidents' ? incidents.filter((r) => (area === 'all' || r.area === area)
     && (filter === 'all' || (filter === 'unresolved') === ['open', 'in_progress'].includes(status(r)))) : commits.filter((c) => view !== 'fixes' || c.is_fix);
   rows = rows.filter((r) => !q || values(r).toLowerCase().includes(q));
@@ -81,7 +92,7 @@ function render() {
 // 주소 조건: ?view=fixes, ?show=unresolved&area=Status, ?q=json&sort=updated 처럼 거른 화면을 주소로 나눈다. 사건 하나는 #GEMMA-001.
 function readUrl() {
   const p = new URLSearchParams(location.search);
-  view = ['fixes', 'commits'].includes(p.get('view')) ? p.get('view') : 'incidents';
+  view = ['fixes', 'commits', 'analysis'].includes(p.get('view')) ? p.get('view') : 'incidents';
   filter = view === 'incidents' && ['unresolved', 'resolved'].includes(p.get('show')) ? p.get('show') : 'all';
   area = view === 'incidents' && data.incidents.some((r) => r.area === p.get('area')) ? p.get('area') : 'all';
   $('#q').value = (p.get('q') || '').slice(0, 80);
@@ -141,9 +152,10 @@ let restore = () => {};
 $('#top').outerHTML = topBar('paper-code-bugs');
 restore = bindRows($('#list'));
 try {
-  [data, {commits}] = await Promise.all([
+  [data, {commits}, analysis] = await Promise.all([
     fetch('data.json').then((r) => { if (!r.ok) throw Error('사건 기록 ' + r.status); return r.json(); }),
     fetch('commits.json').then((r) => { if (!r.ok) throw Error('커밋 기록 ' + r.status); return r.json(); }),
+    fetch('model-analysis.json').then((r) => { if (!r.ok) throw Error('모델 분석 ' + r.status); return r.json(); }).catch(() => null),
   ]);
   $('#fresh').outerHTML = fresh(data.recorded_at, {label: '기록', warnHours: 72, deadHours: 24 * 14});
   $('#scores').innerHTML = `<div class="sk-callout warn"><b>Gemma 초기 보고 수치</b><ul class="pcb-scores">${data.reported_scores.map((s) => `<li>${badge('warn', s.label, 'plain')}<span>${esc(s.source)} · ${s.verified ? '검증됨' : '미검증'}</span></li>`).join('')}</ul><p class="sk-note" style="margin-top:8px">${esc(data.measurement_note)}</p></div>`;
@@ -154,11 +166,13 @@ try {
   renderChanges();
   $('#changes').addEventListener('click', (e) => { if (!e.target.closest('#changes-seen')) return; seen.set(); changes = new Map(); renderChanges(); render(); });
   $('#tiles').addEventListener('click', (e) => { const b = e.target.closest('[data-filter]'); if (!b) return; [view, filter] = b.dataset.filter.split(':'); area = 'all'; limit = 40; render(); });
+  $('#views').addEventListener('click', (e) => { const b = e.target.closest('[data-view]'); if (!b) return; view = b.dataset.view; filter = 'all'; area = 'all'; limit = 40; $('#q').value = ''; try { history.replaceState(null, '', location.pathname + location.search); } catch {} render(); });
+  $('#list').addEventListener('click', (e) => { const b = e.target.closest('[data-analysis-expand]'); if (b) $('#list').querySelectorAll('.pcb-comparison').forEach((d) => { d.open = b.dataset.analysisExpand === 'true'; }); });
   $('#areas').addEventListener('click', (e) => { const b = e.target.closest('[data-area]'); if (b) { area = b.dataset.area; limit = 40; render(); } });
   $('#q').addEventListener('input', () => { limit = 40; render(); });
   $('#sort').addEventListener('change', render);
   $('#more').addEventListener('click', () => { limit += 60; render(); });
-  $('#download').addEventListener('click', () => { const url = URL.createObjectURL(new Blob([JSON.stringify({data, commits}, null, 2)], {type: 'application/json'})); const a = document.createElement('a'); a.href = url; a.download = 'paper-code-bug-records.json'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 30000); });
+  $('#download').addEventListener('click', () => { const url = URL.createObjectURL(new Blob([JSON.stringify({data, commits, analysis}, null, 2)], {type: 'application/json'})); const a = document.createElement('a'); a.href = url; a.download = 'paper-code-bug-records.json'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 30000); });
   window.addEventListener('hashchange', () => openHash(true));
   render();
   openHash(true);

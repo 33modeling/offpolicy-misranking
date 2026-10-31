@@ -1,14 +1,14 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-10-31T18:56:08+09:00",
+  "recorded_at": "2026-10-31T20:37:05+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "46dda5a23a42f1d947af6530f28ff0ea8f6af945",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/46dda5a23a42f1d947af6530f28ff0ea8f6af945",
-    "all_available_commits": 1130,
-    "fix_commit_records": 113,
-    "gemma_named_commits": 42,
+    "source_commit": "dff44713e40c39ffc079a5e302997c7eca058ef1",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/dff44713e40c39ffc079a5e302997c7eca058ef1",
+    "all_available_commits": 1135,
+    "fix_commit_records": 114,
+    "gemma_named_commits": 43,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
     "first_commit_at": "2026-08-07T05:56:48+09:00",
     "first_gemma_commit": "a15d3f114438cdd38ec1d959b94d3ad881172854",
@@ -23,7 +23,7 @@
       "refs/heads/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:46dda5a23a42f1d947af6530f28ff0ea8f6af945",
+      "refs/heads/master:dff44713e40c39ffc079a5e302997c7eca058ef1",
       "refs/remotes/origin/audit/codecheck-20260820:5dd447990296042e334679c85e7672477cd7c5d3",
       "refs/remotes/origin/audit/p1-integrity:5dfda89ec3be2cc4d60f8f0371eeaf00790f6644",
       "refs/remotes/origin/docs/mbpp-budget-incident-20260919:fa1c6897b2b26ef002dd165c94f58702b1f9e1ed",
@@ -32,7 +32,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:46dda5a23a42f1d947af6530f28ff0ea8f6af945"
+      "refs/remotes/origin/master:dff44713e40c39ffc079a5e302997c7eca058ef1"
     ]
   },
   "incidents": [
@@ -1296,6 +1296,22 @@
           "evidence_kind": "code_test",
           "commit": "d7730f15a9bcb1b747924178ac340de6e3bbd150",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/d7730f15a9bcb1b747924178ac340de6e3bbd150"
+        },
+        {
+          "at": "2026-10-31T21:30:00+09:00",
+          "type": "model_comparison_audit",
+          "status": "open",
+          "actor": "repository audit",
+          "evidence_kind": "source_inspection",
+          "text": "Qwen・Llama・Gemma IT 비교 분석을 별도 모델 분석 보기에 추가했다. 기준 dff44713/최근 기준72a9a331: adapter12/23/44개와 frozen engine30개는 불변, 공통 admission・상태・시간 reader 변경과 Gemma 전용 startup/MBPP/selection-resume 변경은 구분했다. 실제 prepare의 CPU fixture에서 기본값과 MATH/MBPP split ID를 확인했다. 분석・기존 evidence/retention29개 검사와1440/390px 브라우저에서 검색・펼치기・기존 사건 hash・분석 파일 누락 격리를 통과했다. 원격 학습 성공이나 사용자 SyntaxError 해결을 뜻하지 않으며 기존 미해결 상태를 유지한다. 상세 분석 원본: research-bug-board/model-analysis.json."
+        },
+        {
+          "at": "2026-10-31T20:36:48+09:00",
+          "type": "audit_timestamp_correction",
+          "status": "open",
+          "actor": "repository audit",
+          "evidence_kind": "source_inspection",
+          "text": "바로 앞 모델 비교 감사 이벤트의21:30 시각은 수동 입력 오류다. 분석 추가 및 첫29개 검사・브라우저 검증은 이 정정 시각 이전에 끝났다. 원래 이벤트는 보존한다. 이후 최신 분석 revision만 표시해 중복 HTML 앵커를 막는 검사를 추가했으며 최종 검사 수는 별도로 기록한다."
         }
       ]
     },

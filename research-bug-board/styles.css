@@ -22,3 +22,30 @@
 :root.sk .pcb-scores li>span:not(.sk-badge){color:var(--sk-muted);font-size:13px;overflow-wrap:anywhere;min-width:0}
 @media (max-width:820px),(pointer:coarse){:root.sk .pcb-changes-head .sk-chip{min-height:44px}:root.sk .pcb-changes-list a{display:inline-flex;align-items:center;min-height:44px}}
 :root.sk #more[hidden]{display:none}
+
+:root.sk .pcb-views{margin:16px 0;gap:8px}
+:root.sk .pcb-views button{font-weight:700;min-height:44px}
+:root.sk .pcb-analysis h2{margin:0 0 8px;font-size:22px;line-height:1.45}
+:root.sk .pcb-analysis h3{font-size:19px;margin:24px 0 10px}
+:root.sk .pcb-analysis h4{font-size:16px;margin:18px 0 8px}
+:root.sk .pcb-analysis p,:root.sk .pcb-analysis li{line-height:1.75;overflow-wrap:anywhere}
+:root.sk .pcb-analysis section{border-top:2px solid var(--sk-line);margin-top:24px;scroll-margin-top:20px}
+:root.sk .pcb-analysis-nav{margin:16px 0;gap:8px 18px}
+:root.sk .pcb-analysis-nav a{padding:6px 0}
+:root.sk .pcb-comparison{background:var(--sk-paper);border:1px solid var(--sk-line);border-radius:8px;margin:8px 0;overflow:hidden}
+:root.sk .pcb-comparison summary{font-weight:700;cursor:pointer;padding:14px 16px;min-height:44px;line-height:1.6}
+:root.sk .pcb-comparison[open]>summary{border-bottom:1px solid var(--sk-line)}
+:root.sk .pcb-model-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:0;padding:16px}
+:root.sk .pcb-model-grid dt{font-weight:700;margin:0 0 6px;color:var(--sk-muted)}
+:root.sk .pcb-model-grid dd{margin:0;line-height:1.7;overflow-wrap:anywhere}
+:root.sk .pcb-impact{padding:12px 16px;border-top:1px solid var(--sk-line);margin:0}
+:root.sk .pcb-source-links{padding:0 16px 14px;font-size:12px;overflow-wrap:anywhere}
+:root.sk .pcb-analysis-entry{padding:6px 0 14px;border-bottom:1px solid var(--sk-line)}
+:root.sk .pcb-analysis-entry dl,:root.sk .pcb-defaults{display:grid;grid-template-columns:minmax(100px,1fr) minmax(0,4fr);gap:4px 14px;margin:10px 0}
+:root.sk .pcb-analysis-entry dt,:root.sk .pcb-defaults dt{font-weight:700;overflow-wrap:anywhere}
+:root.sk .pcb-analysis-entry dd,:root.sk .pcb-defaults dd{margin:0;overflow-wrap:anywhere;line-height:1.7}
+:root.sk .pcb-defaults{padding:0 16px}
+:root.sk .pcb-comparison>p{padding:0 16px}
+:root.sk .pcb-comparison>.pcb-impact{padding:12px 16px}
+:root.sk #sort[hidden],:root.sk #scores[hidden]{display:none}
+@media(max-width:700px){:root.sk .pcb-model-grid{grid-template-columns:1fr;gap:14px}:root.sk .pcb-model-grid>div+div{border-top:1px solid var(--sk-line);padding-top:12px}:root.sk .pcb-analysis h2{font-size:20px}:root.sk .pcb-analysis-entry dl,:root.sk .pcb-defaults{grid-template-columns:1fr}:root.sk .pcb-defaults dd{margin-bottom:8px}}

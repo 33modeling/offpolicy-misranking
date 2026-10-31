@@ -1259,6 +1259,22 @@
         "evidence_kind": "code_test",
         "commit": "d7730f15a9bcb1b747924178ac340de6e3bbd150",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/d7730f15a9bcb1b747924178ac340de6e3bbd150"
+      },
+      {
+        "at": "2026-10-31T21:30:00+09:00",
+        "type": "model_comparison_audit",
+        "status": "open",
+        "actor": "repository audit",
+        "evidence_kind": "source_inspection",
+        "text": "Qwen・Llama・Gemma IT 비교 분석을 별도 모델 분석 보기에 추가했다. 기준 dff44713/최근 기준72a9a331: adapter12/23/44개와 frozen engine30개는 불변, 공통 admission・상태・시간 reader 변경과 Gemma 전용 startup/MBPP/selection-resume 변경은 구분했다. 실제 prepare의 CPU fixture에서 기본값과 MATH/MBPP split ID를 확인했다. 분석・기존 evidence/retention29개 검사와1440/390px 브라우저에서 검색・펼치기・기존 사건 hash・분석 파일 누락 격리를 통과했다. 원격 학습 성공이나 사용자 SyntaxError 해결을 뜻하지 않으며 기존 미해결 상태를 유지한다. 상세 분석 원본: research-bug-board/model-analysis.json."
+      },
+      {
+        "at": "2026-10-31T20:36:48+09:00",
+        "type": "audit_timestamp_correction",
+        "status": "open",
+        "actor": "repository audit",
+        "evidence_kind": "source_inspection",
+        "text": "바로 앞 모델 비교 감사 이벤트의21:30 시각은 수동 입력 오류다. 분석 추가 및 첫29개 검사・브라우저 검증은 이 정정 시각 이전에 끝났다. 원래 이벤트는 보존한다. 이후 최신 분석 revision만 표시해 중복 HTML 앵커를 막는 검사를 추가했으며 최종 검사 수는 별도로 기록한다."
       }
     ]
   },

@@ -3,12 +3,13 @@
 <div class="sk-head"><div><h1>논문 코드 버그 현황판</h1><p class="sk-sub">실험 코드의 문제, 영향 범위, 수정 커밋과 검증 기록.</p></div><span id="fresh"></span></div>
 <div id="tiles" class="sk-tiles"></div>
 <section id="changes" class="sk-callout warn pcb-changes" aria-live="polite" hidden></section>
+<nav id="views" class="sk-chips pcb-views" aria-label="현황판 보기"><button type="button" class="sk-chip" data-view="incidents" aria-pressed="true">사건·수정 기록</button><button type="button" class="sk-chip" data-view="analysis" aria-pressed="false">모델 비교·변경 분석</button></nav>
 <div id="scores"></div>
 <div class="sk-toolbar"><label class="sk-search"><span class="sk-skip">검색</span><input id="q" type="search" maxlength="80" placeholder="1%, JSON, status, 커밋 검색" autocomplete="off"></label><select id="sort" class="sk-select" aria-label="순서"><option value="oldest">오래된 순</option><option value="newest">최신 순</option><option value="updated">최근 이력 순</option></select></div>
 <div id="areas" class="sk-chips" style="margin:-6px 0 6px"></div>
 <div id="list"></div>
 <p style="text-align:center;margin-top:14px"><button id="more" class="sk-chip" hidden>기록 더 보기</button></p>
 <details class="sk-note pcb-legend"><summary>기록 구분과 범위</summary><p><b>사용자 보고</b>는 원격 원시 기록과 대조하지 않은 관측입니다. <b>코드 검사</b>와 <b>실제 모델 진단</b>은 따로 적습니다. 코드 테스트 통과만으로 원격 학습 정상이나 성능 회복을 확정하지 않습니다. 커밋 작성자와 작성 도구(Codex·Claude 등)는 따로 적습니다. 작성 도구는 근거가 없으면 미확인으로 둡니다.</p><p id="coverage"></p></details>
-</main><footer class="sk-foot"><span id="recorded-at"></span><span class="sk-links" style="margin:0"><a href="data.json" download>사건 원본</a><a href="commits.json" download>커밋 원본</a><button id="download" class="sk-chip" type="button">전체 기록 JSON 받기</button><a href="https://github.com/33modeling/offpolicy-misranking/issues/1" target="_blank" rel="noopener">status 추적 이슈 ↗</a><a href="https://github.com/33modeling/offpolicy-misranking" target="_blank" rel="noopener">원본 저장소 ↗</a></span></footer>
+</main><footer class="sk-foot"><span id="recorded-at"></span><span class="sk-links" style="margin:0"><a href="data.json" download>사건 원본</a><a href="commits.json" download>커밋 원본</a><a href="model-analysis.json" download>모델 분석 원본</a><button id="download" class="sk-chip" type="button">전체 기록 JSON 받기</button><a href="https://github.com/33modeling/offpolicy-misranking/issues/1" target="_blank" rel="noopener">status 추적 이슈 ↗</a><a href="https://github.com/33modeling/offpolicy-misranking" target="_blank" rel="noopener">원본 저장소 ↗</a></span></footer>
 <noscript>이 화면은 JavaScript로 기록을 읽습니다. 원본 파일: <a href="data.json">사건 원본</a>, <a href="commits.json">전체 커밋 원본</a>.</noscript>
 <script type="module" src="app.js"></script></body></html>

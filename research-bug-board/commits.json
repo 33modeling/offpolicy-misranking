@@ -12012,6 +12012,56 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "df098c7913ad18b50e30cb5ab62f7380a9bdf6a3",
+      "at": "2026-10-31T18:56:09+09:00",
+      "author": "33modeling",
+      "title": "Record startup registration and shared preparation lock fix",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/df098c7913ad18b50e30cb5ab62f7380a9bdf6a3",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "7bb0a9387e01f6657af1ab2e3f1828a518a3c18b",
+      "at": "2026-10-31T19:23:35+09:00",
+      "author": "33modeling",
+      "title": "Hide expired node records and chain order in status",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/7bb0a9387e01f6657af1ab2e3f1828a518a3c18b",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "0c02a0780ca0d10861f5f484fda9fda6eaad9749",
+      "at": "2026-10-31T19:26:03+09:00",
+      "author": "33modeling",
+      "title": "Add a node command that ends launch children stuck on a startup lock",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/0c02a0780ca0d10861f5f484fda9fda6eaad9749",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "f61bf099a1461640cd1bf89e5742c1a0ef8e818c",
+      "at": "2026-10-31T19:47:20+09:00",
+      "author": "33modeling",
+      "title": "Show why the last child on a node ended next to its launcher row",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/f61bf099a1461640cd1bf89e5742c1a0ef8e818c",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "dff44713e40c39ffc079a5e302997c7eca058ef1",
+      "at": "2026-10-31T20:06:52+09:00",
+      "author": "33modeling",
+      "title": "Reap orphaned Gemma IT training ranks launched through wrappers",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/dff44713e40c39ffc079a5e302997c7eca058ef1",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": true
     }
   ]
 }

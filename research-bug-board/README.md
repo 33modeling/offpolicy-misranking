@@ -28,3 +28,7 @@ python3 -m pytest -q srgc_research/tests/test_paper_bug_retention.py
 불러오므로 허브 사본(`/paper-code-bugs/`)에서 확인한다. 2026-10-29 허브에만 있던 status-kit 판을 이 폴더로 옮겼다.
 77의 기존 일반 bug-board/D1 기록은 별도로 보존한다. 이 화면의 커밋 이력을 실제
 학습 성공 기록으로 사용하지 않는다.
+
+## 모델 비교 분석
+
+`?view=analysis`에서 Qwen·Llama·Gemma IT의 모델별 구현과 최근 공통/전용 변경을 비교한다. `model-analysis.json`은 source commit·baseline·파일 manifest·해시·line 근거를 포함한다. 기존 분석 revision은 덮어쓰지 않고 새 report를 추가한다. 실행 결과가 없는 항목은 원격 미확인으로 유지한다. 자세한 문서: [`docs/MODEL_COMPARISON_2026-10-31.md`](../docs/MODEL_COMPARISON_2026-10-31.md).
