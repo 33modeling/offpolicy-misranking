@@ -28,6 +28,7 @@ import numpy as np
 
 RESULT = "gathered-gradients.npz"
 PARTIAL = "partial-gradients.npz"
+SLICE_PROMPTS_PER_RANK = 5
 # Ranks shard a scoring block by prompt and wait for each other at its gather.
 # A switch check gives each Gemma rank 20 candidate/SR prompts of very uneven
 # length; the pinned 1800 s NCCL limit then aborts every rank while one is still
@@ -164,25 +165,28 @@ def patch_mixin(mixin):
             print(f"RESUME scoring block seed={seed}: reused {len(result)} saved gradients from {directory}",
                   flush=True)
             return result
-        # Score one prompt per rank at a time and keep every finished slice, so
-        # an attempt that runs out of memory part way resumes after it instead
-        # of recomputing the whole block. Each rank still scores ids[rank::world]
-        # in the original order; sampling seeds depend on (seed, rank, prompt).
+        # Score SLICE_PROMPTS_PER_RANK prompts per rank at a time and keep every
+        # finished slice, so an attempt that runs out of memory part way resumes
+        # after it instead of recomputing the whole block. Slices start at
+        # multiples of world, so each rank still scores ids[rank::world] in the
+        # original order; sampling seeds depend on (seed, rank, prompt). Ranks
+        # meet once per slice, not once per prompt.
         partial = None
         if self.rank == 0:
             partial = load_result(directory, ids, fingerprint, responses, group_size, name=PARTIAL, subset=True)
         done = agreed(self, sorted(partial) if partial else [])
         result = dict(partial or {})
         world = max(1, getattr(self, "world", 1))
+        width = world * SLICE_PROMPTS_PER_RANK
         before = self.resumed_rollouts
         self._resumable_dir = directory
         try:
-            for start in range(0, len(ids), world):
-                part = list(ids)[start:start + world]
+            for start in range(0, len(ids), width):
+                part = list(ids)[start:start + width]
                 if set(part) <= set(done):
-                    # Replay this rank's cached rollout so raw traces stay complete.
-                    if self.rank < len(part):
-                        self._rollout(part[self.rank], responses, seed)
+                    # Replay this rank's cached rollouts so raw traces stay complete.
+                    for prompt_id in part[self.rank::world]:
+                        self._rollout(prompt_id, responses, seed)
                     continue
                 result.update(base(part, responses=responses, group_size=group_size, seed=seed))
                 if self.rank == 0:

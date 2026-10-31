@@ -344,3 +344,15 @@ def test_status_only_fix_preserves_all_model_and_information_runtime_identities(
     assert qwen.adapter_digest() == "20e90f784b19afa6602b839ff2f7934eb207f03868a4052896edc9355b7ffd8b"
     assert "srgc_research/dispatch/qwen_status.py" not in gemma.SHARED_FILES
     assert "srgc_research/dispatch/qwen_status.py" not in runtime_files()
+
+
+def test_a_running_node_does_not_carry_an_earlier_worker_error():
+    # 2026-10-31: the task table showed RUN while ATTENTION listed the same node
+    # with the previous worker's "SystemExit: 1".
+    snapshots = [{"label": "MATH", "workers": [
+        {"host": "h1", "worker_id": "old", "status": "failed", "error": "SystemExit: 1",
+         "heartbeat_age_seconds": 30, "task": None}],
+        "tasks": [{"task": "seed-5.switch", "status": "running", "host": "h1", "worker_id": None}]}]
+    nodes = status.node_rows(snapshots)
+    assert [node["status"] for node in nodes] == ["running"]
+    assert status.worker_error(nodes[0]) == ""

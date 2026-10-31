@@ -153,8 +153,10 @@ def test_running_selection_shows_saved_scoring_prompts(cohort, capsys):
         assert row["phase_stage"] == "selection" and row["completed_steps"] == 25
         assert row["selection_progress"]["candidate_saved"] == 7
         assert row["selection_progress"]["validation_saved"] is None
+        # The newest saved rollout tells a slow block from a stalled one (2026-10-31).
         assert status.selection_text(row) == (
-            f"cand 7/{plan['scoring_prompts_per_set']} val ?/{len(bundle['ranking_validation_ids'])}")
+            f"cand 7/{plan['scoring_prompts_per_set']} val ?/{len(bundle['ranking_validation_ids'])}"
+            " last write 0s ago")
         text = inspect(cohort, capsys, as_json=False, dataset="math")
         assert "SELECT cand 7/" in text and "Select" in text
 
@@ -165,6 +167,8 @@ def test_switch_check_selection_bound_counts_sr_contrast():
            "candidate_saved": 80, "validation_saved": 12, "validation_total": 50}}
     assert status.selection_text(row) == "cand 80/<=80 val 12/50"
     assert "SELECT cand 80/<=80 val 12/50 prompts saved (switch check" in status.progress(row)
+    row["selection_progress"].update(candidate_scored=40, validation_scored=10, last_write=__import__("time").time() - 125)
+    assert status.selection_text(row) == "cand 80/<=80 val 12/50 scored 50 last write 2m ago"
     row["phase_stage"] = "training"
     assert status.selection_text(row) is None
 

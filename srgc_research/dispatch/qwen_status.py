@@ -87,8 +87,14 @@ def selection_text(task):
         return None
     count = lambda value: "?" if value is None else value
     bound = "<=" if progress["check"] else ""
-    return (f"cand {count(progress['candidate_saved'])}/{bound}{progress['candidate_max']}"
+    text = (f"cand {count(progress['candidate_saved'])}/{bound}{progress['candidate_max']}"
             f" val {count(progress['validation_saved'])}/{progress['validation_total']}")
+    scored = [progress.get(f"{name}_scored") for name in ("candidate", "validation")]
+    if any(value is not None for value in scored):
+        text += f" scored {sum(value or 0 for value in scored)}"
+    if isinstance(progress.get("last_write"), (int, float)):
+        text += f" last write {age(time.time() - progress['last_write'])} ago"
+    return text
 
 
 def worker_error(node):
@@ -216,7 +222,9 @@ def node_rows(snapshots, *, coordinators=(), model=None, root=None, hide_stale=F
             key = ((host, owner) if owner else min(matches, key=lambda item: heartbeat_age(item[1]))[0]
                    if matches else (host, f"task:{task['task']}"))
             worker = sessions.get(key, {})
-            sessions[key] = {**worker, "host": host, "worker_id": owner or worker.get("worker_id"),
+            # A running lease is current; an earlier worker's error on this host is history.
+            previous = {name: value for name, value in worker.items() if name != "error"}
+            sessions[key] = {**previous, "host": host, "worker_id": owner or worker.get("worker_id"),
                              "status": "running", "source": "task_lease",
                              "heartbeat_stale": bool(worker) and heartbeat_age(worker) > 60,
                              "task": task["task"], "task_row": task, "label": report["label"]}
@@ -572,7 +580,9 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
     attention = [(report["label"], row) for report in snapshots for row in report["tasks"]
                  if row["status"] in ERRORS]
     errors = [(report["label"], error) for report in snapshots for error in dict.fromkeys(report["errors"])]
-    worker_errors = [(node, message) for node in nodes if (message := worker_error(node))]
+    # Only nodes that are not working now; a node shown as RUN must not also be listed as failed.
+    worker_errors = [(node, message) for node in nodes
+                     if node["status"] not in LIVE_WORKERS and (message := worker_error(node))]
     if attention or errors or worker_errors:
         lines += ["", "ATTENTION"]
         for label, row in attention:

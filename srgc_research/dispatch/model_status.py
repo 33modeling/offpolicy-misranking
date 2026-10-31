@@ -239,6 +239,19 @@ def final_evaluation_progress(report, plan, seed, data):
         row["final_evaluation"] = progress
 
 
+def scored_count(directory):
+    """Prompts whose gradients are saved in a scoring block (complete or partial), or None."""
+    import numpy as np
+
+    for name in ("gathered-gradients.npz", "partial-gradients.npz"):
+        try:
+            with np.load(Path(directory) / name, allow_pickle=False) as saved:
+                return int(len(saved["ids"]))
+        except (OSError, ValueError, KeyError, EOFError):
+            continue
+    return None
+
+
 def selection_progress(report, plan, seed, data):
     """Count saved scoring rollouts of a running selection block, by file name only."""
     # Engine.update scores candidates under stream (seed, step, "selection") and the
@@ -264,8 +277,14 @@ def selection_progress(report, plan, seed, data):
             progress[f"{name}_saved"] = None
             try:
                 with os.scandir(directory) as entries:
-                    progress[f"{name}_saved"] = sum(entry.name in expected and entry.is_file(follow_symlinks=False)
-                                                    for entry in entries)
+                    files = [entry for entry in entries if entry.is_file(follow_symlinks=False)]
+                progress[f"{name}_saved"] = sum(entry.name in expected for entry in files)
+                # Newest saved rollout or gradient slice: tells a slow block from a stalled one.
+                written = [entry.stat(follow_symlinks=False).st_mtime for entry in files
+                           if entry.name in expected or entry.name.endswith("-gradients.npz")]
+                if written:
+                    progress["last_write"] = max(progress.get("last_write", 0), max(written))
+                progress[f"{name}_scored"] = scored_count(directory)
             except FileNotFoundError:
                 # Not started yet, or already finished and removed.
                 pass

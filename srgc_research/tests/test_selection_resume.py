@@ -377,14 +377,14 @@ def test_an_attempt_that_fails_part_way_resumes_after_its_finished_prompts(tmp_p
     module = fresh_mixin_module()
     Backend = backend_class(module, tmp_path)
     reference = FakeBackend().score_gradients(CANDIDATES, responses=8, group_size=4, seed=11)
-    first = Backend(fail_on={"c3"})
+    first = Backend(fail_on={"c5"})
     with pytest.raises(Interrupted):
         first.score_gradients(CANDIDATES, responses=8, group_size=4, seed=11)
-    assert first.scored == ["c0", "c1", "c2"]
+    assert first.scored == ["c0", "c1", "c2", "c3", "c4"]  # one finished slice of five
     second = Backend()
     result = second.score_gradients(CANDIDATES, responses=8, group_size=4, seed=11)
-    assert second.scored == ["c3", "c4", "c5"] and second.generated == ["c3", "c4", "c5"]
-    assert "3 saved prompt gradient(s) reused" in capsys.readouterr().out
+    assert second.scored == ["c5"] and second.generated == ["c5"]
+    assert "5 saved prompt gradient(s) reused" in capsys.readouterr().out
     for key in reference:
         np.testing.assert_array_equal(result[key], reference[key])
     # Other weights never reuse the slices.
