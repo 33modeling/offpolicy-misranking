@@ -98,8 +98,10 @@ if [ "${2:-}" = audit ]; then
     fi
     exec "$PY" -m srgc_research.dispatch.gemma_initial_audit "$AUDIT_DATASET" "$@"
 fi
-# Training commands share one model queue; read-only/control actions stay model-specific.
-if [ "${SRGC_MODEL_CHAIN:-1}" = 1 ] && [ "${SRGC_MODEL_CHAIN_CHILD:-0}" != 1 ]; then
+# Only Gemma remains (2026-10-31): run it directly by default. A direct worker
+# waits in-process for work instead of exiting and being relaunched by the
+# model chain. SRGC_MODEL_CHAIN=1 restores the shared model queue.
+if [ "${SRGC_MODEL_CHAIN:-0}" = 1 ] && [ "${SRGC_MODEL_CHAIN_CHILD:-0}" != 1 ]; then
     case "${1:-}:${2:-run}" in
         all:run|math:run|mbpp:run|all:resume|math:resume|mbpp:resume)
             exec "$PY" -m srgc_research.dispatch.model_chain --start gemma4 "$@" ;;

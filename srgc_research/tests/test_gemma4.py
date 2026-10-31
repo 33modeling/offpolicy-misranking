@@ -215,8 +215,13 @@ def test_one_command_and_dataset_selection_use_shared_python(tmp_path):
             text=True,
             check=True,
         )
-        entry = ["-m", "srgc_research.dispatch.model_chain", "--start", "gemma4"]
+        # Only Gemma remains (2026-10-31): the default runs it directly.
+        entry = ["-m", "srgc_research.dispatch.gemma_it_run"]
         assert json.loads(result.stdout) == [*entry, *expected]
+        chained = subprocess.run(
+            ["sh", str(REPO / "scripts/run_srgc_gemma4.sh"), *args], cwd="/tmp",
+            env={**env, "SRGC_MODEL_CHAIN": "1"}, capture_output=True, text=True, check=True)
+        assert json.loads(chained.stdout) == ["-m", "srgc_research.dispatch.model_chain", "--start", "gemma4", *expected]
 
 
 def test_explicit_python_failure_never_uses_another_venv(tmp_path):
