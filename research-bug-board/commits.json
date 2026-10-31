@@ -11842,6 +11842,26 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "9ef244993aff838c12a447edbd7d6df4dfdfe7a1",
+      "at": "2026-10-31T10:33:58+09:00",
+      "author": "33modeling",
+      "title": "Record resume-only launch loop and admission display incidents",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/9ef244993aff838c12a447edbd7d6df4dfdfe7a1",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "9858dbc97d944f84080892b7b73375b8a4554731",
+      "at": "2026-10-31T13:14:59+09:00",
+      "author": "33modeling",
+      "title": "fix(gemma): keep a finished scoring block so a switch-check restart does not regenerate it",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/9858dbc97d944f84080892b7b73375b8a4554731",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": true
     }
   ]
 }

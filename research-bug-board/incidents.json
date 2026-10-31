@@ -927,6 +927,16 @@
         "evidence_kind": "code_test",
         "commit": "908e50eef3c515e06f1c66278e69c99ba633099a",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/908e50eef3c515e06f1c66278e69c99ba633099a"
+      },
+      {
+        "at": "2026-10-31",
+        "actor": "코드 검증",
+        "type": "recorded",
+        "status": "code_fixed",
+        "text": "표시만이 아니라 실제 반복 원인이 있었다. GEMMA-035에서 고쳤다.",
+        "evidence_kind": "code_test",
+        "commit": "9858dbc97d944f84080892b7b73375b8a4554731",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/9858dbc97d944f84080892b7b73375b8a4554731"
       }
     ]
   },
@@ -1169,6 +1179,48 @@
         "evidence_kind": "code_test",
         "commit": "b2407186ee5897fc86ec53574800f1b714f3e53b",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/b2407186ee5897fc86ec53574800f1b714f3e53b"
+      }
+    ]
+  },
+  {
+    "id": "GEMMA-035",
+    "title": "Gemma switch가 25번 검사 단계에서 재시작마다 후보 채점을 처음부터 반복",
+    "area": "재개·체크포인트",
+    "severity": "critical",
+    "first_reported": "2026-10-31",
+    "cause": "고정된 ResumableRolloutMixin이 채점 묶음 하나가 끝나는 즉시 그 rollout 캐시를 지웠다. switch 검사(25, 50, …)는 후보·SR 80문제를 채점한 뒤 검증 50문제를 채점하고 업데이트 25를 학습해야 다음 체크포인트가 생긴다. 그 사이 작업이 끝나면 재시작은 업데이트 25 체크포인트에서 후보 응답 640개를 처음부터 다시 생성했다. 작업이 끝난 이유는 클러스터 로그가 없어 미확인이다.",
+    "impact": "Gemma switch가 SELECT 25/275에서 24시간 넘게 같은 단계를 반복하고 결과가 나오지 않았다. on_policy는 같은 시점에 40문제만 채점해 이 구간이 절반이라 넘어갔다.",
+    "introduction_commit": null,
+    "attribution": "채점 묶음 단위 캐시 삭제 시점과 Gemma의 긴 채점 시간의 조합. 실험 설정·학습 코드는 바꾸지 않았다.",
+    "evidence": [
+      {
+        "kind": "user_report",
+        "text": "25/275 아직 안고친거 같은데? / 반복이야 / 아니 왜 이렇게 느린거야. 버그야 느린거야 뭔지 모르겠어 / 빨리고 쳐 switch만 결과 자체가 안나오고 다른건 느리지만 결과는 나와"
+      },
+      {
+        "kind": "source",
+        "commit": "9858dbc97d944f84080892b7b73375b8a4554731",
+        "path": "srgc_research/dispatch/selection_resume.py"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-31",
+        "actor": "사용자 보고",
+        "type": "user_request",
+        "status": "open",
+        "text": "25/275 아직 안고친거 같은데? / 반복이야 / 아니 왜 이렇게 느린거야. 버그야 느린거야 뭔지 모르겠어 / 빨리고 쳐 switch만 결과 자체가 안나오고 다른건 느리지만 결과는 나와",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-10-31",
+        "actor": "코드 검증",
+        "type": "code_fix_verified",
+        "status": "code_fixed",
+        "text": "운영 rank 래퍼가 Gemma rank에만 설치: 끝난 채점 묶음의 rollout과 모은 gradient를 학습 가중치 지문과 함께 남기고, 같은 가중치의 재시작은 생성 없이 다시 쓴다. 가중치가 바뀐 다음 업데이트에서 지운다. Gemma plan 지문 파일은 그대로라 기존 root를 이어 쓴다. 실제 Engine으로 switch 검사 중 검증 채점·학습에서 각각 끊고 재시작해 후보 재생성 없음, d·전환·선택 문제가 끊지 않은 실행과 같음을 확인(고치기 전 mixin에서는 실패). 전체 검사 1859 통과, 실패 8·수집 오류 13은 수정 전과 같다(torch 없는 환경). 원격 미검증.",
+        "evidence_kind": "code_test",
+        "commit": "9858dbc97d944f84080892b7b73375b8a4554731",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/9858dbc97d944f84080892b7b73375b8a4554731"
       }
     ]
   }
