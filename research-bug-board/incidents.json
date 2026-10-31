@@ -1919,6 +1919,16 @@
         "evidence_kind": "code_test",
         "commit": "97e258c08f6568aa3ce200779afa5b6fb0a50cbd",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/97e258c08f6568aa3ce200779afa5b6fb0a50cbd"
+      },
+      {
+        "at": "2026-10-31",
+        "actor": "배정 수정",
+        "type": "code_fix_verified",
+        "status": "open",
+        "text": "사용자 요청(“30분 쉬게 하지말고 바로 하게 해”)으로 OOM 30분 보류를 없애고 일반 재시도 대기로 되돌렸다. 사용자 보고상 OOM은 아직 해결되지 않았다(“아직도 oom은 못고침”).",
+        "evidence_kind": "user_report",
+        "commit": "82f9c9ce5b7454d1504a3c3aa4fdb95ea25fd773",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/82f9c9ce5b7454d1504a3c3aa4fdb95ea25fd773"
       }
     ]
   },
@@ -2057,6 +2067,74 @@
         "evidence_kind": "code_test",
         "commit": "e37ec437f225bdd964f6afaaa1105810006f686a",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/e37ec437f225bdd964f6afaaa1105810006f686a"
+      }
+    ]
+  },
+  {
+    "id": "STATUS-050",
+    "title": "status 위는 RUN인데 아래 ATTENTION은 같은 노드를 오류로 표시하고, 25번 검사가 진행 중인지 멈췄는지 안 보임",
+    "area": "status",
+    "severity": "medium",
+    "first_reported": "2026-10-31",
+    "cause": "작업 lease로 RUN이 된 노드 줄이 같은 호스트에서 먼저 실패한 worker 기록의 error(SystemExit: 1)를 그대로 물려받아 ATTENTION에 올랐다. Select 칸은 생성한 문제 수만 보여 마지막 진행 시각과 채점한 문제 수가 없었다.",
+    "impact": "seed5 switch가 25/275에서 오래 걸리는지 오류인지 status만으로 판단할 수 없었다.",
+    "introduction_commit": null,
+    "attribution": "표시 정책. 노드 병합 시 이전 worker 오류를 지우지 않음.",
+    "evidence": [
+      {
+        "kind": "user_report",
+        "text": "status가 하단에 표는 error 고 위에는 run 이고 다른게 있어 맞춰\n오래걸리는건지 에러인지 확인이 안돼\n25/275"
+      },
+      {
+        "kind": "commit",
+        "label": "RUN 노드 오류 분리·진행 시각 표시",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/def8e7673242587db1624111bf261f06a1b8e3bc"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-31",
+        "actor": "status",
+        "type": "code_fix_verified",
+        "status": "code_fixed",
+        "text": "작업 중인 노드에는 이전 worker 오류를 붙이지 않고 ATTENTION에는 쉬거나 멈춘 노드 오류만 표시. Select 칸에 채점한 문제 수(scored)와 마지막 저장 뒤 시간(last write)을 추가.",
+        "evidence_kind": "code_test",
+        "commit": "def8e7673242587db1624111bf261f06a1b8e3bc",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/def8e7673242587db1624111bf261f06a1b8e3bc"
+      }
+    ]
+  },
+  {
+    "id": "PERF-051",
+    "title": "검사 묶음을 문제마다 나눠 저장하면서 GPU 네 장이 문제마다 서로를 기다림",
+    "area": "실행·재개",
+    "severity": "medium",
+    "first_reported": "2026-10-31",
+    "cause": "OOM 재시도가 이어지도록 검사 묶음을 GPU마다 한 문제씩 계산·저장하게 바꾸면서(f201ff9) 문제마다 gather가 생겼다. 응답 길이가 문제마다 달라 매번 가장 느린 rank를 기다렸다.",
+    "impact": "25번 switch 검사(80문제)가 이전보다 느려져 멈춘 것처럼 보였을 수 있다. 실제 느려진 정도는 원격에서 측정하지 않았다.",
+    "introduction_commit": "f201ff9629b7695de48b93eccec1781963c04c8e",
+    "attribution": "Claude Code가 만든 회귀(f201ff9).",
+    "evidence": [
+      {
+        "kind": "user_report",
+        "text": "왜 또 25에서 멈춰져 있는거 같지"
+      },
+      {
+        "kind": "commit",
+        "label": "rank당 5문제씩 저장",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/def8e7673242587db1624111bf261f06a1b8e3bc"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-31",
+        "actor": "재개 수정",
+        "type": "code_fix_verified",
+        "status": "code_fixed",
+        "text": "rank당 5문제씩 묶어 계산·저장해 80문제 검사에서 rank끼리 맞추는 횟수를 20번에서 4번으로 줄였다. rank별 문제·순서·seed 동일, 중간 실패 뒤 저장된 묶음 이후부터 재개.",
+        "evidence_kind": "code_test",
+        "commit": "def8e7673242587db1624111bf261f06a1b8e3bc",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/def8e7673242587db1624111bf261f06a1b8e3bc"
       }
     ]
   }
