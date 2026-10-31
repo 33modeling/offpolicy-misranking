@@ -11,8 +11,8 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 
 sys.dont_write_bytecode = True
 
@@ -158,7 +158,13 @@ def main(argv=None):
     repo = args.repo.resolve()
     sys.path[:0] = [str(repo / "scripts"), str(repo / "src")]
     try:
+        helper = repo / "scripts/mbpp_budget_recovery.py"
+        if not helper.is_file():
+            raise ImportError(f"requested runtime helper is missing: {helper}")
         import mbpp_budget_recovery as recovery
+        loaded = getattr(recovery, "__file__", None)
+        if not isinstance(loaded, (str, os.PathLike)) or Path(loaded).resolve() != helper.resolve():
+            raise ImportError(f"loaded recovery helper does not belong to requested runtime: {helper}")
         runner = repo / "scripts/selector_pair_budget_recovery.py"
         directories = args.directory or [args.root / name for name in DEFAULT_BRANCHES]
         rows = [branch_report(p.resolve(), recovery.checkpoint_contract, runner) for p in directories]

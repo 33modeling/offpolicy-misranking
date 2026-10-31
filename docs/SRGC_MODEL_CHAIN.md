@@ -13,7 +13,7 @@ sh scripts/run_srgc_qwen35.sh all
 sh scripts/run_srgc_llama31.sh all
 ```
 
-노드당 위 명령 하나를 실행한다. `all`은 두 plan을 먼저 준비하되 MATH 단계에서 MBPP 학습·생성·평가는 실행하지 않는다. `math`는 MATH만 수행한다. `mbpp`도 준비돼 있는 MATH sibling plan을 먼저 완료한 뒤 MBPP를 실행한다. MATH plan이 없으면 오류를 내며, MATH를 건너뛰거나 빈 큐를 완료로 간주하지 않는다. `--root`, `--source-plan`, `--max-attempts` 등 모델별 인자와 Python 선택은 시작 모델에서 그대로 보존하며, 재방문과 데이터셋 전환에도 유지한다. 다른 모델은 각자의 기존 root·Python·고정 모델 snapshot을 사용한다.
+노드당 위 명령 하나를 실행한다. `all`은 두 plan을 먼저 준비하며 MBPP 비교 arm의 학습·최종 평가는 MATH가 끝날 때까지 기다린다. Gemma IT는 사용자 지시(2026-10-29)에 따라 유휴 GPU에서 MBPP cache·prefix를 먼저 배정할 수 있다. 이 준비 작업은 패널 검증·큐 의존성을 유지하며 MBPP 학습 단계 전환으로 간주하지 않는다. `math`는 MATH만 수행한다. `mbpp`도 준비돼 있는 MATH sibling plan을 먼저 완료한 뒤 MBPP를 실행한다. MATH plan이 없으면 오류를 내며, MATH를 건너뛰거나 빈 큐를 완료로 간주하지 않는다. `--root`, `--source-plan`, `--max-attempts` 등 모델별 인자와 Python 선택은 시작 모델에서 그대로 보존하며, 재방문과 데이터셋 전환에도 유지한다. 다른 모델은 각자의 기존 root·Python·고정 모델 snapshot을 사용한다.
 
 각 모델의 학습·최종 평가는 기존 실행기에 맡긴다. 학습 update 275 도달만으로 완료로 표시하지 않는다. 남은 최종 평가도 기존 작업의 일부다. 현재 모델의 작업을 다른 노드가 소유하거나 실패 재시도 대기 중이면 GPU 잠금을 해제한 뒤 같은 모델을 다시 확인한다. 이때 다음 모델로 넘어가지 않는다. 선택한 모델의 MATH가 하나라도 남으면 MBPP로 넘어가지 않는다. endpoint가 저장돼도 실행 잠금이 남아 있으면 완료 경계를 넘지 않는다.
 
@@ -45,6 +45,32 @@ sh scripts/run_srgc_llama31.sh all
 운영 스크립트에서 기존의 즉시 거절 동작이 필요하면 `SRGC_MODEL_CHAIN_WAIT=0`을 지정한다.
 이때 잠금이 사용 중이면 이전처럼 종료 코드75를 반환한다. 수정은 새로 시작하는
 coordinator부터 적용되며 이미 실행 중인 학습·입력·checkpoint·결과는 바꾸지 않는다.
+
+## LAUNCH·WAIT와 재실행 기록 읽기 (2026-10-31)
+
+`model launcher active; dataset worker not registered`는 coordinator 기록은 있지만
+해당 데이터셋 worker가 등록됐다는 기록은 확인되지 않는다는 뜻이다. 학습 단계나
+GPU 작업의 정상 진행을 보장하지 않는다. `ADMISSION`은 worker가 GPU·모델 사전 점검을
+기록한 상태이고, 실제 학습은 task lease와 step 기록으로 확인한다.
+
+새 coordinator는 모델·데이터셋마다 실행 회차와 직전 자식 종료를 남긴다.
+status의 `launcher records`와 `MODEL CHAIN WAIT`에서 확인할 수 있다.
+
+```text
+pid=123; child_pid=456; launch_cycle=3; previous_exit=76; launch_age=125s
+```
+
+연속 조회에서 `launch_cycle`이 늘면 coordinator가 다음 실행 회차를 시작한 것이다.
+`previous_exit=75`는 Busy, `76`은 작업을 잡지 못한 양보, `137`은 강제 종료 코드다.
+`0`은 자식 정상 반환이며 복구 전용 실행 뒤 전체 큐를 확인하는 회차도 포함한다.
+같은 회차에서 `launch_age`만 늘면 이번 실행의 경과시간이 늘고 있다는 뜻으로,
+그 사실만으로 정지·무한 대기를 확정하지 않는다. PID는 기록된 값이며 생존을 별도로
+확인한 값이 아니다. 숫자는 optimizer update 횟수와 다르다.
+
+기존 coordinator에 없던 회차·종료 이력은 만들지 않는다. `git pull`은 실행 중인
+프로세스에 새 기록 기능을 주입하거나 실제 잠금을 해제하지 않는다. 상태 조회에는
+종료·재시작·lease 삭제가 없으며, 이번 진단 표시 추가로 실제 원격 정체가 해결됐다고
+판단하지 않는다.
 
 2026-10-17 검증: 세 모델의 단계 전환·오류 재시도·peer 실행 잠금·중지·원래 명령 인자 보존에 대한 최종 검사 179개를 통과했다. 공통 status·중간 보상·실제 SIGKILL 복구·셸 진입점도 회귀 검사했다. 수정 Python 파일의 Ruff/공백 검사를 통과했고, 세 모델 adapter·공통 engine·보상 기록 확장·동결 runtime 파일은 수정 전과 동일함을 확인했다.
 

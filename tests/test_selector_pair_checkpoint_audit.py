@@ -1,13 +1,17 @@
 """The diagnostic explains failures without modifying any saved experiment."""
 import importlib.util
+import io
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 SOURCE = Path(__file__).resolve().parents[1] / "scripts/selector_pair_checkpoint_audit.py"
 spec = importlib.util.spec_from_file_location("checkpoint_audit", SOURCE)
@@ -169,7 +173,15 @@ class CheckpointAuditTests(unittest.TestCase):
 
     def test_runtime_failure_is_saved_in_txt_and_keeps_exit_status(self):
         shell = SOURCE.with_name("diagnose_selector_pair_hashes.sh")
-        env = {**os.environ, "PAIR_PYTHON": sys.executable}
+        ambient = self.root / "ambient scripts"
+        ambient.mkdir()
+        marker = self.root / "wrong-helper-imported"
+        (ambient / "mbpp_budget_recovery.py").write_text(
+            "from pathlib import Path\n"
+            f"Path({str(marker)!r}).write_text('wrong helper imported')\n"
+            f"def checkpoint_contract(*args): return {self.expected!r}\n")
+        env = {**os.environ, "PAIR_PYTHON": sys.executable,
+               "PYTHONPATH": str(ambient) + os.pathsep + os.environ.get("PYTHONPATH", "")}
         result = subprocess.run(
             ["bash", str(shell), "--repo", str(self.root / "absent runtime")],
             cwd=self.root, env=env, capture_output=True, text=True, timeout=30)
@@ -178,6 +190,27 @@ class CheckpointAuditTests(unittest.TestCase):
         self.addCleanup(report_path.unlink, missing_ok=True)
         self.assertIn("Cannot inspect runtime", report_path.read_text())
         self.assertEqual(report_path.read_text(), result.stdout)
+        self.assertFalse(marker.exists(), "an ambient helper was imported for an absent runtime")
+
+
+    def test_cached_helper_from_another_runtime_is_rejected_before_contract_inspection(self):
+        runtime = self.root / "requested runtime"
+        scripts = runtime / "scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "mbpp_budget_recovery.py").write_text("# requested runtime helper\n")
+        called = []
+        foreign = SimpleNamespace(__file__=str(self.root / "other runtime/mbpp_budget_recovery.py"),
+                                  checkpoint_contract=lambda *args: called.append(args) or self.expected)
+        before = self.snapshot()
+        output, errors = io.StringIO(), io.StringIO()
+        with patch.dict(sys.modules, {"mbpp_budget_recovery": foreign}), \
+                patch.object(sys, "path", list(sys.path)), \
+                redirect_stdout(output), redirect_stderr(errors):
+            code = audit.main(["--repo", str(runtime), "--directory", str(self.directory)])
+        self.assertEqual(code, 2)
+        self.assertIn("does not belong to requested runtime", errors.getvalue())
+        self.assertEqual(called, [])
+        self.assertEqual(self.snapshot(), before)
 
 
 if __name__ == "__main__":

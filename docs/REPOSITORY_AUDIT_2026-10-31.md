@@ -24,6 +24,12 @@ The dashboard assumed every evidence item had `label` and `url`, but 21 entries 
 
 The renderer now shows escaped report text, preserves line breaks and constructs GitHub file links from validated commit/path evidence. Existing labeled links are retained, and incomplete/invalid evidence stays readable without manufacturing a `#` link. Nine Node-backed regressions execute the actual renderer, including every stored incident.
 
+### Checkpoint diagnosis silently imported another runtime's recovery helper
+
+The full repository run exposed a failing missing-runtime diagnostic. It remained reproducible as the repository owner after the Git ownership failures were removed. `selector_pair_checkpoint_audit` prepended the requested paths but used an unrestricted normal import: when the requested helper was absent, ambient `PYTHONPATH` could supply a different checkout; a cached module from another runtime could also be reused. A new cached-helper regression run against the old function returned success (`0`) instead of the required runtime error (`2`).
+
+The diagnostic now requires the helper under the requested runtime and checks the loaded module's resolved filename before inspecting any contract. The standalone shell carries the identical audited Python. The missing-runtime test explicitly plants an ambient helper and proves it is never imported, and the cached-helper test proves no contract is inspected with foreign code. Existing report persistence, return codes, paths with spaces, saved artifact bytes and read-only behavior remain covered. The relevant checkpoint/deployment/Pair launch/results/handoff modules pass **244 tests and 5 subtests in 38.26 seconds**. These are diagnostics and CPU control checks, not new model experiments.
+
 ## Launcher diagnostics and unresolved remote report
 
 `LAUNCH` with no dataset worker is evidence that the coordinator has a child launch in progress and no matching worker receipt has been selected. It does not establish a training phase, GPU utilization, a healthy child, or an infinite pending state. The existing coordinator can launch the same model again after Busy/Yield/interruption, but prior receipts lost the attempt count and previous exit when the next launch began.
@@ -36,7 +42,7 @@ The node lease remains authoritative and is not deleted or bypassed. The earlier
 
 - Initial targeted repair checks: **316 passed in 73.71 seconds**.
 - Combined admission, model chain, actual CPU subprocess/signals, node status, dashboard evidence and ledger retention: **409 passed in 103.84 seconds**. These overlap the first set and are not additive totals.
-- All modified runtime Python and the new dashboard test pass Ruff; two unrelated existing diagnostics in old tests (`RUF059`, `PLW1510`) are excluded, with no new diagnostics of those types. Dashboard JavaScript syntax and Git whitespace checks pass.
+- The first dispatch/status/dashboard change passes scoped Ruff excluding existing test-only `RUF059`/`PLW1510`; the later checkpoint diagnostic has no new Ruff diagnostics compared with its exact pre-repair source (existing `EXE001`, `TRY004`, `PLW1510` remain). Dashboard JavaScript, standalone shell syntax and Git whitespace checks pass. Final tracked Python syntax coverage is 858 files. A SHA-256 comparison confirms 282 protected learner/runtime/adapter Python files match the audit-start snapshot.
 - Full-repository CPU regression results will be appended after the active run finishes. The initial environment lacked the explicitly declared `scikit-learn` dependency from `requirements-gate.txt`; its failures are tracked separately and rerun after installing it in the CPU test virtual environment. No installed package is used as evidence of actual GPU performance.
 
 Frozen learner/runtime/adapter files, original inputs, live queues, checkpoints and results are unchanged by this audit. No remote process was killed or restarted and no real GPU experiment was launched. Local shared-filesystem probes do not verify remote NFS/H100/NCCL behavior.
