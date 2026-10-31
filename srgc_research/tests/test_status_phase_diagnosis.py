@@ -127,3 +127,43 @@ def test_execution_state_does_not_flip_to_eval_or_show_switch_marker_for_other_a
     assert status.cell(row) == "RUN 50/275" and status.phase_cell(row) == "TRAIN"
     row.update(arm="switch", switched_at=50)
     assert "SW@50" in status.cell(row)
+
+
+def test_running_selection_shows_saved_scoring_prompts(cohort, capsys):
+    import hashlib
+
+    from srgc_rebuttal.plan import input_path, load_plan
+    from srgc_rebuttal.srgc import stream_seed
+
+    folder, queue = active(cohort)
+    atomic_json(folder / "cost-receipts/on_policy/select.json",
+                {"phase": "selection", "state": "started", "checkpoint": 25})
+    plan_path = cohort.plans["math"]
+    plan = load_plan(plan_path)
+    bundle = json.loads(input_path(plan_path, plan, 5).read_text())
+    key = lambda rid: f"{hashlib.sha256(rid.encode()).hexdigest()[:24]}-{plan['responses']}.npz"
+    cache = folder / "rollout-cache/on_policy"
+    scoring = cache / f"score-{stream_seed(5, 25, 'selection')}"
+    scoring.mkdir(parents=True)
+    for rid in bundle["candidate_ids"][:7]:
+        (scoring / key(rid)).write_bytes(b"x")
+    (scoring / ".writing-partial.npz").write_bytes(b"x")
+    with lease(queue / "leases/seed-5.on_policy.lock"):
+        row = next(r for r in inspect(cohort, capsys)["datasets"][0]["tasks"] if r["task"] == "seed-5.on_policy")
+        assert row["phase_stage"] == "selection" and row["completed_steps"] == 25
+        assert row["selection_progress"]["candidate_saved"] == 7
+        assert row["selection_progress"]["validation_saved"] is None
+        assert status.selection_text(row) == (
+            f"cand 7/{plan['scoring_prompts_per_set']} val ?/{len(bundle['ranking_validation_ids'])}")
+        text = inspect(cohort, capsys, as_json=False, dataset="math")
+        assert "SELECT cand 7/" in text and "Select" in text
+
+
+def test_switch_check_selection_bound_counts_sr_contrast():
+    row = {"arm": "switch", "status": "running", "phase_stage": "selection", "completed_steps": 25,
+           "total_steps": 275, "selection_progress": {"step": 25, "check": True, "candidate_max": 80,
+           "candidate_saved": 80, "validation_saved": 12, "validation_total": 50}}
+    assert status.selection_text(row) == "cand 80/<=80 val 12/50"
+    assert "SELECT cand 80/<=80 val 12/50 prompts saved (switch check" in status.progress(row)
+    row["phase_stage"] = "training"
+    assert status.selection_text(row) is None

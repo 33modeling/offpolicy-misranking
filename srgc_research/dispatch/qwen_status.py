@@ -80,6 +80,17 @@ def phase_cell(task):
             "startup": "STARTUP", "preparation": "PREP"}.get(task.get("phase_stage"), "-")
 
 
+def selection_text(task):
+    """Saved scoring prompts of a running selection block, or None when not observed."""
+    progress = task.get("selection_progress")
+    if not progress or task.get("phase_stage") != "selection":
+        return None
+    count = lambda value: "?" if value is None else value
+    bound = "<=" if progress["check"] else ""
+    return (f"cand {count(progress['candidate_saved'])}/{bound}{progress['candidate_max']}"
+            f" val {count(progress['validation_saved'])}/{progress['validation_total']}")
+
+
 def worker_error(node):
     message = " ".join(str(node.get("error") or "").split())
     expected = {"KeyboardInterrupt", "KeyboardInterrupt:",
@@ -240,6 +251,13 @@ def progress(task):
         if task.get("phase_stage"):
             parts.append(task["phase_stage"].replace("_", " "))
             parts.append(f"last progress {age(task.get('progress_age_seconds'))} ago")
+        selection = selection_text(task)
+        if selection is not None:
+            check = task["selection_progress"]["check"]
+            parts.append(f"SELECT {selection} prompts saved"
+                         + (" (switch check: candidates + SR contrast)" if check else ""))
+            if task["selection_progress"].get("read_error"):
+                parts.append(f"selection cache read error: {task['selection_progress']['read_error']}")
         if evaluation:
             parts.append(f"{evaluation['responses_per_prompt']} responses/prompt")
             if evaluation.get("read_error"):
@@ -457,8 +475,8 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
             eval_count = (f"{evaluation['saved_prompts'] if evaluation['saved_prompts'] is not None else '?'}/{evaluation['total_prompts']}"
                           if evaluation and row.get("phase_stage") == "evaluation" else "-")
             details.append([label, row["task"], "RUN", phase_cell(row), train, eval_count,
-                            row.get("attempt", "-")])
-        lines += table(("Dataset", "Task", "State", "Phase", "Train", "Eval", "Attempt"), details)
+                            selection_text(row) or "-", row.get("attempt", "-")])
+        lines += table(("Dataset", "Task", "State", "Phase", "Train", "Eval", "Select", "Attempt"), details)
         for label, row in running:
             lines.append(f"  {label} {row['task']} | node {row.get('host') or '-'} | {progress(row)}")
     pending = [(report["label"], row) for report in snapshots for row in report["tasks"]

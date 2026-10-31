@@ -238,6 +238,41 @@ def final_evaluation_progress(report, plan, seed, data):
         row["final_evaluation"] = progress
 
 
+def selection_progress(report, plan, seed, data):
+    """Count saved scoring rollouts of a running selection block, by file name only."""
+    # Engine.update scores candidates under stream (seed, step, "selection") and the
+    # ranking validation set under (seed, step, "validation"), eight responses each.
+    # A switch check adds up to scoring_prompts SR prompts to the candidate union.
+    responses = plan["responses"]
+    key = lambda rid: f"{hashlib.sha256(rid.encode()).hexdigest()[:24]}-{responses}.npz"
+    for row in report["tasks"]:
+        if (row["seed"] != seed or row["status"] != "running"
+                or row.get("phase_stage") != "selection" or type(row.get("completed_steps")) is not int):
+            continue
+        step = row["completed_steps"]
+        check = (row["arm"] == "switch" and step >= plan["first_check"]
+                 and step % plan["check_interval"] == 0)
+        progress = {"step": step, "check": check,
+                    "candidate_max": plan["scoring_prompts_per_set"] * (2 if check else 1),
+                    "validation_total": len(data["ranking_validation_ids"])}
+        folder = Path(report["output_root"]) / f"seed-{seed}" / "rollout-cache" / row["arm"]
+        for name, purpose, ids in (("candidate", "selection", data["candidate_ids"]),
+                                   ("validation", "validation", data["ranking_validation_ids"])):
+            expected = {key(rid) for rid in ids}
+            directory = folder / f"score-{stream_seed(seed, step, purpose)}"
+            progress[f"{name}_saved"] = None
+            try:
+                with os.scandir(directory) as entries:
+                    progress[f"{name}_saved"] = sum(entry.name in expected and entry.is_file(follow_symlinks=False)
+                                                    for entry in entries)
+            except FileNotFoundError:
+                # Not started yet, or already finished and removed.
+                pass
+            except OSError as error:
+                progress["read_error"] = str(error)
+        row["selection_progress"] = progress
+
+
 def load_reports(model, dataset, root, environment):
     """Read recorded identities and isolate input failures to the affected seed."""
     if model not in CONFIGS or dataset not in {"all", "math", "mbpp"}:
@@ -298,6 +333,7 @@ def load_reports(model, dataset, root, environment):
                         report["errors"].append(f"seed {seed} checkpoint eval progress: {error}")
                         report["complete"] = False
                     final_evaluation_progress(report, plan, seed, data)
+                    selection_progress(report, plan, seed, data)
                 except (OSError, ValueError, KeyError, TypeError) as error:
                     report["errors"].append(f"seed {seed} {LABELS[model]} inputs: {error}")
                     for row in report["tasks"]:
