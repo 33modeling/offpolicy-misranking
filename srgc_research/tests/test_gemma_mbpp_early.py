@@ -379,3 +379,21 @@ def test_public_it_run_dispatches_with_early_mbpp_claims(it_math, monkeypatch):
     with patch.object(entry, "main", return_value=0):
         assert gemma_it_run.main(["all", "--root", str(cohort.root)]) == 0
     assert factories and set(factories) == {gemma_it_run.GemmaITEarlyMBPP}
+
+
+@pytest.mark.parametrize("panel,runnable", ((None, False), ("paused", False), ("passed", True)))
+def test_resume_only_child_does_not_admit_for_an_unpassed_mbpp_panel(gemma, monkeypatch, panel, runnable):
+    # Resume-only admission does not run the MBPP panel, so the claim would
+    # find nothing; runnable must not send the child through admission.
+    math, mbpp = gemma.queues
+    finish_fake(math, Task(5, "prefix"))
+    abandoned(math, Task(5, "sr"), state="failed")
+    monkeypatch.setattr(EarlyGemma, "panel", panel)
+    monkeypatch.setenv("SRGC_MODEL_CHAIN_CHILD", "1")
+    monkeypatch.setenv("SRGC_RESUME_ONLY", "1")
+    manager = EarlyGemma(gemma.queues)
+    pending = resume_drain.phase_pending(manager, manager.pending())
+    args = SimpleNamespace(retry_delay=3600)
+    assert resume_drain.runnable(manager, [math], pending, args) is runnable
+    with manager.claim(mbpp, retry_failed=True, retry_delay=3600) as task:
+        assert task == (Task(9, "prefix") if runnable else None)

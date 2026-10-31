@@ -111,7 +111,11 @@ def runnable(manager, requested, pending, args):
             if os.environ.get("SRGC_CACHE_ONLY") == "1" and task.arm != "cache":
                 continue
             key = (str(queue.plan_path.resolve()), task.key)
-            early = queue not in requested and early_sibling(manager, queue, task, admitted=False)
+            # Admission runs an unrun MBPP panel only outside resume-only mode
+            # (early_preflight_plan). Otherwise a claim needs a passed panel, and
+            # predicting more would admit, claim nothing and relaunch forever.
+            early = queue not in requested and early_sibling(
+                manager, queue, task, admitted=os.environ.get("SRGC_RESUME_ONLY") == "1")
             if queue not in requested and key not in pending and not early:
                 continue
             if (os.environ.get("SRGC_RESUME_ONLY") == "1" and not early
