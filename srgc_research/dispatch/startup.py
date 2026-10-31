@@ -1,5 +1,6 @@
 """Real startup registration outside immutable experiment/queue directories."""
 
+import hashlib
 import json
 import math
 import os
@@ -29,7 +30,9 @@ def directory(root):
 class Registration:
     def __init__(self, root):
         identity = uuid.uuid4().hex
-        self.path = directory(root) / (identity + '.json')
+        allocation = socket.gethostname() + ':' + os.environ.get('CUDA_VISIBLE_DEVICES', '0,1,2,3')
+        key = hashlib.sha256(allocation.encode()).hexdigest()
+        self.path = directory(root) / (key + '.json')
         self.row = {'worker_id': identity, 'host': socket.gethostname(), 'pid': os.getpid(),
                     'root': str(Path(root).resolve()), 'model': 'gemma4_it',
                     'started': time.time(), 'status': 'preparing', 'stage': 'starting'}

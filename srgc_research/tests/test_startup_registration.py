@@ -119,3 +119,16 @@ def test_probe_distinguishes_held_and_waiting_kernel_locks(tmp_path):
     assert probe.lock_rows(tmp_path) == {(10, 0, 1, 123): 'held', (11, 0, 1, 123): 'waiting'}
     assert probe.stage('/group-volume/work/.start-prepare.lock') == 'plan 준비'
     assert probe.stage('/home/user/.ssh/private-key') is None
+
+
+def test_retries_reuse_one_latest_startup_record_per_allocation(tmp_path):
+    root = tmp_path / 'experiment'
+    identities = []
+    for _ in range(3):
+        with startup.registration(root):
+            rows = startup.snapshot(root)
+            assert len(rows) == 1
+            identities.append(rows[0]['worker_id'])
+    assert len(set(identities)) == 3
+    assert len(list(startup.directory(root).glob('*.json'))) == 1
+    assert startup.snapshot(root) == []
