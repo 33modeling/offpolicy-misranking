@@ -1087,5 +1087,89 @@
         "evidence_kind": "code_test"
       }
     ]
+  },
+  {
+    "id": "DISPATCH-033",
+    "title": "재개 전용 Gemma child가 잡지 못할 MBPP 때문에 GPU 점검만 반복함(LAUNCH 정지)",
+    "area": "실행·재개",
+    "severity": "high",
+    "first_reported": "2026-10-31",
+    "cause": "3a52515가 재개 전용 child도 MBPP cache·prefix를 보게 했는데, runnable은 패널을 아직 돌리지 않은 상태도 '잡을 수 있음'으로 보았다. 재개 전용 admission은 MBPP 패널을 돌리지 않고, claim은 PASS된 패널을 요구한다. child는 GPU admission을 통과한 뒤 아무것도 잡지 못하고 양보했고, 체인이 10초 뒤 다시 띄웠다.",
+    "impact": "노드가 LAUNCH(dataset worker not registered)에 머물고 학습이 진행되지 않았을 수 있다. 원격 로그로는 미확인이다.",
+    "introduction_commit": "3a52515f31ce7e3cd5c6366d8d8bb8ce89c0afa5",
+    "attribution": "3a52515 수정의 회귀.",
+    "evidence": [
+      {
+        "kind": "user_report",
+        "text": "다 런칭에 걸려 있고 진행이 안된다고 / dataset woker not registered 고쳐 / 이전에 잘 돌아가는 코드가 있는데 왜 모델만 바꾸는건데 못하는거야"
+      },
+      {
+        "kind": "source",
+        "commit": "3a52515f31ce7e3cd5c6366d8d8bb8ce89c0afa5",
+        "path": "srgc_research/dispatch/resume_drain.py"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-31",
+        "actor": "사용자 보고",
+        "type": "user_request",
+        "status": "open",
+        "text": "다 런칭에 걸려 있고 진행이 안된다고 / dataset woker not registered 고쳐 / 이전에 잘 돌아가는 코드가 있는데 왜 모델만 바꾸는건데 못하는거야",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-10-31",
+        "actor": "코드 검증",
+        "type": "code_fix_verified",
+        "status": "code_fixed",
+        "text": "재개 전용 모드에서는 PASS된 MBPP 패널이 있을 때만 MBPP를 실행 가능으로 본다. 패널 없음·실패·PASS 3경우 검사 추가, 배정·체인·재개·status 검사 378건 통과. 원격 미검증.",
+        "evidence_kind": "code_test",
+        "commit": "7ff3e4994da2e9fe7921aa8502263f6203a2b88c",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/7ff3e4994da2e9fe7921aa8502263f6203a2b88c"
+      }
+    ]
+  },
+  {
+    "id": "STATUS-034",
+    "title": "GPU 점검 중인 노드를 'dataset worker not registered'로 표시",
+    "area": "Status·표기",
+    "severity": "high",
+    "first_reported": "2026-10-31",
+    "cause": "같은 노드의 체인 coordinator 기록과 worker의 admission 기록이 같은 우선순위였고, coordinator heartbeat가 더 새로워 worker 기록을 가렸다.",
+    "impact": "GPU 점검(ADMISSION) 중인 노드도 worker가 없는 LAUNCH로 보였다.",
+    "introduction_commit": null,
+    "attribution": "status 노드 병합 우선순위 누락.",
+    "evidence": [
+      {
+        "kind": "user_report",
+        "text": "다 런칭에 걸려 있고 진행이 안된다고 / dataset woker not registered 고쳐 / 이전에 잘 돌아가는 코드가 있는데 왜 모델만 바꾸는건데 못하는거야"
+      },
+      {
+        "kind": "source",
+        "commit": "b2407186ee5897fc86ec53574800f1b714f3e53b",
+        "path": "srgc_research/dispatch/qwen_status.py"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-31",
+        "actor": "사용자 보고",
+        "type": "user_request",
+        "status": "open",
+        "text": "다 런칭에 걸려 있고 진행이 안된다고 / dataset woker not registered 고쳐 / 이전에 잘 돌아가는 코드가 있는데 왜 모델만 바꾸는건데 못하는거야",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-10-31",
+        "actor": "코드 검증",
+        "type": "code_fix_verified",
+        "status": "code_fixed",
+        "text": "120초 안에 갱신된 admission 기록이 있으면 ADMISSION으로 표시한다. 검사 123건 통과. 원격 미검증.",
+        "evidence_kind": "code_test",
+        "commit": "b2407186ee5897fc86ec53574800f1b714f3e53b",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/b2407186ee5897fc86ec53574800f1b714f3e53b"
+      }
+    ]
   }
 ]

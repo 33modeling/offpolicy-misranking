@@ -11812,6 +11812,36 @@
       "attribution": [],
       "is_fix": true,
       "gemma": true
+    },
+    {
+      "hash": "adad1922cd20185db8b394606c49aff682a70de3",
+      "at": "2026-10-31T10:23:34+09:00",
+      "author": "33modeling",
+      "title": "Record SELECT progress, MBPP-first dispatch and Gemma slowness incidents",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/adad1922cd20185db8b394606c49aff682a70de3",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": true
+    },
+    {
+      "hash": "7ff3e4994da2e9fe7921aa8502263f6203a2b88c",
+      "at": "2026-10-31T10:31:54+09:00",
+      "author": "33modeling",
+      "title": "fix(dispatch): do not admit a resume-only Gemma child for an MBPP panel it cannot claim",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/7ff3e4994da2e9fe7921aa8502263f6203a2b88c",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": true
+    },
+    {
+      "hash": "b2407186ee5897fc86ec53574800f1b714f3e53b",
+      "at": "2026-10-31T10:33:33+09:00",
+      "author": "33modeling",
+      "title": "Show ADMISSION instead of an unregistered dataset worker while a chain child is admitted",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/b2407186ee5897fc86ec53574800f1b714f3e53b",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }
