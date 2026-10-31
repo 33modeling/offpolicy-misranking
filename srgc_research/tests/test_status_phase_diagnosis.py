@@ -167,3 +167,20 @@ def test_switch_check_selection_bound_counts_sr_contrast():
     assert "SELECT cand 80/<=80 val 12/50 prompts saved (switch check" in status.progress(row)
     row["phase_stage"] = "training"
     assert status.selection_text(row) is None
+
+
+def test_node_in_admission_is_not_reported_as_unregistered_worker(tmp_path):
+    root = tmp_path / "gemma-it"
+    now = time.time()
+    coordinator = {"status": "running", "model": "gemma4", "status_model": "gemma4_it", "root": str(root),
+                   "heartbeat_age_seconds": 0, "active_dataset": "math", "host": "node-a", "pid": 7,
+                   "order": ["gemma4"], "started": now}
+    worker = {"host": "node-a", "worker_id": "w1", "status": "preflight", "heartbeat_age_seconds": 20}
+    report = {"label": "MATH", "workers": [worker], "tasks": []}
+    nodes = status.node_rows([report], coordinators=[coordinator], model="gemma4_it", root=root)
+    row = next(r for r in (nodes.values() if isinstance(nodes, dict) else nodes) if r.get("host") == "node-a")
+    assert row["status"] == "preflight"
+    worker["heartbeat_age_seconds"] = 600
+    nodes = status.node_rows([report], coordinators=[coordinator], model="gemma4_it", root=root)
+    row = next(r for r in (nodes.values() if isinstance(nodes, dict) else nodes) if r.get("host") == "node-a")
+    assert row["status"] == "launching"

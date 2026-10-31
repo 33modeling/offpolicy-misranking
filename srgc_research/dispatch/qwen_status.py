@@ -186,6 +186,10 @@ def node_rows(snapshots, *, coordinators=(), model=None, root=None):
             return 3
         if row["status"] == "serving_other_dataset":
             return 2
+        # The launcher's child heartbeat is newer than its own worker's
+        # admission receipt; show that admission, not "worker not registered".
+        if row["status"] == "preflight" and row.get("source") != "model_chain" and heartbeat_age(row) <= 120:
+            return 1.5
         return int(row["status"] in LIVE_WORKERS)
 
     for row in sessions.values():
