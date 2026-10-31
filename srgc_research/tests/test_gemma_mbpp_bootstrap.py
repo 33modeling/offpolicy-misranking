@@ -166,3 +166,62 @@ def test_forty_contenders_can_claim_all_twenty_ready_mbpp_arms_while_three_math_
     from pathlib import Path
 
     assert all(Path(name).read_bytes() == content for name, content in immutable.items())
+
+
+def ready_cohort(it_math):
+    """Prepared five-seed queues: MATH done except switch, MBPP prefixes done, panels passed."""
+    from srgc_rebuttal.plan import digest, input_path
+    from srgc_rebuttal.runtime import atomic_json
+    from srgc_rebuttal.tests.test_cluster import finish_fake
+    from srgc_research.dispatch.gemma4_it.protocol import CODE_VERSION, sampling
+    from srgc_research.tests.test_gemma_it_math_handoff import finish_math_caches
+    from srgc_research.tests.test_gemma_mbpp_early import write_panel
+
+    cohort, (math, mbpp) = it_math
+    finish_math_caches(math)
+    for seed in mbpp.plan["seeds"]:
+        path = input_path(mbpp.plan_path, mbpp.plan, seed)
+        bundle = json.loads(path.read_text())
+        bundle["cached_rewards"] = {key: [0, 1] * 4 for key in bundle["candidate_ids"]}
+        bundle["provenance"]["cache"] = {
+            **{key: mbpp.plan[key] for key in ("model", "model_revision", "responses", "max_new_tokens", "verifier")},
+            "cache_seed": seed, "attention": "eager", "gemma_extension": mbpp.plan["extension"],
+            "sampling": sampling(), "code_verifier_version": CODE_VERSION}
+        atomic_json(path, bundle)
+        atomic_json(path.with_suffix(".cache") / "cost-summary.json", {"bundle_sha256": digest(path), "complete": False})
+    mbpp.verify()
+    write_panel(cohort, "mbpp", correct=2)
+    for queue in (math, mbpp):
+        for seed in queue.plan["seeds"]:
+            finish_fake(queue, Task(seed, "prefix"))
+            if queue is math:
+                for arm in queue.plan["arms"]:
+                    if arm != "switch":
+                        finish_fake(queue, Task(seed, arm))
+    return cohort, math, mbpp
+
+
+@pytest.mark.parametrize("ending,cooling", [("torch.OutOfMemoryError: CUDA out of memory.", True),
+                                            ("RuntimeError: other failure", False)])
+def test_oom_switch_does_not_take_every_free_gpu(it_math, ending, cooling):
+    # 2026-10-31: a deterministic switch OOM was retried first by every free
+    # allocation after 60 s, so nothing else was ever assigned.
+    import time
+
+    from srgc_research.tests.test_qwen_resume import abandoned
+
+    cohort, math, mbpp = ready_cohort(it_math)
+    for seed in math.plan["seeds"]:
+        abandoned(math, Task(seed, "switch"), state="failed")
+        log = math.directory / "logs" / f"seed-{seed}.switch.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text("SRGC CHILD START model=gemma4_it\nolder attempt\n"
+                       "SRGC CHILD START model=gemma4_it\n" + ending + "\n")
+    manager = gemma_it_run.GemmaITEarlyMBPP([math, mbpp])
+    with manager.claim(math, retry_failed=True, retry_delay=0) as task:
+        assert (task is None) is cooling
+    if cooling:
+        with manager.claim(mbpp, retry_failed=True, retry_delay=0) as task:
+            assert task is not None and task.arm not in {"cache", "prefix"}
+        row = manager.receipt(math, Task(5, "switch"))
+        assert not manager.oom_cooling(math, Task(5, "switch"), now=row["finished"] + gemma_it_run.OOM_COOLDOWN)
