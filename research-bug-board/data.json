@@ -1,14 +1,14 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-10-30T21:43:21+09:00",
+  "recorded_at": "2026-10-31T10:20:55+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "2f9d9e649214a6df212f2a5fe3ad59ca355ad6b2",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/2f9d9e649214a6df212f2a5fe3ad59ca355ad6b2",
-    "all_available_commits": 1107,
-    "fix_commit_records": 105,
-    "gemma_named_commits": 31,
+    "source_commit": "3a52515f31ce7e3cd5c6366d8d8bb8ce89c0afa5",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/3a52515f31ce7e3cd5c6366d8d8bb8ce89c0afa5",
+    "all_available_commits": 1110,
+    "fix_commit_records": 107,
+    "gemma_named_commits": 32,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
     "first_commit_at": "2026-08-07T05:56:48+09:00",
     "first_gemma_commit": "a15d3f114438cdd38ec1d959b94d3ad881172854",
@@ -23,7 +23,7 @@
       "refs/heads/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:2f9d9e649214a6df212f2a5fe3ad59ca355ad6b2",
+      "refs/heads/master:3a52515f31ce7e3cd5c6366d8d8bb8ce89c0afa5",
       "refs/remotes/origin/audit/codecheck-20260820:5dd447990296042e334679c85e7672477cd7c5d3",
       "refs/remotes/origin/audit/p1-integrity:5dfda89ec3be2cc4d60f8f0371eeaf00790f6644",
       "refs/remotes/origin/docs/mbpp-budget-incident-20260919:fa1c6897b2b26ef002dd165c94f58702b1f9e1ed",
@@ -32,7 +32,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:2f9d9e649214a6df212f2a5fe3ad59ca355ad6b2"
+      "refs/remotes/origin/master:908e50eef3c515e06f1c66278e69c99ba633099a"
     ]
   },
   "incidents": [
@@ -922,6 +922,206 @@
           "evidence_kind": "code_test",
           "commit": "2f9d9e649214a6df212f2a5fe3ad59ca355ad6b2",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/2f9d9e649214a6df212f2a5fe3ad59ca355ad6b2"
+        }
+      ]
+    },
+    {
+      "id": "STATUS-028",
+      "title": "선택 단계(SELECT)에 진행률이 없어 24시간 멈춘 것처럼 보임",
+      "area": "Status·표기",
+      "severity": "high",
+      "first_reported": "2026-10-31",
+      "cause": "status는 선택 단계의 시작 기록만 보여 주고, 단계 안에서 저장되는 후보·검증 rollout 수를 세지 않았다. switch는 25, 50, … 업데이트마다 새 후보 40개와 SR 비교 40개, 검증 50개를 문제마다 8응답으로 다시 채점하므로 이 단계 하나가 학습 업데이트 약 30번 분량이다.",
+      "impact": "Gemma switch가 SELECT 25/275에서 24시간 넘게 같은 표시로 남아, 도는 중인지 멈춘 것인지 구분할 수 없었다. 실제 원격 진행 여부는 이 기록 시점에 미확인이다.",
+      "introduction_commit": null,
+      "attribution": "status 표시 누락. 학습·선택 코드는 바꾸지 않았다.",
+      "evidence": [
+        {
+          "kind": "user_report",
+          "text": "야 씨발 25/275 switch 멈춰 있어 / select 25/275 에서 멈춘다고 / 24시간 지났어 / 고쳐 빨리"
+        },
+        {
+          "kind": "source",
+          "commit": "908e50eef3c515e06f1c66278e69c99ba633099a",
+          "path": "srgc_rebuttal/srgc.py"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-10-31",
+          "actor": "사용자 보고",
+          "type": "user_request",
+          "status": "open",
+          "text": "야 씨발 25/275 switch 멈춰 있어 / select 25/275 에서 멈춘다고 / 24시간 지났어 / 고쳐 빨리",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-10-31",
+          "actor": "코드 검증",
+          "type": "code_fix_verified",
+          "status": "code_fixed",
+          "text": "RUNNING 표에 Select 칸, 진행 줄에 'SELECT cand 저장/후보 val 저장/50 prompts saved'를 추가했다. switch 검사 시점은 후보 상한 80을 '<=80'으로 표시한다. rollout-cache 파일 이름만 세며 내용은 읽지 않는다. gemma4_it·qwen35·llama31·gemma4 status 경로에서 가짜 실행 기록으로 검사 149건 통과. 원격 표시는 미확인.",
+          "evidence_kind": "code_test",
+          "commit": "908e50eef3c515e06f1c66278e69c99ba633099a",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/908e50eef3c515e06f1c66278e69c99ba633099a"
+        }
+      ]
+    },
+    {
+      "id": "DISPATCH-029",
+      "title": "잡을 수 없는 MATH 작업 하나가 남는 GPU의 MBPP cache·prefix를 막음",
+      "area": "실행·큐",
+      "severity": "high",
+      "first_reported": "2026-10-31",
+      "cause": "ReadyClaims.claim은 주인 없는 MATH 미완료 작업이 있으면 새 작업 우선순위를 닫았고, 체인 child의 runnable도 그 MATH 작업만 후보로 보았다. 그 작업이 재시도 대기 중이거나 실행 잠금이 남아 지금 잡을 수 없어도 같았다.",
+      "impact": "남는 GPU가 MBPP cache·prefix를 잡지 않고 양보를 반복해 놀 수 있었다. 원격에서 이 경로가 실제로 일어났는지는 로그가 없어 미확인이다.",
+      "introduction_commit": "df7263c3c4ae3af976eb7b663695aa147db394db",
+      "attribution": "10-29 MBPP 선행 배정 구현의 우선순위 처리 누락.",
+      "evidence": [
+        {
+          "kind": "user_report",
+          "text": "그리고 씨발 남는 gpu는 mbpp prefix 진행 먼저하라고 했잖아 개새끼야 버그 전부 등록해놓고 고쳐"
+        },
+        {
+          "kind": "source",
+          "commit": "df7263c3c4ae3af976eb7b663695aa147db394db",
+          "path": "srgc_research/dispatch/ready_dispatch.py"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-10-31",
+          "actor": "사용자 보고",
+          "type": "user_request",
+          "status": "open",
+          "text": "그리고 씨발 남는 gpu는 mbpp prefix 진행 먼저하라고 했잖아 개새끼야 버그 전부 등록해놓고 고쳐",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-10-31",
+          "actor": "코드 검증",
+          "type": "code_fix_verified",
+          "status": "code_fixed",
+          "text": "MATH 단계 worker가 MBPP cache·prefix를 고를 때 MATH 밀린 작업이 우선순위를 막지 않게 했다. 재시도 대기 중인 MATH ERROR가 있는 상태에서 MBPP prefix를 배정하는 검사 3건(claim, 체인 child 일반·재개 전용)은 이전 코드에서 실패하고 수정 후 통과한다. 원격 H100 미검증.",
+          "evidence_kind": "code_test",
+          "commit": "3a52515f31ce7e3cd5c6366d8d8bb8ce89c0afa5",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/3a52515f31ce7e3cd5c6366d8d8bb8ce89c0afa5"
+        }
+      ]
+    },
+    {
+      "id": "DISPATCH-030",
+      "title": "실패한 MBPP prefix가 MATH 작업이 모두 끝나야 재시도됨",
+      "area": "실행·큐",
+      "severity": "high",
+      "first_reported": "2026-10-31",
+      "cause": "MATH 단계 worker의 고르는 순서에서 MBPP cache·prefix ERROR 재시도가 맨 끝이었다.",
+      "impact": "MATH arm은 275 업데이트라 실패한 MBPP prefix가 사실상 다시 시도되지 않았다.",
+      "introduction_commit": "df7263c3c4ae3af976eb7b663695aa147db394db",
+      "attribution": "10-29 순서 결정이 사용자 지시(남는 GPU는 MBPP prefix 먼저)와 달랐다.",
+      "evidence": [
+        {
+          "kind": "user_report",
+          "text": "그리고 씨발 남는 gpu는 mbpp prefix 진행 먼저하라고 했잖아 개새끼야 버그 전부 등록해놓고 고쳐"
+        },
+        {
+          "kind": "source",
+          "commit": "df7263c3c4ae3af976eb7b663695aa147db394db",
+          "path": "srgc_research/dispatch/resume_drain.py"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-10-31",
+          "actor": "사용자 보고",
+          "type": "user_request",
+          "status": "open",
+          "text": "그리고 씨발 남는 gpu는 mbpp prefix 진행 먼저하라고 했잖아 개새끼야 버그 전부 등록해놓고 고쳐",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-10-31",
+          "actor": "코드 검증",
+          "type": "code_fix_verified",
+          "status": "code_fixed",
+          "text": "순서를 새 MBPP cache·prefix → MBPP cache·prefix 재시도(재시도 대기 시간 유지) → MATH ERROR·재개 → MATH cache·prefix → MATH arm으로 바꿨다. 재시도 대기 중이면 MATH로 넘어가는 검사 포함 통과. 원격 미검증.",
+          "evidence_kind": "code_test",
+          "commit": "3a52515f31ce7e3cd5c6366d8d8bb8ce89c0afa5",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/3a52515f31ce7e3cd5c6366d8d8bb8ce89c0afa5"
+        }
+      ]
+    },
+    {
+      "id": "DISPATCH-031",
+      "title": "체인 재개 전용 모드에서 MBPP cache·prefix를 보지 않음",
+      "area": "실행·재개",
+      "severity": "high",
+      "first_reported": "2026-10-31",
+      "cause": "SRGC_RESUME_ONLY=1인 체인 child는 MATH 밀린 작업 목록에 있는 것만 잡았고, MBPP는 MATH가 끝나기 전 그 목록에서 빠져 있었다.",
+      "impact": "체인이 저장된 MATH 작업을 재개하는 동안 그 노드는 MBPP prefix를 잡지 못했다.",
+      "introduction_commit": "df7263c3c4ae3af976eb7b663695aa147db394db",
+      "attribution": "재개 전용 경로에 MBPP 선행 배정 예외가 빠짐.",
+      "evidence": [
+        {
+          "kind": "user_report",
+          "text": "그리고 씨발 남는 gpu는 mbpp prefix 진행 먼저하라고 했잖아 개새끼야 버그 전부 등록해놓고 고쳐"
+        },
+        {
+          "kind": "source",
+          "commit": "df7263c3c4ae3af976eb7b663695aa147db394db",
+          "path": "srgc_research/dispatch/ready_dispatch.py"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-10-31",
+          "actor": "사용자 보고",
+          "type": "user_request",
+          "status": "open",
+          "text": "그리고 씨발 남는 gpu는 mbpp prefix 진행 먼저하라고 했잖아 개새끼야 버그 전부 등록해놓고 고쳐",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-10-31",
+          "actor": "코드 검증",
+          "type": "code_fix_verified",
+          "status": "code_fixed",
+          "text": "재개 전용 child도 MBPP cache·prefix를 잡게 했다. 재개 전용 모드 검사는 이전 코드에서 실패하고 수정 후 통과. 원격 미검증.",
+          "evidence_kind": "code_test",
+          "commit": "3a52515f31ce7e3cd5c6366d8d8bb8ce89c0afa5",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/3a52515f31ce7e3cd5c6366d8d8bb8ce89c0afa5"
+        }
+      ]
+    },
+    {
+      "id": "GEMMA-032",
+      "title": "Gemma 학습·선택이 Qwen보다 훨씬 느림",
+      "area": "모델·성능",
+      "severity": "high",
+      "first_reported": "2026-10-31",
+      "cause": "코드 버그는 찾지 못했다. Gemma 4 12B는 모든 층이 softmax attention인데 plan이 eager attention으로 고정돼 있어 sliding window 층도 전체 길이 행렬을 계산한다. 프롬프트가 최대 약 3,800토큰이고 응답은 최대 2,048토큰이다. 생성은 2개씩 4번, log-prob은 1개씩 계산하며 gradient checkpointing 재계산이 붙는다. Gemma 전용 마스크·softcap의 동기화 비용은 몇 % 수준으로 추정한다. 모두 측정이 아닌 추정이다.",
+      "impact": "switch 검사 선택 단계 하나가 수십 시간 걸릴 수 있다. attention 방식과 묶음 크기는 plan 계약 필드라 바꾸면 새 root에서 다시 시작해야 한다.",
+      "introduction_commit": null,
+      "attribution": "실험 계약 설정과 모델 구조의 조합. 속도 때문에 계약을 바꾸는 것은 사용자 결정이다.",
+      "evidence": [
+        {
+          "kind": "user_report",
+          "text": "gemma 코드 너무 느린데 … 야 gemma 코드 뭐가 문제냐 / 왜 느려 / gemma만 왜 버그를 내냐"
+        },
+        {
+          "kind": "source",
+          "commit": "3a52515f31ce7e3cd5c6366d8d8bb8ce89c0afa5",
+          "path": "srgc_research/dispatch/gemma4/memory.py"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-10-31",
+          "actor": "코드 검증",
+          "type": "recorded",
+          "status": "open",
+          "text": "원인 분석만 기록했다. 측정값 없음. 계약 필드(attention, generation_micro_batch, logprob_micro_batch, logit_chunk_tokens) 변경은 새 root 재시작이 필요해 사용자 결정 대기.",
+          "evidence_kind": "code_test"
         }
       ]
     }

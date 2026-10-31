@@ -11782,6 +11782,36 @@
       "attribution": [],
       "is_fix": true,
       "gemma": false
+    },
+    {
+      "hash": "dad2748c2b40afcc0b8b2cc009e2bc21b75bf436",
+      "at": "2026-10-30T21:44:19+09:00",
+      "author": "33modeling",
+      "title": "Record model-chain busy report and verified lease-wait fix",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/dad2748c2b40afcc0b8b2cc009e2bc21b75bf436",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "908e50eef3c515e06f1c66278e69c99ba633099a",
+      "at": "2026-10-31T09:53:23+09:00",
+      "author": "33modeling",
+      "title": "Show saved candidate and validation scoring prompts while a selection block runs",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/908e50eef3c515e06f1c66278e69c99ba633099a",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "3a52515f31ce7e3cd5c6366d8d8bb8ce89c0afa5",
+      "at": "2026-10-31T10:20:13+09:00",
+      "author": "33modeling",
+      "title": "fix(dispatch): give free Gemma GPUs early MBPP cache/prefix before MATH work",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/3a52515f31ce7e3cd5c6366d8d8bb8ce89c0afa5",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": true
     }
   ]
 }
