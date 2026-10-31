@@ -885,6 +885,26 @@
         "evidence_kind": "code_test",
         "commit": "2f9d9e649214a6df212f2a5fe3ad59ca355ad6b2",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/2f9d9e649214a6df212f2a5fe3ad59ca355ad6b2"
+      },
+      {
+        "at": "2026-10-31T05:09:48+00:00",
+        "actor": "코드 재점검",
+        "type": "recurrence_report",
+        "status": "open",
+        "text": "사용자: 버그 그대로인거 같은데 다시 점검 / model chain wiate 또 걸림. 이전 2f9d9e6은 Busy 즉시 종료를 실제 lease 대기로 바꾼 수정이다. 잠금을 계속 보유하는 원격 원인은 해결 확인되지 않았다. 기존 원문·수정·검증 이력은 유지하며 원격 정체는 다시 미해결로 표시한다.",
+        "evidence_kind": "user_report",
+        "commit": "b2b7c46f29eab5bebf984ef39f50972e912f73e4",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/b2b7c46f29eab5bebf984ef39f50972e912f73e4"
+      },
+      {
+        "at": "2026-10-31T05:09:48+00:00",
+        "actor": "코드 재점검",
+        "type": "bounded_reaudit",
+        "status": "open",
+        "text": "현재 실행 경로와 실제 CPU 잠금 대기·해제·신호 처리를 재검사했다. 새 coordinator의 기록에는 모델/데이터셋별 실행 회차·직전 종료 코드/시각·시작 시각·현재 자식 PID를 남기며 WAIT와 status에서 보여 준다. 기존 노드 잠금은 삭제·우회하지 않는다. 409개 관련 CPU 검사 통과. 실제 원격 잠금 보유 PID·GPU 진행은 접근 불가로 미확인이다.",
+        "evidence_kind": "code_test",
+        "commit": "b2b7c46f29eab5bebf984ef39f50972e912f73e4",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/b2b7c46f29eab5bebf984ef39f50972e912f73e4"
       }
     ]
   },
@@ -1179,6 +1199,26 @@
         "evidence_kind": "code_test",
         "commit": "b2407186ee5897fc86ec53574800f1b714f3e53b",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/b2407186ee5897fc86ec53574800f1b714f3e53b"
+      },
+      {
+        "at": "2026-10-31T05:09:48+00:00",
+        "actor": "코드 재점검",
+        "type": "recurrence_report",
+        "status": "open",
+        "text": "사용자: model launcher active; dataset worker not resistered 는 무슨 단계야 / 왜 오래 걸려? / 무한 pending인지 모르겠어 / 종료했다가 다시 시작하냐? 이전 ADMISSION 병합 우선순위 수정으로 실제 worker 미등록 정체의 원인까지 해결된 것은 아니다.",
+        "evidence_kind": "user_report",
+        "commit": "b2b7c46f29eab5bebf984ef39f50972e912f73e4",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/b2b7c46f29eab5bebf984ef39f50972e912f73e4"
+      },
+      {
+        "at": "2026-10-31T05:09:48+00:00",
+        "actor": "코드 재점검",
+        "type": "launcher_diagnostics_verified",
+        "status": "open",
+        "text": "LAUNCH는 coordinator 기록만 있고 데이터셋 worker 기록은 확인되지 않는 상태이며 학습 단계나 정상 진행을 뜻하지 않는다. 모델 연결 기록에 launch_cycle·previous_exit·PID·launch_age를 추가해 같은 자식의 장기 실행과 반복 종료를 구분할 근거를 제공했다. 기존 실행의 없던 이력은 만들지 않는다. Busy/Yield/SIGKILL 재시도 및 세 모델 status 검사 등 409개 통과. 실제 원격 등록 정체는 미해결이다.",
+        "evidence_kind": "code_test",
+        "commit": "b2b7c46f29eab5bebf984ef39f50972e912f73e4",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/b2b7c46f29eab5bebf984ef39f50972e912f73e4"
       }
     ]
   },
@@ -1288,6 +1328,96 @@
         "evidence_kind": "code_test",
         "commit": "cd0cb20503bc0d7294b8be3dca138d18c180b262",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/cd0cb20503bc0d7294b8be3dca138d18c180b262"
+      }
+    ]
+  },
+  {
+    "id": "DISPATCH-037",
+    "title": "요청한 MBPP 큐가 잡을 수 없는 학습 작업 때문에 GPU admission을 반복함",
+    "area": "실행·배정",
+    "severity": "high",
+    "first_reported": "2026-10-31",
+    "cause": "runnable은 sibling MBPP를 분류할 때만 task_allowed를 확인했다. 요청된 MBPP 큐에서는 MATH 미완료/완료 lease 유지로 막힌 학습 arm이나 패널이 통과하지 않은 재개 전용 prefix까지 실행 가능으로 판단했지만 실제 claim은 거절했다.",
+    "impact": "실제 배정 가능한 작업이 없어도 GPU admission과 양보·재실행이 반복될 수 있다. 사용자 원격 WAIT/LAUNCH의 실제 원인인지 아직 확인되지 않았다.",
+    "introduction_commit": null,
+    "attribution": "전체 코드 점검 중 CPU에서 재현한 admission/claim 경계 불일치. 도입 커밋은 특정하지 않았다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "commit": "db93271fd2be44a971bd60756b69d130576cc613",
+        "path": "srgc_research/dispatch/resume_drain.py"
+      },
+      {
+        "kind": "commit",
+        "label": "배정 판단 일치 및 실행 진단 수정",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/b2b7c46f29eab5bebf984ef39f50972e912f73e4"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-31T05:09:48+00:00",
+        "actor": "코드 재점검",
+        "type": "fault_injection_reproduced",
+        "status": "open",
+        "text": "실제 queue·receipt·lease를 쓰는 CPU probe 4건에서 admission=True/claim=None을 재현했다. 새 회귀 12개를 db93271의 수정 전 함수로 실행하면 7실패·5통과다. checkpoint 바이트를 보존하며 GPU는 모의 함수로 차단했다.",
+        "evidence_kind": "code_test",
+        "commit": "b2b7c46f29eab5bebf984ef39f50972e912f73e4",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/b2b7c46f29eab5bebf984ef39f50972e912f73e4"
+      },
+      {
+        "at": "2026-10-31T05:09:48+00:00",
+        "actor": "코드 재점검",
+        "type": "code_fix_verified",
+        "status": "code_fixed",
+        "text": "모든 candidate에 동일한 task_allowed를 적용하고 기존 normal/resume-only 패널 정책을 유지했다. MATH 완료 장벽, early cache/prefix, 재시도 대기·task lease·모델 순서는 보존했다. 새 12건과 관련 운영·상태·보존 회귀를 포함한 409개 CPU 검사 통과. 원격 H100/공유 볼륨 미검증.",
+        "evidence_kind": "code_test",
+        "commit": "b2b7c46f29eab5bebf984ef39f50972e912f73e4",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/b2b7c46f29eab5bebf984ef39f50972e912f73e4"
+      }
+    ]
+  },
+  {
+    "id": "BOARD-038",
+    "title": "현황판에서 사용자 원문과 commit/path 소스 근거가 빈 링크로 표시됨",
+    "area": "현황판·근거",
+    "severity": "medium",
+    "first_reported": "2026-10-31",
+    "cause": "근거 렌더러가 label/url 형식만 처리해 user_report/text와 source/commit/path 형식 21건의 원문·파일 링크가 보이지 않고 # 링크로 표시됐다.",
+    "impact": "버그 현황판에서 보고 원문과 문제가 발생한 코드 파일을 확인하기 어려웠다. 원본 JSON의 근거 자체는 보존돼 있었다.",
+    "introduction_commit": null,
+    "attribution": "현재 36개 사건의 근거 형식과 실제 Node 렌더러를 대조해 재현. 최초 도입은 특정하지 않았다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "commit": "db93271fd2be44a971bd60756b69d130576cc613",
+        "path": "research-bug-board/app.js"
+      },
+      {
+        "kind": "commit",
+        "label": "근거 원문·실제 파일 링크 복원",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/b2b7c46f29eab5bebf984ef39f50972e912f73e4"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-31T05:09:48+00:00",
+        "actor": "코드 재점검",
+        "type": "renderer_reproduced",
+        "status": "open",
+        "text": "실제 incident 렌더러에 사용자 보고문과 commit/path 소스를 입력한 두 검사가 수정 전 모두 실패했다. 기록을 삭제하거나 예전 형식으로 덮어쓰지 않았다.",
+        "evidence_kind": "code_test",
+        "commit": "b2b7c46f29eab5bebf984ef39f50972e912f73e4",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/b2b7c46f29eab5bebf984ef39f50972e912f73e4"
+      },
+      {
+        "at": "2026-10-31T05:09:48+00:00",
+        "actor": "코드 재점검",
+        "type": "code_fix_verified",
+        "status": "code_fixed",
+        "text": "보고 원문은 이스케이프·개행을 유지해 표시하고 검증된 commit/path는 GitHub 파일 URL로 연결한다. 기존 labeled 링크를 유지하고 불완전한 근거는 가짜 링크 대신 텍스트로 보여 준다. 실제 전체 사건 데이터·기존 링크·잘못된 경로·HTML 입력을 포함한 Node 검사 9건 통과(409개 관련 검사에 포함). 실제 사이트 게시 검증은 인증 조회 자동 승인 검토 차단으로 미완료.",
+        "evidence_kind": "code_test",
+        "commit": "b2b7c46f29eab5bebf984ef39f50972e912f73e4",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/b2b7c46f29eab5bebf984ef39f50972e912f73e4"
       }
     ]
   }

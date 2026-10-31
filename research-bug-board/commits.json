@@ -11892,6 +11892,26 @@
       "attribution": [],
       "is_fix": true,
       "gemma": true
+    },
+    {
+      "hash": "db93271fd2be44a971bd60756b69d130576cc613",
+      "at": "2026-10-31T13:59:47+09:00",
+      "author": "33modeling",
+      "title": "Record the Gemma switch-check NCCL wait incident",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/db93271fd2be44a971bd60756b69d130576cc613",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": true
+    },
+    {
+      "hash": "b2b7c46f29eab5bebf984ef39f50972e912f73e4",
+      "at": "2026-10-31T14:08:42+09:00",
+      "author": "33modeling",
+      "title": "Fix task admission, expose launcher retries and restore bug-board evidence",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/b2b7c46f29eab5bebf984ef39f50972e912f73e4",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
     }
   ]
 }

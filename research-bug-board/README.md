@@ -1,6 +1,9 @@
 # 논문 코드 버그 현황판
 
-게시 주소: https://77modeling.pages.dev/paper-code-bugs/
+현재 tools-host 게시 주소: https://77model.pages.dev/paper-code-bugs/
+
+이전 `77modeling.pages.dev`는 별도 legacy 호스트다. 게시 대상을 현재 설정과 대조하고,
+원격 검증 없이 두 호스트의 기록이 같다고 보고하지 않는다.
 
 Gemma 초기 1%대 사용자 보고부터 모델 선택·생성·실행·기록·status 문제를 상세
 사건으로 남긴다. 과거 수정커밋과 감사 시점의 전체 Git 이력도 별도 목록으로 보존한다.
