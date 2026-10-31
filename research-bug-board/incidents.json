@@ -915,6 +915,16 @@
         "evidence_kind": "code_test",
         "commit": "8dfc08559300d83721c70a9dbd342636e69647fc",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/8dfc08559300d83721c70a9dbd342636e69647fc"
+      },
+      {
+        "at": "2026-10-31T09:32:59+00:00",
+        "actor": "MBPP 실행 경로 점검",
+        "type": "mbpp_dispatch_followup",
+        "status": "open",
+        "text": "사용자40개 등록·RUN3개/MBPP 미시작 보고에 대해 별도MBPP 배정 차단을 수정했다. 원격 MODEL CHAIN WAIT의 실제 lock holder와40개 노드별 상태는 확인하지 못했으므로 원래 잠금 사건은 open 유지한다. 핵심68개와 관련271개 CPU 회귀 통과, 명시적 tokenizer 건너뜀1개. 실제 5-seed Gemma IT 큐·파일 lease 검사에서 MATH3개를 보유하고40개 contender가경쟁해 준비된 MBPP학습20건을중복없이모두claim했다. early opt-out이면0건. 실제GPU40대 실행·속도·메모리·요금 절감 검증은 아니다.",
+        "evidence_kind": "code_test",
+        "commit": "4c6d01a3df40f214b773b71f03cae27df0d74526",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/4c6d01a3df40f214b773b71f03cae27df0d74526"
       }
     ]
   },
@@ -1619,6 +1629,60 @@
         "evidence_kind": "code_test",
         "commit": "8dfc08559300d83721c70a9dbd342636e69647fc",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/8dfc08559300d83721c70a9dbd342636e69647fc"
+      }
+    ]
+  },
+  {
+    "id": "MBPP-043",
+    "title": "유휴 Gemma worker가 준비된 MBPP를 시작하지 못함",
+    "area": "배정·MBPP",
+    "severity": "high",
+    "first_reported": "2026-10-31",
+    "cause": "MATH cache 전용 단계가 peer 소유 때문에76을 반환하면 MBPP 배정 경로에 도달하지 않았다. 재개 전용 모드는 미실행 MBPP panel을 건너뛰지만 claim은 panel 통과를 요구했고, 빈 MATH 복구 목록도 MBPP 확인 전 조기 반환했다. 기존 전체-MATH 장벽은 준비된 MBPP 학습 arm의 유휴 노드 배정도 막았다.",
+    "impact": "GPU 작업을 여러 개 등록해도 MBPP cache/prefix 또는 준비된 학습 arm을 시작하지 못하고 대기를 반복할 수 있었다. 사용자 보고의40개 등록·RUN3개에 대한 실제 노드별 원인과 현재 적용은 원격 로그가 없어 미확인이다.",
+    "introduction_commit": null,
+    "attribution": "최신 MBPP 병행 요청에 따른 배정 정책 수정 및 CPU 재현. 기존 모델 완료 순서·seed 의존성·원래 학습은 보존했다.",
+    "evidence": [
+      {
+        "kind": "user_report",
+        "text": "야 병신아. 40개를 등록했는데, run이 3개야\nmbpp 시작을 못하네 병신새끼야\n빨리고쳐"
+      },
+      {
+        "kind": "source",
+        "commit": "f41439bb08fbd3893d5c3e0e13ec524cf3696773",
+        "path": "srgc_research/dispatch/gemma_it_run.py"
+      },
+      {
+        "kind": "commit",
+        "label": "유휴 GPU의 준비된 MBPP 학습 arm 배정",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/d375b93bd3327db3cdb0778b2c8a2bcb6846d2ea"
+      },
+      {
+        "kind": "source",
+        "commit": "4c6d01a3df40f214b773b71f03cae27df0d74526",
+        "path": "docs/MBPP_DISPATCH_2026-10-31.md"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-31T09:32:59+00:00",
+        "actor": "MBPP 실행 경로 점검",
+        "type": "user_report_and_cpu_reproduction",
+        "status": "open",
+        "text": "새 재현9건은 수정 전 실패했고 중지·실패 대조2건은 통과했다. 중간 통합234통과·3실패·1건너뜀을 보존했다. 남은 admission 판정·이전 IT 장벽 기대값을 고쳤고40-contender 합성 캐시의 고정 code-verifier provenance도 바로잡았다.",
+        "evidence_kind": "code_test",
+        "commit": "4c6d01a3df40f214b773b71f03cae27df0d74526",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/4c6d01a3df40f214b773b71f03cae27df0d74526"
+      },
+      {
+        "at": "2026-10-31T09:32:59+00:00",
+        "actor": "MBPP 실행 경로 점검",
+        "type": "code_fix_verified",
+        "status": "code_fixed",
+        "text": "peer 소유 cache yield 뒤 MBPP 경로를 확인하고 recovery에서도 panel을 검증한다. 실제 claim은 panel 통과·해당seed Prefix·잠금을 계속 요구한다. MATH claim이 없는 유휴 Gemma IT worker는 준비된 MBPP arm도 맡는다. fallback 성공을 MATH 완료로 표시하지 않는다. 핵심68개와 관련271개 CPU 회귀 통과, 명시적 tokenizer 건너뜀1개. 실제 5-seed Gemma IT 큐·파일 lease 검사에서 MATH3개를 보유하고40개 contender가경쟁해 준비된 MBPP학습20건을중복없이모두claim했다. early opt-out이면0건. 실제GPU40대 실행·속도·메모리·요금 절감 검증은 아니다.",
+        "evidence_kind": "code_test",
+        "commit": "4c6d01a3df40f214b773b71f03cae27df0d74526",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/4c6d01a3df40f214b773b71f03cae27df0d74526"
       }
     ]
   }

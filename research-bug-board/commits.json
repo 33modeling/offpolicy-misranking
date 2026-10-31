@@ -11942,6 +11942,36 @@
       "attribution": [],
       "is_fix": true,
       "gemma": false
+    },
+    {
+      "hash": "f41439bb08fbd3893d5c3e0e13ec524cf3696773",
+      "at": "2026-10-31T15:24:03+09:00",
+      "author": "33modeling",
+      "title": "Record full audit and GPU accounting regressions in permanent ledger",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/f41439bb08fbd3893d5c3e0e13ec524cf3696773",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "d375b93bd3327db3cdb0778b2c8a2bcb6846d2ea",
+      "at": "2026-10-31T18:31:23+09:00",
+      "author": "33modeling",
+      "title": "Let free Gemma GPUs take MBPP arms after MATH work instead of idling",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/d375b93bd3327db3cdb0778b2c8a2bcb6846d2ea",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": true
+    },
+    {
+      "hash": "4c6d01a3df40f214b773b71f03cae27df0d74526",
+      "at": "2026-10-31T18:31:44+09:00",
+      "author": "33modeling",
+      "title": "Fix idle Gemma workers blocking ready MBPP work",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/4c6d01a3df40f214b773b71f03cae27df0d74526",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": true
     }
   ]
 }
