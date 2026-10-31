@@ -76,6 +76,11 @@ def main():
             "entry": args.entry_module or args.entry_script,
             "arguments": arguments, "error_file": os.environ.get("TORCHELASTIC_ERROR_FILE"),
         }, sort_keys=True), flush=True)
+        from . import selection_resume
+        if args.model in selection_resume.MODELS:
+            # Before the pinned rank imports its backend: a restart reuses a
+            # finished scoring block instead of regenerating it.
+            selection_resume.install()
         sys.argv = [args.entry_module or args.entry_script, *arguments]
         if args.entry_module:
             runpy.run_module(args.entry_module, run_name="__main__", alter_sys=True)
