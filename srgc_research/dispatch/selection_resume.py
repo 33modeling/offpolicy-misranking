@@ -200,6 +200,21 @@ def extend_collective_timeout(seconds=COLLECTIVE_TIMEOUT_SECONDS):
     return init_process_group
 
 
+def expandable_segments(environment=None):
+    """Keep the CUDA allocator's expandable segments on in every Gemma rank.
+
+    The launch script sets it only when PYTORCH_CUDA_ALLOC_CONF is unset; an
+    inherited value without it leaves long scoring blocks to fragmentation.
+    Allocation behaviour only; results are unchanged."""
+    environment = os.environ if environment is None else environment
+    value = environment.get("PYTORCH_CUDA_ALLOC_CONF", "")
+    options = [item for item in value.split(",") if item.strip()]
+    if not any(item.replace(" ", "").startswith("expandable_segments:") for item in options):
+        options.append("expandable_segments:True")
+    environment["PYTORCH_CUDA_ALLOC_CONF"] = ",".join(options)
+    return environment["PYTORCH_CUDA_ALLOC_CONF"]
+
+
 def install():
     """Patch the rollout mixin under both of its import names."""
     from scripts import srgc_resumable_rollouts as module

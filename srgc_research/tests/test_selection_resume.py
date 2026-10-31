@@ -192,10 +192,11 @@ def test_rank_wrapper_installs_for_gemma_only(monkeypatch):
     calls = []
     monkeypatch.setattr(selection_resume, "install", lambda: calls.append(True))
     monkeypatch.setattr(selection_resume, "extend_collective_timeout", lambda: calls.append("timeout"))
+    monkeypatch.setattr(selection_resume, "expandable_segments", lambda: calls.append("allocator"))
     monkeypatch.setattr(rank_runtime.runpy, "run_module", lambda *a, **k: None)
     fake = SimpleNamespace(record=lambda function: function)
     monkeypatch.setitem(sys.modules, "torch.distributed.elastic.multiprocessing.errors", fake)
-    for model, expected in (("gemma4_it", 2), ("gemma4", 4), ("qwen35", 4), ("llama31", 4)):
+    for model, expected in (("gemma4_it", 3), ("gemma4", 6), ("qwen35", 6), ("llama31", 6)):
         monkeypatch.setattr(sys, "argv", ["rank_runtime", "--model", model, "--entry-module",
                                           "srgc_research.dispatch.reward_curve_rank", "--", "--model", model])
         rank_runtime.main()
@@ -356,3 +357,15 @@ def test_status_line_for_a_cuda_oom_carries_its_sizes_and_call_site(tmp_path):
     assert last_error_line(log) == expected
     log.write_text("\n".join(attempt + ["SRGC CHILD START model=gemma4_it", "running again"]) + "\n")
     assert previous_attempt_line(log) == expected
+
+
+@pytest.mark.parametrize("value,expected", [
+    (None, "expandable_segments:True"),
+    ("max_split_size_mb:512", "max_split_size_mb:512,expandable_segments:True"),
+    ("expandable_segments:True", "expandable_segments:True"),
+    ("expandable_segments:False", "expandable_segments:False"),
+])
+def test_gemma_ranks_keep_expandable_cuda_segments(value, expected):
+    environment = {} if value is None else {"PYTORCH_CUDA_ALLOC_CONF": value}
+    assert selection_resume.expandable_segments(environment) == expected
+    assert environment["PYTORCH_CUDA_ALLOC_CONF"] == expected
