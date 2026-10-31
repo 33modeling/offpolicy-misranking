@@ -11912,6 +11912,36 @@
       "attribution": [],
       "is_fix": true,
       "gemma": false
+    },
+    {
+      "hash": "62bed2a16b535f33a45e28bb0bd85344ca2c0a5c",
+      "at": "2026-10-31T14:10:31+09:00",
+      "author": "33modeling",
+      "title": "Record unresolved chain and launcher reports plus two reproduced audit defects",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/62bed2a16b535f33a45e28bb0bd85344ca2c0a5c",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "ea7018958133ca9c5d8bef83454cb75e7d8d7dde",
+      "at": "2026-10-31T14:18:23+09:00",
+      "author": "33modeling",
+      "title": "Bind checkpoint diagnosis to the requested runtime and document launcher states",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/ea7018958133ca9c5d8bef83454cb75e7d8d7dde",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "8dfc08559300d83721c70a9dbd342636e69647fc",
+      "at": "2026-10-31T15:22:37+09:00",
+      "author": "33modeling",
+      "title": "Fix GPU receipt accounting and clarify recorded launcher states",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/8dfc08559300d83721c70a9dbd342636e69647fc",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
     }
   ]
 }

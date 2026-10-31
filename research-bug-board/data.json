@@ -1,13 +1,13 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-10-31T14:09:48+09:00",
+  "recorded_at": "2026-10-31T15:22:58+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "b2b7c46f29eab5bebf984ef39f50972e912f73e4",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/b2b7c46f29eab5bebf984ef39f50972e912f73e4",
-    "all_available_commits": 1120,
-    "fix_commit_records": 111,
+    "source_commit": "8dfc08559300d83721c70a9dbd342636e69647fc",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/8dfc08559300d83721c70a9dbd342636e69647fc",
+    "all_available_commits": 1123,
+    "fix_commit_records": 112,
     "gemma_named_commits": 39,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
     "first_commit_at": "2026-08-07T05:56:48+09:00",
@@ -23,7 +23,7 @@
       "refs/heads/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:b2b7c46f29eab5bebf984ef39f50972e912f73e4",
+      "refs/heads/master:8dfc08559300d83721c70a9dbd342636e69647fc",
       "refs/remotes/origin/audit/codecheck-20260820:5dd447990296042e334679c85e7672477cd7c5d3",
       "refs/remotes/origin/audit/p1-integrity:5dfda89ec3be2cc4d60f8f0371eeaf00790f6644",
       "refs/remotes/origin/docs/mbpp-budget-incident-20260919:fa1c6897b2b26ef002dd165c94f58702b1f9e1ed",
@@ -32,7 +32,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:b2b7c46f29eab5bebf984ef39f50972e912f73e4"
+      "refs/remotes/origin/master:8dfc08559300d83721c70a9dbd342636e69647fc"
     ]
   },
   "incidents": [
@@ -942,6 +942,16 @@
           "evidence_kind": "code_test",
           "commit": "b2b7c46f29eab5bebf984ef39f50972e912f73e4",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/b2b7c46f29eab5bebf984ef39f50972e912f73e4"
+        },
+        {
+          "at": "2026-10-31T06:22:58+00:00",
+          "actor": "전체 코드 재점검",
+          "type": "full_audit_followup",
+          "status": "open",
+          "text": "CPU 전수 및 계산기 수정으로 원격 lease 보유 원인까지 해결됐다고 표시하지 않는다. 실제 원격 대기 상태는 미확인 유지. 소스 고정 상태에서 전체 CPU 검사7,025개·하위검사330개 통과, 실패0개, 명시적 건너뜀18개(실제 CUDA/NCCL15개·공식 tokenizer2개·RLOO 비적용1개). 이후 부분 표시 수정8건을 포함한 실제 세 모델 상태·결과·GPU 회귀178개가 최종 코드에서 모두 통과했다. 두 집합은 겹치므로 합산하지 않는다. 실제 원격 GPU 성능·요금·lease 해제·worker 등록 회복을 측정한 결과가 아니다.",
+          "evidence_kind": "code_test",
+          "commit": "8dfc08559300d83721c70a9dbd342636e69647fc",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/8dfc08559300d83721c70a9dbd342636e69647fc"
         }
       ]
     },
@@ -1256,6 +1266,16 @@
           "evidence_kind": "code_test",
           "commit": "b2b7c46f29eab5bebf984ef39f50972e912f73e4",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/b2b7c46f29eab5bebf984ef39f50972e912f73e4"
+        },
+        {
+          "at": "2026-10-31T06:22:58+00:00",
+          "actor": "전체 코드 재점검",
+          "type": "full_audit_followup",
+          "status": "open",
+          "text": "사용자 질문 prefix 기다리는거야? / task lease held는 뭐야. 실제 작업·마지막 기록 단계·응답 미기록·종료 반환 대기와 알려진 child exit를 직접 설명하도록 문구 수정. worker 등록 정체 원인 자체는 미확인 유지. 소스 고정 상태에서 전체 CPU 검사7,025개·하위검사330개 통과, 실패0개, 명시적 건너뜀18개(실제 CUDA/NCCL15개·공식 tokenizer2개·RLOO 비적용1개). 이후 부분 표시 수정8건을 포함한 실제 세 모델 상태·결과·GPU 회귀178개가 최종 코드에서 모두 통과했다. 두 집합은 겹치므로 합산하지 않는다. 실제 원격 GPU 성능·요금·lease 해제·worker 등록 회복을 측정한 결과가 아니다.",
+          "evidence_kind": "code_test",
+          "commit": "8dfc08559300d83721c70a9dbd342636e69647fc",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/8dfc08559300d83721c70a9dbd342636e69647fc"
         }
       ]
     },
@@ -1455,6 +1475,187 @@
           "evidence_kind": "code_test",
           "commit": "b2b7c46f29eab5bebf984ef39f50972e912f73e4",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/b2b7c46f29eab5bebf984ef39f50972e912f73e4"
+        }
+      ]
+    },
+    {
+      "id": "DIAG-039",
+      "title": "체크포인트 진단이 지정한 runtime 대신 다른 helper를 사용함",
+      "area": "진단·실험 identity",
+      "severity": "high",
+      "first_reported": "2026-10-31",
+      "cause": "진단기가 요청한 scripts/src 경로를 sys.path 앞에 넣기만 하고 일반 import를 사용했다. helper가 없는 runtime을 지정해도 PYTHONPATH의 다른 helper를 가져올 수 있었고, 캐시된 다른 runtime 모듈도 재사용했다.",
+      "impact": "잘못된 코드 기준으로 checkpoint contract를 검사하거나 존재하지 않는 runtime에서 실행 오류 대신 branch 진단을 반환할 수 있었다. 캐시된 다른 helper를 넣은 CPU 회귀는 수정 전 성공 코드0을 반환했다. 실제 학습 artifact 변경은 없었다.",
+      "introduction_commit": null,
+      "attribution": "전체 회귀에서 기존 missing-runtime 테스트 실패를 발견하고 실제 저장소 소유자 재검사·ambient import/캐시 fault injection으로 코드 결함을 확인했다. 최초 도입 커밋은 특정하지 않았다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "commit": "62bed2a16b535f33a45e28bb0bd85344ca2c0a5c",
+          "path": "scripts/selector_pair_checkpoint_audit.py"
+        },
+        {
+          "kind": "commit",
+          "label": "요청 runtime helper 경로와 로드된 모듈 경로 대조",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/ea7018958133ca9c5d8bef83454cb75e7d8d7dde"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-10-31T05:19:07+00:00",
+          "actor": "전체 코드 점검",
+          "type": "fault_injection_reproduced",
+          "status": "open",
+          "text": "전체 회귀에서 missing-runtime 오류 반환 테스트가 실패했다. 소유자 kms에서도 재현됐다. 캐시된 다른 runtime helper를 사용하는 새 회귀를 수정 전 62bed2a 함수에 적용하면 진단이0으로 성공하여 기대한2 오류와 달랐다. 기록·checkpoint는 그대로 유지했다.",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-10-31T05:19:07+00:00",
+          "actor": "코드 검증",
+          "type": "code_fix_verified",
+          "status": "code_fixed",
+          "text": "요청 runtime의 helper 존재와 실제 로드한 모듈의 resolved filename을 확인한 뒤에만 contract를 검사한다. standalone shell의 내장 Python도 같은 원문으로 유지했다. ambient helper를 심어도 import되지 않는 검사, 캐시된 다른 helper 거절, 경로 공백·report·종료코드·artifact 보존을 포함한 관련244개와 하위검사5개 통과. 동결 학습 코드는 변경하지 않았다. 실제 GPU 실험 결과가 아닌 CPU 진단 검사다.",
+          "evidence_kind": "code_test",
+          "commit": "ea7018958133ca9c5d8bef83454cb75e7d8d7dde",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/ea7018958133ca9c5d8bef83454cb75e7d8d7dde"
+        },
+        {
+          "at": "2026-10-31T06:22:58+00:00",
+          "actor": "전체 코드 재점검",
+          "type": "full_regression_verified",
+          "status": "code_fixed",
+          "text": "소스 고정 상태에서 전체 CPU 검사7,025개·하위검사330개 통과, 실패0개, 명시적 건너뜀18개(실제 CUDA/NCCL15개·공식 tokenizer2개·RLOO 비적용1개). 이후 부분 표시 수정8건을 포함한 실제 세 모델 상태·결과·GPU 회귀178개가 최종 코드에서 모두 통과했다. 두 집합은 겹치므로 합산하지 않는다. 실제 원격 GPU 성능·요금·lease 해제·worker 등록 회복을 측정한 결과가 아니다.",
+          "evidence_kind": "code_test",
+          "commit": "8dfc08559300d83721c70a9dbd342636e69647fc",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/8dfc08559300d83721c70a9dbd342636e69647fc"
+        }
+      ]
+    },
+    {
+      "id": "GPU-040",
+      "title": "동일 GPU 작업 영수증 복사를 실제 실행 비용으로 중복 합산",
+      "area": "GPU 시간·집계",
+      "severity": "high",
+      "first_reported": "2026-10-31",
+      "cause": "기존 phase ledger가 JSON 파일마다 비용을 더해 같은 operation ID의 복사 영수증도 새 실행처럼 합산했다. 실제 원격 기록에서 이 현상이 있었는지는 미확인이다.",
+      "impact": "파일 복사가 실제 GPU 소비처럼 표시될 수 있었다. 실제 원격 기록의 발생 여부나 요금 감소는 검증하지 않았다.",
+      "introduction_commit": null,
+      "attribution": "전체 CPU 회귀 및 별도 fault injection으로 재현했다. 최초 도입 커밋은 특정하지 않았다.",
+      "evidence": [
+        {
+          "kind": "user_report",
+          "text": "gpu 시간 계산하는거 다시 만들어\n전체 버그 다시 체크해"
+        },
+        {
+          "kind": "commit",
+          "label": "수정·검증 코드",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/8dfc08559300d83721c70a9dbd342636e69647fc"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-10-31T06:22:58+00:00",
+          "actor": "전체 코드 재점검",
+          "type": "fault_injection_reproduced",
+          "status": "open",
+          "text": "실제 로컬 파일을 쓰는 합성 검사: 4 GPU × 10초의 한 작업이 같은 ID 두 파일로80 GPU초 표시. 새 집계는40, 서로 다른 ID의 실제 재실행은 합산 유지.",
+          "evidence_kind": "code_test",
+          "commit": "8dfc08559300d83721c70a9dbd342636e69647fc",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/8dfc08559300d83721c70a9dbd342636e69647fc"
+        },
+        {
+          "at": "2026-10-31T06:22:58+00:00",
+          "actor": "전체 코드 재점검",
+          "type": "code_fix_verified",
+          "status": "code_fixed",
+          "text": "새 읽기 전용 v2 집계기로 operation ID 중복·물리 실행/복사·inclusive invocation/세부 phase·공유 cache/prefix를 구분한다. 원고의 retained 비교 기준과 원시 기록을 유지하고 미측정 구간을 채우지 않는다. 소스 고정 상태에서 전체 CPU 검사7,025개·하위검사330개 통과, 실패0개, 명시적 건너뜀18개(실제 CUDA/NCCL15개·공식 tokenizer2개·RLOO 비적용1개). 이후 부분 표시 수정8건을 포함한 실제 세 모델 상태·결과·GPU 회귀178개가 최종 코드에서 모두 통과했다. 두 집합은 겹치므로 합산하지 않는다. 실제 원격 GPU 성능·요금·lease 해제·worker 등록 회복을 측정한 결과가 아니다.",
+          "evidence_kind": "code_test",
+          "commit": "8dfc08559300d83721c70a9dbd342636e69647fc",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/8dfc08559300d83721c70a9dbd342636e69647fc"
+        }
+      ]
+    },
+    {
+      "id": "TEST-041",
+      "title": "전수 검사가 호스트 Python override·import alias·Torch 토큰 형식에 영향받음",
+      "area": "검증·테스트",
+      "severity": "medium",
+      "first_reported": "2026-10-31",
+      "cause": "두 기본 인터프리터 테스트가 외부 override를 그대로 받아 환경에 따라 실패했다. 선택 캐시 테스트는 alias 모듈을1개로 가정했고 NumPy 전용 합계를 Torch 캐시 토큰에 사용했다.",
+      "impact": "전체 검사의 재현성이 호스트 환경과 fixture 형식에 영향을 받았다. 모델 학습 알고리즘의 결함으로 분류하지 않는다.",
+      "introduction_commit": null,
+      "attribution": "전체 CPU 회귀 및 별도 fault injection으로 재현했다. 최초 도입 커밋은 특정하지 않았다.",
+      "evidence": [
+        {
+          "kind": "commit",
+          "label": "수정·검증 코드",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/8dfc08559300d83721c70a9dbd342636e69647fc"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-10-31T06:22:58+00:00",
+          "actor": "전체 코드 재점검",
+          "type": "fault_injection_reproduced",
+          "status": "open",
+          "text": "초기 전수 42실패 중4건. 동일 host override를 심으면 기존 두 default 테스트가2로 종료하고 수정 후 두 테스트는 통과. distinct/shared alias와 재시작 비교 fixture를 분리해 모델 코드는 그대로 둔다.",
+          "evidence_kind": "code_test",
+          "commit": "8dfc08559300d83721c70a9dbd342636e69647fc",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/8dfc08559300d83721c70a9dbd342636e69647fc"
+        },
+        {
+          "at": "2026-10-31T06:22:58+00:00",
+          "actor": "전체 코드 재점검",
+          "type": "code_fix_verified",
+          "status": "code_fixed",
+          "text": "의도한 기본값 테스트의 환경을 분리하고 private alias 모듈 두 형태를 검증하며 dummy backend가 실제 Torch 캐시 토큰을 처리하게 고쳤다. 소스 고정 상태에서 전체 CPU 검사7,025개·하위검사330개 통과, 실패0개, 명시적 건너뜀18개(실제 CUDA/NCCL15개·공식 tokenizer2개·RLOO 비적용1개). 이후 부분 표시 수정8건을 포함한 실제 세 모델 상태·결과·GPU 회귀178개가 최종 코드에서 모두 통과했다. 두 집합은 겹치므로 합산하지 않는다. 실제 원격 GPU 성능·요금·lease 해제·worker 등록 회복을 측정한 결과가 아니다.",
+          "evidence_kind": "code_test",
+          "commit": "8dfc08559300d83721c70a9dbd342636e69647fc",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/8dfc08559300d83721c70a9dbd342636e69647fc"
+        }
+      ]
+    },
+    {
+      "id": "TIME-042",
+      "title": "미측정 세부 GPU 비용이 부분 현황에서 0으로 표시됨",
+      "area": "GPU 시간·표시",
+      "severity": "medium",
+      "first_reported": "2026-10-31",
+      "cause": "원래 ledger가 selection/training의 합계 기본값을 0으로 제공했고 부분 현황 from_ledger가 해당 phase의 완료 영수증 유무를 확인하지 않고 그대로 숫자로 표시했다.",
+      "impact": "실제 0초와 미측정 phase가 구분되지 않았다. 전체 미종료 구간의 총 시간을 0으로 계산했다는 뜻은 아니다.",
+      "introduction_commit": null,
+      "attribution": "전체 CPU 회귀 및 별도 fault injection으로 재현했다. 최초 도입 커밋은 특정하지 않았다.",
+      "evidence": [
+        {
+          "kind": "user_report",
+          "text": "gpu 시간 계산하는거 다시 만들어\n전체 버그 다시 체크해"
+        },
+        {
+          "kind": "commit",
+          "label": "수정·검증 코드",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/8dfc08559300d83721c70a9dbd342636e69647fc"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-10-31T06:22:58+00:00",
+          "actor": "전체 코드 재점검",
+          "type": "fault_injection_reproduced",
+          "status": "open",
+          "text": "ea70189의 원래 from_ledger와 PhaseLedger 조합에서 startup40 GPU초만 완료되고 selection은 시작만 기록돼도 selection/training이0으로 표시됐다. 별도 신규 검사8건도 수정 전 모두 실패했다. 전체 중단 시간을0으로 채웠다는 주장은 아니다.",
+          "evidence_kind": "code_test",
+          "commit": "8dfc08559300d83721c70a9dbd342636e69647fc",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/8dfc08559300d83721c70a9dbd342636e69647fc"
+        },
+        {
+          "at": "2026-10-31T06:22:58+00:00",
+          "actor": "전체 코드 재점검",
+          "type": "code_fix_verified",
+          "status": "code_fixed",
+          "text": "v2 완료 phase별 카운터를 사용해 부분 현황에서 실제 완료 기록이 있는 항목만 숫자로 표시한다. 실제 측정된0은0으로 유지하고 기록이 없거나 시작만 있는 항목은 미측정으로 둔다. 완료 phase별 식별 정보가 없는 예전 부분 요약의0도 근거가 불충분하면 미측정으로 유지한다. 소스 고정 상태에서 전체 CPU 검사7,025개·하위검사330개 통과, 실패0개, 명시적 건너뜀18개(실제 CUDA/NCCL15개·공식 tokenizer2개·RLOO 비적용1개). 이후 부분 표시 수정8건을 포함한 실제 세 모델 상태·결과·GPU 회귀178개가 최종 코드에서 모두 통과했다. 두 집합은 겹치므로 합산하지 않는다. 실제 원격 GPU 성능·요금·lease 해제·worker 등록 회복을 측정한 결과가 아니다.",
+          "evidence_kind": "code_test",
+          "commit": "8dfc08559300d83721c70a9dbd342636e69647fc",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/8dfc08559300d83721c70a9dbd342636e69647fc"
         }
       ]
     }
