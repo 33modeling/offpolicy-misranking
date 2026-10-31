@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts import srgc_live_status as live
+from scripts.srgc_gpu_accounting import seed_costs
 from srgc_rebuttal import reports
 from srgc_rebuttal.plan import input_path
 from srgc_rebuttal.srgc import stream_seed
@@ -295,7 +296,8 @@ def load_reports(model, dataset, root, environment):
         path = root / "experiments" / f"{prefix}-{name}.json"
         try:
             plan = adapter.validate_extension(path, read_only=True)
-            with patch.object(reports, "code_digest", return_value=identity):
+            with patch.object(reports, "code_digest", return_value=identity), \
+                    patch.object(reports, "seed_costs", seed_costs):
                 report = live.snapshot(reports.snapshot, path)
                 finalizing_progress(report, path, plan)
         except (OSError, ValueError, KeyError, TypeError) as error:

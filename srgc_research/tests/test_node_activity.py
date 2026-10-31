@@ -85,7 +85,7 @@ def test_live_task_lease_keeps_local_node_active_when_heartbeat_is_missing_or_st
         assert node["heartbeat_stale"] is worker_receipt
         text = inspect(cohort, capsys, as_json=False)
         assert "NODES  1 active | 0 stale | 0 stopped | RUN 1" in text
-        assert "task lease held" in text
+        assert "초기 응답 캐시 작업 확보" in text
         assert saved(cohort) == before
 
 
@@ -191,7 +191,30 @@ def test_launcher_without_dataset_worker_shows_recorded_restart_evidence(cohort,
                        previous_exit_code=76, previous_exit_at=time.time() - 126)
     before = path.read_bytes()
     text = inspect(cohort, capsys, as_json=False)
-    assert 'dataset worker not registered' in text
+    assert 'worker 시작 미확인' in text
     assert 'launcher records: pid=123; child_pid=456; launch_cycle=3; previous_exit=76' in text
     assert 'launch_age=' in text
     assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("stage,label", [("training", "Prefix 업데이트"), ("checkpoint_save", "체크포인트 저장"),
+                                        (None, "실행 단계 미기록")])
+def test_prefix_lease_describes_actual_recorded_stage_and_unknown_progress(stage, label):
+    row = {"task": "seed-5.prefix", "task_row": {"arm": "prefix", "phase_stage": stage}}
+    text = qwen_status.leased_task_text(row)
+    assert "공통 Prefix 작업 확보" in text and label in text
+    assert "worker 응답 미기록, 진행 미확인" in text
+    assert "학습 중" not in text
+
+
+def test_lease_after_endpoint_is_saved_is_an_exit_wait_not_a_new_training_claim():
+    row = {"task": "seed-5.switch", "heartbeat_age_seconds": 1,
+           "task_row": {"arm": "switch", "endpoint_ready": True}}
+    assert "결과 저장 완료 · 작업 종료/잠금 반환 대기" in qwen_status.leased_task_text(row)
+
+
+@pytest.mark.parametrize("code,label", [(76, "배정 가능한 작업"), (75, "자원 점검/잠금"), (137, "자식 작업 중단")])
+def test_launcher_wait_explains_recorded_child_exit_without_guessing_a_prefix(code, label):
+    text = qwen_status.launcher_text({"status": "waiting", "previous_exit_code": code})
+    assert label in text and "재시도 대기" in text
+    assert "Prefix" not in text

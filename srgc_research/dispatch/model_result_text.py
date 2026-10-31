@@ -62,11 +62,11 @@ def restart_table(report):
             value = audit.get(key)
             prefix = '>=' if value is not None and audit.get('removal_is_lower_bound') and key != 'retained_gpu_seconds' else ''
             return prefix + cell(None if value is None else value / 3600)
-        rows.append([row['seed'], row['arm'], hours('recorded_before_gpu_seconds'), hours('removed_gpu_seconds'),
+        rows.append([row['seed'], row['arm'], hours('unique_recorded_gpu_seconds'), hours('replayed_gpu_seconds'),
                      hours('retained_gpu_seconds'), timing.get('duplicate_history_entries', 0), audit.get('record', '-')])
     return (["", 'RESTART TIME CORRECTION (GPU-hours; selection + training; SR prep added once in Total)',
-             *aligned_table(('Seed', 'Arm', 'Before', 'Removed', 'Retained', 'History copies', 'Audit'), rows),
-             'Before - Removed = Retained for matched completed receipts; unfinished attempts remain unknown.'] if rows else []) + errors
+             *aligned_table(('Seed', 'Arm', 'Measured unique', 'Real replay', 'Retained', 'History copies', 'Audit'), rows),
+             'Measured unique - Real replay = Retained. Real replays remain consumed GPU cost; copied receipts are not GPU work. Unfinished durations stay unknown.'] if rows else []) + errors
 
 
 def render(result):

@@ -52,6 +52,11 @@ def test_restarts_at_same_checkpoint_subtract_finished_replays_once(tmp_path):
                       start=25, stop=27, read=read_json, expected_gpus=4)
     assert audit['record'] == 'COMPLETE'
     assert audit['recorded_before_gpu_seconds'] == 36.
+    assert audit['unique_recorded_gpu_seconds'] == 32.
+    assert audit['replayed_gpu_seconds'] == 24.
+    assert audit['raw_receipt_sum_gpu_seconds'] == 36.
+    assert audit['duplicate_copy_gpu_seconds_excluded'] == 4.
+    assert audit['unique_recorded_gpu_seconds'] == audit['retained_gpu_seconds'] + audit['replayed_gpu_seconds']
     assert audit['removed_gpu_seconds'] == 28.
     assert audit['retained_gpu_seconds'] == 8.
     assert audit['duplicate_receipt_copies'] == 1

@@ -6,8 +6,8 @@ import math
 import statistics
 from pathlib import Path
 
-from srgc_rebuttal.cost_ledger import PhaseLedger
-from srgc_rebuttal.cost_report import seed_costs
+from scripts.srgc_gpu_accounting import ReceiptLedger as PhaseLedger
+from scripts.srgc_gpu_accounting import seed_costs
 from srgc_rebuttal.plan import input_path
 
 COMPONENTS = ("preparation", "selection", "training", "evaluation", "checkpoint", "startup")
@@ -63,6 +63,13 @@ def timing(record="MISSING", values=None, *, error=None, accounting="exclusive p
         if "exclusive_stages" in result:
             result["exclusive_stage_gpu_hours"] = {
                 name: value["gpu_seconds"] / 3600 for name, value in result["exclusive_stages"].items()}
+    if details is not None:
+        schema = details.get("accounting_schema", details.get("schema"))
+        if schema == "srgc-allocated-gpu-accounting-v2":
+            result["accounting_schema"] = schema
+            for field in ("duplicate_receipt_copies", "duplicate_copy_gpu_seconds_excluded"):
+                if field in details:
+                    result[field] = details[field]
     return result
 
 
@@ -76,7 +83,7 @@ def from_arm(cost, *, completed):
     known = {key: finite(value) for key, value in known.items()}
     if complete:
         return timing("COMPLETE", {key: cost.get(field) for key, field in ARM_FIELDS.items()}, details=cost)
-    if not any(known.values()) and not cost.get("unfinished_phases") and not any(
+    if not any(known.values()) and not cost.get("unfinished_phases") and not cost.get("finished_phases") and not any(
             cost.get(field) for field in ("exclusive_stages", "counts")):
         return timing()
     values = {key: known.get(f"{key}_gpu_seconds") for key in COMPONENTS}
@@ -87,6 +94,16 @@ def from_arm(cost, *, completed):
     primary = sum(known.get(f"{key}_gpu_seconds", 0) for key in ("preparation", "selection", "training"))
     total = sum(known.values())
     values.update(primary=primary if primary else None, phases=total if total else None)
+    recorded = cost.get("completed_phase_counts", {})
+    for phase in COMPONENTS:
+        if recorded.get(phase):
+            values[phase] = known.get(phase + "_gpu_seconds")
+    if any(recorded.get(phase) for phase in ("checkpoint_load", "checkpoint_save")):
+        values["checkpoint"] = sum(known.get(phase + "_gpu_seconds", 0) for phase in ("checkpoint_load", "checkpoint_save"))
+    if any(recorded.get(phase) for phase in ("selection", "training", "preparation")):
+        values["primary"] = primary
+    if cost.get("finished_phases"):
+        values["phases"] = total
     return timing("PARTIAL", values, details=cost)
 
 
@@ -106,6 +123,20 @@ def from_ledger(ledger, *, completed, accounting="exclusive phase costs"):
                             ("preparation", "selection", "training")) if complete or any(
         known.get(f"{key}_gpu_seconds") for key in ("preparation", "selection", "training")) else None
     values["phases"] = ledger.get("total_gpu_seconds") if complete else sum(known.values()) or None
+    if not complete:
+        values = {key: value if value else None for key, value in values.items()}
+    if not complete and "completed_phase_counts" in ledger:
+        recorded = ledger["completed_phase_counts"]
+        for phase in COMPONENTS:
+            values[phase] = known.get(phase + "_gpu_seconds") if recorded.get(phase) else None
+        values["checkpoint"] = sum(known.get(phase + "_gpu_seconds", 0)
+            for phase in ("checkpoint_load", "checkpoint_save")) if any(
+                recorded.get(phase) for phase in ("checkpoint_load", "checkpoint_save")) else None
+        values["primary"] = sum(known.get(phase + "_gpu_seconds", 0)
+            for phase in ("preparation", "selection", "training")) if any(
+                recorded.get(phase) for phase in ("preparation", "selection", "training")) else None
+    if not complete and ledger.get("finished_phases"):
+        values["phases"] = sum(known.values())
     return timing("COMPLETE" if complete else "PARTIAL", values, accounting=accounting, details=ledger)
 
 
@@ -259,6 +290,14 @@ def render(report, *, label=None):
         if recorded:
             lines.append("RECORDED PLAN SETTINGS: " + " | ".join(recorded))
     lines.extend(detail_lines(rows))
+    for row in rows:
+        value = row.get("timing", {})
+        copies = value.get("duplicate_receipt_copies", 0)
+        if copies:
+            seconds = value.get("duplicate_copy_gpu_seconds_excluded")
+            amount = "미기록" if seconds is None else f"{seconds / 3600:.6f} GPU-h"
+            lines.append(f"동일 작업 영수증 복사 제외: seed-{row.get('seed', '-')}.{row.get('arm', '-')} "
+                         f"{copies}개 ({amount}); 실제 재실행 비용은 포함")
     for row in rows:
         if row.get("timing", {}).get("error"):
             lines.append(f"TIME ERROR seed {row.get('seed', '-')} {row.get('arm', row.get('task', '-'))}: "

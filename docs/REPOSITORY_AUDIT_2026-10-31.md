@@ -42,7 +42,35 @@ The node lease remains authoritative and is not deleted or bypassed. The earlier
 
 - Initial targeted repair checks: **316 passed in 73.71 seconds**.
 - Combined admission, model chain, actual CPU subprocess/signals, node status, dashboard evidence and ledger retention: **409 passed in 103.84 seconds**. These overlap the first set and are not additive totals.
-- The first dispatch/status/dashboard change passes scoped Ruff excluding existing test-only `RUF059`/`PLW1510`; the later checkpoint diagnostic has no new Ruff diagnostics compared with its exact pre-repair source (existing `EXE001`, `TRY004`, `PLW1510` remain). Dashboard JavaScript, standalone shell syntax and Git whitespace checks pass. Final tracked Python syntax coverage is 858 files. A SHA-256 comparison confirms 282 protected learner/runtime/adapter Python files match the audit-start snapshot.
-- Full-repository CPU regression results will be appended after the active run finishes. The initial environment lacked the explicitly declared `scikit-learn` dependency from `requirements-gate.txt`; its failures are tracked separately and rerun after installing it in the CPU test virtual environment. No installed package is used as evidence of actual GPU performance.
+- The first dispatch/status/dashboard change passes scoped Ruff excluding existing test-only `RUF059`/`PLW1510`; the later checkpoint diagnostic has no new Ruff diagnostics compared with its exact pre-repair source (existing `EXE001`, `TRY004`, `PLW1510` remain). Dashboard JavaScript, standalone shell syntax and Git whitespace checks pass. Final tracked/new Python syntax coverage is 860 files (plus 98 JSON and 118 shell files). A SHA-256 comparison confirms 282 protected learner/runtime/adapter Python files match the audit-start snapshot.
+- Initial full-repository serial CPU regression: **6,914 passed, 42 failed, 18 skipped, 330 subtests passed** in 1,774.96 seconds. Thirteen failures required the explicitly declared scikit-learn dependency and 24 required running Git-backed tests as repository owner kms. Both gate modules pass 53 checks after correcting those conditions. A 21-case ownership retry left only the actual runtime-diagnosis defect; its complete affected modules pass 244 checks and 5 subtests after repair. The remaining four failures were nonisolated default-interpreter fixtures and selection-cache fixtures assuming one module alias/NumPy tokens. Those fixture assumptions are corrected without changing model code. The final full serial run with declared dependencies, repository ownership and dedicated in-memory temporary files completed with **7,025 passed, zero failed, 18 skipped, 330 subtests passed and 150 warnings in 1,824.81 seconds**. The skips are 15 explicitly gated CUDA/NCCL checks, two unavailable official tokenizer checks and one inapplicable nested RLOO-meter case. These skipped checks are not represented as passed. CPU packages/tests are not evidence of actual GPU performance.
 
 Frozen learner/runtime/adapter files, original inputs, live queues, checkpoints and results are unchanged by this audit. No remote process was killed or restarted and no real GPU experiment was launched. Local shared-filesystem probes do not verify remote NFS/H100/NCCL behavior.
+
+
+## Follow-up: GPU accounting rebuild and clearer node explanations
+
+The user explicitly requested rebuilding GPU time calculation and another whole-code check. A CPU fault injection proves that the old `PhaseLedger`/cost-report reader counted identical receipt copies as additional GPU work: one 10-second, four-GPU operation became 80 instead of 40 GPU-seconds when its receipt was copied. The replacement read-only accounting reader deduplicates by operation identity, preserves distinct real replays, validates measurements, separates inclusive invocations from contained phases, and retains unknown interrupted durations. The original writer/learner files stay unchanged. See [the v2 accounting guide](SRGC_GPU_TIME_ACCOUNTING_V2.md).
+
+The first integration run passed 156 checks. Extended core/public-model checks passed 32 cases on local disk. A later combined 276-case run found one obsolete `Wait reason` header expectation (275 passed); the expectation is updated for the requested clearer status column. The stable-source full run passed 7,025 tests and 330 subtests with 18 explicit skips; it completed before the later partial-display correction below. Exact original logs are retained separately from follow-up checks.
+
+Node explanations now identify the recorded cache/Prefix/arm, last recorded stage, worker-response gaps and known child-exit reason. `worker 시작 미확인` explicitly leaves the cause unknown. Ownership alone is not described as healthy training or an inferred Prefix wait. Saved endpoints with a held task lease are shown as waiting for exit/lease release. The raw WAIT and worker-registration incidents stay open.
+
+## Final partial-display correction
+
+A further CPU reproduction using both the exact `ea70189` time-display function and
+the original frozen `PhaseLedger` found a narrower missing-versus-zero defect:
+when startup alone was measured and selection only had an unclosed start, the
+partial detail table displayed selection/training as zero because it copied the
+ledger's defaults. This does not establish that the old code filled the complete
+interrupted allocation interval with zero; that interval was already unknown.
+
+Eight fault-injection cases fail before repair. Partial detail values now require
+completed phase evidence: measured zero remains zero, absent/unclosed phases stay
+unknown, and checkpoint and primary totals follow the same rule. Ambiguous zero
+defaults in legacy partial summaries without per-phase completion evidence also
+stay unknown; nonzero recorded evidence is retained. This changes derived display
+only. Original receipts, endpoints, learner bytes and scientific comparison rules
+remain unchanged.
+
+After the full run completed, only `scripts/srgc_time_status.py` and its new accounting regression module changed. The eight affected GPU/status/results modules then passed **178 tests in 82.52 seconds**, including all eight new fault-injection cases. These overlap the full suite and are not added to its 7,025-test count. The remaining 977 source files match the full-run source fence. New reader/display/tests pass Ruff; the earlier preexisting model-status `ISC004` and node-test `PLW1510` diagnostics remain unchanged.

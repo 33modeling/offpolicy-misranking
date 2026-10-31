@@ -113,7 +113,12 @@ def reconcile(folder, arm, points, *, start, stop, read, expected_gpus=None):
     removed = math.fsum(event['gpu_seconds'] for event in replayed) + duplicate_seconds if covered else None
     if covered and not math.isclose(before, retained + removed, rel_tol=1e-9, abs_tol=1e-6):
         raise ValueError('restart before-minus-removed does not reconcile with retained updates')
-    return {'record': 'COMPLETE' if covered and not unfinished else 'PARTIAL',
+    return {'schema': 'srgc-restart-accounting-v2',
+            'unique_recorded_gpu_seconds': math.fsum(event['gpu_seconds'] for event in finished.values()),
+            'replayed_gpu_seconds': math.fsum(event['gpu_seconds'] for event in replayed) if covered else None,
+            'raw_receipt_sum_gpu_seconds': before,
+            'duplicate_copy_gpu_seconds_excluded': duplicate_seconds,
+            'record': 'COMPLETE' if covered and not unfinished else 'PARTIAL',
             'recorded_before_gpu_seconds': before, 'removed_gpu_seconds': removed,
             'retained_gpu_seconds': retained if covered else None,
             'removal_is_lower_bound': bool(unfinished), 'unfinished_receipts': len(unfinished),

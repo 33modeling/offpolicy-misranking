@@ -202,7 +202,7 @@ def test_one_command_and_dataset_selection_use_shared_python(tmp_path):
         f"#!{sys.executable}\nimport json,sys\nprint(json.dumps(sys.argv[1:]))\n"
     )
     python.chmod(0o755)
-    env = {**os.environ, "OM_WORK": str(tmp_path / "work")}
+    env = {"PATH": os.environ["PATH"], "OM_WORK": str(tmp_path / "work")}
     for args, expected in [
         ([], ["all"]),
         (["math"], ["math"]),

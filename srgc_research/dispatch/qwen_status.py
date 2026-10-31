@@ -120,6 +120,46 @@ def scoped_coordinators(rows, *, model, root):
                  and Path(row["root"]).resolve() == Path(root).resolve())]
 
 
+def leased_task_text(node):
+    """Explain the recorded work without treating ownership as forward progress."""
+    task = node.get("task_row") or {}
+    arm = task.get("arm") or str(node.get("task") or "").rsplit(".", 1)[-1]
+    work = {"cache": "초기 응답 캐시", "prefix": "공통 Prefix", "switch": "Switch",
+            "on_policy": "On-policy", "sr": "SR", "random": "Random"}.get(arm, str(arm or "실험"))
+    stage = {"training": "Prefix 업데이트" if arm == "prefix" else "모델 업데이트",
+             "selection": "후보·검증 데이터 선별", "checkpoint_save": "체크포인트 저장",
+             "checkpoint_load": "체크포인트 복원", "preparation": "학습 준비",
+             "startup": "자식 초기화", "finalizing": "결과 마무리",
+             "evaluation": "중간 평가" if task.get("evaluation_step") is not None else "최종 평가"}.get(task.get("phase_stage"))
+    if task.get("endpoint_ready") is True:
+        text = f"{work} 결과 저장 완료 · 작업 종료/잠금 반환 대기"
+    else:
+        text = f"{work} 작업 확보 · " + (f"마지막 기록: {stage}" if stage else "실행 단계 미기록")
+    if node.get("heartbeat_stale"):
+        text += " · worker 응답 오래됨, 진행 미확인"
+    elif not math.isfinite(heartbeat_age(node)):
+        text += " · worker 응답 미기록, 진행 미확인"
+    return text
+
+
+def launcher_text(node):
+    if node["status"] == "waiting":
+        code = node.get("previous_exit_code", node.get("exit_code"))
+        if code == 76:
+            return "배정 가능한 작업을 잡지 못함 · 같은 모델 재시도 대기 (종료 코드76)"
+        if code == 75:
+            return "자원 점검/잠금 확보 보류 · 같은 모델 재시도 대기 (종료 코드75)"
+        if code in (129, 137):
+            return f"자식 작업 중단 · 저장 작업 재시도 대기 (종료 코드{code})"
+        reason = node.get("idle_reason", "")
+        labels = {"worker failed; retrying saved work before fresh work": "직전 작업 실패 · 저장 작업 재시도 대기",
+                  "worker interrupted; retrying saved work": "자식 작업 중단 · 저장 작업 재시도 대기",
+                  "GPU allocation owned": "GPU 자원 확보 대기 · 상세 원인 미확인",
+                  "current model waiting on peers or retry delay; later models blocked": "같은 모델 재시도 대기 · 상세 차단 조건 미기록"}
+        return labels.get(reason, reason or "실행 대기 · 원인 미기록")
+    return node["idle_reason"]
+
+
 def node_rows(snapshots, *, coordinators=(), model=None, root=None):
     """Merge worker, held-task and coordinator evidence once per host."""
     sessions = {}
@@ -167,7 +207,7 @@ def node_rows(snapshots, *, coordinators=(), model=None, root=None):
                  "stopped": "stopped", "failed": "failed"}.get(coordinator["status"])
         if state is None or (state not in LIVE_WORKERS and heartbeat_age(coordinator) > 900):
             continue
-        reason = coordinator.get("idle_reason") or ("model launcher active; dataset worker not registered"
+        reason = coordinator.get("idle_reason") or ("worker 시작 미확인 · 실행기 응답만 기록됨 · 원인 미기록"
                  if state in LIVE_WORKERS else "model launcher " + state)
         if not coordinator.get("root"):
             reason += "; experiment root not recorded"
@@ -389,15 +429,14 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
             reason = idle_reason(node, snapshots, backlog) if node["status"] == "idle" else "-"
             heartbeat = age(node.get("heartbeat_age_seconds"))
             if node.get("source") == "task_lease":
-                reason = "task lease held"
+                reason = leased_task_text(node)
                 if node.get("heartbeat_stale"):
-                    reason += "; worker heartbeat stale"
                     heartbeat += " STALE"
-                elif not math.isfinite(heartbeat_age(node)):
-                    reason += "; worker heartbeat not recorded"
             if node.get("source") == "model_chain":
                 current = f"{node['model']} {node['label']} launcher"
-                reason = node["idle_reason"]
+                reason = launcher_text(node)
+            if node["status"] == "preflight" and node.get("source") != "model_chain":
+                reason = "worker 등록됨 · 실행 전 GPU·모델 점검"
             if node["status"] == "serving_other_dataset":
                 current = str(node["active_dataset"])
                 reason = "shared worker is running the other dataset"
@@ -405,7 +444,7 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
                          phase_cell(node["task_row"]) if node["task_row"] else "-",
                          current, cell(node["task_row"]).removeprefix("RUN ") if node["task_row"] else "-",
                          heartbeat, reason])
-        lines += table(("Node", "State", "Phase", "Task", "Progress", "Heartbeat", "Wait reason"), rows)
+        lines += table(("Node", "State", "Phase", "Task", "Progress", "Heartbeat", "상태·대기 사유"), rows)
         from .model_chain import launch_details
 
         for node in nodes:

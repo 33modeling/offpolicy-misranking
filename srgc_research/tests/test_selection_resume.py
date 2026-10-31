@@ -161,27 +161,29 @@ def test_without_a_cache_root_the_pinned_path_is_used(tmp_path):
     assert backend.generated == CANDIDATES and not list(tmp_path.iterdir())
 
 
-def test_install_patches_both_import_names_and_only_once():
-    from scripts import srgc_resumable_rollouts as module
+@pytest.mark.parametrize("distinct_alias", [False, True])
+def test_install_patches_both_import_names_and_only_once(monkeypatch, distinct_alias):
+    import scripts
 
-    mixin = module.ResumableRolloutMixin
-    original = mixin.__dict__["score_gradients"]
-    previous = sys.modules.get("srgc_resumable_rollouts")
-    try:
-        assert selection_resume.install() == [mixin]
-        assert sys.modules["srgc_resumable_rollouts"] is module
-        patched = mixin.__dict__["score_gradients"]
-        selection_resume.install()
-        assert mixin.__dict__["score_gradients"] is patched is not original
-    finally:
-        mixin.score_gradients = original
-        for name in ("train", "selection_resume_installed"):
-            if name in mixin.__dict__:
-                delattr(mixin, name)
-        if previous is None:
-            sys.modules.pop("srgc_resumable_rollouts", None)
-        else:
-            sys.modules["srgc_resumable_rollouts"] = previous
+    def unpatched_module(name):
+        spec = importlib.util.spec_from_file_location(name, ROOT / "scripts/srgc_resumable_rollouts.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    module = unpatched_module("private_resumable_package")
+    alias = unpatched_module("private_resumable_alias") if distinct_alias else module
+    monkeypatch.setattr(scripts, "srgc_resumable_rollouts", module, raising=False)
+    monkeypatch.setitem(sys.modules, "scripts.srgc_resumable_rollouts", module)
+    monkeypatch.setitem(sys.modules, "srgc_resumable_rollouts", alias)
+    mixins = list(dict.fromkeys((module.ResumableRolloutMixin, alias.ResumableRolloutMixin)))
+    originals = {mixin: mixin.__dict__["score_gradients"] for mixin in mixins}
+    assert selection_resume.install() == mixins
+    assert sys.modules["srgc_resumable_rollouts"] is alias
+    patched = {mixin: mixin.__dict__["score_gradients"] for mixin in mixins}
+    assert all(patched[mixin] is not originals[mixin] for mixin in mixins)
+    assert selection_resume.install() == mixins
+    assert all(mixin.__dict__["score_gradients"] is patched[mixin] for mixin in mixins)
 
 
 def test_rank_wrapper_installs_for_gemma_only(monkeypatch):
@@ -227,7 +229,7 @@ class EngineBackend:
         result = {}
         for prompt_id in ids:
             sequences, rewards, _ = self._rollout(prompt_id, responses, seed)
-            base = np.array([float(np.sum(s)) for s in sequences[:4]]) + rewards[:4] + self.weights
+            base = np.array([float(s.sum()) for s in sequences[:4]]) + np.asarray(rewards[:4]) + self.weights
             result[prompt_id] = base / (1 + np.linalg.norm(base))
         return result
 
