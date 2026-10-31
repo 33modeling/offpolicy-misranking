@@ -31,12 +31,54 @@ def original_errors(lines):
                              if EXCEPTION.match(line.strip()) and not WRAPPER.search(line)))
 
 
+OOM_NUMBERS = re.compile(r"Tried to allocate ([\d.]+ \w+)\. GPU (\d+) has a total capacity of ([\d.]+ \w+) "
+                         r"of which ([\d.]+ \w+) is free\.")
+FRAME = re.compile(r'File "([^"]+)", line \d+, in (\w+)')
+
+
+def oom_summary(lines):
+    """One status line from a CUDA OOM: sizes, other GPU processes and our call site."""
+    index = next((i for i in range(len(lines) - 1, -1, -1) if "CUDA out of memory" in lines[i]), None)
+    if index is None:
+        return None
+    text = lines[index]
+    parts = []
+    numbers = OOM_NUMBERS.search(text)
+    if numbers:
+        wanted, gpu, total, free = numbers.groups()
+        parts.append(f"tried {wanted}, GPU{gpu} total {total}, free {free}")
+    mine = re.search(r"this process has ([\d.]+ \w+) memory in use", text)
+    if mine:
+        parts.append(f"this process {mine.group(1)}")
+    allocated = re.search(r"([\d.]+ \w+) is allocated by PyTorch", text)
+    if allocated:
+        parts.append(f"PyTorch allocated {allocated.group(1)}")
+    others = re.findall(r"Process \d+ has ([\d.]+ \w+) memory in use", text)
+    if numbers or mine:
+        parts.append(f"other processes {len(others)}" + (f" ({', '.join(others)})" if others else ""))
+    # Our own frames of the traceback that ends at this OOM, innermost last.
+    frames = []
+    for line in reversed(lines[max(0, index - 200):index]):
+        if "Traceback (most recent call last)" in line:
+            break
+        match = FRAME.search(line)
+        if match and "site-packages" not in match.group(1) and "/torch/" not in match.group(1):
+            frames.append(match.group(2))
+    sites = list(dict.fromkeys(reversed(frames)))[-4:]
+    if sites:
+        parts.append("at " + " > ".join(sites))
+    return "CUDA OOM: " + ", ".join(parts) if parts else text.strip()[:400]
+
+
 def last_error_line(path):
     try:
         lines = attempt_lines(path)
     except (OSError, TypeError):
         return None
     errors = original_errors(lines)
+    if errors and "out of memory" in errors[-1]:
+        boundaries = [i for i, line in enumerate(lines) if line.startswith("SRGC CHILD START ")]
+        return oom_summary(lines[boundaries[-1]:] if boundaries else lines) or errors[-1][:400]
     if errors:
         return errors[-1][:400]
     root = "\n".join(lines).rsplit("Root Cause (first observed failure):", 1)[-1]
@@ -60,6 +102,8 @@ def previous_attempt_line(path, *, max_bytes=4 * 1024 * 1024):
         return None
     lines = lines[boundaries[-2]:boundaries[-1]]
     errors = original_errors(lines)
+    if errors and "out of memory" in errors[-1]:
+        return oom_summary(lines) or errors[-1][:400]
     if errors:
         return errors[-1][:400]
     for line in reversed(lines):

@@ -335,3 +335,24 @@ def test_running_task_shows_why_its_previous_attempt_ended(tmp_path):
     killed = tmp_path / "killed.log"
     killed.write_text("SRGC CHILD START a\nGEMMA generation\nTIMEOUT: no progress for 1800s\nSRGC CHILD START b\n")
     assert previous_attempt_line(killed) == "TIMEOUT: no progress for 1800s"
+
+
+def test_status_line_for_a_cuda_oom_carries_its_sizes_and_call_site(tmp_path):
+    # 2026-10-31: status showed only "torch.OutOfMemoryError" for the switch arm.
+    from srgc_research.dispatch.rank_failures import last_error_line, previous_attempt_line
+
+    oom = ("[rank2]: torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 2.00 GiB. GPU 2 has a total "
+           "capacity of 79.19 GiB of which 1.06 GiB is free. Process 3312 has 40.12 GiB memory in use. Including "
+           "non-PyTorch memory, this process has 38.00 GiB memory in use. Of the allocated memory 35.20 GiB is "
+           "allocated by PyTorch, and 1.90 GiB is reserved by PyTorch but unallocated.")
+    attempt = ["SRGC CHILD START model=gemma4_it", "[rank2]: Traceback (most recent call last):",
+               '[rank2]:   File "/w/srgc_rebuttal/srgc.py", line 276, in _vectors',
+               '[rank2]:   File "/w/srgc_rebuttal/torch_backend.py", line 199, in score_gradients',
+               '[rank2]:   File "/v/site-packages/torch/autograd/__init__.py", line 496, in grad', oom]
+    log = tmp_path / "seed-5.switch.log"
+    log.write_text("\n".join(attempt) + "\n")
+    expected = ("CUDA OOM: tried 2.00 GiB, GPU2 total 79.19 GiB, free 1.06 GiB, this process 38.00 GiB, "
+                "PyTorch allocated 35.20 GiB, other processes 1 (40.12 GiB), at _vectors > score_gradients")
+    assert last_error_line(log) == expected
+    log.write_text("\n".join(attempt + ["SRGC CHILD START model=gemma4_it", "running again"]) + "\n")
+    assert previous_attempt_line(log) == expected
