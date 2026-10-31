@@ -121,7 +121,8 @@ def test_all_public_models_hide_expired_workers_keep_owned_work_and_preserve_fil
         assert recoverable["status"] == "recoverable"
         text = render(value["datasets"], cohort.root)
         assert "HISTORY" not in text
-        assert "recent" in text and "owner" in text and "RESUME" in text
+        # Stale-heartbeat workers are not listed in the text view (2026-10-31 user request).
+        assert "recent" not in text and "owner" in text and "RESUME" in text
         assert saved(cohort) == before
     assert json.loads((queue / "workers/expired.json").read_text())["worker_id"] == "expired"
     assert checkpoint.read_bytes() == b"checkpoint evidence must survive status"
