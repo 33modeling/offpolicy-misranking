@@ -27,6 +27,7 @@ from pathlib import Path
 import numpy as np
 
 RESULT = "gathered-gradients.npz"
+PARTIAL = "partial-gradients.npz"
 # Ranks shard a scoring block by prompt and wait for each other at its gather.
 # A switch check gives each Gemma rank 20 candidate/SR prompts of very uneven
 # length; the pinned 1800 s NCCL limit then aborts every rank while one is still
@@ -79,8 +80,18 @@ def write_atomic(path, write):
             os.unlink(temporary)
 
 
-def load_result(directory, ids, fingerprint, responses, group_size):
-    path = directory / RESULT
+def release_memory(backend):
+    import gc
+
+    gc.collect()
+    device = getattr(backend, "device", None)
+    if device is not None and getattr(device, "type", "") == "cuda":
+        import torch
+        torch.cuda.empty_cache()
+
+
+def load_result(directory, ids, fingerprint, responses, group_size, *, name=None, subset=False):
+    path = directory / (name or RESULT)
     if not path.is_file() or saved_policy(directory) != fingerprint:
         return None
     try:
@@ -92,16 +103,17 @@ def load_result(directory, ids, fingerprint, responses, group_size):
                 return None
     except (OSError, ValueError, KeyError, EOFError):
         return None
-    if (sorted(saved_ids) != sorted(ids) or len(set(saved_ids)) != len(saved_ids)
+    if ((not set(saved_ids) <= set(ids) if subset else sorted(saved_ids) != sorted(ids))
+            or len(set(saved_ids)) != len(saved_ids)
             or vectors.ndim != 2 or vectors.shape[0] != len(saved_ids) or not np.isfinite(vectors).all()):
         return None
     return {i: vectors[n].copy() for n, i in enumerate(saved_ids)}
 
 
-def save_result(directory, result, fingerprint, responses, group_size):
+def save_result(directory, result, fingerprint, responses, group_size, *, name=None):
     ids = list(result)
     vectors = np.stack([np.asarray(result[i], dtype=np.float64) for i in ids])
-    write_atomic(directory / RESULT, lambda output: np.savez(
+    write_atomic(directory / (name or RESULT), lambda output: np.savez(
         output, ids=np.asarray(ids), vectors=vectors, policy=np.asarray(fingerprint),
         responses=np.int64(responses), group_size=np.int64(group_size)))
 
@@ -152,12 +164,34 @@ def patch_mixin(mixin):
             print(f"RESUME scoring block seed={seed}: reused {len(result)} saved gradients from {directory}",
                   flush=True)
             return result
-        self._resumable_dir = directory
+        # Score one prompt per rank at a time and keep every finished slice, so
+        # an attempt that runs out of memory part way resumes after it instead
+        # of recomputing the whole block. Each rank still scores ids[rank::world]
+        # in the original order; sampling seeds depend on (seed, rank, prompt).
+        partial = None
+        if self.rank == 0:
+            partial = load_result(directory, ids, fingerprint, responses, group_size, name=PARTIAL, subset=True)
+        done = agreed(self, sorted(partial) if partial else [])
+        result = dict(partial or {})
+        world = max(1, getattr(self, "world", 1))
         before = self.resumed_rollouts
+        self._resumable_dir = directory
         try:
-            result = base(ids, responses=responses, group_size=group_size, seed=seed)
+            for start in range(0, len(ids), world):
+                part = list(ids)[start:start + world]
+                if set(part) <= set(done):
+                    # Replay this rank's cached rollout so raw traces stay complete.
+                    if self.rank < len(part):
+                        self._rollout(part[self.rank], responses, seed)
+                    continue
+                result.update(base(part, responses=responses, group_size=group_size, seed=seed))
+                if self.rank == 0:
+                    save_result(directory, result, fingerprint, responses, group_size, name=PARTIAL)
+                release_memory(self)
         finally:
             self._resumable_dir = None
+        if done:
+            print(f"RESUME scoring block seed={seed}: {len(done)} saved prompt gradient(s) reused", flush=True)
         if self.resumed_rollouts > before:
             print(f"RESUME scoring block seed={seed}: {self.resumed_rollouts - before} rollout(s) reused from "
                   f"{directory} on this rank", flush=True)

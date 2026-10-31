@@ -369,3 +369,25 @@ def test_gemma_ranks_keep_expandable_cuda_segments(value, expected):
     environment = {} if value is None else {"PYTORCH_CUDA_ALLOC_CONF": value}
     assert selection_resume.expandable_segments(environment) == expected
     assert environment["PYTORCH_CUDA_ALLOC_CONF"] == expected
+
+
+def test_an_attempt_that_fails_part_way_resumes_after_its_finished_prompts(tmp_path, capsys):
+    # 2026-10-31: seed-5 switch ran out of memory part way through its scoring
+    # block and every retry recomputed the block from its first prompt.
+    module = fresh_mixin_module()
+    Backend = backend_class(module, tmp_path)
+    reference = FakeBackend().score_gradients(CANDIDATES, responses=8, group_size=4, seed=11)
+    first = Backend(fail_on={"c3"})
+    with pytest.raises(Interrupted):
+        first.score_gradients(CANDIDATES, responses=8, group_size=4, seed=11)
+    assert first.scored == ["c0", "c1", "c2"]
+    second = Backend()
+    result = second.score_gradients(CANDIDATES, responses=8, group_size=4, seed=11)
+    assert second.scored == ["c3", "c4", "c5"] and second.generated == ["c3", "c4", "c5"]
+    assert "3 saved prompt gradient(s) reused" in capsys.readouterr().out
+    for key in reference:
+        np.testing.assert_array_equal(result[key], reference[key])
+    # Other weights never reuse the slices.
+    moved = Backend(weight=2.0)
+    moved.score_gradients(CANDIDATES, responses=8, group_size=4, seed=11)
+    assert moved.scored == CANDIDATES
