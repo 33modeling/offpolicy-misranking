@@ -10,6 +10,7 @@ launch the same model again from the current checkout. Training, admission
 and the coordinator itself are never signalled; no queue file is changed.
 """
 
+import argparse
 import os
 import signal
 import socket
@@ -19,9 +20,9 @@ from pathlib import Path
 STARTUP = {"srgc_research.dispatch.gemma_it_run", "srgc_research.dispatch.gemma4_it.entry",
            "srgc_research.dispatch.gemma4_it.cli"}
 COORDINATOR = "srgc_research.dispatch.model_chain"
-# The shared session lock stays open for a child's whole life, so it is not
-# evidence of a startup wait.
-LOCKS = (".start-prepare.lock", ".auto-prepare.lock", ".download.lock")
+# A shared session FD is normally held for a worker's whole life. Only an
+# actual kernel waiting record, never an open/held FD, is evidence of a wait.
+LOCKS = (".start-prepare.lock", ".auto-prepare.lock", ".download.lock", ".session.lock")
 
 
 def read(proc, pid, uid):
@@ -31,10 +32,20 @@ def read(proc, pid, uid):
     tail = (path / "stat").read_text().rsplit(") ", 1)[1].split()
     argv = (path / "cmdline").read_bytes().decode(errors="replace").split("\0")
     module = argv[argv.index("-m") + 1] if "-m" in argv[:-1] else None
-    return {"pid": pid, "ppid": int(tail[1]), "pgid": int(tail[2]), "argv": argv, "module": module}
+    return {"pid": pid, "ppid": int(tail[1]), "pgid": int(tail[2]), "start_ticks": tail[19],
+            "argv": argv, "module": module}
 
 
 def startup_lock(proc, pid):
+    try:
+        from .srgc_launch_probe import lock_rows
+    except ImportError:
+        from srgc_launch_probe import lock_rows
+
+    try:
+        records = lock_rows(proc)
+    except OSError:
+        return None
     for fd in (proc / str(pid) / "fd").iterdir():
         try:
             target = os.readlink(fd).removesuffix(" (deleted)")
@@ -42,7 +53,13 @@ def startup_lock(proc, pid):
             continue
         name = Path(target).name
         if name.endswith(LOCKS) or name.endswith(".lock") and "/gemma-runtime-cache/" in target:
-            return target
+            try:
+                stat = fd.stat()
+            except OSError:
+                continue
+            key = (pid, os.major(stat.st_dev), os.minor(stat.st_dev), stat.st_ino)
+            if records.get(key) == "waiting":
+                return target
     return None
 
 
@@ -97,17 +114,37 @@ def candidates(proc=Path("/proc"), uid=None):
             continue
         group = {pid for pid, other in rows.items() if other["pgid"] == row["pgid"]}
         tree = set().union(*(below(pid) for pid in group))
-        if any("torch.distributed.run" in rows[pid]["argv"] for pid in tree if pid in rows):
+        gpu_modules = {"torch.distributed.run", "srgc_research.dispatch.rank_runtime",
+                       "srgc_research.dispatch.reward_curve_rank", "srgc_research.dispatch.gemma4_it.rank"}
+        if any(gpu_modules.intersection(rows[pid]["argv"])
+               or any(Path(arg).name == "torchrun" for arg in rows[pid]["argv"])
+               for pid in tree if pid in rows):
             continue
         found[row["pgid"]] = {"pgid": row["pgid"], "pid": row["pid"], "lock": lock,
-                              "wait": channel, "coordinator": coordinator["pid"]}
+                              "start_ticks": row["start_ticks"], "leader_start_ticks": leader["start_ticks"],
+                              "wait": channel, "coordinator": coordinator["pid"],
+                              "coordinator_start_ticks": coordinator["start_ticks"]}
     return list(found.values())
 
 
-def main():
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--dry-run', action='store_true', help='show confirmed startup waiters without sending signals')
+    args = parser.parse_args(argv)
     host = socket.gethostname()
     rows = candidates()
     for row in rows:
+        if args.dry_run:
+            print(f"{host} startup waiter pid={row['pid']} lock={row['lock']}; dry-run, no signal", flush=True)
+            continue
+        # Recheck PID generations, the kernel wait and the absence of ranks at
+        # the last moment. A process that left startup is not a recovery target.
+        current = next((r for r in candidates() if r['pgid'] == row['pgid']), None)
+        fields = ('pid', 'pgid', 'start_ticks', 'leader_start_ticks', 'coordinator',
+                  'coordinator_start_ticks', 'lock')
+        if current is None or any(current.get(key) != row.get(key) for key in fields):
+            print(f"{host} startup waiter pid={row['pid']} changed; no signal", flush=True)
+            continue
         try:
             os.killpg(row["pgid"], signal.SIGKILL)
             result = "ended; coordinator relaunches it with the current code"

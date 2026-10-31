@@ -384,7 +384,7 @@ def run(argv=None):
 
 def main(argv=None):
     from .gemma4_it import cli
-    from .gemma4_it.reset import session
+    from .startup_locks import retrying_session as session
 
     args = list(sys.argv[1:] if argv is None else argv) or ["all"]
     if args[0] in {"status", "results", "stop", "resume", "doctor", "prepare", "preflight", "reset"}:

@@ -15,7 +15,7 @@ from pathlib import Path
 from srgc_rebuttal.runtime import atomic_json
 
 CURRENT = ContextVar('srgc_startup', default=None)
-LABELS = {'starting': 'worker 초기 등록', 'model_files': '모델 파일 확인·다운로드',
+LABELS = {'session': '기존 reset의 session 잠금 대기', 'starting': 'worker 초기 등록', 'model_files': '모델 파일 확인·다운로드',
           'packages': '고정 패키지 활성화', 'model_verify': '모델 snapshot 검증',
           'plans_validate': '기존 plan·입력 검증', 'plans_prepare': '누락 plan 준비',
           'prepare_busy': '공용 plan 생성 중 · 다음 재시도 대기',
@@ -90,6 +90,7 @@ def wrap_entry(original, root):
         from unittest.mock import patch
 
         from .gemma4_it import model, runtime
+        from .startup_locks import retrying_startup_locks
 
         def step(function, name):
             def call(*args, **kwargs):
@@ -99,7 +100,7 @@ def wrap_entry(original, root):
                 return result
             return call
 
-        with registration(root), \
+        with registration(root), retrying_startup_locks(), \
                 patch.object(model, 'ensure_snapshot', step(model.ensure_snapshot, 'model_files')), \
                 patch.object(runtime, 'activate', step(runtime.activate, 'packages')):
             code = original(args)
