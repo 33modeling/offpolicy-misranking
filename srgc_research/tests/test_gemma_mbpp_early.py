@@ -264,8 +264,8 @@ def test_it_mbpp_cache_then_prefix_claimable_while_math_prefixes_remain(it_math)
     finish_math_caches(mbpp)
     with manager.claim(mbpp, retry_failed=True, retry_delay=0) as task:
         assert task == Task(5, "prefix")
-    # MBPP arms open too; drain offers them only after MATH work (scope "late").
     assert manager.task_allowed(mbpp, Task(5, "on_policy"))
+    assert not mbpp.ready(Task(5, "on_policy"))  # Its own prefix is still unfinished.
     with manager.claim(math, retry_failed=True, retry_delay=0) as task:
         assert task == Task(5, "prefix")
 
@@ -383,10 +383,9 @@ def test_public_it_run_dispatches_with_early_mbpp_claims(it_math, monkeypatch):
     assert factories and set(factories) == {gemma_it_run.GemmaITEarlyMBPP}
 
 
-@pytest.mark.parametrize("panel,runnable", ((None, False), ("paused", False), ("passed", True)))
-def test_resume_only_child_does_not_admit_for_an_unpassed_mbpp_panel(gemma, monkeypatch, panel, runnable):
-    # Resume-only admission does not run the MBPP panel, so the claim would
-    # find nothing; runnable must not send the child through admission.
+@pytest.mark.parametrize("panel,runnable", ((None, True), ("paused", False), ("passed", True)))
+def test_resume_only_child_can_verify_unrun_mbpp_panel_before_claim(gemma, monkeypatch, panel, runnable):
+    # Admission may verify an unrun panel, while claiming always needs a pass.
     math, mbpp = gemma.queues
     finish_fake(math, Task(5, "prefix"))
     abandoned(math, Task(5, "sr"), state="failed")
@@ -398,7 +397,7 @@ def test_resume_only_child_does_not_admit_for_an_unpassed_mbpp_panel(gemma, monk
     args = SimpleNamespace(retry_delay=3600)
     assert resume_drain.runnable(manager, [math], pending, args) is runnable
     with manager.claim(mbpp, retry_failed=True, retry_delay=3600) as task:
-        assert task == (Task(9, "prefix") if runnable else None)
+        assert task == (Task(9, "prefix") if panel == "passed" else None)
 
 
 @pytest.mark.parametrize("resume_only", ("0", "1"))
@@ -450,7 +449,7 @@ def test_requested_early_mbpp_panel_matches_admission_mode(gemma, monkeypatch, r
     monkeypatch.setattr(EarlyGemma, "panel", panel)
     manager = EarlyGemma(gemma.queues)
     pending = resume_drain.phase_pending(manager, manager.pending())
-    expected = panel == "passed" or panel is None and resume_only == "0"
+    expected = panel in {None, "passed"}
     assert resume_drain.runnable(manager, [mbpp], pending, SimpleNamespace(retry_delay=0)) is expected
 
 

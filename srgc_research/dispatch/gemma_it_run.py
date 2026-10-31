@@ -75,8 +75,8 @@ def early_enabled(environment=None):
 class GemmaITEarlyMBPP(GemmaITResumeFirst):
     """MBPP cache and prefix may start while MATH work remains (2026-10-29).
 
-    Later MBPP arms keep the MATH barrier; each stage keeps its dependency and
-    the MBPP preflight that its rank checks again before caching or training."""
+    Ready MBPP arms follow this worker's MATH claims on spare allocations.
+    Every task keeps its own prefix dependency and verified MBPP preflight."""
 
     @property
     def early_arms(self):
@@ -95,7 +95,7 @@ def early_preflight_plan(plans, environment):
     from srgc_rebuttal import cluster
 
     if (not early_enabled(environment) or active_dataset_phase(environment) != "math"
-            or environment.get("SRGC_CACHE_ONLY") == "1" or environment.get("SRGC_RESUME_ONLY") == "1"):
+            or environment.get("SRGC_CACHE_ONLY") == "1"):
         return None
     for path in plans:
         plan = load_plan(Path(path))
@@ -253,7 +253,7 @@ def run(argv=None):
     from srgc_rebuttal import cluster
 
     from .gemma4 import worker
-    from .model_chain import enabled
+    from .model_chain import YIELD, enabled
     from .model_resume import failure_footer
     from .resume_drain import resume_worker
 
@@ -290,9 +290,22 @@ def run(argv=None):
                 print(f"GEMMA preparing {phase.upper()} initial caches before {phase.upper()} training", flush=True)
                 with patch.dict(os.environ, {"SRGC_CACHE_ONLY": "1", "SRGC_CACHE_DATASET": phase}):
                     check_saved_preflight(options)
-                    code = entry.main(args)
-                    if code:
+                    try:
+                        code = entry.main(args)
+                    except SystemExit as error:
+                        if error.code != YIELD or phase != "math" or not early_enabled():
+                            raise
+                        code = YIELD
+                    if code and not (code == YIELD and phase == "math" and early_enabled()):
                         return code
+                if code == YIELD:
+                    # Peer-owned MATH caches do not block independent MBPP
+                    # preparation. Resume-only keeps fresh MATH work closed.
+                    print("GEMMA MATH caches waiting on peers; checking available MBPP work", flush=True)
+                    with patch.dict(os.environ, {"SRGC_CACHE_ONLY": "0", "SRGC_RESUME_ONLY": "1"}):
+                        code = entry.main(args)
+                    # Finishing this fallback never declares MATH complete.
+                    return code or YIELD
                 print(f"GEMMA {phase.upper()} initial caches complete; starting {phase.upper()} work", flush=True)
             return entry.main(args)
         except (subprocess.CalledProcessError, OSError, ValueError, TypeError, RuntimeError, ImportError) as error:

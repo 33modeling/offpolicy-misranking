@@ -1,5 +1,20 @@
 # Qwen → Llama → Gemma 자동 연결
 
+**2026-10-31 Gemma IT 유휴 노드 배정 수정:** MATH 작업이 다른 노드에서 실행 중이어도
+사용 가능한 노드는 MBPP 캐시·Prefix를 먼저 배정받는다. 자기 노드가 가져갈 MATH 작업이
+없으면 준비된 MBPP 학습 arm도 실행한다. MBPP의 사전 검증과 해당 seed의 Prefix 완료·잠금
+반환은 계속 필요하다. 모델 전체의 MATH·MBPP를 완료해야 다음 모델로 넘어가는 경계는
+유지한다. `SRGC_GEMMA_MBPP_EARLY=0`이면 기존 MATH 우선 장벽으로 돌아간다.
+
+MATH 캐시 전용 실행이 peer 소유 때문에 76을 반환하면 같은 coordinator가 MBPP 배정을
+확인한다. 이 경로가 끝나도 MATH 완료로 보고하지 않는다. 재개 전용 실행도 미실행 MBPP
+사전 검증을 수행할 수 있지만, 통과 전에는 작업을 claim하지 않는다. 빈 MATH 복구 목록만으로
+실행을 끝내어 배정 가능한 MBPP를 놓치지 않는다.
+
+이 변경은 새로 시작한 worker에 적용된다. 이미 실행 중인 학습은 유지하고, 유휴 상태의
+이전 coordinator를 정상 종료한 뒤 `git pull --ff-only origin master` 및 원래 시작 명령으로
+재개한다. `reset`이나 잠금 파일 삭제는 필요하지 않다.
+
 공개 학습 시작 명령은 **모델 단위**로 실행한다(2026-10-19 사용자 결정). 한 모델의 MATH와 MBPP를 모두 끝낸 뒤 다음 모델로 간다. Qwen 시작의 기본 순서는 `Qwen MATH → Qwen MBPP → Llama MATH → Llama MBPP → Gemma MATH → Gemma MBPP`다. Llama 시작은 `llama31 → gemma4 → qwen35`, Gemma 시작은 `gemma4 → qwen35 → llama31` 모델 순서를 따르며, 각 모델 안에서는 MATH 다음 MBPP다.
 
 **2026-10-19 현재 정책: 현재 모델을 MATH·MBPP 모두 끝낸 뒤 다음 모델로 간다.** Llama 시작이면
@@ -13,7 +28,7 @@ sh scripts/run_srgc_qwen35.sh all
 sh scripts/run_srgc_llama31.sh all
 ```
 
-노드당 위 명령 하나를 실행한다. `all`은 두 plan을 먼저 준비하며 MBPP 비교 arm의 학습·최종 평가는 MATH가 끝날 때까지 기다린다. Gemma IT는 사용자 지시(2026-10-29)에 따라 유휴 GPU에서 MBPP cache·prefix를 먼저 배정할 수 있다. 이 준비 작업은 패널 검증·큐 의존성을 유지하며 MBPP 학습 단계 전환으로 간주하지 않는다. `math`는 MATH만 수행한다. `mbpp`도 준비돼 있는 MATH sibling plan을 먼저 완료한 뒤 MBPP를 실행한다. MATH plan이 없으면 오류를 내며, MATH를 건너뛰거나 빈 큐를 완료로 간주하지 않는다. `--root`, `--source-plan`, `--max-attempts` 등 모델별 인자와 Python 선택은 시작 모델에서 그대로 보존하며, 재방문과 데이터셋 전환에도 유지한다. 다른 모델은 각자의 기존 root·Python·고정 모델 snapshot을 사용한다.
+노드당 위 명령 하나를 실행한다. `all`은 두 plan을 먼저 준비한다. Gemma IT의 유휴 노드는 위 규칙에 따라 MBPP를 병행하며, 다른 모델과 early 배정을 끈 실행은 기존 MATH 완료 장벽을 유지한다. `math`는 MATH만 수행한다. `mbpp`도 준비돼 있는 MATH sibling plan을 먼저 완료한 뒤 MBPP를 실행한다. MATH plan이 없으면 오류를 내며, MATH를 건너뛰거나 빈 큐를 완료로 간주하지 않는다. `--root`, `--source-plan`, `--max-attempts` 등 모델별 인자와 Python 선택은 시작 모델에서 그대로 보존하며, 재방문과 데이터셋 전환에도 유지한다. 다른 모델은 각자의 기존 root·Python·고정 모델 snapshot을 사용한다.
 
 각 모델의 학습·최종 평가는 기존 실행기에 맡긴다. 학습 update 275 도달만으로 완료로 표시하지 않는다. 남은 최종 평가도 기존 작업의 일부다. 현재 모델의 작업을 다른 노드가 소유하거나 실패 재시도 대기 중이면 GPU 잠금을 해제한 뒤 같은 모델을 다시 확인한다. 이때 다음 모델로 넘어가지 않는다. 선택한 모델의 MATH가 하나라도 남으면 MBPP로 넘어가지 않는다. endpoint가 저장돼도 실행 잠금이 남아 있으면 완료 경계를 넘지 않는다.
 

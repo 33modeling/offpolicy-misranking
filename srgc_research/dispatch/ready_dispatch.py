@@ -39,7 +39,7 @@ class ReadyClaims:
 
     def early_state(self, queue):
         """Saved preflight of an early MBPP plan: "passed", "paused" or None (not run)."""
-        return None
+        return
 
     def math_complete(self):
         # A completed endpoint can still be owned while its writer exits.

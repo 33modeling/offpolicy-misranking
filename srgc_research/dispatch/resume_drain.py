@@ -120,10 +120,9 @@ def runnable(manager, requested, pending, args):
             if os.environ.get("SRGC_CACHE_ONLY") == "1" and task.arm != "cache":
                 continue
             key = (str(queue.plan_path.resolve()), task.key)
-            # Admission runs an unrun MBPP panel only outside resume-only mode
-            # (early_preflight_plan). Otherwise a claim needs a passed panel, and
-            # predicting more would admit, claim nothing and relaunch forever.
-            admitted = os.environ.get("SRGC_RESUME_ONLY") == "1"
+            # Admission verifies an unrun MBPP panel even in recovery mode.
+            # The later claim still needs the recorded panel to have passed.
+            admitted = False
             early = queue not in requested and (early_sibling(manager, queue, task, admitted=admitted)
                                                 or late_sibling(manager, queue, task, admitted=admitted))
             if queue not in requested and key not in pending and not early:
@@ -137,8 +136,7 @@ def runnable(manager, requested, pending, args):
                 continue
             # The requested queue also needs the claim's task-level barrier:
             # an early MBPP queue may be open while its training arms are not.
-            if not manager.task_allowed(
-                    queue, task, admitted=os.environ.get("SRGC_RESUME_ONLY") == "1"):
+            if not manager.task_allowed(queue, task, admitted=False):
                 continue
             if queue.complete(task) or not queue.ready(task) or manager.owned(queue, task):
                 continue
@@ -186,7 +184,8 @@ def worker_loop(worker, factory, pattern, env_key, label, plans, args, group, co
             pending = {key for key in phase_pending(manager, manager.pending())
                        if not cluster.stop_requested(manager.tasks[key][0])}
         if (os.environ.get("SRGC_RESUME_ONLY") == "1"
-                and os.environ.get("SRGC_CACHE_ONLY") != "1" and not pending):
+                and os.environ.get("SRGC_CACHE_ONLY") != "1" and not pending
+                and not runnable(manager, requested, pending, args)):
             update("yielded", idle_reason="unfinished tasks recovered; fresh work deferred")
             return
         if not pending and all(q.plan_path in stopped or
@@ -295,7 +294,7 @@ def drain(worker, factory, pattern, env_key, label, requested, args, environment
         if os.environ.get("SRGC_RESUME_ONLY") == "1" and os.environ.get("SRGC_CACHE_ONLY") != "1":
             with lease(manager.marker.with_suffix(".lock"), wait=True):
                 remaining = phase_pending(manager, manager.pending())
-            if not remaining:
+            if not remaining and not runnable(manager, requested, remaining, args):
                 progress("yielded", idle_reason="unfinished tasks recovered; fresh work deferred")
                 return
         pending = None
