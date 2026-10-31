@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -397,3 +398,56 @@ def test_resume_only_child_does_not_admit_for_an_unpassed_mbpp_panel(gemma, monk
     assert resume_drain.runnable(manager, [math], pending, args) is runnable
     with manager.claim(mbpp, retry_failed=True, retry_delay=3600) as task:
         assert task == (Task(9, "prefix") if runnable else None)
+
+
+@pytest.mark.parametrize("resume_only", ("0", "1"))
+@pytest.mark.parametrize("math_state", ("unfinished", "complete_but_owned"))
+def test_requested_mbpp_admission_obeys_the_claims_math_barrier(gemma, monkeypatch, resume_only, math_state):
+    math, mbpp = gemma.queues
+    abandoned(mbpp, Task(9, "sr"), state="failed")
+    if math_state == "complete_but_owned":
+        for task in math.tasks:
+            finish_fake(math, task)
+    monkeypatch.setenv("SRGC_DATASET_PHASE", "mbpp")
+    monkeypatch.setenv("SRGC_RESUME_ONLY", resume_only)
+    lock = (lease(math.directory / "leases" / "seed-5.sr.lock")
+            if math_state == "complete_but_owned" else nullcontext())
+    with lock:
+        manager = EarlyGemma(gemma.queues)
+        pending = resume_drain.phase_pending(manager, manager.pending())
+        assert not manager.math_complete()
+        with manager.claim(mbpp, retry_failed=True, retry_delay=0) as task:
+            assert task is None
+        assert not resume_drain.runnable(manager, [mbpp], pending, SimpleNamespace(retry_delay=0))
+
+
+@pytest.mark.parametrize("resume_only", ("0", "1"))
+def test_blocked_requested_mbpp_yields_before_gpu_admission(gemma, monkeypatch, tmp_path, resume_only):
+    _, mbpp = gemma.queues
+    abandoned(mbpp, Task(9, "sr"), state="failed")
+    checkpoint = mbpp.root / "seed-9/prefix.pt"
+    before = checkpoint.read_bytes()
+    monkeypatch.setenv("SRGC_DATASET_PHASE", "mbpp")
+    monkeypatch.setenv("SRGC_MODEL_CHAIN_CHILD", "1")
+    monkeypatch.setenv("SRGC_RESUME_ONLY", resume_only)
+    with pytest.raises(SystemExit) as stopped:
+        run_worker(gemma, monkeypatch, tmp_path, selected=gemma.queues,
+                   probe=lambda: pytest.fail("blocked MBPP child requested GPUs"),
+                   admission=lambda *a, **kw: pytest.fail("blocked MBPP child requested admission"))
+    assert stopped.value.code == YIELD
+    assert gemma.jobs == []
+    assert checkpoint.read_bytes() == before
+
+
+@pytest.mark.parametrize("resume_only", ("0", "1"))
+@pytest.mark.parametrize("panel", (None, "paused", "passed"))
+def test_requested_early_mbpp_panel_matches_admission_mode(gemma, monkeypatch, resume_only, panel):
+    _, mbpp = gemma.queues
+    abandoned(mbpp, Task(9, "prefix"), state="failed")
+    monkeypatch.setenv("SRGC_DATASET_PHASE", "mbpp")
+    monkeypatch.setenv("SRGC_RESUME_ONLY", resume_only)
+    monkeypatch.setattr(EarlyGemma, "panel", panel)
+    manager = EarlyGemma(gemma.queues)
+    pending = resume_drain.phase_pending(manager, manager.pending())
+    expected = panel == "passed" or panel is None and resume_only == "0"
+    assert resume_drain.runnable(manager, [mbpp], pending, SimpleNamespace(retry_delay=0)) is expected

@@ -184,3 +184,14 @@ def test_long_coordinator_wait_refreshes_heartbeat_without_changing_wait_reason(
     with patch.object(model_chain, "drain", side_effect=drain):
         assert model_chain.main(["--start", "gemma4", "all"]) == 0
     assert ages and max(ages) <= 5
+
+
+def test_launcher_without_dataset_worker_shows_recorded_restart_evidence(cohort, capsys):
+    path = coordinator(cohort, child_pid=456, launch_attempt=3, launch_started=time.time() - 125,
+                       previous_exit_code=76, previous_exit_at=time.time() - 126)
+    before = path.read_bytes()
+    text = inspect(cohort, capsys, as_json=False)
+    assert 'dataset worker not registered' in text
+    assert 'launcher records: pid=123; child_pid=456; launch_cycle=3; previous_exit=76' in text
+    assert 'launch_age=' in text
+    assert path.read_bytes() == before

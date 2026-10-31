@@ -14,10 +14,25 @@ const lastAt = (r) => r.events.at(-1)?.at || '';
 // 찾기는 값만 본다. 키 이름까지 보면 status·gemma·fix 같은 말이 모든 사건·커밋에 걸린다.
 const values = (v) => v && typeof v === 'object' ? Object.values(v).map(values).join(' ') : typeof v === 'string' || typeof v === 'number' ? String(v) : '';
 
+function evidenceItem(e) {
+  if (e.kind === 'user_report' && typeof e.text === 'string') {
+    return `<span>사용자 보고 · ${esc(e.text).replaceAll('\n', '<br>')}</span>`;
+  }
+  let url = e.url, label = e.label;
+  if (e.kind === 'source' && /^[a-f0-9]{7,40}$/.test(e.commit)
+      && typeof e.path === 'string' && e.path.split('/').every((p) => p && p !== '.' && p !== '..')) {
+    url ||= `https://github.com/33modeling/offpolicy-misranking/blob/${e.commit}/${e.path.split('/').map(encodeURIComponent).join('/')}`;
+    label ||= `${e.path} (${e.commit.slice(0, 8)})`;
+  }
+  const text = `${e.kind === 'commit' ? '수정·관련 커밋' : '원본 근거'} · ${esc(label || e.path || '근거 정보 미확인')}`;
+  const href = safe(url);
+  return href === '#' ? `<span>${text}</span>` : `<a href="${esc(href)}" target="_blank" rel="noopener">${text} ↗</a>`;
+}
+
 function incident(r) {
   const s = status(r);
   const facts = [['원인 · 확인 범위', r.cause], ['영향', r.impact], ['도입 · 책임 근거', r.attribution]];
-  const evidence = r.evidence.map((e) => `<a href="${esc(safe(e.url))}" target="_blank" rel="noopener">${e.kind === 'commit' ? '수정·관련 커밋' : '원본 근거'} · ${esc(e.label)} ↗</a>`);
+  const evidence = r.evidence.map(evidenceItem);
   if (r.introduction_commit) evidence.push(`<a href="https://github.com/33modeling/offpolicy-misranking/commit/${esc(r.introduction_commit)}" target="_blank" rel="noopener">도입 커밋 ${esc(r.introduction_commit.slice(0, 12))} ↗</a>`);
   const events = r.events.map((e) => `<li data-tone="${TONES[e.status] || 'wait'}"><small>${esc(e.at)} · ${esc(e.actor)} · ${esc(NAMES[e.status] ?? e.type)} · ${esc(TYPES[e.evidence_kind] ?? e.evidence_kind ?? '기록')}</small><p>${esc(e.text)}</p>${e.url ? `<a href="${esc(safe(e.url))}" target="_blank" rel="noopener">근거 ↗</a>` : ''}</li>`).join('');
   const body = `${kv(facts)}<h3>근거</h3><div class="sk-links" style="margin-top:0">${evidence.join('')}</div><h3>이력</h3><ol class="pcb-events">${events}</ol>`;

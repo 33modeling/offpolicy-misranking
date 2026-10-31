@@ -1,7 +1,6 @@
 """Drain Qwen, Llama and Gemma with isolated runtimes and existing shared task leases."""
 
 import argparse
-from contextlib import ExitStack, contextmanager
 import hashlib
 import json
 import math
@@ -12,6 +11,7 @@ import subprocess
 import sys
 import time
 import uuid
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 from srgc_rebuttal.runtime import Busy, atomic_json, lease
@@ -28,6 +28,24 @@ def enabled(environment=None):
     return (os.environ if environment is None else environment).get('SRGC_MODEL_CHAIN_CHILD') == '1'
 
 
+def launch_details(row, *, now=None):
+    """Describe recorded launch cycles; no PID liveness or training is inferred."""
+    parts = []
+    for field in ('pid', 'child_pid', 'launch_attempt'):
+        value = row.get(field)
+        if type(value) is int and value > 0:
+            label = 'launch_cycle' if field == 'launch_attempt' else field
+            parts.append(f'{label}={value}')
+    code = row.get('previous_exit_code')
+    if type(code) is int:
+        parts.append(f'previous_exit={code}')
+    started = row.get('launch_started')
+    now = time.time() if now is None else now
+    if type(started) in (int, float) and math.isfinite(started) and 0 <= started <= now:
+        parts.append(f'launch_age={now - started:.0f}s')
+    return '; '.join(parts)
+
+
 def waiting_coordinator(environment):
     """Describe receipt evidence; only the actual lease decides ownership."""
     host = socket.gethostname()
@@ -38,10 +56,11 @@ def waiting_coordinator(environment):
         return 'coordinator record unavailable'
     row = max(rows, key=lambda item: item['started'])
     child = f" child_pid={row['child_pid']}" if type(row.get('child_pid')) is int else ''
+    details = launch_details(row)
     return (f"recorded coordinator pid={row.get('pid', '?')}{child} "
             f"status={row['status'].upper()} model={row.get('model', '-')} "
             f"dataset={row.get('active_dataset', row.get('dataset', '-'))} "
-            f"heartbeat_age={row['heartbeat_age_seconds']:.0f}s")
+            f"heartbeat_age={row['heartbeat_age_seconds']:.0f}s; {details}")
 
 
 @contextmanager
@@ -165,6 +184,11 @@ def drain_phase(order, dataset, initial, environment, update, *, runner=run_chil
     def saved_errors(model):
         return failed_signature(model, environment['SRGC_DATASET_PHASE'], environment,
                                 root=custom_root.root if model == start else None)
+    launches = {}
+
+    def notify(status, **details):
+        update(status, **{**launches.get(details.get('model'), {}), **details})
+
     while True:
         busy = False
         killed = False
@@ -194,40 +218,48 @@ def drain_phase(order, dataset, initial, environment, update, *, runner=run_chil
             command = child_command(model, dataset, args)
             resume_only = model in recovery
             attempt_env = {**child_env, 'SRGC_RESUME_ONLY': '1' if resume_only else '0'}
+            previous_launch = launches.get(model, {})
+            launches[model] = {
+                'launch_attempt': previous_launch.get('launch_attempt', 0) + 1,
+                'launch_started': time.time(),
+                **{key: previous_launch[key] for key in ('previous_exit_code', 'previous_exit_at')
+                   if key in previous_launch},
+            }
             print(f'MODEL START {model} dataset={environment["SRGC_DATASET_PHASE"]} resume_only={resume_only}', flush=True)
             states[model] = 'running'
-            update('running', model=model, resume_only=resume_only, models=dict(states))
+            notify('running', model=model, resume_only=resume_only, models=dict(states))
             try:
-                code = runner(command, dict(attempt_env), lambda pid, current=model, mode=resume_only: update(
+                code = runner(command, dict(attempt_env), lambda pid, current=model, mode=resume_only: notify(
                     'running', model=current, resume_only=mode, child_pid=pid, models=dict(states)))
                 # The legacy Qwen resume action clears stop markers and exits;
                 # continue into its actual queue only after that explicit action.
                 if model == 'qwen35' and args and len(args) > 1 and args[1] == 'resume' and code == 0:
                     command = child_command(model, dataset, [dataset, 'run', *args[2:]])
-                    code = runner(command, dict(attempt_env), lambda pid, current=model, mode=resume_only: update(
+                    code = runner(command, dict(attempt_env), lambda pid, current=model, mode=resume_only: notify(
                         'running', model=current, resume_only=mode, child_pid=pid, models=dict(states)))
             except (OSError, subprocess.SubprocessError) as error:
                 print(f'MODEL FAILED {model}: {error}', file=sys.stderr, flush=True)
                 code = 2
+            launches[model].update(previous_exit_code=code, previous_exit_at=time.time())
             if code in (129, 137):
                 retrying.add(model)
                 states[model] = 'waiting'
-                update('waiting', model=model, exit_code=code, models=dict(states), resume_only=True,
+                notify('waiting', model=model, exit_code=code, models=dict(states), resume_only=True,
                        idle_reason='worker interrupted; resuming saved work')
                 killed = True
                 break
             if code in (130, 143):
-                update('stopped', model=model, exit_code=code, models=dict(states))
+                notify('stopped', model=model, exit_code=code, models=dict(states))
                 return code
             if code == PAUSED:
-                update('stopped', model=model, exit_code=code, models=dict(states))
+                notify('stopped', model=model, exit_code=code, models=dict(states))
                 return code
             if code not in (0, YIELD, BUSY) and (resume_only or saved_work(model) is not None):
                 retrying.add(model)
                 recovered.pop(model, None)
                 states[model] = 'waiting'
                 failures[model] = code
-                update('waiting', model=model, exit_code=code, models=dict(states),
+                notify('waiting', model=model, exit_code=code, models=dict(states),
                        failures=dict(failures), resume_only=True,
                        idle_reason='worker failed with unfinished work; retrying saved task before fresh work')
                 print(f'MODEL RETRY {model} exit={code}; saved work remains; retry_limit=none', flush=True)
@@ -238,7 +270,7 @@ def drain_phase(order, dataset, initial, environment, update, *, runner=run_chil
                 recovered.pop(model, None)
                 states[model] = 'waiting'
                 retry = True
-                update('waiting', model=model, exit_code=code, models=dict(states), resume_only=True,
+                notify('waiting', model=model, exit_code=code, models=dict(states), resume_only=True,
                        idle_reason='worker exited successfully but unfinished task remains; holding current model')
                 break
             states[model] = 'finished' if code == 0 else 'waiting' if code in (YIELD, BUSY) else 'failed'
@@ -249,31 +281,31 @@ def drain_phase(order, dataset, initial, environment, update, *, runner=run_chil
                 states[model] = 'pending'
             if states[model] == 'failed':
                 failures[model] = code
-                update('failed', model=model, exit_code=code, models=dict(states), failures=dict(failures),
+                notify('failed', model=model, exit_code=code, models=dict(states), failures=dict(failures),
                        idle_reason='current model failed before saved work was available; later models blocked')
                 return 2
             action = 'current model complete' if states[model] == 'finished' else 'holding current model'
             print(f'MODEL {model} {states[model]} exit={code}; {action}', flush=True)
-            update('switching' if states[model] == 'finished' else 'waiting',
+            notify('switching' if states[model] == 'finished' else 'waiting',
                    model=model, exit_code=code, models=dict(states))
             if code == BUSY:
                 busy = True
                 break
         if all(state in {'finished', 'failed'} for state in states.values()):
-            update('failed' if failures else 'finished', models=dict(states), failures=failures)
+            notify('failed' if failures else 'finished', models=dict(states), failures=failures)
             return 2 if failures else 0
         if states[current_model] == 'finished':
             continue  # Only a completed full worker releases the next model.
         if recovery and not busy and not killed and not retry and all(states[model] in {'pending', 'failed'} for model in recovery):
             if failures:
-                update('failed', models=dict(states), failures=failures)
+                notify('failed', models=dict(states), failures=failures)
                 return 2
             continue  # Recovery finished; proceed directly to the normal queues.
         # Hold the same model during errors, peer leases and retry delays.
         reason = ('worker failed; retrying saved work before fresh work' if retry
                   else 'worker interrupted; retrying saved work' if killed else 'GPU allocation owned' if busy
                   else 'current model waiting on peers or retry delay; later models blocked')
-        update('waiting', model=current_model, models=dict(states), idle_reason=reason, failures=dict(failures),
+        notify('waiting', model=current_model, models=dict(states), idle_reason=reason, failures=dict(failures),
                resume_only=bool(recovery) or killed or retry)
         print(f'MODEL WAIT: {reason}; retry in {poll_seconds}s', flush=True)
         sleep(poll_seconds)
@@ -315,6 +347,7 @@ def main(argv=None):
 
     def update(status, **details):
         import importlib
+
         from .model_status import CONFIGS
 
         model = details.get('model', latest[1].get('model'))

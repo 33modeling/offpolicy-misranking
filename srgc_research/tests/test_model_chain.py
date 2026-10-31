@@ -614,3 +614,38 @@ def test_surviving_coordinator_retries_a_real_sigkill_child(tmp_path):
     assert chain.drain(list(chain.MODELS), 'math', ['math'], os.environ, lambda *a, **kw: None,
                        runner=runner, sleep=lambda n: None) == 0
     assert attempts == ['qwen35', 'qwen35', 'qwen35', 'llama31', 'gemma4']
+
+
+@pytest.mark.parametrize('exit_code', [chain.BUSY, chain.YIELD, 137])
+def test_repeated_launch_cycles_preserve_the_previous_exit_and_current_child(monkeypatch, exit_code):
+    from srgc_research.dispatch import resume_inventory
+
+    monkeypatch.setattr(resume_inventory, 'signature', lambda *a, **kw: None)
+    monkeypatch.setattr(resume_inventory, 'failed_signature', lambda *a, **kw: None)
+    events, attempts = [], []
+
+    def run(command, environment, heartbeat):
+        attempts.append(command)
+        heartbeat(9000 + len(attempts))
+        return exit_code if len(attempts) <= 2 else 0
+
+    assert chain.drain(['llama31'], 'math', ['math'], {},
+                       lambda status, **row: events.append({'status': status, **row}),
+                       runner=run, sleep=lambda seconds: None) == 0
+    running = [row for row in events if row['status'] == 'running' and 'child_pid' in row]
+    assert [row['launch_attempt'] for row in running[:3]] == [1, 2, 3]
+    assert [row['child_pid'] for row in running[:3]] == [9001, 9002, 9003]
+    assert 'previous_exit_code' not in running[0]
+    assert running[1]['previous_exit_code'] == running[2]['previous_exit_code'] == exit_code
+    assert running[1]['previous_exit_at'] <= running[1]['launch_started']
+    waiting = next(row for row in events if row['status'] == 'waiting')
+    assert waiting['launch_attempt'] == 1 and waiting['previous_exit_code'] == exit_code
+
+
+def test_launch_diagnostics_preserve_unknown_legacy_fields():
+    assert chain.launch_details({}, now=200) == ''
+    assert chain.launch_details({'launch_attempt': '3', 'previous_exit_code': True,
+                                 'launch_started': float('nan')}, now=200) == ''
+    text = chain.launch_details({'pid': 100, 'child_pid': 101, 'launch_attempt': 3,
+                                 'launch_started': 150, 'previous_exit_code': 76}, now=200)
+    assert text == 'pid=100; child_pid=101; launch_cycle=3; previous_exit=76; launch_age=50s'

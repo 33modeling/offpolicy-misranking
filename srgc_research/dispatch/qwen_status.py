@@ -406,6 +406,13 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
                          current, cell(node["task_row"]).removeprefix("RUN ") if node["task_row"] else "-",
                          heartbeat, reason])
         lines += table(("Node", "State", "Phase", "Task", "Progress", "Heartbeat", "Wait reason"), rows)
+        from .model_chain import launch_details
+
+        for node in nodes:
+            if node.get("source") == "model_chain":
+                details = launch_details(node)
+                if details:
+                    lines.append(f"  {node.get('host', '-')} launcher records: {details}")
     else:
         lines += ["", "NODES  no worker records"]
     for report in snapshots:

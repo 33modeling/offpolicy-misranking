@@ -125,6 +125,11 @@ def runnable(manager, requested, pending, args):
             # take an early MBPP cache/prefix.
             if active and key not in active and not early:
                 continue
+            # The requested queue also needs the claim's task-level barrier:
+            # an early MBPP queue may be open while its training arms are not.
+            if not manager.task_allowed(
+                    queue, task, admitted=os.environ.get("SRGC_RESUME_ONLY") == "1"):
+                continue
             if queue.complete(task) or not queue.ready(task) or manager.owned(queue, task):
                 continue
             row = manager.receipt(queue, task)
