@@ -80,6 +80,27 @@ class RunControl:
     def preparing(self, original):
         def prepare(*args, **kwargs):
             self.check()
+            from . import startup
+            from .gemma4_it import cli
+
+            datasets = args[0] if args else kwargs["datasets"]
+            root = Path(args[1] if len(args) > 1 else kwargs["root"])
+            environment = args[2] if len(args) > 2 else kwargs["environment"]
+            paths = [root / "experiments" / f"gemma4-12b-it-{name}.json" for name in datasets]
+            if all(path.is_file() for path in paths):
+                # Existing immutable plans need validation, not a writer queue.
+                startup.progress("model_verify")
+                _, identity = cli.resolve_snapshot(environment)
+                environment["SRGC_GEMMA_MODEL_SHA256"] = identity
+                cli.adapter.runtime_packages()
+                startup.progress("plans_validate")
+                for path in paths:
+                    self.check()
+                    cli.validate_saved(path, identity)
+                self.check()
+                startup.progress("queue")
+                return paths
+            startup.progress("plans_prepare")
             previous_child = cluster.run_child
 
             def child(command, log, environment, **options):
@@ -92,8 +113,27 @@ class RunControl:
                 self.check()
                 return result
 
-            with patch.object(cluster, "run_child", child):
-                result = original(*args, **kwargs)
+            from srgc_rebuttal import runtime
+
+            from .model_chain import BUSY, enabled
+
+            original_lease = runtime.lease
+
+            def preparation_lease(path, *, wait=False):
+                if enabled(environment) and Path(path) == root / ".start-prepare.lock":
+                    wait = False
+                return original_lease(path, wait=wait)
+
+            try:
+                with patch.object(cluster, "run_child", child), \
+                        patch.object(runtime, "lease", preparation_lease):
+                    result = original(*args, **kwargs)
+            except runtime.Busy:
+                if not enabled(environment):
+                    raise
+                startup.progress("prepare_busy")
+                print("GEMMA plan preparation owned by peer; yielding before GPU work", flush=True)
+                raise SystemExit(BUSY) from None
             self.check()
             return result
 

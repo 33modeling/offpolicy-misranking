@@ -173,6 +173,9 @@ def worker_loop(worker, factory, pattern, env_key, label, plans, args, group, co
         worker.write_worker(cohort, worker_id, state, **metadata, **details)
 
     update("preflight")
+    from .startup import worker_registered
+
+    worker_registered()
     try:
         stopped = {q.plan_path for q in requested if cluster.stop_requested(q)}
         if len(stopped) == len(requested):

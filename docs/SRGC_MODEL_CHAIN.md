@@ -1,5 +1,20 @@
 # Qwen → Llama → Gemma 자동 연결
 
+**2026-10-31 초기 등록·준비 잠금 수정:** Gemma IT는 모델·패키지·plan 준비 전에
+별도의 실제 startup worker를 등록하고 `PREPARING`과 마지막 준비 단계를 표시한다.
+초기 기록은 실험 root 옆의 `.startup-workers` 디렉터리에 저장해 입력·큐 protocol을
+바꾸지 않는다. 정상 큐 worker가 등록되면 초기 등록을 종료한다. RUN은 실제 task lease가
+있을 때만 표시한다. 기존 plan은 생성 잠금 밖에서 동일한 모델·입력 검증을 수행하고,
+다른 노드가 누락 plan을 만들고 있으면 75로 반환해 체인이 자동 재확인한다.
+
+기존 자식이 오래 LAUNCH로 보이면 해당 노드에서 다음 읽기 전용 명령으로 프로세스의
+커널 대기 지점과 실제 startup 잠금 파일을 확인한다. 열린 파일만으로 잠금 대기를
+추정하지 않으며 프로세스·GPU·잠금 상태를 변경하지 않는다.
+
+```sh
+python3 scripts/srgc_launch_probe.py
+```
+
 **2026-10-31 Gemma IT 유휴 노드 배정 수정:** MATH 작업이 다른 노드에서 실행 중이어도
 사용 가능한 노드는 MBPP 캐시·Prefix를 먼저 배정받는다. 자기 노드가 가져갈 MATH 작업이
 없으면 준비된 MBPP 학습 arm도 실행한다. MBPP의 사전 검증과 해당 seed의 Prefix 완료·잠금

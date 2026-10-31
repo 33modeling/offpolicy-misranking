@@ -329,7 +329,11 @@ def main(argv=None):
     from .gemma_it_bootstrap import discard_previous_pt_path
 
     discard_previous_pt_path(os.environ)
-    with session(options.root, reset=options.action == "reset"):
+    from . import startup
+    from .gemma4_it import entry
+
+    with session(options.root, reset=options.action == "reset"), \
+            patch.object(entry, "main", startup.wrap_entry(entry.main, options.root)):
         if options.action == "reset":
             args[1] = "run"
             # An explicit fresh start must not inherit a chain's resume-only or

@@ -19,7 +19,7 @@ REPO = Path(__file__).resolve().parents[2]
 ARMS = ("cache", "prefix", "on_policy", "switch", "sr", "random")
 HEADERS = ("Cache", "Prefix", "On-policy", "Switch", "SR", "Random")
 LIVE_WORKERS = {"running", "preflight", "idle", "serving_other_dataset",
-                "launching", "waiting", "switching"}
+                "launching", "waiting", "switching", "preparing"}
 RESUMABLE = {"recoverable", "interrupted"}
 ERRORS = {"failed", "invalid", "attempts_exhausted"}
 
@@ -215,6 +215,12 @@ def node_rows(snapshots, *, coordinators=(), model=None, root=None):
                "task_row": None, "label": str(coordinator.get("active_dataset") or "model").upper(),
                "idle_reason": reason}
         sessions[(row["host"], "model-chain:" + str(row.get("worker_id", row.get("pid"))))] = row
+    if model == "gemma4_it" and root is not None:
+        from .startup import snapshot as startup_snapshot
+
+        for row in startup_snapshot(root):
+            sessions[(row["host"], "startup:" + row["worker_id"])] = {
+                **row, "source": "startup", "task": None, "task_row": None, "label": "STARTUP"}
     nodes = {}
 
     def activity(row):
@@ -230,6 +236,8 @@ def node_rows(snapshots, *, coordinators=(), model=None, root=None):
         # admission receipt; show that admission, not "worker not registered".
         if row["status"] == "preflight" and row.get("source") != "model_chain" and heartbeat_age(row) <= 120:
             return 1.5
+        if row.get("source") == "startup":
+            return 1.25
         return int(row["status"] in LIVE_WORKERS)
 
     for row in sessions.values():
@@ -419,7 +427,7 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
         lines += ["", (f"NODES  {live_nodes} active | {stale_nodes} stale | {len(nodes) - live_nodes - stale_nodes} stopped"
                        f" | RUN {node_counts['running'] + node_counts['serving_other_dataset']} | IDLE {node_counts['idle']}"
                        f" | ADMISSION {node_counts['preflight']}"
-                       f" | LAUNCH {node_counts['launching']} | WAIT {node_counts['waiting']}"
+                       f" | PREPARING {node_counts['preparing']} | LAUNCH {node_counts['launching']} | WAIT {node_counts['waiting']}"
                        f" | HANDOFF {node_counts['switching']}")]
         rows = []
         for node in nodes:
@@ -435,6 +443,9 @@ def render(snapshots, root, *, host=None, now=None, model="Qwen3.5-9B", include_
             if node.get("source") == "model_chain":
                 current = f"{node['model']} {node['label']} launcher"
                 reason = launcher_text(node)
+            if node.get("source") == "startup":
+                current = f"worker pid={node['pid']}"
+                reason = node["idle_reason"]
             if node["status"] == "preflight" and node.get("source") != "model_chain":
                 reason = "worker 등록됨 · 실행 전 GPU·모델 점검"
             if node["status"] == "serving_other_dataset":
