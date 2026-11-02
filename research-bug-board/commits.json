@@ -12212,6 +12212,26 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "9c11fd0e2dc652274cf26547f2fcc4beb7b25fcc",
+      "at": "2026-10-31T22:59:14+09:00",
+      "author": "33modeling",
+      "title": "Record status RUN/ERROR mismatch, per-prompt scoring slowdown and open switch OOM",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/9c11fd0e2dc652274cf26547f2fcc4beb7b25fcc",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "3e1a3ba3f953cb0bab7688d447c6f6d1ac29737c",
+      "at": "2026-11-02T20:10:15+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] Preserve correction selector prototype and historical CFCS review evidence",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/3e1a3ba3f953cb0bab7688d447c6f6d1ac29737c",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }
