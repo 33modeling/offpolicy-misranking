@@ -13,7 +13,10 @@
       "docs/V8_MULTINODE_H100.md": "e2ee85158706dcf682f54b5dbdc9815b2c7ad6f4b470105f2f3b9c63c0ac8c9e"
     },
     "paper_runtime_commit": "3d0c08336950d2697dc66cbe3570a230e449f33b",
-    "frozen_backend_files_changed": 0
+    "frozen_backend_files_changed": 0,
+    "implementation_commit": "c44f6d9921a0e38e7bc9734ce3d28970d8a52f6f",
+    "implementation_url": "https://github.com/33modeling/offpolicy-misranking/commit/c44f6d9921a0e38e7bc9734ce3d28970d8a52f6f",
+    "first_remote_exact_commit": "c44f6d9921a0e38e7bc9734ce3d28970d8a52f6f"
   },
   "method": {
     "scheduling": "one four-GPU torchrun job per node/GPU group; shared-filesystem dynamic queue; immutable per-task matrices; per-task leases; globally serialized control actions",
@@ -116,7 +119,8 @@
     },
     "final_suite_report": "/home/kms/reports/rlvr-v8-nodes-20261108/final-portable.xml",
     "evidence_integration_report": "/home/kms/reports/rlvr-v8-nodes-20261108/final-published.xml",
-    "note": "Final portable test fixture repeats70 passing checks on identical coordinator code; metadata/raw manifest retain the preceding matching70-pass integration run."
+    "note": "Final portable test fixture repeats70 passing checks on identical coordinator code; metadata/raw manifest retain the preceding matching70-pass integration run.",
+    "bug_ledger_retention_tests_passed": 6
   },
   "scientific_measurements": {
     "new_GPU_jobs": 0,
@@ -154,5 +158,10 @@
     "Only existing rebuttal Branch Bank path is supported; new-seed tune-freeze/E8 scaffolds remain outside this change.",
     "No linear speedup claim; actual H100 progress/performance is unmeasured."
   ],
-  "primary_os_reference": "https://man7.org/linux/man-pages/man2/flock.2.html"
+  "primary_os_reference": "https://man7.org/linux/man-pages/man2/flock.2.html",
+  "bug_ledger_incidents": [
+    "V8-013",
+    "V8-014",
+    "V8-015"
+  ]
 }

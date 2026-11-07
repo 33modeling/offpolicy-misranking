@@ -2614,5 +2614,143 @@
         "evidence_kind": "code_test"
       }
     ]
+  },
+  {
+    "id": "V8-013",
+    "title": "다중 노드의 busy 작업을 남긴 채 다음 단계로 진행 가능",
+    "area": "단계 완료 확인",
+    "severity": "high",
+    "first_reported": "2026-11-08",
+    "cause": "기존 gpu_stage는 모든 pending task가 다른 노드에서 busy(75)이면 progressed=0으로 반복을 끝낸다. rebuttal 전체 루프에는 노드 전체의 완료 대기가 없다.",
+    "impact": "다른 노드의 학습이 끝나기 전에 예산 고정·평가 단계로 넘어가거나 준비되지 않은 결과를 읽을 수 있다.",
+    "introduction_commit": null,
+    "attribution": "Codex가 게시 runner 소스를 검토하고 코드 저장소의 별도 다중 노드 실행 경로를 구현했다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "기존 runner 게시 소스",
+        "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/tree/3d0c08336950d2697dc66cbe3570a230e449f33b/v8/experiments"
+      },
+      {
+        "kind": "code_test",
+        "label": "다중 노드 코드·70검사·원시 CPU 근거",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/c44f6d9921a0e38e7bc9734ce3d28970d8a52f6f/research/v8-multinode-20261108"
+      },
+      {
+        "kind": "source",
+        "label": "새 다중 노드 실행기",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/c44f6d9921a0e38e7bc9734ce3d28970d8a52f6f/scripts/srgc_v8_nodes.py"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "reviewed",
+        "status": "open",
+        "text": "기존 gpu_stage는 모든 pending task가 다른 노드에서 busy(75)이면 progressed=0으로 반복을 끝낸다. rebuttal 전체 루프에는 노드 전체의 완료 대기가 없다. 실제 H100에서 관측한 장애나 성능 결과로 보고한 것은 아니다.",
+        "evidence_kind": "code_review"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "공유 큐의 task lease와 출력 검증을 모두 통과해야 단계가 바뀐다. 진행 중인 lease가 있으면 기다린다. 3·6작업자 CPU 검사에서 단계별 완료 대기와 조기 분기를 확인했다. 기존 paper run_h100.sh 자체는 수정하지 않았다. 새 run_v8_nodes.sh 경로에서 적용되며, 실제 다중 H100과 공유 파일시스템 검증은 남아 있다.",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "V8-014",
+    "title": "여러 노드의 동일 평가 중복 실행과 가변 행렬 공유",
+    "area": "평가·작업 배정",
+    "severity": "high",
+    "first_reported": "2026-11-08",
+    "cause": "기존 평가 경로에는 학습 run의 execution lock과 같은 작업별 lease가 없다. 여러 full launcher가 같은 stage matrix 경로도 다시 쓴다.",
+    "impact": "같은 checkpoint 평가를 중복 실행하거나 실행 중 행렬 세대가 바뀌어 불필요한 GPU 작업·작업 조회 오류가 발생할 수 있다.",
+    "introduction_commit": null,
+    "attribution": "Codex가 게시 runner 소스를 검토하고 코드 저장소의 별도 다중 노드 실행 경로를 구현했다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "기존 runner 게시 소스",
+        "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/tree/3d0c08336950d2697dc66cbe3570a230e449f33b/v8/experiments"
+      },
+      {
+        "kind": "code_test",
+        "label": "다중 노드 코드·70검사·원시 CPU 근거",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/c44f6d9921a0e38e7bc9734ce3d28970d8a52f6f/research/v8-multinode-20261108"
+      },
+      {
+        "kind": "source",
+        "label": "새 다중 노드 실행기",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/c44f6d9921a0e38e7bc9734ce3d28970d8a52f6f/scripts/srgc_v8_nodes.py"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "reviewed",
+        "status": "open",
+        "text": "기존 평가 경로에는 학습 run의 execution lock과 같은 작업별 lease가 없다. 여러 full launcher가 같은 stage matrix 경로도 다시 쓴다. 실제 H100에서 관측한 장애나 성능 결과로 보고한 것은 아니다.",
+        "evidence_kind": "code_review"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "checkpoint와 evaluation protocol의 전체 해시로 평가 lease를 잡고, control lock 아래 작업당 불변 행렬을 기록한다. 실제 v8 CPU 작업자3개·28작업을 모두 단일 실행으로 확인하고, 모순된 정의와 누락된 출력은 성공으로 보지 않았다. 기존 paper run_h100.sh 자체는 수정하지 않았다. 새 run_v8_nodes.sh 경로에서 적용되며, 실제 다중 H100과 공유 파일시스템 검증은 남아 있다.",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "V8-015",
+    "title": "모든 seed의 평가 행렬에 첫 seed 입력 bundle 재사용",
+    "area": "평가 입력",
+    "severity": "high",
+    "first_reported": "2026-11-08",
+    "cause": "기존 cluster.cmd_make_matrix는 첫 seed의 bundle을 한 번 읽고 모든 run_id의 eval task를 만든다.",
+    "impact": "seed마다 평가 문항 집합이 다르면 자식 실행기의 실제 bundle과 문항 해시가 달라져 평가가 거부될 수 있다.",
+    "introduction_commit": null,
+    "attribution": "Codex가 게시 runner 소스를 검토하고 코드 저장소의 별도 다중 노드 실행 경로를 구현했다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "기존 runner 게시 소스",
+        "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/tree/3d0c08336950d2697dc66cbe3570a230e449f33b/v8/experiments"
+      },
+      {
+        "kind": "code_test",
+        "label": "다중 노드 코드·70검사·원시 CPU 근거",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/c44f6d9921a0e38e7bc9734ce3d28970d8a52f6f/research/v8-multinode-20261108"
+      },
+      {
+        "kind": "source",
+        "label": "새 다중 노드 실행기",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/c44f6d9921a0e38e7bc9734ce3d28970d8a52f6f/scripts/srgc_v8_nodes.py"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "reviewed",
+        "status": "open",
+        "text": "기존 cluster.cmd_make_matrix는 첫 seed의 bundle을 한 번 읽고 모든 run_id의 eval task를 만든다. 실제 H100에서 관측한 장애나 성능 결과로 보고한 것은 아니다.",
+        "evidence_kind": "code_review"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "새 coordinator는 seed별 bundle로 해당 seed run만 평가 계획을 만든다. 실제 v8 CPU 실행에서 seeds5/6/7의100/70/40개 문항을 구분하고 서로 다른3개 문항 해시를 확인했다. 기존 paper run_h100.sh 자체는 수정하지 않았다. 새 run_v8_nodes.sh 경로에서 적용되며, 실제 다중 H100과 공유 파일시스템 검증은 남아 있다.",
+        "evidence_kind": "code_test"
+      }
+    ]
   }
 ]

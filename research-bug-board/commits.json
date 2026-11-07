@@ -12262,6 +12262,36 @@
       "attribution": [],
       "is_fix": true,
       "gemma": false
+    },
+    {
+      "hash": "1f249d2aa3c9166479564c66bc57fdd380bd6477",
+      "at": "2026-11-08T01:32:54+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Record budget-freeze replay regression and verification",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/1f249d2aa3c9166479564c66bc57fdd380bd6477",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "48b59a30f903eef26df28cd6ef8698b5840d5be9",
+      "at": "2026-11-08T01:39:47+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Verify published V8 runtime commit and launch contracts",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/48b59a30f903eef26df28cd6ef8698b5840d5be9",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "c44f6d9921a0e38e7bc9734ce3d28970d8a52f6f",
+      "at": "2026-11-08T02:25:52+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Add shared V8 multi-node task coordinator and recovery checks",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/c44f6d9921a0e38e7bc9734ce3d28970d8a52f6f",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }
