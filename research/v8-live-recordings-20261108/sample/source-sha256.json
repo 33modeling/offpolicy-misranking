@@ -1,0 +1,12 @@
+{
+  "scope": "CPU ToyBackend software test records, not measured RLVR model results",
+  "sources_sha256": {
+    "fixture/runs/fixture.smoke.s5.on_monitored.bea2f8f3a8/manifest.json": "4ba19a64e28e0d5e72a9ffbdf39815b94d0111cbfcc27936297ada1cfecc0896",
+    "fixture/runs/fixture.smoke.s5.on_monitored.bea2f8f3a8/attempts/384ed6b92c0f476bbc40f408f4d534b3/updates.jsonl": "ac9979d46c9c9abff3cd89afc54a4479908e181853a2e09c2ce03f8b68c9e451",
+    "fixture/runs/fixture.smoke.s5.on_monitored.bea2f8f3a8/attempts/b33e5e98a78e41ee8f9afccb9a96d0d8/updates.jsonl": "dd158ac6fd5b6a5116e0bfd10287d3d4c971c08162c2fdf1459a1a00f6a04e95",
+    "fixture/runs/fixture.smoke.s5.on_monitored.bea2f8f3a8/training_stats.jsonl": "682a28045b66366b644e605f94064d5dfb2b3941a62041bcb3cf1ee34774bfcf",
+    "fixture/runs/fixture.smoke.s5.on_monitored.bea2f8f3a8/snapshots.jsonl": "fd75e76fe218d4927503a881f82b143ec9f8d50ce07c4c9231b0a946b8000d65",
+    "fixture/evaluations/1ecf8015fef259f3__742c36fc5f52.json": "752c47f7a808ce2b9eab9a5d5609d0b3e73e1395ba0d6220c07093c83c0bc7ea",
+    "fixture/evaluations/1ecf8015fef259f3__8d0ae614c314.json": "f75f82b6d1d99147020c59b52b9bfc0f52701c1e500b03054c4a1b62864d299a"
+  }
+}

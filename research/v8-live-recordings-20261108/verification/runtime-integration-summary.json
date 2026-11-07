@@ -1,0 +1,17 @@
+{
+  "scope": "CPU ToyBackend software integration; NOT RLVR scientific measurements",
+  "runtime_source": "/home/kms/reports/rlvr-v8-code-recordings-20261108/runtime-source",
+  "completed_updates": 100,
+  "interruption_update": 60,
+  "interrupted_training_rows": 35,
+  "resumed_training_rows": 100,
+  "verified_retained_checkpoints": 3,
+  "offline_final_evaluations": 1,
+  "offline_development_evaluations": 1,
+  "new_GPU_jobs": 0,
+  "generations": [
+    "/home/kms/reports/rlvr-v8-code-recordings-20261108/integration-tests-release/test_v8_runtime_interrupt_resu0/exports/generation-20261107T162302-4ceff8bbff61",
+    "/home/kms/reports/rlvr-v8-code-recordings-20261108/integration-tests-release/test_v8_runtime_interrupt_resu0/exports/generation-20261107T162302-df3ea7e41d20",
+    "/home/kms/reports/rlvr-v8-code-recordings-20261108/integration-tests-release/test_v8_runtime_interrupt_resu0/exports/generation-20261107T162302-2cf49c427e23"
+  ]
+}

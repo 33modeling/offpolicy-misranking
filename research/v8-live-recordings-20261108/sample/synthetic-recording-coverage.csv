@@ -1,0 +1,4 @@
+study_id,cohort_id,run_id,method_id,training_seed,role,completed_update,training_status,checkpoint_status,final_evaluation_status,development_evaluation_status,final_evaluation_records,development_evaluation_records
+rlvr_switching_rebuttal_v8,fixture,fixture.smoke.s5.on_monitored.bea2f8f3a8,on_monitored,5,smoke,50,recorded,verified_sha256,unmeasured,unmeasured,0,0
+rlvr_switching_rebuttal_v8,fixture,fixture.smoke.s5.on_monitored.bea2f8f3a8,on_monitored,5,smoke,75,recorded,verified_sha256,unmeasured,unmeasured,0,0
+rlvr_switching_rebuttal_v8,fixture,fixture.smoke.s5.on_monitored.bea2f8f3a8,on_monitored,5,smoke,100,recorded,verified_sha256,recorded,recorded,1,1

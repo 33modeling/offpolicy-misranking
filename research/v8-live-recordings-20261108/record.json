@@ -1,0 +1,102 @@
+{
+  "kind": "executable V8 live reward/checkpoint export feature and software verification",
+  "user_instruction": "너도 코드 작업해; source/H100 instructions after git push",
+  "hypothesis": "Active/interrupted runs can export surviving per-update training rewards before finalization, preserve25-update checkpoint coverage, and keep skipped held-out points unmeasured without calling an evaluator.",
+  "implementation": {
+    "entrypoint": "scripts/srgc_v8_history.py",
+    "branch": "master",
+    "code_sha256": {
+      "scripts/srgc_v8_history.py": "48d2dee6e97795d350843a73b8750e69faf7f5d92cf0721a7374aa414bf8a177",
+      "tests/test_srgc_v8_history.py": "06d2f015c458beb7ede713094bc057722c39d4982df4f1b7036dd5ad5bb790f2"
+    },
+    "existing_trainer_modified": false,
+    "backend_identity": "verification/baseline.json; every srgc_rebuttal/*.py hash unchanged",
+    "operations": "JSON/JSONL input; optional streaming checkpoint SHA; atomic immutable export generations + latest.json; no pickle/torch import in exporter"
+  },
+  "data_model_transformation": {
+    "data": "synthetic ToyBackend JSON records only",
+    "model": "code-repository ToyBackend, not a language model experiment",
+    "transformation": "none",
+    "seeds": [
+      5
+    ],
+    "updates": {
+      "prefix": 25,
+      "safe_interruption": 60,
+      "endpoint": 100
+    },
+    "controls": [
+      "interrupted before finalization",
+      "resumed same run",
+      "offline final/dev evaluation after training",
+      "conflicting duplicate and abandoned attempt exclusion",
+      "known final vs missing intermediate evaluations"
+    ]
+  },
+  "metric_definitions": {
+    "training": "logged per-update training-batch sample_reward; response denominator only when recorded in training_stats, never guessed",
+    "heldout": "separate dev/final question-level integer counts; aggregate checked, snapshot index/path/hash linkage reported",
+    "checkpoint": "default file existence/path only; --verify-checkpoints streams SHA256; payload/optimizer/RNG contents are not loaded or certified",
+    "coverage": "25-update retained points through recorded evidence boundary; missing training/checkpoints fail --strict; absent held-out evaluations are explicitly unmeasured and allowed"
+  },
+  "software_results": {
+    "targeted_tests_passed": 39,
+    "tests_failed": 0,
+    "tests_skipped": 0,
+    "integration": {
+      "scope": "CPU ToyBackend software integration; NOT RLVR scientific measurements",
+      "runtime_source": "/home/kms/reports/rlvr-v8-code-recordings-20261108/runtime-source",
+      "completed_updates": 100,
+      "interruption_update": 60,
+      "interrupted_training_rows": 35,
+      "resumed_training_rows": 100,
+      "verified_retained_checkpoints": 3,
+      "offline_final_evaluations": 1,
+      "offline_development_evaluations": 1,
+      "new_GPU_jobs": 0,
+      "generations": [
+        "/home/kms/reports/rlvr-v8-code-recordings-20261108/integration-tests-release/test_v8_runtime_interrupt_resu0/exports/generation-20261107T162302-4ceff8bbff61",
+        "/home/kms/reports/rlvr-v8-code-recordings-20261108/integration-tests-release/test_v8_runtime_interrupt_resu0/exports/generation-20261107T162302-df3ea7e41d20",
+        "/home/kms/reports/rlvr-v8-code-recordings-20261108/integration-tests-release/test_v8_runtime_interrupt_resu0/exports/generation-20261107T162302-2cf49c427e23"
+      ]
+    },
+    "source_artifacts_unchanged_by_exporter": true
+  },
+  "scientific_results": {
+    "new_RLVR_measurements": 0,
+    "new_GPU_jobs": 0,
+    "paid_model_API_calls": 0,
+    "Gemma_H100_stall_status": "not addressed or verified by these CPU tests",
+    "actual_H100_integration": "not run"
+  },
+  "reproduce_tests": "V8_HISTORY_TEST_RUNTIME=/path/to/v8/experiments python3 -m pytest --noconftest -q tests/test_srgc_v8_history.py",
+  "test_environment_note": "Root tests/conftest.py imports selection_gate_gpu which is unavailable in this checkout. Initial default pytest attempts exited4 at collection. New standalone tests use --noconftest because they do not use that historical trainer fixture; no existing fixture/trainer was changed. Intermediate30/37/38-pass suites and final39-pass suite are retained.",
+  "test_environment_failures": [
+    {
+      "command": "python3 -m pytest -q tests/test_srgc_v8_history.py",
+      "exit_code": 4,
+      "error": "ModuleNotFoundError: No module named 'selection_gate_gpu' while loading tests/conftest.py"
+    },
+    {
+      "command": "PYTHONPATH=scripts:. python3 -m pytest -q tests/test_srgc_v8_history.py",
+      "exit_code": 4,
+      "error": "same unrelated fixture import failure"
+    }
+  ],
+  "commands": {
+    "live_fast": "python scripts/srgc_v8_history.py --root /group-volume/minsoo3.kim/offpolicy-misranking/v8 --output /group-volume/minsoo3.kim/offpolicy-misranking/v8-history-exports",
+    "integrity_check": "python scripts/srgc_v8_history.py --root /group-volume/minsoo3.kim/offpolicy-misranking/v8 --output /group-volume/minsoo3.kim/offpolicy-misranking/v8-history-exports --verify-checkpoints --strict"
+  },
+  "raw_evidence_and_checkpoints": {
+    "local_report_root": "/home/kms/reports/rlvr-v8-code-recordings-20261108",
+    "runtime_software_source": "verification/runtime-source-manifest.json (peer source hashes, captured before its final commit)",
+    "test_runs_and_snapshots": "/home/kms/reports/rlvr-v8-code-recordings-20261108/integration-tests-release/test_v8_runtime_interrupt_resu0/input",
+    "export_files": "/home/kms/reports/rlvr-v8-code-recordings-20261108/integration-tests-release/test_v8_runtime_interrupt_resu0/exports/generation-20261107T162302-2cf49c427e23",
+    "preservation": "Every prior test run uses its own directory; no real/in-flight experiment or raw source artifact was changed."
+  },
+  "limitations": [
+    "Run manifests discovered under the given root define the inventory; future or uncreated matrix tasks are not declared complete.",
+    "Exporter reads per-file snapshots; it flags manifest changes but does not certify an atomic snapshot of a live run across all files.",
+    "Presence/hash of a checkpoint does not independently verify complete optimizer/RNG recovery; actual H100 progress and measurements remain unverified."
+  ]
+}
