@@ -1,0 +1,1 @@
+{"actions":[{"action":"prepare","at":1794072203.0714498,"worker":"node2"},{"action":"freeze","at":1794072203.8144994,"worker":"node0"},{"action":"finalize","at":1794072204.3720455,"worker":"node2"}],"failure":null,"failure_history":[],"phase":"complete"}

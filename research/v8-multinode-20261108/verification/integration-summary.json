@@ -1,0 +1,37 @@
+{
+  "all_tasks_done": true,
+  "matched_updates": 75,
+  "new_GPU_jobs": 0,
+  "no_duplicate_execution": true,
+  "safety_cap": 100,
+  "scope": "CPU multi-process software integration; not scientific RLVR results",
+  "tasks": 28,
+  "training_seeds": [
+    5,
+    6,
+    7
+  ],
+  "workers": 3,
+  "peak_overlapping_cpu_attempts": 3,
+  "phase_counts": {
+    "train": 11,
+    "evaluation": 11,
+    "extension": 6
+  },
+  "executed_worker_counts": {
+    "node1": 8,
+    "node0": 9,
+    "node2": 11
+  },
+  "question_counts_by_seed": {
+    "5": [
+      100
+    ],
+    "6": [
+      70
+    ],
+    "7": [
+      40
+    ]
+  }
+}

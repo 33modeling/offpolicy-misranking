@@ -1,0 +1,70 @@
+{
+  "attempts": [
+    {
+      "attempt_id": "6a50669952454a708353e37173016ba4",
+      "start": "fork",
+      "start_update": 25,
+      "started_at": "2026-11-07T17:23:23+00:00"
+    }
+  ],
+  "cohort_id": "olmo_math",
+  "completed_updates": 75,
+  "config_hash": "3937425fe7dbf825a3cc4d6e299971206d93abe500eadcc033b16b305ee51e07",
+  "created_at": "2026-11-07T17:23:23+00:00",
+  "final_phase": "sr",
+  "finished_at": "2026-11-07T17:23:23+00:00",
+  "method_id": "bank_sr_t025",
+  "no_switch": false,
+  "role": "rebuttal_bank",
+  "run_id": "olmo_math.rebuttal_bank.s6.bank_sr_t025.3937425fe7",
+  "status": "completed_horizon",
+  "study_id": "rlvr_switching_rebuttal_v8",
+  "task": {
+    "budget_cap_gpu_seconds": null,
+    "cohort_id": "olmo_math",
+    "config_hash": "3937425fe7dbf825a3cc4d6e299971206d93abe500eadcc033b16b305ee51e07",
+    "cost_offset_gpu_seconds": null,
+    "deps": [
+      "olmo_math.rebuttal_bank.s6.on_monitored.e079471f44"
+    ],
+    "equivalence_key": "f060988b73616a81b3218eb3545ecd33cef6fa19c086059dfa4bf1138b8001d5",
+    "hard_cap": null,
+    "horizon": 75,
+    "kind": "train",
+    "latest_every": 1,
+    "method": {
+      "branch_update": 25,
+      "cache": {
+        "policy": "static_initial"
+      },
+      "destination": null,
+      "family": "fixed_sr",
+      "initial_selector": "sr",
+      "method_id": "bank_sr_t025",
+      "monitor": false,
+      "policy": {
+        "policy": "never"
+      },
+      "prefix_updates": 25
+    },
+    "method_id": "bank_sr_t025",
+    "parent": {
+      "completed_update": 25,
+      "kind": "prefix",
+      "path": "/home/kms/reports/rlvr-v8-nodes-20261108/final-published/test_real_v8_cpu_three_worker_0/olmo_math/prefixes/seed-6/prefix.pt",
+      "run_id": null,
+      "sha256": "3caf474327489a49cea903fc663d211aeace18cedc035dfa7c25e516391ce42c"
+    },
+    "retain_updates": [
+      50,
+      75
+    ],
+    "role": "rebuttal_bank",
+    "run_id": "olmo_math.rebuttal_bank.s6.bank_sr_t025.3937425fe7",
+    "stage": "bank-extended",
+    "study_id": "rlvr_switching_rebuttal_v8",
+    "training_seed": 6
+  },
+  "training_seed": 6,
+  "transition_update": null
+}

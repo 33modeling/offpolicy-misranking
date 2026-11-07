@@ -1,0 +1,26 @@
+{
+  "first_update_of_branch": 76,
+  "fork_arm": "sr",
+  "parent": {
+    "completed_update": 75,
+    "kind": "snapshot",
+    "path": "/home/kms/reports/rlvr-v8-nodes-20261108/final-published/test_real_v8_cpu_three_worker_0/olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t050.9a2503276f/snapshots/step-000075.pt",
+    "run_id": "olmo_math.rebuttal_bank.s6.bank_sr_t050.9a2503276f",
+    "sha256": "703466492b0e345a1c0008ad2daf7f7c6a66732d6d87ba52911e0f7f0c034008",
+    "state_hash": "6097dd11b1750cb94089ed19460d3dd2b6eeb669dc639654614e2d427b4ff1a0"
+  },
+  "parent_branch_identity": {
+    "branch_hash": "402db59723be23b23efd7b16318d7ba1641bceb4ae3d37c7e73dfbc427007f09",
+    "model_hash": "efc002bf8690b8bed6944b526ea868df0ae2878c5327e31b2b0502acf3446147",
+    "optimizer_hash": "7ac5c7cbfd21339b8a3e58e721d507cdce80e4de54b6456bac79c762422e34d8",
+    "rng_hash": "ab52db93239cac030a29991e2c3aa7316c389ed819a43668a30b2b8d6875cce4",
+    "selector_hash": "12d3ed9cfdb2a7ead39e0d1e893fd5f1e125a8047ce37b3a88b0e9196ce1b0f4",
+    "state_hash": "6097dd11b1750cb94089ed19460d3dd2b6eeb669dc639654614e2d427b4ff1a0"
+  },
+  "parent_identity": {
+    "model_hash": "efc002bf8690b8bed6944b526ea868df0ae2878c5327e31b2b0502acf3446147",
+    "optimizer_hash": "7ac5c7cbfd21339b8a3e58e721d507cdce80e4de54b6456bac79c762422e34d8",
+    "selector_hash": "12d3ed9cfdb2a7ead39e0d1e893fd5f1e125a8047ce37b3a88b0e9196ce1b0f4",
+    "state_hash": "6097dd11b1750cb94089ed19460d3dd2b6eeb669dc639654614e2d427b4ff1a0"
+  }
+}

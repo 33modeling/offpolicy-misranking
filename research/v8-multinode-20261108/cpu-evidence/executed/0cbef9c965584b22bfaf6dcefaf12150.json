@@ -1,0 +1,1 @@
+{"kind":"train","method":"bank_uniform_t050","result":{"completed_updates":75,"run_id":"olmo_math.rebuttal_bank.s7.bank_uniform_t050.2ce0ea0fc5","status":"completed_horizon","transition_update":null},"task":"8390db51830b33ac267d8104f3cb29b00855199c321bd25769aa141d505b8ab9","worker":"node0"}

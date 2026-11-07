@@ -1,0 +1,25 @@
+{
+  "first_update_of_branch": 26,
+  "fork_arm": "on_policy",
+  "parent": {
+    "completed_update": 25,
+    "kind": "prefix",
+    "path": "/home/kms/reports/rlvr-v8-nodes-20261108/final-published/test_real_v8_cpu_three_worker_0/olmo_math/prefixes/seed-5/prefix.pt",
+    "run_id": null,
+    "sha256": "dc3d1fecbc45f2437bc99d45528f6048ad2a79285cd9be83a23434bf85c4b7c5"
+  },
+  "parent_branch_identity": {
+    "branch_hash": "80b60792c7b3f89a4ae6bcba061d675e95f328d3ff91f552ad6cb476aaa6c6db",
+    "model_hash": "b3b817a026c7e577365c973978b278b395026bb6bf98744942adf58345a05ebe",
+    "optimizer_hash": "1f171e9076d934ff1609bb33088d3c1a99ef0f29cb830f33dd49e290abad8c04",
+    "rng_hash": null,
+    "selector_hash": "ff6255f10099ccec765c308180ecc4ffd4ee9d6de545cf01993915bfcf89ef81",
+    "state_hash": "44c3d5cb372cce4089126b35dea8fe246db5a79f3b06ab98093c5ec31f491252"
+  },
+  "parent_identity": {
+    "model_hash": "b3b817a026c7e577365c973978b278b395026bb6bf98744942adf58345a05ebe",
+    "optimizer_hash": "1f171e9076d934ff1609bb33088d3c1a99ef0f29cb830f33dd49e290abad8c04",
+    "selector_hash": "ff6255f10099ccec765c308180ecc4ffd4ee9d6de545cf01993915bfcf89ef81",
+    "state_hash": "44c3d5cb372cce4089126b35dea8fe246db5a79f3b06ab98093c5ec31f491252"
+  }
+}

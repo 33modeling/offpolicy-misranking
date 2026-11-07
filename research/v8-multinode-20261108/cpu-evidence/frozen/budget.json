@@ -1,0 +1,16 @@
+{
+  "frozen_at": "2026-11-07T17:23:23+00:00",
+  "inputs_sha256": "9747047b46fae7984504be35860e1880bdaaef3c0d1e356f886a4d90b46d2332",
+  "n_seeds": 3,
+  "per_seed": [
+    0.14375334000214934,
+    0.15863184677436948,
+    0.15598728507757187
+  ],
+  "policy_id": "srgc_current",
+  "requested_scope": "cold_start_algorithm",
+  "rule": "mean composed cost of srgc_current at the matched horizon; frozen before evaluation outputs",
+  "scope": "continuation_algorithm (cold-start incomplete)",
+  "unit": "gpu_seconds",
+  "value": 0.15279082395136356
+}

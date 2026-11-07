@@ -1,0 +1,67 @@
+{
+  "attempts": [
+    {
+      "attempt_id": "fbee4480ba44438b90334391e1f697cd",
+      "start": "fork",
+      "start_update": 25,
+      "started_at": "2026-11-07T17:23:23+00:00"
+    }
+  ],
+  "cohort_id": "olmo_math",
+  "completed_updates": 75,
+  "config_hash": "e079471f44fc85afc5eb35b55e318cd22509c3e3bd17974c0a4cf8b6c91ad80b",
+  "created_at": "2026-11-07T17:23:23+00:00",
+  "final_phase": "on_policy",
+  "finished_at": "2026-11-07T17:23:23+00:00",
+  "method_id": "on_monitored",
+  "no_switch": true,
+  "role": "rebuttal_bank",
+  "run_id": "olmo_math.rebuttal_bank.s6.on_monitored.e079471f44",
+  "status": "completed_horizon",
+  "study_id": "rlvr_switching_rebuttal_v8",
+  "task": {
+    "budget_cap_gpu_seconds": null,
+    "cohort_id": "olmo_math",
+    "config_hash": "e079471f44fc85afc5eb35b55e318cd22509c3e3bd17974c0a4cf8b6c91ad80b",
+    "cost_offset_gpu_seconds": null,
+    "deps": [],
+    "equivalence_key": "3dbe96d228f93ae9593dc4a6b9233e029551194566a8888e93b55c87e2fac09d",
+    "hard_cap": null,
+    "horizon": 75,
+    "kind": "train",
+    "latest_every": 1,
+    "method": {
+      "cache": {
+        "policy": "static_initial"
+      },
+      "destination": null,
+      "family": "on_continued",
+      "initial_selector": "on_policy",
+      "method_id": "on_monitored",
+      "monitor": true,
+      "policy": {
+        "policy": "never"
+      },
+      "prefix_updates": 25
+    },
+    "method_id": "on_monitored",
+    "parent": {
+      "completed_update": 25,
+      "kind": "prefix",
+      "path": "/home/kms/reports/rlvr-v8-nodes-20261108/final-published/test_real_v8_cpu_three_worker_0/olmo_math/prefixes/seed-6/prefix.pt",
+      "run_id": null,
+      "sha256": "3caf474327489a49cea903fc663d211aeace18cedc035dfa7c25e516391ce42c"
+    },
+    "retain_updates": [
+      50,
+      75
+    ],
+    "role": "rebuttal_bank",
+    "run_id": "olmo_math.rebuttal_bank.s6.on_monitored.e079471f44",
+    "stage": "bank-trajectory",
+    "study_id": "rlvr_switching_rebuttal_v8",
+    "training_seed": 6
+  },
+  "training_seed": 6,
+  "transition_update": null
+}

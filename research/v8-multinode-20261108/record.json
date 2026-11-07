@@ -1,0 +1,158 @@
+{
+  "kind": "multi-node execution coordinator and CPU software verification; no new scientific RLVR measurements",
+  "user_instruction": "야 노드 여러개 잡으면 더 빨리 되게 해",
+  "hypothesis": "Independent seed/branch/evaluation tasks can fill multiple 4GPU nodes without duplicate execution or premature freeze/evaluation, while retaining the existing scientific task definitions and recovery artifacts.",
+  "source": {
+    "repository": "https://github.com/33modeling/offpolicy-misranking",
+    "branch": "master",
+    "baseline_commit": "48b59a30f903eef26df28cd6ef8698b5840d5be9",
+    "implementation_files_sha256": {
+      "scripts/srgc_v8_nodes.py": "8c81da4b44c17346bb9d36eb59075964f88f8bcce6c9a80776714671527bb6a1",
+      "scripts/run_v8_nodes.sh": "8f2b59f2ec47f5fa278fb6c55227ab8cdca53d0c36083c3ce351b30a297852de",
+      "tests/test_srgc_v8_nodes.py": "f18c45afe04b2f0c4e88b677d9834b4e34734628dc7ce5c56e2cef2389421b3b",
+      "docs/V8_MULTINODE_H100.md": "e2ee85158706dcf682f54b5dbdc9815b2c7ad6f4b470105f2f3b9c63c0ac8c9e"
+    },
+    "paper_runtime_commit": "3d0c08336950d2697dc66cbe3570a230e449f33b",
+    "frozen_backend_files_changed": 0
+  },
+  "method": {
+    "scheduling": "one four-GPU torchrun job per node/GPU group; shared-filesystem dynamic queue; immutable per-task matrices; per-task leases; globally serialized control actions",
+    "dependency": "dispatch checkpoint-ready branches before trajectory completion; freeze only after all training outputs and leases are complete",
+    "recovery": "retained attempts/failures; inherited job/GPU lock descriptors; SIGTERM checkpoint path; no age-based lease stealing",
+    "identity": "same coordinator/runner/config/trainer hashes, Python/package versions and per-seed input hashes; validate run and evaluation artifact identity",
+    "evaluation": "freeze cost-only budget before evaluation, then per-seed bundle and checkpoint/protocol lease; no periodic held-out evaluation added"
+  },
+  "data_model_transformation": {
+    "data": "synthetic ToyBackend generated features/answers; actual V8 planner/runner/evaluator",
+    "model": "CPU ToyBackend; no language model training",
+    "transformation": "none",
+    "software_test_seeds": [
+      5,
+      6,
+      7
+    ],
+    "software_updates": {
+      "prefix": 25,
+      "matched_endpoint": 75,
+      "safety_cap": 100
+    },
+    "software_grids": {
+      "core": [
+        50
+      ],
+      "extended": [
+        25
+      ]
+    },
+    "question_counts_by_seed": {
+      "5": 100,
+      "6": 70,
+      "7": 40
+    },
+    "production_scope": "existing OLMo MATH and Qwen MBPP rebuttal_bank seeds5–9; original H275/safety400 config preserved"
+  },
+  "controls": [
+    "three and six simulated node processes",
+    "live parent checkpoint branches",
+    "held leases block phase transitions",
+    "rc0 without output is failure",
+    "lost coordinator recovers attempts",
+    "SIGTERM before/after dispatch",
+    "GPU overlap across cohorts rejected before model launch",
+    "altered frozen input rejected",
+    "seed-specific evaluation questions",
+    "existing live-history interruption/resume tests"
+  ],
+  "metric_definitions": {
+    "tasks": "distinct full task identity with validated terminal outputs; every dispatched attempt retained",
+    "duplicate_execution": "more than one actual execution record for one task identity",
+    "concurrency": "overlap of CPU attempt start/end timestamps on the same local host; not H100 throughput",
+    "training_reward": "recorded per-update training-batch reward, separate from held-out evaluator",
+    "heldout": "question-level integer correctness/response denominator tied to checkpoint and protocol; skipped intermediate held-out values remain unmeasured"
+  },
+  "software_results": {
+    "tests": 70,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "new_coordinator_test_cases": 31,
+    "existing_history_test_cases": 39,
+    "integration": {
+      "all_tasks_done": true,
+      "matched_updates": 75,
+      "new_GPU_jobs": 0,
+      "no_duplicate_execution": true,
+      "safety_cap": 100,
+      "scope": "CPU multi-process software integration; not scientific RLVR results",
+      "tasks": 28,
+      "training_seeds": [
+        5,
+        6,
+        7
+      ],
+      "workers": 3,
+      "peak_overlapping_cpu_attempts": 3,
+      "phase_counts": {
+        "train": 11,
+        "evaluation": 11,
+        "extension": 6
+      },
+      "executed_worker_counts": {
+        "node1": 8,
+        "node0": 9,
+        "node2": 11
+      },
+      "question_counts_by_seed": {
+        "5": [
+          100
+        ],
+        "6": [
+          70
+        ],
+        "7": [
+          40
+        ]
+      }
+    },
+    "final_suite_report": "/home/kms/reports/rlvr-v8-nodes-20261108/final-portable.xml",
+    "evidence_integration_report": "/home/kms/reports/rlvr-v8-nodes-20261108/final-published.xml",
+    "note": "Final portable test fixture repeats70 passing checks on identical coordinator code; metadata/raw manifest retain the preceding matching70-pass integration run."
+  },
+  "scientific_measurements": {
+    "new_GPU_jobs": 0,
+    "new_RLVR_measurements": 0,
+    "multi_H100_throughput": "not measured",
+    "wallclock_speedup": "not measured",
+    "cross_node_network_filesystem_locks": "not tested on actual allocated nodes",
+    "Gemma_remote_stall": "not verified or closed"
+  },
+  "failure_retention": {
+    "raw_reports": "verification/raw-pytest-reports.json",
+    "notes": [
+      "Initial FakeRuntime binding omitted cohort; test-only fixture corrected.",
+      "Initial orphan recovery assertion incorrectly demanded retry priority over never-attempted work; corrected to scheduler policy.",
+      "integration-first basetemp parent did not yet exist:26 setup errors; created report root, kept raw XML.",
+      "integration-fourth/fifth used100/200/300 slices of only100 questions; fixture corrected to100/70/40.",
+      "Historical tests/conftest.py imports unavailable selection_gate_gpu; standalone tests deliberately use --noconftest and do not alter trainer fixtures."
+    ]
+  },
+  "provenance": {
+    "raw_integration": "/home/kms/reports/rlvr-v8-nodes-20261108/final-published/test_real_v8_cpu_three_worker_0",
+    "raw_file_sha256": "verification/raw-integration-manifest.json",
+    "metadata": "cpu-evidence/",
+    "runner_source": "verification/runner-source.json",
+    "checkpoints": "43 CPU .pt files, including prefixes/latest/retained snapshots, hashed in raw manifest and preserved locally",
+    "training_logs": "runs/*/training_stats.jsonl and history.jsonl included; attempt events remain at raw integration root",
+    "publication_note": "Git source/metadata publication only; no website deployment or GPU job launch performed"
+  },
+  "reproduce_tests": "CUDA_VISIBLE_DEVICES= V8_NODES_TEST_RUNTIME=/path/to/v8/experiments V8_HISTORY_TEST_RUNTIME=/path/to/v8/experiments python3 -m pytest --noconftest -q tests/test_srgc_v8_nodes.py tests/test_srgc_v8_history.py",
+  "execution_guide": "docs/V8_MULTINODE_H100.md",
+  "limitations": [
+    "Requires the same shared V8_ROOT absolute path and functioning cross-node POSIX flock.",
+    "Do not mix old full rebuttal loops with new coordinator on the same root.",
+    "Independent jobs parallelize; one optimizer is not split across nodes.",
+    "Only existing rebuttal Branch Bank path is supported; new-seed tune-freeze/E8 scaffolds remain outside this change.",
+    "No linear speedup claim; actual H100 progress/performance is unmeasured."
+  ],
+  "primary_os_reference": "https://man7.org/linux/man-pages/man2/flock.2.html"
+}
