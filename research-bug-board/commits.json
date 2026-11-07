@@ -12232,6 +12232,26 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "09375260b3576203ec2687cc9be89daac4313f0f",
+      "at": "2026-11-02T20:10:15+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] Refresh permanent research history without rewriting prior incidents",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/09375260b3576203ec2687cc9be89daac4313f0f",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "6cfe1920f2be5f46c039b4d74bd151769cff712a",
+      "at": "2026-11-08T01:25:37+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Export live V8 rewards and surviving checkpoint history",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/6cfe1920f2be5f46c039b4d74bd151769cff712a",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

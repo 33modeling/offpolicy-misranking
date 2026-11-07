@@ -1,0 +1,140 @@
+{
+  "scope": "POSIX launcher checks with fake Python only; no backend/torch/GPU/training execution",
+  "source_sha256": "add133dd191b69a70b15657f4949043b5613f8db52b55ccaf833f528522b2cb8",
+  "source_stable": true,
+  "checks": [
+    {
+      "case": "check_failure",
+      "exit_code": 42,
+      "passed": true,
+      "calls": [
+        [
+          "-m",
+          "switching.cli",
+          "inspect-repo"
+        ]
+      ],
+      "stdout": "controlled CPU failure\n[v8] CPU step failed rc=42: inspect-repo\n",
+      "stderr": ""
+    },
+    {
+      "case": "pending_failure",
+      "exit_code": 42,
+      "passed": true,
+      "calls": [
+        [
+          "-m",
+          "switching.cli",
+          "make-matrix",
+          "--cohort",
+          "olmo_math",
+          "--stage",
+          "bank-trajectory",
+          "--role",
+          "rebuttal_bank"
+        ],
+        [
+          "-m",
+          "switching.cli",
+          "pending",
+          "--cohort",
+          "olmo_math",
+          "--stage",
+          "bank-trajectory",
+          "--role",
+          "rebuttal_bank"
+        ]
+      ],
+      "stdout": "",
+      "stderr": "controlled CPU failure\n"
+    },
+    {
+      "case": "dev_methods",
+      "exit_code": 0,
+      "passed": true,
+      "calls": [
+        [
+          "-m",
+          "switching.cli",
+          "make-matrix",
+          "--cohort",
+          "olmo_math",
+          "--stage",
+          "prospective",
+          "--role",
+          "development",
+          "--methods",
+          "fixed_sr_t025,fixed_sr_t050,fixed_sr_t100,fixed_sr_t150,fixed_sr_t200,plateau_sr_eps0000,plateau_sr_eps0005,plateau_sr_eps0010,sr_early_refreshed_k050,sr_early_refreshed_k100,srgc_current,on_continued"
+        ],
+        [
+          "-m",
+          "switching.cli",
+          "pending",
+          "--cohort",
+          "olmo_math",
+          "--stage",
+          "prospective",
+          "--role",
+          "development"
+        ]
+      ],
+      "stdout": "[v8] stage dev finished on jieun-500TGA-500SGA; outputs under /home/kms/reports/rlvr-v8-code-recordings-20261108/h100-launcher-check/dev_methods/olmo_math\n",
+      "stderr": ""
+    },
+    {
+      "case": "test_methods",
+      "exit_code": 0,
+      "passed": true,
+      "calls": [
+        [
+          "-m",
+          "switching.cli",
+          "make-matrix",
+          "--cohort",
+          "olmo_math",
+          "--stage",
+          "prospective",
+          "--role",
+          "test",
+          "--methods",
+          "on_continued,sr_early,uniform_early,fixed_sr_tuned,srgc_current,plateau_sr_tuned,srgc_uniform_destination,srgc_one_negative,srgc_two_negative,sampled_time_sr"
+        ],
+        [
+          "-m",
+          "switching.cli",
+          "pending",
+          "--cohort",
+          "olmo_math",
+          "--stage",
+          "prospective",
+          "--role",
+          "test"
+        ]
+      ],
+      "stdout": "[v8] stage test finished on jieun-500TGA-500SGA; outputs under /home/kms/reports/rlvr-v8-code-recordings-20261108/h100-launcher-check/test_methods/olmo_math\n",
+      "stderr": ""
+    },
+    {
+      "case": "status_pending_failure",
+      "exit_code": 42,
+      "passed": true,
+      "calls": [
+        [
+          "-m",
+          "switching.cli",
+          "pending",
+          "--cohort",
+          "olmo_math",
+          "--stage",
+          "sample",
+          "--role",
+          "smoke"
+        ]
+      ],
+      "stdout": "",
+      "stderr": "controlled CPU failure\n"
+    }
+  ],
+  "passed": 5,
+  "total": 5
+}

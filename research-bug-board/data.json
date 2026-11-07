@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-02T20:10:15+09:00",
+  "recorded_at": "2026-11-08T01:28:05+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "3e1a3ba3f953cb0bab7688d447c6f6d1ac29737c",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/3e1a3ba3f953cb0bab7688d447c6f6d1ac29737c",
-    "all_available_commits": 1152,
+    "source_commit": "6cfe1920f2be5f46c039b4d74bd151769cff712a",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/6cfe1920f2be5f46c039b4d74bd151769cff712a",
+    "all_available_commits": 1154,
     "fix_commit_records": 115,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
@@ -23,7 +23,7 @@
       "refs/heads/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:3e1a3ba3f953cb0bab7688d447c6f6d1ac29737c",
+      "refs/heads/master:6cfe1920f2be5f46c039b4d74bd151769cff712a",
       "refs/remotes/origin/audit/codecheck-20260820:5dd447990296042e334679c85e7672477cd7c5d3",
       "refs/remotes/origin/audit/p1-integrity:5dfda89ec3be2cc4d60f8f0371eeaf00790f6644",
       "refs/remotes/origin/docs/mbpp-budget-incident-20260919:fa1c6897b2b26ef002dd165c94f58702b1f9e1ed",
@@ -32,7 +32,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:9c11fd0e2dc652274cf26547f2fcc4beb7b25fcc"
+      "refs/remotes/origin/master:6cfe1920f2be5f46c039b4d74bd151769cff712a"
     ]
   },
   "incidents": [
@@ -2172,6 +2172,447 @@
           "evidence_kind": "code_test",
           "commit": "def8e7673242587db1624111bf261f06a1b8e3bc",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/def8e7673242587db1624111bf261f06a1b8e3bc"
+        }
+      ]
+    },
+    {
+      "id": "V8-001",
+      "title": "상태 해시에서 서로 다른 정수 목록이 충돌",
+      "area": "체크포인트",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "cause": "리스트 원소 사이 종류·길이 구분이 없어 [1,23]과 [12,3]이 같은 hash를 만들었다.",
+      "impact": "다른 학습·선택 상태를 같은 분기 시작 상태로 잘못 판정할 수 있었다.",
+      "introduction_commit": null,
+      "attribution": "발견 당시 미커밋 v8 작업 소스에서 Codex가 CPU 재현했고 Claude 작업자가 수정했다. 도입 커밋은 미확정.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "초기 재현·소스 SHA",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/codex-code-counterexamples.json"
+        },
+        {
+          "kind": "source",
+          "label": "수정 source11개 CPU 검사",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/peer-review-final-verified.json"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "reproduced",
+          "status": "open",
+          "text": "리스트 원소 사이 종류·길이 구분이 없어 [1,23]과 [12,3]이 같은 hash를 만들었다. 초기 실패 입력과 파일 SHA를 보존했다.",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex + Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "typed length-delimited 직렬화로 바꾼 source의 회귀 검사 통과. 검증 범위는 기록된 파일 SHA의 CPU 소프트웨어 동작이며 실제 H100/Gemma 진행·성능이나 원격 실험 완료는 확인하지 않았다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/peer-review-final-verified.json"
+        }
+      ]
+    },
+    {
+      "id": "V8-002",
+      "title": "불변 체크포인트 비교에서 RNG·컨트롤러 상태 누락",
+      "area": "체크포인트",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "cause": "immutable 저장 시 learner 중심 identity만 비교해 payload의 RNG·v8 controller/cache 차이를 놓쳤다.",
+      "impact": "다른 재개 상태를 같은 경로의 기존 checkpoint로 재사용할 수 있었다.",
+      "introduction_commit": null,
+      "attribution": "발견 당시 미커밋 v8 작업 소스에서 Codex가 CPU 재현했고 Claude 작업자가 수정했다. 도입 커밋은 미확정.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "초기 재현·소스 SHA",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/codex-code-counterexamples.json"
+        },
+        {
+          "kind": "source",
+          "label": "수정 source11개 CPU 검사",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/peer-review-final-verified.json"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "reproduced",
+          "status": "open",
+          "text": "immutable 저장 시 learner 중심 identity만 비교해 payload의 RNG·v8 controller/cache 차이를 놓쳤다. 초기 실패 입력과 파일 SHA를 보존했다.",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex + Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "완전 payload 불변성 검사와 sibling learner/RNG 동일성 검사를 분리한 source 검사 통과. 검증 범위는 기록된 파일 SHA의 CPU 소프트웨어 동작이며 실제 H100/Gemma 진행·성능이나 원격 실험 완료는 확인하지 않았다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/peer-review-final-verified.json"
+        }
+      ]
+    },
+    {
+      "id": "V8-003",
+      "title": "체크 기록 누락을 리셋으로 간주해 첫 전환을 확정",
+      "area": "전환 규칙",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "cause": "로그에 없는 scheduled check를 실제 invalid/reset과 구분하지 않았다.",
+      "impact": "알 수 없는 첫 전환 시점이나 미전환을 관측 완료로 보고할 수 있었다.",
+      "introduction_commit": null,
+      "attribution": "발견 당시 미커밋 v8 작업 소스에서 Codex가 CPU 재현했고 Claude 작업자가 수정했다. 도입 커밋은 미확정.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "초기 재현·소스 SHA",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/codex-code-counterexamples.json"
+        },
+        {
+          "kind": "source",
+          "label": "수정 source11개 CPU 검사",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/peer-review-final-verified.json"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "reproduced",
+          "status": "open",
+          "text": "로그에 없는 scheduled check를 실제 invalid/reset과 구분하지 않았다. 초기 실패 입력과 파일 SHA를 보존했다.",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex + Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "누락 prefix를 censored로 남기는 source 회귀 검사 통과. 검증 범위는 기록된 파일 SHA의 CPU 소프트웨어 동작이며 실제 H100/Gemma 진행·성능이나 원격 실험 완료는 확인하지 않았다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/peer-review-final-verified.json"
+        }
+      ]
+    },
+    {
+      "id": "V8-004",
+      "title": "같은 체크의 상충하는 중복값을 무시",
+      "area": "전환 규칙",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "cause": "동일 update에서 D=-1과 D=+1이 함께 있어도 먼저 읽은 값만 유지했다.",
+      "impact": "잘못된 temporal confirmation으로 전환 시점이 확정될 수 있었다.",
+      "introduction_commit": null,
+      "attribution": "발견 당시 미커밋 v8 작업 소스에서 Codex가 CPU 재현했고 Claude 작업자가 수정했다. 도입 커밋은 미확정.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "초기 재현·소스 SHA",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/codex-code-counterexamples.json"
+        },
+        {
+          "kind": "source",
+          "label": "수정 source11개 CPU 검사",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/peer-review-final-verified.json"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "reproduced",
+          "status": "open",
+          "text": "동일 update에서 D=-1과 D=+1이 함께 있어도 먼저 읽은 값만 유지했다. 초기 실패 입력과 파일 SHA를 보존했다.",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex + Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "동일 중복은 idempotent, 상충 중복은 ValueError인 source 회귀 검사 통과. 검증 범위는 기록된 파일 SHA의 CPU 소프트웨어 동작이며 실제 H100/Gemma 진행·성능이나 원격 실험 완료는 확인하지 않았다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/peer-review-final-verified.json"
+        }
+      ]
+    },
+    {
+      "id": "V8-005",
+      "title": "미측정 GPU 비용이 0·complete로 집계",
+      "area": "비용 집계",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "cause": "GPU cost와 usable interval이 모두 없는 measured 이벤트가 합계에서 사라졌다.",
+      "impact": "미측정 비용이 0으로 들어가 physical expenditure가 과소 집계될 수 있었다.",
+      "introduction_commit": null,
+      "attribution": "발견 당시 미커밋 v8 작업 소스에서 Codex가 CPU 재현했고 Claude 작업자가 수정했다. 도입 커밋은 미확정.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "초기 재현·소스 SHA",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/codex-cost-counterexamples.json"
+        },
+        {
+          "kind": "source",
+          "label": "수정 source11개 CPU 검사",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/peer-review-final-verified.json"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "reproduced",
+          "status": "open",
+          "text": "GPU cost와 usable interval이 모두 없는 measured 이벤트가 합계에서 사라졌다. 초기 실패 입력과 파일 SHA를 보존했다.",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex + Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "미측정 비용을 incomplete로 남기는 source 회귀 검사 통과. 검증 범위는 기록된 파일 SHA의 CPU 소프트웨어 동작이며 실제 H100/Gemma 진행·성능이나 원격 실험 완료는 확인하지 않았다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/peer-review-final-verified.json"
+        }
+      ]
+    },
+    {
+      "id": "V8-006",
+      "title": "prefix·cache 미측정인데 상각 비용을 숫자로 출력",
+      "area": "비용 집계",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "cause": "amortized view에서 미측정 prefix/cache를 0으로 대체하거나 생략했다.",
+      "impact": "필수 비용이 없는 상태에서 완전한 상각 비용으로 오해할 수 있었다.",
+      "introduction_commit": null,
+      "attribution": "발견 당시 미커밋 v8 작업 소스에서 Codex가 CPU 재현했고 Claude 작업자가 수정했다. 도입 커밋은 미확정.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "초기 재현·소스 SHA",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/codex-cost-counterexamples.json"
+        },
+        {
+          "kind": "source",
+          "label": "수정 source11개 CPU 검사",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/peer-review-final-verified.json"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "reproduced",
+          "status": "open",
+          "text": "amortized view에서 미측정 prefix/cache를 0으로 대체하거나 생략했다. 초기 실패 입력과 파일 SHA를 보존했다.",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex + Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "필수 비용이 없으면 상각 결과를 unknown으로 남기는 source 회귀 검사 통과. 검증 범위는 기록된 파일 SHA의 CPU 소프트웨어 동작이며 실제 H100/Gemma 진행·성능이나 원격 실험 완료는 확인하지 않았다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/peer-review-final-verified.json"
+        }
+      ]
+    },
+    {
+      "id": "V8-007",
+      "title": "예산 경계의 미측정 비용을 선택 완료·불가능으로 오분류",
+      "area": "예산 선택",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "cause": "뒤 checkpoint 비용을 모르는 상태에서 앞 checkpoint를 latest feasible로 확정하고, 전부 미측정이면 infeasible로 표시했다.",
+      "impact": "실제 예산 내 최신 checkpoint를 알 수 없는데 성능 비교 대상을 확정할 수 있었다.",
+      "introduction_commit": null,
+      "attribution": "발견 당시 미커밋 v8 작업 소스에서 Codex가 CPU 재현했고 Claude 작업자가 수정했다. 도입 커밋은 미확정.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "초기 재현·소스 SHA",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/codex-cost-counterexamples.json"
+        },
+        {
+          "kind": "source",
+          "label": "수정 source11개 CPU 검사",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/peer-review-final-verified.json"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "reproduced",
+          "status": "open",
+          "text": "뒤 checkpoint 비용을 모르는 상태에서 앞 checkpoint를 latest feasible로 확정하고, 전부 미측정이면 infeasible로 표시했다. 초기 실패 입력과 파일 SHA를 보존했다.",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex + Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "unknown/undetermined와 measured infeasibility를 구분하는 source 회귀 검사 통과. 검증 범위는 기록된 파일 SHA의 CPU 소프트웨어 동작이며 실제 H100/Gemma 진행·성능이나 원격 실험 완료는 확인하지 않았다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/peer-review-final-verified.json"
+        }
+      ]
+    },
+    {
+      "id": "V8-008",
+      "title": "평가 평균을 반올림해 측정하지 않은 정답 수 생성",
+      "area": "평가 집계",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "cause": "8응답 평균0.37을 정답3개로 반올림해0.375로 기록했다.",
+      "impact": "분모와 양립하지 않는 입력을 실제 정수 정답 수처럼 저장할 수 있었다.",
+      "introduction_commit": null,
+      "attribution": "발견 당시 미커밋 v8 작업 소스에서 Codex가 CPU 재현했고 Claude 작업자가 수정했다. 도입 커밋은 미확정.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "초기 재현·소스 SHA",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/codex-evaluator-finding.json"
+        },
+        {
+          "kind": "source",
+          "label": "수정 source11개 CPU 검사",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/peer-review-final-verified.json"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "reproduced",
+          "status": "open",
+          "text": "8응답 평균0.37을 정답3개로 반올림해0.375로 기록했다. 초기 실패 입력과 파일 SHA를 보존했다.",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex + Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "비정수 응답 분모·NaN·범위 밖 입력 거부, 유효3/8 대조군 검사 통과. 검증 범위는 기록된 파일 SHA의 CPU 소프트웨어 동작이며 실제 H100/Gemma 진행·성능이나 원격 실험 완료는 확인하지 않았다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/peer-review-final-verified.json"
+        }
+      ]
+    },
+    {
+      "id": "V8-009",
+      "title": "실행 중·중단된 v8 기록을 완료 요약 없이 내보내기",
+      "area": "학습 기록",
+      "severity": "medium",
+      "first_reported": "2026-11-08",
+      "cause": "training_stats.jsonl은 최종 정리 시 생성된다. 실행 중인 run은 attempts/*/updates.jsonl에서 살아남은 학습 경로를 읽어야 한다.",
+      "impact": "완료 요약만 읽거나 모든 attempt를 합치면 중간 보상이 빠지거나 재개 시 폐기한 경로가 섞인다.",
+      "introduction_commit": null,
+      "attribution": "Codex가 신규 exporter를 직접 구현했다. 기존 학습기 소스와 실험 root는 바꾸지 않았다.",
+      "evidence": [
+        {
+          "kind": "commit",
+          "label": "실행 중 export 코드",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/6cfe1920f2be5f46c039b4d74bd151769cff712a"
+        },
+        {
+          "kind": "source",
+          "label": "39검사와 CPU 중단·재개 검증",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/6cfe1920f2be5f46c039b4d74bd151769cff712a/research/v8-live-recordings-20261108/record.json"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "implemented",
+          "status": "code_fixed",
+          "text": "60에서 중단한 CPU ToyBackend의35개 live update와100까지 재개한 전체100행, retained checkpoint3개의 SHA, 별도 final/dev 평가를 확인했다. 미평가50/75는 unmeasured이며 학습 중 평가를 실행하지 않는다. 이는 소프트웨어 검증이고 실제 모델 결과가 아니다.",
+          "evidence_kind": "code_test"
+        }
+      ]
+    },
+    {
+      "id": "V8-010",
+      "title": "H100 실행 셸에서 CPU 실패 종료 코드가 숨겨짐",
+      "area": "H100 실행",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "cause": "POSIX sh의 python|tee에서 tee 성공이 Python 실패를 가렸다.",
+      "impact": "잘못된 사전 검사 성공이나 빈 실험 행렬을 실행 완료로 오해할 수 있었다.",
+      "introduction_commit": null,
+      "attribution": "Codex가 launcher 소스를 검토했고 Claude 작업자가 수정했다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "런처 CPU 회귀검사·소스 SHA",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/master/research/v8-live-recordings-20261108/verification/h100-launcher-check.json"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "recorded",
+          "status": "open",
+          "text": "POSIX sh의 python|tee에서 tee 성공이 Python 실패를 가렸다.",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex + Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "CPU check·pending·status의 강제 실패42를 모두 보존하는 shell source 확인. fake Python만 사용한5개 검사가 통과했다. GPU·학습·평가 실행은 없으며 실제 클러스터 연결은 별도 확인이 필요하다. source SHA=add133dd191b69a70b15657f4949043b5613f8db52b55ccaf833f528522b2cb8",
+          "evidence_kind": "code_test"
+        }
+      ]
+    },
+    {
+      "id": "V8-011",
+      "title": "개발·테스트 행렬을 재생성할 때 방법 목록 소실",
+      "area": "H100 실행",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "cause": "dev/test가 methods를 지정한 뒤 gpu_stage가 methods 없이 같은 prospective matrix를 다시 생성했다.",
+      "impact": "잘못된 사전 검사 성공이나 빈 실험 행렬을 실행 완료로 오해할 수 있었다.",
+      "introduction_commit": null,
+      "attribution": "Codex가 launcher 소스를 검토했고 Claude 작업자가 수정했다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "런처 CPU 회귀검사·소스 SHA",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/master/research/v8-live-recordings-20261108/verification/h100-launcher-check.json"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "recorded",
+          "status": "open",
+          "text": "dev/test가 methods를 지정한 뒤 gpu_stage가 methods 없이 같은 prospective matrix를 다시 생성했다.",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex + Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "dev/test의 모든 make-matrix 호출에서 --methods를 전달하는 shell source 확인. fake Python만 사용한5개 검사가 통과했다. GPU·학습·평가 실행은 없으며 실제 클러스터 연결은 별도 확인이 필요하다. source SHA=add133dd191b69a70b15657f4949043b5613f8db52b55ccaf833f528522b2cb8",
+          "evidence_kind": "code_test"
         }
       ]
     }

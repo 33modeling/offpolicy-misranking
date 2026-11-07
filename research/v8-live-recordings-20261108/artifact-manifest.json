@@ -8,6 +8,7 @@
     "sample/synthetic-recording-coverage.csv": "558e43032aba89cfe51a50c89f473657b38bbdd33e38b3bba59561e711bb0dbe",
     "sample/synthetic-training-curve.csv": "580925f405a26853d597d850745a3969e718b0a9c03075ec3318222f7f0769a5",
     "verification/baseline.json": "b01604db32a91abd73aef33d8cc81b8a15f883a92b0dfb77c90a94e318316906",
+    "verification/h100-launcher-check.json": "d8c755beb4fcb90d76de306d52309be5c68007d1e9fc247eaefd37f4466a1716",
     "verification/pytest-expanded.xml": "4fecd2e091dbd9a4e1a39284951bfc4147ede1bbd61f4521fe4fe5f4d0d843f0",
     "verification/pytest-first-running.xml": "67bd879c7279de04419f32f16184073422f97da60624f35d09defd567edb5bd1",
     "verification/pytest-release.xml": "5288a9428712f8eab702b316aa97c1e375e60ae533d61620f6e4e45d1e2702cc",
