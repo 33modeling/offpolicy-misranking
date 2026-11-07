@@ -2578,5 +2578,41 @@
         "evidence_kind": "code_test"
       }
     ]
+  },
+  {
+    "id": "V8-012",
+    "title": "같은 예산 고정 명령 재실행에서 시각 차이로 거부될 수 있음",
+    "area": "예산·재개",
+    "severity": "high",
+    "first_reported": "2026-11-08",
+    "cause": "예산 계산마다 frozen_at을 새로 넣고 write-once 저장과 비교해 동일한 예산의 재개 실행도 달라진 payload로 취급할 수 있었다.",
+    "impact": "예산 고정 뒤 후속 작업에서 중단되면 rebuttal 파이프라인 재실행이 고정 단계에서 멈출 수 있었다.",
+    "introduction_commit": null,
+    "attribution": "Codex 코드 검토 후 Claude 작업자가 명령의 고정 예산 재사용을 수정했다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "command-level CPU 재실행 검증과 source SHA",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/master/research/v8-live-recordings-20261108/verification/h100-budget-replay.json"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "reviewed",
+        "status": "open",
+        "text": "초기 코드의 매호출 utc_now와 immutable 비교를 확인했다. 실제 H100에서 발생한 실패로 보고한 것은 아니다.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex + Claude",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "서로 다른 시각으로 같은 command를 두 번 호출해 원래 budget 파일 바이트·시각을 그대로 재사용하고, 실제 예산을 바꾸면 거부하는 것을 CPU fake-bank로 확인했다. GPU·평가·학습 실행은 없다.",
+        "evidence_kind": "code_test"
+      }
+    ]
   }
 ]

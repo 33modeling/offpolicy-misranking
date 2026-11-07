@@ -12252,6 +12252,16 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "4ca20269aadfe4828823ef8847f1d5c4203c8eb3",
+      "at": "2026-11-08T01:29:23+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve V8 code defects and CPU verification in bug ledger",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/4ca20269aadfe4828823ef8847f1d5c4203c8eb3",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
     }
   ]
 }

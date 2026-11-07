@@ -1,0 +1,23 @@
+{
+  "scope": "CPU fake-bank command-level replay, no model/GPU evaluation",
+  "source_sha256": {
+    "switching/cluster.py": "b080790aea6a360ba967d175668ec8b8d1d27b0e89626c0c157a9e5115511549",
+    "switching/freeze.py": "b8af986f461ba01410b99ff69e71ef8c8f88ff71fbc4d085d8a03b02758f6b44",
+    "switching/common.py": "f174ac3cfe6d4e300dd69b0f6244b72e261a644006377b7bcb163793fb3e70e4"
+  },
+  "source_stable": true,
+  "attempts": [
+    {
+      "clock": "clock1",
+      "status": "ok",
+      "file_bytes_sha256": "abdb66ba0fdd3788a290b821e8f3b2c2488a05f2ac4fd582264693e257fd1b86"
+    },
+    {
+      "clock": "clock2",
+      "status": "ok",
+      "file_bytes_sha256": "abdb66ba0fdd3788a290b821e8f3b2c2488a05f2ac4fd582264693e257fd1b86"
+    }
+  ],
+  "same_budget_reused_with_original_bytes": true,
+  "changed_budget_rejected": true
+}

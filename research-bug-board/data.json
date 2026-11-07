@@ -1,13 +1,13 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-08T01:28:05+09:00",
+  "recorded_at": "2026-11-08T01:32:54+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "6cfe1920f2be5f46c039b4d74bd151769cff712a",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/6cfe1920f2be5f46c039b4d74bd151769cff712a",
-    "all_available_commits": 1154,
-    "fix_commit_records": 115,
+    "source_commit": "4ca20269aadfe4828823ef8847f1d5c4203c8eb3",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/4ca20269aadfe4828823ef8847f1d5c4203c8eb3",
+    "all_available_commits": 1155,
+    "fix_commit_records": 116,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
     "first_commit_at": "2026-08-07T05:56:48+09:00",
@@ -23,7 +23,7 @@
       "refs/heads/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:6cfe1920f2be5f46c039b4d74bd151769cff712a",
+      "refs/heads/master:4ca20269aadfe4828823ef8847f1d5c4203c8eb3",
       "refs/remotes/origin/audit/codecheck-20260820:5dd447990296042e334679c85e7672477cd7c5d3",
       "refs/remotes/origin/audit/p1-integrity:5dfda89ec3be2cc4d60f8f0371eeaf00790f6644",
       "refs/remotes/origin/docs/mbpp-budget-incident-20260919:fa1c6897b2b26ef002dd165c94f58702b1f9e1ed",
@@ -32,7 +32,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:6cfe1920f2be5f46c039b4d74bd151769cff712a"
+      "refs/remotes/origin/master:4ca20269aadfe4828823ef8847f1d5c4203c8eb3"
     ]
   },
   "incidents": [
@@ -2612,6 +2612,42 @@
           "type": "source_fix_verified",
           "status": "code_fixed",
           "text": "dev/test의 모든 make-matrix 호출에서 --methods를 전달하는 shell source 확인. fake Python만 사용한5개 검사가 통과했다. GPU·학습·평가 실행은 없으며 실제 클러스터 연결은 별도 확인이 필요하다. source SHA=add133dd191b69a70b15657f4949043b5613f8db52b55ccaf833f528522b2cb8",
+          "evidence_kind": "code_test"
+        }
+      ]
+    },
+    {
+      "id": "V8-012",
+      "title": "같은 예산 고정 명령 재실행에서 시각 차이로 거부될 수 있음",
+      "area": "예산·재개",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "cause": "예산 계산마다 frozen_at을 새로 넣고 write-once 저장과 비교해 동일한 예산의 재개 실행도 달라진 payload로 취급할 수 있었다.",
+      "impact": "예산 고정 뒤 후속 작업에서 중단되면 rebuttal 파이프라인 재실행이 고정 단계에서 멈출 수 있었다.",
+      "introduction_commit": null,
+      "attribution": "Codex 코드 검토 후 Claude 작업자가 명령의 고정 예산 재사용을 수정했다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "command-level CPU 재실행 검증과 source SHA",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/master/research/v8-live-recordings-20261108/verification/h100-budget-replay.json"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "reviewed",
+          "status": "open",
+          "text": "초기 코드의 매호출 utc_now와 immutable 비교를 확인했다. 실제 H100에서 발생한 실패로 보고한 것은 아니다.",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex + Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "서로 다른 시각으로 같은 command를 두 번 호출해 원래 budget 파일 바이트·시각을 그대로 재사용하고, 실제 예산을 바꾸면 거부하는 것을 CPU fake-bank로 확인했다. GPU·평가·학습 실행은 없다.",
           "evidence_kind": "code_test"
         }
       ]
