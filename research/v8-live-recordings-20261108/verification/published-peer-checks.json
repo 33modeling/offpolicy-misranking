@@ -1,0 +1,189 @@
+{
+  "scope": "CPU synthetic structural review; no RLVR or GPU measurements",
+  "optional_torch_disabled": true,
+  "peer_source_paths": [
+    "/home/kms/reports/rlvr-v8-code-recordings-20261108/published-runtime-3d0c083/v8/experiments/switching/rules.py",
+    "/home/kms/reports/rlvr-v8-code-recordings-20261108/published-runtime-3d0c083/v8/experiments/switching/snapshots.py",
+    "/home/kms/reports/rlvr-v8-code-recordings-20261108/published-runtime-3d0c083/v8/experiments/switching/ledger.py",
+    "/home/kms/reports/rlvr-v8-code-recordings-20261108/published-runtime-3d0c083/v8/experiments/switching/budget.py",
+    "/home/kms/reports/rlvr-v8-code-recordings-20261108/published-runtime-3d0c083/v8/experiments/switching/runner.py"
+  ],
+  "source_sha256": {
+    "rules.py": "bb9929ecefdaea6bca9eb3fffb4fee323658f263d98adadda73d0187449d3b33",
+    "snapshots.py": "ad7c89868e98b5ff7917479bd48e195b2f8a480b5061dbb33f8d7a017c7e9239",
+    "ledger.py": "c147930274d96c115fc4bad1477b0ff134ebab61cd8f8137a09aaa61ed07f915",
+    "budget.py": "9111de1fd97ac1c8f63c2fe6c2b83e174bf3625e7517ce5ac0b7bc830eebe232",
+    "runner.py": "677519256b20067f3d7d18ab96098e5d683c44b045531c2d668197284ae1c9a4"
+  },
+  "sources_stable_during_probe": true,
+  "checks": [
+    {
+      "id": "SNAPSHOT-HASH-SERIALIZATION",
+      "expected": "different hashes for distinct integer lists",
+      "passed": true,
+      "actual": {
+        "left": "19413cccb822a19687bd684ddccc89d691c314ea197df9418cd79ab549b0c218",
+        "right": "808868281f4ce4f21f1209565315ffaf940d3a8fe934b701f433805f2be6d2d7"
+      }
+    },
+    {
+      "id": "SNAPSHOT-COMPLETE-IMMUTABILITY",
+      "expected": "reject changed controller/cache/RNG payload at same path",
+      "passed": true,
+      "actual": {
+        "changed_resume_state_rejected": true
+      }
+    },
+    {
+      "id": "REPLAY-UNOBSERVED-GAP",
+      "expected": "incomplete/censored prefix; no claimed known first trigger",
+      "passed": true,
+      "actual": {
+        "rule_id": "two_negative",
+        "status": "censored",
+        "switch_update": null,
+        "checks_used": 1,
+        "observed_through": 25,
+        "censored_after": 25
+      }
+    },
+    {
+      "id": "REPLAY-INCOMPLETE-NO-TRIGGER",
+      "expected": "incomplete/censored instead of confirmed not_triggered",
+      "passed": true,
+      "actual": {
+        "rule_id": "current",
+        "status": "censored",
+        "switch_update": null,
+        "checks_used": 0,
+        "observed_through": 0,
+        "censored_after": 0
+      }
+    },
+    {
+      "id": "REPLAY-CONFLICTING-DUPLICATE",
+      "expected": "reject_conflicting_duplicate",
+      "passed": true,
+      "actual": {
+        "exception": "ValueError",
+        "message": "conflicting duplicate observations at completed_update 25: -1.0 vs 1.0"
+      }
+    },
+    {
+      "id": "COST-UNKNOWN-DROPPED",
+      "expected": "incomplete when neither interval nor GPU cost is available",
+      "passed": true,
+      "actual": {
+        "gpu_seconds": null,
+        "known_lower_bound_gpu_seconds": 0.0,
+        "untimed_gpu_seconds": 0.0,
+        "missing_event_ids": [
+          "unknown"
+        ],
+        "complete": false,
+        "gpus": []
+      }
+    },
+    {
+      "id": "AMORTIZED-UNKNOWN-ZERO",
+      "expected": "null amortized cost when required prefix/cache cost is unknown",
+      "passed": true,
+      "actual": {
+        "continuation_algorithm": 10,
+        "cold_start_algorithm": null,
+        "cold_start_lower_bound": 10,
+        "cold_start_missing": [
+          "prefix",
+          "cache_build"
+        ],
+        "physical_expenditure": null,
+        "declared_amortized": null,
+        "declared_amortized_lower_bound": 10.0,
+        "declared_amortized_missing": [
+          "prefix",
+          "cache_build"
+        ],
+        "family": "srgc"
+      }
+    },
+    {
+      "id": "BUDGET-UNKNOWN-ENDPOINT",
+      "expected": "indeterminate latest feasible endpoint with later unknown costs",
+      "passed": true,
+      "actual": {
+        "unknown_cost_updates": [
+          50
+        ],
+        "budget": 20,
+        "overshoot": null,
+        "status": "undetermined",
+        "endpoint": null,
+        "blocking_unknown_updates": [
+          50
+        ],
+        "last_known_within": {
+          "completed_update": 25,
+          "cumulative_cost": 10,
+          "snapshot_hash": "a"
+        }
+      }
+    },
+    {
+      "id": "BUDGET-ALL-UNKNOWN",
+      "expected": "unknown cost is distinct from measured infeasibility",
+      "passed": true,
+      "actual": {
+        "unknown_cost_updates": [
+          50
+        ],
+        "budget": 20,
+        "overshoot": null,
+        "status": "undetermined",
+        "endpoint": null,
+        "blocking_unknown_updates": [
+          50
+        ],
+        "last_known_within": null
+      }
+    },
+    {
+      "id": "EVAL-COUNT-FABRICATION",
+      "expected": "reject fraction incompatible with 8 measured binary responses",
+      "passed": true,
+      "actual": {
+        "rejected": true,
+        "reason": "synthetic-question: reward 0.37 is not an integer count over 8 responses"
+      }
+    },
+    {
+      "id": "EVAL-VALID-COUNTS-CONTROL",
+      "expected": "accept exact 3/8 and label synthetic fixture measurement status",
+      "passed": true,
+      "actual": {
+        "rejected": false,
+        "record": {
+          "attempt_id": "578e50affe8642168070b72696cdd8d9",
+          "checkpoint_hash": "e50f30d037636a9513d58fc75ba5b2dcc42b762b8a8c571ef2050b92aec118f2",
+          "completed_update": 275,
+          "count_source": "per_question_mean",
+          "evaluated_at": "2026-11-07T16:39:17+00:00",
+          "evaluation_spec_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "generation_seed_purpose": "synthetic",
+          "measurement_status": "synthetic_fixture_not_measured_RLVR",
+          "n_questions": 1,
+          "per_question_correct": {
+            "synthetic-question": 3
+          },
+          "responses_per_question": 8,
+          "reward_fraction": 0.375,
+          "run_id": "synthetic-audit",
+          "sample_level_rewards": false,
+          "split": "final",
+          "verifier": null
+        }
+      }
+    }
+  ],
+  "passed": 11,
+  "total": 11
+}

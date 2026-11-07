@@ -1,6 +1,6 @@
 {
   "files_sha256": {
-    "record.json": "af210c0fc3edbdc783475c5f068279d85166a9fc67376c1aa0c81b14b0fd0cde",
+    "record.json": "1638c4fe770c86be1bb19acbd03a75944177b0b6f30c60881ae277a91f369ac0",
     "sample/source-sha256.json": "46c0952c8f2e7ba39e680eb552ab3827edd7b97a55be7cc4224fcb0a2ab95876",
     "sample/synthetic-checkpoint-index.csv": "b4e9266d14c7c37288097ba7713da6828e273c799d5841f2c3b4ee1952149f72",
     "sample/synthetic-heldout-development.csv": "3956b39b7e939462cf1f52f1ee5d63d3741658723d2aeb0e02317c265b15cc68",
@@ -8,8 +8,12 @@
     "sample/synthetic-recording-coverage.csv": "558e43032aba89cfe51a50c89f473657b38bbdd33e38b3bba59561e711bb0dbe",
     "sample/synthetic-training-curve.csv": "580925f405a26853d597d850745a3969e718b0a9c03075ec3318222f7f0769a5",
     "verification/baseline.json": "b01604db32a91abd73aef33d8cc81b8a15f883a92b0dfb77c90a94e318316906",
+    "verification/claude-experiments-final.json": "7aeef46db6f4bc5abbf417a3e448b857f6a8ef31fe142ef84b07b7d1a985ee33",
     "verification/h100-budget-replay.json": "20cfe2e5e25a5ef72768763c0bebd3386677c75a9b9339fa029ebae2b85049f4",
     "verification/h100-launcher-check.json": "d8c755beb4fcb90d76de306d52309be5c68007d1e9fc247eaefd37f4466a1716",
+    "verification/published-launcher-tests.txt": "a4755f707a93aef6446304b4f1231ebccb064199c930b394b079d2277f99eaf4",
+    "verification/published-peer-checks.json": "c7595a318219c29d6f78b6d1fc30a45983c16c1c71a0d0609a5f9e8132d0993e",
+    "verification/published-runtime-receipt.json": "ac6d5a66a6b63b8a9ea58d56528d3c62c87e3d6999607b30c4d680d9f2ec394b",
     "verification/pytest-expanded.xml": "4fecd2e091dbd9a4e1a39284951bfc4147ede1bbd61f4521fe4fe5f4d0d843f0",
     "verification/pytest-first-running.xml": "67bd879c7279de04419f32f16184073422f97da60624f35d09defd567edb5bd1",
     "verification/pytest-release.xml": "5288a9428712f8eab702b316aa97c1e375e60ae533d61620f6e4e45d1e2702cc",

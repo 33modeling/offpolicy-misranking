@@ -1,0 +1,9 @@
+{
+  "runtime_commit": "3d0c08336950d2697dc66cbe3570a230e449f33b",
+  "remote_main_exact": true,
+  "verified_commit_blob_hashes": 30,
+  "changed_files": 55,
+  "scoped_to_v8_experiments": true,
+  "both_skip_markers": true,
+  "source": "/home/kms/reports/rlvr-v8-code-recordings-20261108/published-runtime-3d0c083/v8/experiments"
+}

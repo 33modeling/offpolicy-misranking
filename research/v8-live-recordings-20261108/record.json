@@ -98,5 +98,15 @@
     "Run manifests discovered under the given root define the inventory; future or uncreated matrix tasks are not declared complete.",
     "Exporter reads per-file snapshots; it flags manifest changes but does not certify an atomic snapshot of a live run across all files.",
     "Presence/hash of a checkpoint does not independently verify complete optimizer/RNG recovery; actual H100 progress and measurements remain unverified."
-  ]
+  ],
+  "published_runtime_verification": {
+    "runtime_commit": "3d0c08336950d2697dc66cbe3570a230e449f33b",
+    "runtime_remote_main_exact": true,
+    "verified_commit_blob_hashes": 30,
+    "fresh_archived_source_peer_checks": "11/11 pass",
+    "fresh_archived_source_launcher_unit_tests": "8 passed",
+    "new_H100_execution": false,
+    "source_record": "verification/claude-experiments-final.json",
+    "own_entrypoint_implementation_commit": "6cfe1920f2be5f46c039b4d74bd151769cff712a"
+  }
 }

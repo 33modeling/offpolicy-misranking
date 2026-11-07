@@ -1,0 +1,102 @@
+{
+  "from": "claude (nsh session f44ca35a, experiments worker)",
+  "written_at": "2026-11-08",
+  "repo": "33modeling/offpolicy-misranking-paper-v2",
+  "branch": "main",
+  "pushed_commit": "3d0c08336950d2697dc66cbe3570a230e449f33b",
+  "remote_main_equals_local_head": true,
+  "parent_commit": "220cd4f04cf946b6cade6fc94c17ad0a730e8cfd",
+  "paths": [
+    "v8/experiments/"
+  ],
+  "commit_message_tags": [
+    "[Skip CI]",
+    "[skip review]"
+  ],
+  "author": "33modeling <33modeling@gmail.com>",
+  "ai_trailers": false,
+  "sha256": {
+    "v8/experiments/switching/__init__.py": "91aefc23f1ab7916d42316b89c1ad707efdba066eb96df5157f476073e48a7f7",
+    "v8/experiments/switching/analyze.py": "5d10db49c94823d06d3d2dd03b3888541bfb0a90e162f62d6e24b43953af7703",
+    "v8/experiments/switching/audit.py": "fe5426bfb7c9bf744d596add26b31ce22f7e0c1354756efd916e13e328b7fe59",
+    "v8/experiments/switching/backends.py": "df2008f236629c6cfac5f8610d6bb83973110c0b63875e4642cd7e636d38d63f",
+    "v8/experiments/switching/bank.py": "610d79d775fc65596a6c3e6c04aff3aaff2876fc3b98ac06a6f3edb7bd3a0466",
+    "v8/experiments/switching/budget.py": "9111de1fd97ac1c8f63c2fe6c2b83e174bf3625e7517ce5ac0b7bc830eebe232",
+    "v8/experiments/switching/cache.py": "15522c751c715d9f5c04760cd2586c3c02bf46833fd74d141259c9b0f2f03517",
+    "v8/experiments/switching/cli.py": "893d42e451dcbfad9a7252cff7fe0b422dea598b9fd73012eba921cc0f6c0659",
+    "v8/experiments/switching/cluster.py": "b080790aea6a360ba967d175668ec8b8d1d27b0e89626c0c157a9e5115511549",
+    "v8/experiments/switching/coderepo.py": "d33604b760b992fb7e356759de395c522023b67d31fefa71d96b29c7c5c0d725",
+    "v8/experiments/switching/common.py": "f174ac3cfe6d4e300dd69b0f6244b72e261a644006377b7bcb163793fb3e70e4",
+    "v8/experiments/switching/engine.py": "a6de83083ba300c94c2c2570900901a4f51cbb5ccf39e933b6f85f196589dbd2",
+    "v8/experiments/switching/estimate.py": "63d745c79588c8973763d70d9f934b0045993358ac524892498195917d5762c3",
+    "v8/experiments/switching/freeze.py": "b8af986f461ba01410b99ff69e71ef8c8f88ff71fbc4d085d8a03b02758f6b44",
+    "v8/experiments/switching/ledger.py": "c147930274d96c115fc4bad1477b0ff134ebab61cd8f8137a09aaa61ed07f915",
+    "v8/experiments/switching/matrix.py": "b641a62c3d0a0baca643393b3d22b44017b6203c8b01d633a7b174b4d8b6089d",
+    "v8/experiments/switching/methods.py": "886f8ee2d341e8d20b20459dd93567a4bf949f113847c3f6a46c2cf8ff691e7e",
+    "v8/experiments/switching/policies.py": "fe2dea9412c2d1042b58343f9ec636e08d46f226dd62e09ee33dee6a1c43dfc2",
+    "v8/experiments/switching/report.py": "0d3b556e54e5584185f6b5913c75c5de6b196edc25a5c4067572f04397beb0c0",
+    "v8/experiments/switching/rules.py": "bb9929ecefdaea6bca9eb3fffb4fee323658f263d98adadda73d0187449d3b33",
+    "v8/experiments/switching/runner.py": "677519256b20067f3d7d18ab96098e5d683c44b045531c2d668197284ae1c9a4",
+    "v8/experiments/switching/seeds.py": "143f7f916d8b19e41be4fb4ada3d09f3dbd4c618b75531ebf6d688c327de7a5b",
+    "v8/experiments/switching/smoke.py": "4e85fa26691a523e171dc91b96a55b086b347264ad93e8d2ba4a41e14b17a65f",
+    "v8/experiments/switching/snapshots.py": "ad7c89868e98b5ff7917479bd48e195b2f8a480b5061dbb33f8d7a017c7e9239",
+    "v8/experiments/switching/spec.py": "83f2b412f0eb05ea18bcfa33d1c4ddb6159e473c872bdb0d5c981b341833b715",
+    "v8/experiments/switching/tune.py": "24b4f2063bd0e8162d35afa2784767d6570b756d25fc1df75befb8a0c6ca7fbc",
+    "v8/experiments/run_h100.sh": "e87015548d91e1b10dc1878d8f8d33da69099505e8773f761337ba61d7946b19",
+    "v8/experiments/harvest.sh": "0d4b186128a27f82c51c9c51463d1981ed1d499c9cd4bbcc45a558de00f97dd4",
+    "v8/experiments/smoke_cpu.sh": "95c110b945328a340bea419af941b6dee188ca60594698555225f49d1ca09653",
+    "v8/experiments/cluster_child.py": "955c147e36d6554443bcdb83513f8e10e0354275ddff6f60764c365a8d727718"
+  },
+  "code_repo_engine": {
+    "path": "/home/kms/dev/offpolicy-misranking",
+    "verified_at": "0937526 (master at implementation time)",
+    "srgc_rebuttal_modified": false,
+    "exporter": {
+      "commit": "6cfe1920f2be5f46c039b4d74bd151769cff712a",
+      "latest_master": "1f249d2",
+      "command": "python \"$EXPORT_CODE_ROOT/scripts/srgc_v8_history.py\" --root \"$V8_ROOT\" --output \"${V8_ROOT}-history-exports\" [--verify-checkpoints --strict]"
+    }
+  },
+  "runner_py_changes_since_c145f465": [
+    "debug_stop_after_update test hook: SIGTERM-equivalent stop at a safe boundary, only if the attempt started before that update (no re-stop on resume)",
+    "budget extension: first continue/stop decision uses task est_update_gpu_seconds (branch mean per-update cost) when no in-run delta exists yet",
+    "decide(): before the matched-update horizon the run always continues without reading the ledger (performance; same decision)",
+    "parent kind 'initial' for fresh-seed prefix runs (no parent load; branch_start records the initial identity)",
+    "note: list reconstructed from the edit history (no copy of c145f465 kept); Codex peer_checks.py 11/11 pass on the final file"
+  ],
+  "stage_readiness": {
+    "check/locate/audit/profile/collect/analyze/freeze-budget/status": "implemented (CPU); locate/audit/profile need the cluster group volume",
+    "trajectory/branches/extended/destination/budget-extension/eval-final/eval-budget/eval-dev": "implemented; GPU child (cluster_child.py) needs cluster integration check (never run on GPU)",
+    "history-export": "implemented as optional wrapper around the code repo exporter (skips without EXPORT_CODE_ROOT)",
+    "prepare-seeds/prefix/dev/test (prospective fresh seeds)": "implemented; needs cluster integration + author confirmation that new seeds reuse the seed-5 split/initial cache",
+    "tune-freeze": "NOT IMPLEMENTED as a cluster stage (exits 2); sequence exists only in switching/smoke.py toy()",
+    "e8": "scaffold: calls the code repo switch_repeat launcher; BidirectionalPolicy (dwell/margin) not executable in PolicyEngine"
+  },
+  "rebuttal_stage_order": [
+    "locate",
+    "audit",
+    "profile",
+    "trajectory",
+    "branches",
+    "extended",
+    "destination",
+    "freeze-budget",
+    "budget-extension",
+    "eval-final",
+    "eval-budget",
+    "collect",
+    "analyze"
+  ],
+  "tests": {
+    "unittest_system_python": "102 run, OK (1 skipped: torch test)",
+    "tiny_torch_cpu_venv": "1 run, OK",
+    "codex_peer_checks": "11/11 pass",
+    "run_h100_shell_regressions": "8 OK (in the 102)"
+  },
+  "smoke": {
+    "full_smoke_cpu.sh": "exit 0: toy 691 s (all E0-E10 paths, extended grid, interruption/resume, Pareto PNGs), tiny OLMo-3 3/3 branch identity checks",
+    "fast_toy_rerun_final_code": "377 s, 60 bank rows, 33 test rows",
+    "cluster_cli_simulation": "make-matrix/pending/freeze-budget(x2 reused)/budget-extension/eval-budget/collect/analyze OK; missing seeds 8,9 surfaced",
+    "note": "software checks only; no GPU, no paper results"
+  }
+}
