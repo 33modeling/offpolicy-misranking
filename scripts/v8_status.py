@@ -272,25 +272,26 @@ def render_cohort(base, cohort, now, gpus, host):
     return '\n'.join(lines) + '\n'
 
 
-def render(bases, now=None, gpus=None, host=None):
+def render(bases, now=None, gpus=None, host=None, cohorts=COHORTS):
     now = time.time() if now is None else now
     gpus = gpu_rows() if gpus is None else gpus
     host = host or socket.gethostname()
-    return '\n'.join(render_cohort(base, cohort, now, gpus, host) for base in bases for cohort in COHORTS)
+    return '\n'.join(render_cohort(base, cohort, now, gpus, host) for base in bases for cohort in cohorts)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--cohort', action='append', choices=COHORTS, help='show only this cohort (repeatable)')
     parser.add_argument('--watch', nargs='?', const=60.0, type=float, default=None, metavar='SECONDS',
                         help='refresh every SECONDS (default 60) until Ctrl-C')
     args = parser.parse_args(argv)
     bases = active_roots() or [root(os.environ)]
     if args.watch is None:
-        sys.stdout.write(render(bases))
+        sys.stdout.write(render(bases, cohorts=tuple(args.cohort or COHORTS)))
         return 0
     try:
         while True:
-            sys.stdout.write('\033[H\033[2J' + render(bases) + f"\n(refresh every {int(args.watch)}s · Ctrl-C to stop)\n")
+            sys.stdout.write('\033[H\033[2J' + render(bases, cohorts=tuple(args.cohort or COHORTS)) + f"\n(refresh every {int(args.watch)}s · Ctrl-C to stop)\n")
             sys.stdout.flush()
             time.sleep(max(5.0, args.watch))
     except KeyboardInterrupt:
