@@ -772,3 +772,81 @@ def test_node_without_the_requested_gpus_is_refused_before_any_queue_write(tmp_p
                            '--python',sys.executable],env=env,text=True,capture_output=True,timeout=30)
     assert result.returncode==2 and 'does not expose the GPUs 0,1,2,3' in result.stderr
     assert not (tmp_path/'v8').exists()
+
+
+# ---- explicit --new-queue (coordinator decision 2026-11-08) -----------------------------------
+def tree_digest(root):
+    import hashlib
+    out={}
+    for path in sorted(Path(root).rglob('*')):
+        if path.is_file():out[str(path.relative_to(root))]=hashlib.sha256(path.read_bytes()).hexdigest()
+    return out
+
+
+def started_queue(tmp_path):
+    root=tmp_path/'olmo_math'/'.multi-node';pool=nodes.Pool(root,{'cohort':'olmo_math','code':'v1.0.3'});pool.initialize()
+    pool.register(task('traj'),'train')
+    return root
+
+
+def test_plain_start_with_another_bundle_still_refuses_with_plain_instructions(tmp_path):
+    root=started_queue(tmp_path)
+    with pytest.raises(nodes.BindingMismatch) as error:
+        nodes.Pool(root,{'cohort':'olmo_math','code':'v1.0.4'}).initialize()
+    assert 'run `sh scripts/run_v8_nodes.sh --new-queue` once on one node' in str(error.value)
+    assert nodes.read(root/'binding.json')['code']=='v1.0.3'
+
+
+def test_new_queue_keeps_old_directory_byte_identical_and_relocks(tmp_path,capsys):
+    root=started_queue(tmp_path)
+    pool=nodes.Pool(root,{'cohort':'olmo_math','code':'v1.0.4'},new_queue=True)
+    with pool.control() as control:
+        assert control is not None
+        before=tree_digest(root)  # includes control.lock, as on a running cluster
+        with pytest.raises(nodes.QueueReset) as reset:pool.initialize()
+    kept=Path(str(reset.value))
+    assert kept.name.startswith('.multi-node.superseded-') and tree_digest(kept)==before
+    pool.initialize()  # second call (after re-locking) neither supersedes again nor refuses
+    assert nodes.read(root/'binding.json')['code']=='v1.0.4' and not list(root.glob('jobs/*.json'))
+    assert len(list(root.parent.glob('.multi-node.superseded-*')))==1
+    out=capsys.readouterr().out
+    assert str(kept) in out and 'Restart every other node with this same bundle' in out
+
+
+def test_new_queue_refused_after_a_completed_update(tmp_path):
+    root=started_queue(tmp_path)
+    log=tmp_path/'olmo_math/runs/r1/attempts/a/updates.jsonl';log.parent.mkdir(parents=True)
+    log.write_text('{"completed_updates": 26}\n')
+    with pytest.raises(nodes.BindingMismatch,match='updates were already completed'):
+        nodes.Pool(root,{'cohort':'olmo_math','code':'v1.0.4'},new_queue=True).initialize()
+    assert nodes.read(root/'binding.json')['code']=='v1.0.3' and not list(root.parent.glob('.multi-node.superseded-*'))
+
+
+def test_new_queue_refused_while_a_job_lease_is_held(tmp_path):
+    root=started_queue(tmp_path)
+    held=nodes.Lock(root/'leases'/'job.lock');assert held.acquire()
+    try:
+        with pytest.raises(nodes.BindingMismatch,match='lease'):
+            nodes.Pool(root,{'cohort':'olmo_math','code':'v1.0.4'},new_queue=True).initialize()
+    finally:held.close()
+    assert nodes.read(root/'binding.json')['code']=='v1.0.3'
+
+
+def test_new_queue_with_the_same_bundle_continues_the_queue(tmp_path):
+    root=started_queue(tmp_path)
+    nodes.Pool(root,{'cohort':'olmo_math','code':'v1.0.3'},new_queue=True).initialize()
+    assert list(root.glob('jobs/*.json')) and not list(root.parent.glob('.multi-node.superseded-*'))
+
+
+def test_worker_loop_relocks_the_fresh_queue_before_ticking(tmp_path):
+    root=started_queue(tmp_path)
+    class Rt:
+        binding={'cohort':'olmo_math','code':'v1.0.4'}
+        def verify_node(self):pass
+    pool=nodes.Pool(root,Rt.binding,new_queue=True);seen=[]
+    def tick(*args):
+        probe=nodes.Lock(root/'control.lock');free=probe.acquire();probe.close()
+        seen.append(not free);return 'complete',None
+    pool.tick=tick
+    assert nodes.worker_loop(pool,Rt(),'w',threading.Event(),poll=.001)==0
+    assert seen==[True]  # the worker held the NEW directory's control.lock when it ticked

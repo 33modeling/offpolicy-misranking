@@ -141,6 +141,11 @@ Ctrl-C/SIGTERM은 자식 실행기에 전달된다. 종료 유예는10초이며 
   끝에 실패한 cohort와 이유를 다시 출력하고 종료 코드 1을 반환한다.
 - 큐 기록과 코드가 다르면 무엇이 다른지와 할 일을 출력한다. 다른 노드가 큐를 새 코드로
   바꾸면 이전 코드로 돌던 worker는 그 cohort 작업을 더 받지 않는다.
+- 다른 묶음으로 시작한 큐는 일반 실행에서 자동으로 바꾸지 않는다. 아직 update가 하나도
+  끝나지 않았다면 모든 노드의 worker를 멈춘 뒤 한 노드에서만
+  `sh scripts/run_v8_nodes.sh --new-queue`를 한 번 실행한다. 기존 큐는 지우지 않고
+  `.multi-node.superseded-<시각>`으로 그대로 보관하고 새 큐를 만든다. 완료된 update가 있거나
+  작업 lease가 잡혀 있으면 거부한다. 나머지 노드는 같은 묶음으로 일반 명령을 실행한다.
 - cohort별 Python은 기존 실행기와 같은 순서로 고른다. OLMo MATH는 `PAIR_PYTHON`,
   Qwen MBPP는 `QWEN_PYTHON` 다음 `SWITCH_PYTHON`, 없으면 기존 `.venv-cu126`이다.
   OLMo가 MBPP/Qwen 인터프리터를 물려받던 문제를 고쳤다.

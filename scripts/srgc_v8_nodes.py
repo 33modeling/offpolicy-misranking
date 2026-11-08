@@ -91,6 +91,26 @@ class BindingMismatch(ValueError):
     pass
 
 
+class QueueReset(Exception):
+    """--new-queue replaced the queue directory; the caller must re-acquire control.lock in the new one."""
+
+
+MISMATCH_HELP=('This queue was started with a different bundle. Either keep using that bundle on every node, or stop '
+               'the workers on ALL nodes and run `sh scripts/run_v8_nodes.sh --new-queue` once on one node (allowed '
+               'only while no update has completed).')
+
+
+def completed_training(cohort_root):
+    """True once any v8 run of this cohort has durably recorded a completed update."""
+    runs=Path(cohort_root)/'runs'
+    if not runs.is_dir():return False
+    for log in runs.rglob('updates.jsonl'):
+        try:
+            if log.stat().st_size>0:return True
+        except OSError:return True
+    return False
+
+
 def binding_changes(old,new):
     changed=[]
     for key in sorted(set(old)|set(new)):
@@ -113,9 +133,38 @@ def task_key(task):
 
 class Pool:
     """All queue writes occur under control.lock; jobs have independent leases."""
-    def __init__(self,root,binding):
-        self.root=Path(root);self.binding=binding
+    def __init__(self,root,binding,*,new_queue=False):
+        self.root=Path(root);self.binding=binding;self.new_queue=new_queue
         self.root.mkdir(parents=True,exist_ok=True)
+
+    def held_leases(self):
+        """Jobs whose lease a live worker or its training child still holds."""
+        held=[]
+        for path in sorted((self.root/'leases').glob('*.lock')):
+            lease=Lock(path)
+            if lease.acquire():lease.close()
+            else:held.append(path.stem)
+        return held
+
+    def supersede(self):
+        """Explicit --new-queue: keep the old queue untouched under a new name and start a fresh one.
+        Called with this queue's control.lock held; raises QueueReset so the caller re-locks the new directory."""
+        self.new_queue=False
+        cohort=self.binding.get('cohort','?')
+        if completed_training(self.root.parent):
+            raise BindingMismatch(f'{cohort}: --new-queue refused: updates were already completed in {self.root.parent/"runs"}; '
+                                  'this queue must be continued with the bundle that started it.')
+        held=self.held_leases()
+        if held:
+            raise BindingMismatch(f'{cohort}: --new-queue refused: {len(held)} job lease(s) are still held by a running '
+                                  'worker or training child. Stop the workers on ALL nodes first.')
+        kept=self.root.with_name(self.root.name+'.superseded-'+time.strftime('%Y%m%dT%H%M%S'))
+        while kept.exists():kept=kept.with_name(kept.name+'x')
+        os.replace(self.root,kept);self.root.mkdir(parents=True)
+        atomic(self.root/'binding.json',self.binding)
+        print(f'[v8] {cohort}: --new-queue kept the previous queue unchanged as {kept} and started a fresh queue in '
+              f'{self.root}. Restart every other node with this same bundle (plain command, without --new-queue).',flush=True)
+        raise QueueReset(str(kept))
 
     @contextmanager
     def control(self):
@@ -126,6 +175,11 @@ class Pool:
 
     def initialize(self,retry=False,worker=None):
         path=self.root/'binding.json'
+        if self.new_queue and path.exists():
+            if read(path)==self.binding:
+                print(f"[v8] {self.binding.get('cohort')}: the queue already uses this bundle; --new-queue not needed, continuing it.",flush=True)
+            else:self.supersede()
+        self.new_queue=False
         if path.exists():
             if read(path)!=self.binding:
                 old=read(path)
@@ -145,9 +199,8 @@ class Pool:
                     # completed update. Moving control.lock would also split its locking domain.
                     # Keep the original binding and inode; supervisor/stop/probe remain usable.
                     raise BindingMismatch(
-                        f"{self.binding.get('cohort')}: Worker/runner/config/trainer identity differs from this queue "
-                        f"(differs: {', '.join(binding_changes(old,self.binding)[:12])}). Use the same bundle version and "
-                        f"Python on every node; the queue's version is recorded in {path}.")
+                        f"{self.binding.get('cohort')}: {MISMATCH_HELP} (Worker/runner/config/trainer identity differs "
+                        f"from this queue: {', '.join(binding_changes(old,self.binding)[:12])}; record: {path})")
         else:atomic(path,self.binding)
         state_path=self.root/'state.json'
         if not state_path.exists():atomic(state_path,dict(phase='prepare',failure=None,actions=[],failure_history=[]))
@@ -332,6 +385,8 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                     if index not in initialized:
                         # A mismatched joining node must not poison healthy workers: no pool.fail here.
                         try:runtime.verify_node();pool.initialize(retry=retry,worker=worker)
+                        except QueueReset:
+                            progressed=True;continue  # re-lock control.lock of the fresh directory first
                         except Exception as exc:
                             give_up(index,pool,'node check',exc);progressed=True;continue
                         initialized.add(index)
@@ -768,6 +823,9 @@ def main(argv=None):
     parser.add_argument('--poll-seconds',type=float,default=3)
     parser.add_argument('--retry-failed',action='store_true')
     parser.add_argument('--status',action='store_true')
+    parser.add_argument('--new-queue',action='store_true',
+                        help='after stopping the workers on ALL nodes: keep the existing queue as .multi-node.superseded-<time> '
+                             'and start a fresh one (refused once any update has completed or a job lease is held)')
     args=parser.parse_args(argv)
     if args.root is None:parser.error('V8_ROOT or --root is required (shared by all nodes)')
     if not re.fullmatch(r'[A-Za-z0-9_-]+',args.cohort):parser.error('cohort must be a simple configured identifier')
@@ -814,7 +872,7 @@ def main(argv=None):
         pairs=[]
         for cohort in cohorts:
             runtime=Runtime(args.runner_root,args.root,cohort,cohort_python(cohort,args.python),gpus)
-            pairs.append((Pool(runtime.root/'.multi-node',runtime.binding),runtime))
+            pairs.append((Pool(runtime.root/'.multi-node',runtime.binding,new_queue=args.new_queue),runtime))
         worker=socket.gethostname()+'.'+str(os.getpid())
         print(f'[{worker}] V8 worker: cohorts={",".join(cohorts)} gpus={",".join(gpus)} '
               f'uuids={",".join(r["uuid"] for r in inventory) if inventory else "nvidia-smi unavailable"}',flush=True)
