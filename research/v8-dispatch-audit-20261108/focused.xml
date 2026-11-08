@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="12" time="5.177" timestamp="2026-11-08T13:57:52.574621+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_dispatch_audit" name="test_claim_requires_successful_node_verification_even_after_control_contention" time="0.003" /><testcase classname="tests.test_srgc_v8_dispatch_audit" name="test_qwen_interpreter_precedence_matches_original_launcher" time="0.000" /><testcase classname="tests.test_srgc_v8_dispatch_audit" name="test_wedged_actor_initialization_is_bounded_and_child_is_reaped" time="4.009"><failure message="Failed: one wedged runtime blocks both cohorts without a startup timeout">tmp_path = PosixPath('/dev/shm/v8-audit-fix-kms/test_wedged_actor_initializati0')
+
+    def test_wedged_actor_initialization_is_bounded_and_child_is_reaped(tmp_path):
+        frozen=tmp_path/'original.py'
+        frozen.write_text('import os,time\nfrom pathlib import Path\n'
+                         'class Runtime:\n def __init__(self,*args):\n'
+                         '  Path(__file__).with_suffix(".pid").write_text(str(os.getpid()))\n  time.sleep(30)\n')
+        entry=dict(cohort='olmo_math',python=sys.executable,script=str(frozen),runner=str(tmp_path))
+        plan=dict(root=str(tmp_path/'v8'),gpus=['0','1','2','3'],worker='fixture.1',entries=[entry])
+        planfile=tmp_path/'plan.json';planfile.write_text(json.dumps(plan))
+        code='''import json,sys
+    from pathlib import Path
+    from v8_dispatch import RuntimeProxy
+    p=Path(sys.argv[1]);plan=json.loads(p.read_text())
+    actor=RuntimeProxy(plan['entries'][0],plan,p)
+    assert actor.error and 'timed out' in actor.error,actor.error
+    assert actor.process.poll() is not None,'failed initialization leaked its child'
+    actor.close()
+    '''
+        child=subprocess.Popen([sys.executable,'-c',code,str(planfile)],start_new_session=True,
+                               env=dict(os.environ,PYTHONPATH=str(REPO/'scripts'),V8_RUNTIME_INIT_TIMEOUT='0.2'),
+                               stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+&gt;           try:out,err=child.communicate(timeout=4)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_srgc_v8_dispatch_audit.py:75: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/lib/python3.12/subprocess.py:1209: in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/subprocess.py:2116: in _communicate
+    self._check_timeout(endtime, orig_timeout, stdout, stderr)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;Popen: returncode: -9 args: ['/usr/bin/python3', '-c', "import json,sys\nfr...&gt;
+endtime = 971926.517878818, orig_timeout = 4
+stdout_seq = [b'[v8] olmo_math: opening original runtime with /usr/bin/python3; startup timeout=0.2s\n']
+stderr_seq = [], skip_check_and_raise = False
+
+    def _check_timeout(self, endtime, orig_timeout, stdout_seq, stderr_seq,
+                       skip_check_and_raise=False):
+        """Convenience for checking if a timeout has expired."""
+        if endtime is None:
+            return
+        if skip_check_and_raise or _time() &gt; endtime:
+&gt;           raise TimeoutExpired(
+                    self.args, orig_timeout,
+                    output=b''.join(stdout_seq) if stdout_seq else None,
+                    stderr=b''.join(stderr_seq) if stderr_seq else None)
+E           subprocess.TimeoutExpired: Command '['/usr/bin/python3', '-c', "import json,sys\nfrom pathlib import Path\nfrom v8_dispatch import RuntimeProxy\np=Path(sys.argv[1]);plan=json.loads(p.read_text())\nactor=RuntimeProxy(plan['entries'][0],plan,p)\nassert actor.error and 'timed out' in actor.error,actor.error\nassert actor.process.poll() is not None,'failed initialization leaked its child'\nactor.close()\n", '/dev/shm/v8-audit-fix-kms/test_wedged_actor_initializati0/plan.json']' timed out after 4 seconds
+
+/usr/lib/python3.12/subprocess.py:1253: TimeoutExpired
+
+During handling of the above exception, another exception occurred:
+
+tmp_path = PosixPath('/dev/shm/v8-audit-fix-kms/test_wedged_actor_initializati0')
+
+    def test_wedged_actor_initialization_is_bounded_and_child_is_reaped(tmp_path):
+        frozen=tmp_path/'original.py'
+        frozen.write_text('import os,time\nfrom pathlib import Path\n'
+                         'class Runtime:\n def __init__(self,*args):\n'
+                         '  Path(__file__).with_suffix(".pid").write_text(str(os.getpid()))\n  time.sleep(30)\n')
+        entry=dict(cohort='olmo_math',python=sys.executable,script=str(frozen),runner=str(tmp_path))
+        plan=dict(root=str(tmp_path/'v8'),gpus=['0','1','2','3'],worker='fixture.1',entries=[entry])
+        planfile=tmp_path/'plan.json';planfile.write_text(json.dumps(plan))
+        code='''import json,sys
+    from pathlib import Path
+    from v8_dispatch import RuntimeProxy
+    p=Path(sys.argv[1]);plan=json.loads(p.read_text())
+    actor=RuntimeProxy(plan['entries'][0],plan,p)
+    assert actor.error and 'timed out' in actor.error,actor.error
+    assert actor.process.poll() is not None,'failed initialization leaked its child'
+    actor.close()
+    '''
+        child=subprocess.Popen([sys.executable,'-c',code,str(planfile)],start_new_session=True,
+                               env=dict(os.environ,PYTHONPATH=str(REPO/'scripts'),V8_RUNTIME_INIT_TIMEOUT='0.2'),
+                               stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+            try:out,err=child.communicate(timeout=4)
+&gt;           except subprocess.TimeoutExpired:pytest.fail('one wedged runtime blocks both cohorts without a startup timeout')
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: one wedged runtime blocks both cohorts without a startup timeout
+
+tests/test_srgc_v8_dispatch_audit.py:76: Failed</failure></testcase><testcase classname="tests.test_srgc_v8_dispatch_audit" name="test_idle_workers_do_not_rescan_every_task_before_entering_dispatch" time="0.002" /><testcase classname="tests.test_srgc_v8_fair_dispatch" name="test_ten_simultaneous_qwen_biased_nodes_and_four_late_nodes_are_balanced" time="0.257" /><testcase classname="tests.test_srgc_v8_fair_dispatch" name="test_new_workers_prefer_olmo_when_ten_legacy_qwen_jobs_hold_leases" time="0.047" /><testcase classname="tests.test_srgc_v8_fair_dispatch" name="test_no_ready_olmo_work_allows_qwen_to_borrow_free_workers" time="0.197" /><testcase classname="tests.test_srgc_v8_dispatch_runtime" name="test_large_messages_and_transferred_lease_stay_valid_after_sender_closes" time="0.019" /><testcase classname="tests.test_srgc_v8_dispatch_runtime" name="test_existing_cohort_bindings_and_checkpoints_survive_new_dispatcher[False]" time="0.146" /><testcase classname="tests.test_srgc_v8_dispatch_runtime" name="test_existing_cohort_bindings_and_checkpoints_survive_new_dispatcher[True]" time="0.084" /><testcase classname="tests.test_srgc_v8_dispatch_runtime" name="test_actor_uses_real_frozen_runtime_identity_without_loading_models[olmo_math]" time="0.130" /><testcase classname="tests.test_srgc_v8_dispatch_runtime" name="test_actor_uses_real_frozen_runtime_identity_without_loading_models[qwen_mbpp]" time="0.113" /></testsuite></testsuites>

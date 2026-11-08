@@ -1,0 +1,71 @@
+{
+  "source_commit": "18ec7886b2b5fe58958a12ea9a8b9def1bd221ca",
+  "hypothesis": "Duplicate pre-dispatch DAG scans contend for per-cohort metadata locks. A joining worker can skip verification when its discovery pass loses the lock, then claim during the second pass. Actor initialization can wait forever and interpreter precedence differs from the original Qwen launcher.",
+  "tested": "Control-path defects only, CPU processes and production five-seed DAG. No GPU/model inference, optimizer update, benchmark accuracy or throughput measurement.",
+  "models_data": "Unchanged production OLMo MATH and Qwen MBPP configurations; CPU prefix/snapshot sentinel files instead of model weights.",
+  "controls": [
+    "Each new regression fails against published f04ca21:4 failures, before.xml",
+    "Contended initial control lock with deliberately invalid node inputs must never claim a task",
+    "Conflicting QWEN_PYTHON and SWITCH_PYTHON overrides must follow the original launcher",
+    "Original Runtime initialization deliberately sleeps30s; test startup deadline0.2s must reap the failed actor",
+    "Count full unsealed DAG planning passes before first claim: before2, after1",
+    "24 CPU workers compete for the actual initial20 jobs; actual 5seed On5 + SR25 5 per cohort",
+    "Append step50 checkpoint metadata while all parent jobs remain leased; add6workers, all30 distinct claims fill15+15 including10 SR50 branches"
+  ],
+  "seeds_updates": "Production scheduling seeds5–9. No real training updates. Steps25/50 are synthetic dependency fixture filenames, never reported as rewards or trained checkpoints.",
+  "metric_definitions": {
+    "failure_count": "pytest failures, not scientific outcomes",
+    "claims": "distinct held CPU task leases grouped by cohort/method",
+    "verification": "no claim if node verification has not succeeded",
+    "unchanged": "SHA256 comparison against original 30 trainer source files"
+  },
+  "measured_code_tests": {
+    "before_failures": 4,
+    "initial_full": {
+      "passed": 191,
+      "failed": 3,
+      "reason": "one newly exposed partial-initialization balance race, fixed by waiting for every healthy cohort verification; two old tests depended on removed pre-claim tick ordering and were updated to test the same lock/identity behavior"
+    },
+    "production_dag": {
+      "passed": 9,
+      "initial_claims": 20,
+      "after_step50_claims": 30,
+      "duplicate_claims": 0
+    },
+    "final": {
+      "passed": 196,
+      "failed": 0,
+      "seconds": 26.6
+    },
+    "trainer_files_unchanged": 30
+  },
+  "scientific_measurements": {
+    "real_H100_OLMo_start": "unverified; user continues to report0 OLMo and only5 real workers active",
+    "model_rewards": null,
+    "training_batch_rewards": "untouched",
+    "held_out_rewards": "unmeasured, not substituted",
+    "wasted_node_hours": null,
+    "wasted_money": null
+  },
+  "checkpoint_provenance": "No checkpoint or optimizer/RNG/reward file was deleted, reset, moved or used as a new numerical result. Original Runtime binding and numerical source are unchanged; new control policy v2 is separately receipted. Existing workers require restart to apply changed control code.",
+  "evidence": [
+    "full-first.xml",
+    "focused.xml",
+    "production-dag.xml",
+    "focused-second.xml",
+    "full-final.xml",
+    "before.xml"
+  ],
+  "limitations": [
+    "No access to the user H100 node or V8_ROOT. Read-only status/error output requested but not received.",
+    "A source push or CPU pass does not establish OLMo training has started.",
+    "Public bug-board deployment remains separate from source ledger publication."
+  ],
+  "exact_source_resume_archive": {
+    "coordinators": 15,
+    "runners": 5,
+    "tests_passed": 14,
+    "failures": 0,
+    "evidence": "archive.xml"
+  }
+}

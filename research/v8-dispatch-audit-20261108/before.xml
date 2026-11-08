@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="4" skipped="0" tests="4" time="4.107" timestamp="2026-11-08T13:57:24.572301+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_dispatch_audit" name="test_claim_requires_successful_node_verification_even_after_control_contention" time="0.002"><failure message="AssertionError: assert 75 == 1&#10; +  where 75 = &lt;function worker_loop_many at 0x7cb945cc7ec0&gt;([(&lt;test_srgc_v8_dispatch_audit.test_claim_requires_successful_node_verification_even_after_control_contention.&lt;locals&gt;..._claim_requires_successful_node_verification_even_after_control_contention.&lt;locals&gt;.Runtime object at 0x7cb945b80a70&gt;)], 'node', &lt;threading.Event at 0x7cb945b80890: set&gt;, poll=0.001)&#10; +    where &lt;function worker_loop_many at 0x7cb945cc7ec0&gt; = nodes.worker_loop_many">tmp_path = PosixPath('/dev/shm/v8-audit-before-kms/test_claim_requires_successful0')
+
+    def test_claim_requires_successful_node_verification_even_after_control_contention(tmp_path):
+        stop=threading.Event();launched=[]
+        class Runtime:
+            def verify_node(self):raise ValueError('this node has invalid frozen inputs')
+            def plan(self,phase):
+                return [dict(kind='train',run_id='r',method_id='on_monitored',training_seed=5,
+                             horizon=275,config_hash='fixture',parent={})],False
+            def ready(self,task):return True
+            def native_busy(self,task):return False
+            def done(self,task):return False
+            def execute(self,*args):launched.append(True);stop.set();return 75
+        class ContendedOnce(nodes.Pool):
+            calls=0
+            @contextmanager
+            def control(self):
+                self.calls+=1
+                if self.calls==1:yield None
+                else:
+                    with super().control() as lease:yield lease
+        pool=ContendedOnce(tmp_path/'olmo_math/.multi-node',dict(cohort='olmo_math'))
+        pool.initialize();state=nodes.read(pool.root/'state.json');state['phase']='train';nodes.atomic(pool.root/'state.json',state)
+&gt;       assert nodes.worker_loop_many([(pool,Runtime())],'node',stop,poll=.001)==1
+E       AssertionError: assert 75 == 1
+E        +  where 75 = &lt;function worker_loop_many at 0x7cb945cc7ec0&gt;([(&lt;test_srgc_v8_dispatch_audit.test_claim_requires_successful_node_verification_even_after_control_contention.&lt;locals&gt;..._claim_requires_successful_node_verification_even_after_control_contention.&lt;locals&gt;.Runtime object at 0x7cb945b80a70&gt;)], 'node', &lt;threading.Event at 0x7cb945b80890: set&gt;, poll=0.001)
+E        +    where &lt;function worker_loop_many at 0x7cb945cc7ec0&gt; = nodes.worker_loop_many
+
+tests/test_srgc_v8_dispatch_audit.py:42: AssertionError</failure></testcase><testcase classname="tests.test_srgc_v8_dispatch_audit" name="test_qwen_interpreter_precedence_matches_original_launcher" time="0.001"><failure message="AssertionError: assert '/dev/shm/v8-...switch-python' == '/dev/shm/v8-...0/qwen-python'&#10;  &#10;  Skipping 51 identical leading characters in diff, use -v to show&#10;  - preceden0/qwen-python&#10;  ?           ^ ^^&#10;  + preceden0/switch-python&#10;  ?           ^ ^^^^">tmp_path = PosixPath('/dev/shm/v8-audit-before-kms/test_qwen_interpreter_preceden0')
+
+    def test_qwen_interpreter_precedence_matches_original_launcher(tmp_path):
+        qwen=tmp_path/'qwen-python';qwen.symlink_to(sys.executable)
+        switch=tmp_path/'switch-python';switch.symlink_to(sys.executable)
+        env=dict(V8_ROOT=str(tmp_path/'v8'),QWEN_PYTHON=str(qwen),SWITCH_PYTHON=str(switch),V8_PYTHON=sys.executable)
+&gt;       assert source.existing_python({},env,'qwen_mbpp')==str(qwen)
+E       AssertionError: assert '/dev/shm/v8-...switch-python' == '/dev/shm/v8-...0/qwen-python'
+E         
+E         Skipping 51 identical leading characters in diff, use -v to show
+E         - preceden0/qwen-python
+E         ?           ^ ^^
+E         + preceden0/switch-python
+E         ?           ^ ^^^^
+
+tests/test_srgc_v8_dispatch_audit.py:51: AssertionError</failure></testcase><testcase classname="tests.test_srgc_v8_dispatch_audit" name="test_wedged_actor_initialization_is_bounded_and_child_is_reaped" time="4.006"><failure message="Failed: one wedged runtime blocks both cohorts without a startup timeout">tmp_path = PosixPath('/dev/shm/v8-audit-before-kms/test_wedged_actor_initializati0')
+
+    def test_wedged_actor_initialization_is_bounded_and_child_is_reaped(tmp_path):
+        frozen=tmp_path/'original.py'
+        frozen.write_text('import os,time\nfrom pathlib import Path\n'
+                         'class Runtime:\n def __init__(self,*args):\n'
+                         '  Path(__file__).with_suffix(".pid").write_text(str(os.getpid()))\n  time.sleep(30)\n')
+        entry=dict(cohort='olmo_math',python=sys.executable,script=str(frozen),runner=str(tmp_path))
+        plan=dict(root=str(tmp_path/'v8'),gpus=['0','1','2','3'],worker='fixture.1',entries=[entry])
+        planfile=tmp_path/'plan.json';planfile.write_text(json.dumps(plan))
+        code='''import json,sys
+    from pathlib import Path
+    from v8_dispatch import RuntimeProxy
+    p=Path(sys.argv[1]);plan=json.loads(p.read_text())
+    actor=RuntimeProxy(plan['entries'][0],plan,p)
+    assert actor.error and 'timed out' in actor.error,actor.error
+    assert actor.process.poll() is not None,'failed initialization leaked its child'
+    actor.close()
+    '''
+        child=subprocess.Popen([sys.executable,'-c',code,str(planfile)],start_new_session=True,
+                               env=dict(os.environ,PYTHONPATH=str(REPO/'scripts'),V8_RUNTIME_INIT_TIMEOUT='0.2'),
+                               stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+&gt;           try:out,err=child.communicate(timeout=4)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_srgc_v8_dispatch_audit.py:75: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/lib/python3.12/subprocess.py:1209: in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/subprocess.py:2116: in _communicate
+    self._check_timeout(endtime, orig_timeout, stdout, stderr)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;Popen: returncode: -9 args: ['/usr/bin/python3', '-c', "import json,sys\nfr...&gt;
+endtime = 971898.44852663, orig_timeout = 4, stdout_seq = [], stderr_seq = []
+skip_check_and_raise = False
+
+    def _check_timeout(self, endtime, orig_timeout, stdout_seq, stderr_seq,
+                       skip_check_and_raise=False):
+        """Convenience for checking if a timeout has expired."""
+        if endtime is None:
+            return
+        if skip_check_and_raise or _time() &gt; endtime:
+&gt;           raise TimeoutExpired(
+                    self.args, orig_timeout,
+                    output=b''.join(stdout_seq) if stdout_seq else None,
+                    stderr=b''.join(stderr_seq) if stderr_seq else None)
+E           subprocess.TimeoutExpired: Command '['/usr/bin/python3', '-c', "import json,sys\nfrom pathlib import Path\nfrom v8_dispatch import RuntimeProxy\np=Path(sys.argv[1]);plan=json.loads(p.read_text())\nactor=RuntimeProxy(plan['entries'][0],plan,p)\nassert actor.error and 'timed out' in actor.error,actor.error\nassert actor.process.poll() is not None,'failed initialization leaked its child'\nactor.close()\n", '/dev/shm/v8-audit-before-kms/test_wedged_actor_initializati0/plan.json']' timed out after 4 seconds
+
+/usr/lib/python3.12/subprocess.py:1253: TimeoutExpired
+
+During handling of the above exception, another exception occurred:
+
+tmp_path = PosixPath('/dev/shm/v8-audit-before-kms/test_wedged_actor_initializati0')
+
+    def test_wedged_actor_initialization_is_bounded_and_child_is_reaped(tmp_path):
+        frozen=tmp_path/'original.py'
+        frozen.write_text('import os,time\nfrom pathlib import Path\n'
+                         'class Runtime:\n def __init__(self,*args):\n'
+                         '  Path(__file__).with_suffix(".pid").write_text(str(os.getpid()))\n  time.sleep(30)\n')
+        entry=dict(cohort='olmo_math',python=sys.executable,script=str(frozen),runner=str(tmp_path))
+        plan=dict(root=str(tmp_path/'v8'),gpus=['0','1','2','3'],worker='fixture.1',entries=[entry])
+        planfile=tmp_path/'plan.json';planfile.write_text(json.dumps(plan))
+        code='''import json,sys
+    from pathlib import Path
+    from v8_dispatch import RuntimeProxy
+    p=Path(sys.argv[1]);plan=json.loads(p.read_text())
+    actor=RuntimeProxy(plan['entries'][0],plan,p)
+    assert actor.error and 'timed out' in actor.error,actor.error
+    assert actor.process.poll() is not None,'failed initialization leaked its child'
+    actor.close()
+    '''
+        child=subprocess.Popen([sys.executable,'-c',code,str(planfile)],start_new_session=True,
+                               env=dict(os.environ,PYTHONPATH=str(REPO/'scripts'),V8_RUNTIME_INIT_TIMEOUT='0.2'),
+                               stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+            try:out,err=child.communicate(timeout=4)
+&gt;           except subprocess.TimeoutExpired:pytest.fail('one wedged runtime blocks both cohorts without a startup timeout')
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: one wedged runtime blocks both cohorts without a startup timeout
+
+tests/test_srgc_v8_dispatch_audit.py:76: Failed</failure></testcase><testcase classname="tests.test_srgc_v8_dispatch_audit" name="test_idle_workers_do_not_rescan_every_task_before_entering_dispatch" time="0.002"><failure message="AssertionError: duplicate full DAG scans retain cohort locks ahead of the dispatch gate&#10;assert ['train', 'train'] == ['train']&#10;  &#10;  Left contains one more item: 'train'&#10;  Use -v to get more diff">tmp_path = PosixPath('/dev/shm/v8-audit-before-kms/test_idle_workers_do_not_resca0')
+
+    def test_idle_workers_do_not_rescan_every_task_before_entering_dispatch(tmp_path):
+        stop=threading.Event();calls=[]
+        class Runtime:
+            def verify_node(self):pass
+            def plan(self,phase):
+                calls.append(phase)
+                return [dict(kind='train',run_id='r',method_id='on_monitored',training_seed=5,
+                             horizon=275,config_hash='fixture',parent={})],False
+            def ready(self,task):return True
+            def native_busy(self,task):return False
+            def done(self,task):return False
+            def execute(self,*args):stop.set();return 75
+        pool=nodes.Pool(tmp_path/'olmo_math/.multi-node',dict(cohort='olmo_math'));pool.initialize()
+        state=nodes.read(pool.root/'state.json');state['phase']='train';nodes.atomic(pool.root/'state.json',state)
+        assert nodes.worker_loop_many([(pool,Runtime())],'node',stop,poll=.001)==75
+&gt;       assert calls==['train'],'duplicate full DAG scans retain cohort locks ahead of the dispatch gate'
+E       AssertionError: duplicate full DAG scans retain cohort locks ahead of the dispatch gate
+E       assert ['train', 'train'] == ['train']
+E         
+E         Left contains one more item: 'train'
+E         Use -v to get more diff
+
+tests/test_srgc_v8_dispatch_audit.py:99: AssertionError</failure></testcase></testsuite></testsuites>
