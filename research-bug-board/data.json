@@ -1,13 +1,13 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-08T14:36:17+09:00",
+  "recorded_at": "2026-11-08T14:54:44+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "e7c9d183099a4957e130432291332e05cae69432",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/e7c9d183099a4957e130432291332e05cae69432",
-    "all_available_commits": 1226,
-    "fix_commit_records": 123,
+    "source_commit": "f17ddeee39b2d536f965664937828a9353584232",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/f17ddeee39b2d536f965664937828a9353584232",
+    "all_available_commits": 1234,
+    "fix_commit_records": 125,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
     "first_commit_at": "2026-08-07T05:56:48+09:00",
@@ -29,13 +29,13 @@
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hang-fix-20261108:f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:e7c9d183099a4957e130432291332e05cae69432",
-      "refs/heads/v8-coord-fixes-20261108:40cffc5d85b2b94201779aaf6337e7e79896a70d",
+      "refs/heads/master:f17ddeee39b2d536f965664937828a9353584232",
+      "refs/heads/v8-coord-fixes-20261108:fc612ac9edc7d15b129a9649c65d5acc7d8723fb",
       "refs/heads/v8-modes:6821c9c09292662008eb4f933c74bae7490358ed",
       "refs/heads/v8-nodes:3adf26925b2b1c1bf572cf0e68f75b26bbae3ddc",
       "refs/heads/v8-perm:0719ee96d5a109e131c2626943d474a6b2e7a0b7",
-      "refs/heads/v8-runtime-fixes-20261108:84d5f1cf3ab5adcf4d636a65126bc52810f3d5de",
-      "refs/heads/v8-science-fixes-20261108:84d5f1cf3ab5adcf4d636a65126bc52810f3d5de",
+      "refs/heads/v8-runtime-fixes-20261108:0a43515950c1c9880a83ebfee73f1fb4189cbe49",
+      "refs/heads/v8-science-fixes-20261108:f13cd3d1392440d58e96e4f77b4147ad0aa62205",
       "refs/heads/v8-statefix:a085f266bf68849d1e24b0b96048680e77ef6563",
       "refs/heads/v8-status:a3675bbd4b6f678b3ef8fbacde56aaf072d0aafa",
       "refs/heads/v8-status2:21b071d2f2478b1f72a2c237368395cc2ebd179a",
@@ -49,7 +49,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:dad57ff13e92f6a1cd55e623640f7e129fa9f254"
+      "refs/remotes/origin/master:173c50063011aa04019f97812ee36f1b6705bff8"
     ]
   },
   "incidents": [
@@ -3868,6 +3868,15 @@
           "text": "두 상태 보기 모두 읽지 못한 파일 이름을 'ERROR some queue records could not be read …(counts incomplete)' / unreadable 목록으로 표시하고 나머지는 계속 센다. 시험 173 통과, v1.0.9 묶음 하네스 실패 0.",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/0719ee9",
           "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "새 supervisor의 v8_probe 기반 준비 상태에서도 손상·읽기 불가 state/job을 정상 준비·not_started로 숨기지 않게 unknown/STATUS ERROR로 표시했다. 노드 이름은 prefix가 아닌 FQDN 전체를 비교하고 launch PID가 다른 작업은 현재 실행 증거에서 제외한다. readonly-errors.xml14검사 통과; 파일 변경·신호·학습 시작 없음.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/173c50063011aa04019f97812ee36f1b6705bff8",
+          "evidence_kind": "code_test"
         }
       ]
     },
@@ -3955,6 +3964,14 @@
           "type": "remote_failure_report",
           "status": "remote_verification_pending",
           "text": "추가 보고: dispatch unverified / rank0 generation event 무한 대기 / olmo 도 동시에 학습 시작하게 고쳐. 단계 기록은 생성 완료·optimizer update의 증거가 아니다. 실제 원격 로그와 스택 미수신 상태이므로 OLMo 시작과 생성 정체 해결은 미확인으로 유지한다.",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "user",
+          "type": "remote_failure_report",
+          "status": "remote_verification_pending",
+          "text": "추가 사용자 보고: preparing this node no GPU work has been / 지금 노드 5개 mbpp 말고 안늘어난다. 기존 SRGC 코드 참고 지시에 따라 task 실패 범위와 child 감시를 비교했고 V8-042/043을 재현·수정했다. 실제 H100 OLMo 추가 배정·학습 시작은 원격 로그를 아직 받지 못해 미검증으로 남긴다.",
           "evidence_kind": "user_report"
         }
       ]
@@ -4223,6 +4240,106 @@
           "type": "remote_runtime_pending",
           "status": "remote_verification_pending",
           "text": "원격 master dad57ff exact 확인. 실행 중인 기존 고정 worker는 git pull만으로 바뀌지 않는다. source 완료와 실제 H100 OLMo 시작/생성 정체 해결을 구분한다. 원격 미시작 사용자 보고는 계속 미해결로 기록하며 공개 현황판 배포는 수행하지 않았다.",
+          "evidence_kind": "limitation"
+        }
+      ]
+    },
+    {
+      "id": "V8-042",
+      "title": "작업 하나의 실패가 모델 큐 전체를 중단시켜 기존 MBPP 5개 이외 노드가 배정되지 않을 수 있음",
+      "area": "V8 SRGC 실행 경로 일치·독립 작업 배정·시작 상태",
+      "severity": "critical",
+      "first_reported": "2026-11-08",
+      "introduction_commit": "c44f6d99",
+      "cause": "Pool.finish가 task exit 하나를 pool.fail로 올렸고 tick은 cohort.failure가 있으면 독립적인 다른 seed/SR25를 검사하지 않았다. 기존 SRGC cluster.run_worker·srgc_multi_queue·qwen35_worker는 개별 실패와 남은 ready/running 작업을 구분한다.",
+      "impact": "사용자는 MBPP5개 외 추가배정 없음·OLMo미시작·Preparing/no GPU work 반복을 보고했다. 실제 원격 state/error/stack이 없어 이 코드 결함이 현장 원인인지는 미검증이다.",
+      "attribution": "Codex V8 coordinator의 작업 실패 범위와 별도 child 감시/상태 설계. 기존 SRGC 구현을 대조해 수정했으며 원본 수치 패키지·reward/checkpoint 기록은 보존했다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "수정 소스",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/173c50063011aa04019f97812ee36f1b6705bff8"
+        },
+        {
+          "kind": "code_test",
+          "label": "실패 재현·SRGC 대조·원시 검사와 한계",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/f17ddeee39b2d536f965664937828a9353584232/research/v8-srgc-parity-20261108/record.json"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "user",
+          "type": "reported",
+          "status": "open",
+          "text": "기존 srgc 코드 같은거 다 참고해서 고치라 / 노드5개 mbpp 말고 안늘어난다 / preparing this node no GPU work has been",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "34be136/fc612ac에서 task 실패만 보존·보류하고 독립 ready 작업은 계속 배정한다. 마지막에 해결되지 않은 실패가 있으면 성공/freeze/평가로 넘어가지 않는다. 기존 task-exit 전역 중단은 같은 failed job이 확인될 때만 history에 보존한 뒤 작업 범위로 옮긴다. binding·inode·시도·checkpoint는 그대로이며 자동 재시도하지 않는다. 명시적 --retry-failed는 task failure만 있어도 동작한다. 이전21971b3에서2회귀실패/1구조오류보존대조통과. 실제5seed DAG의 CPU fixture: 기존MBPP5lease+양쪽SR25실패/전역중단을 둔 뒤 새12worker에12고유작업을 배정(OLMo 최소5), 실패작업 재시도0. checkpoint25·binding 바이트/inode 보존. core71검사, 병합 SCI 포함34검사, 전체248검사 통과.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/173c50063011aa04019f97812ee36f1b6705bff8",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "remote_verification_pending",
+          "status": "remote_verification_pending",
+          "text": "173c500 원격exact 확인. 실제 H100 추가 할당·OLMo optimizer update·처리량·노드 손실시간은 측정하지 못했다. 체크포인트/optimizer/RNG/25-update 기록은 보존하고 기존 고정 worker는 재실행 때 새 제어가 적용된다. 공개 현황판 배포는 별도 미실행이다.",
+          "evidence_kind": "limitation"
+        }
+      ]
+    },
+    {
+      "id": "V8-043",
+      "title": "모델 작업 전 상태를 무조건 Preparing으로 표시하고 기존 SRGC의 전체 child 정체 감시를 재사용하지 않음",
+      "area": "V8 SRGC 실행 경로 일치·독립 작업 배정·시작 상태",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "introduction_commit": "",
+      "cause": "supervisor는 rank work event가 없으면 현재 큐 실패·할당·preflight·실제 로그와 무관하게 Preparing을 표시했다. 별도 V8 Runtime.process는 child가 살아 있는 동안 무한 대기해 model.generate 진입 전 모델 로딩·기타 단계 정체는 생성 관찰기로 잡을 수 없었다.",
+      "impact": "사용자는 MBPP5개 외 추가배정 없음·OLMo미시작·Preparing/no GPU work 반복을 보고했다. 실제 원격 state/error/stack이 없어 이 코드 결함이 현장 원인인지는 미검증이다.",
+      "attribution": "Codex V8 coordinator의 작업 실패 범위와 별도 child 감시/상태 설계. 기존 SRGC 구현을 대조해 수정했으며 원본 수치 패키지·reward/checkpoint 기록은 보존했다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "수정 소스",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/173c50063011aa04019f97812ee36f1b6705bff8"
+        },
+        {
+          "kind": "code_test",
+          "label": "실패 재현·SRGC 대조·원시 검사와 한계",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/f17ddeee39b2d536f965664937828a9353584232/research/v8-srgc-parity-20261108/record.json"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "user",
+          "type": "reported",
+          "status": "open",
+          "text": "기존 srgc 코드 같은거 다 참고해서 고치라 / 노드5개 mbpp 말고 안늘어난다 / preparing this node no GPU work has been",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "b9cddf8에서 GPU 자식을 기존 srgc_rebuttal.cluster.run_child로 실행해 작업 signature·heartbeat 분리, 무진행 timeout, 프로세스 그룹 중단/정리·lease 상속을 재사용한다. timeout은 task exit124로 보존한다. 작업 기록 전에는 기존 SRGC NODE/BLOCKED처럼 ASSIGNED/NOT ASSIGNED/BLOCKED, 모델·seed·방법·실제 log·마지막 launcher 출력·큐 실패를 표시한다. 173c500은 손상 기록을 STATUS ERROR/unknown으로 유지한다. 실제 기존 SRGC run_child CPU 자식: 무진행 timeout124, 실제작업파일변경시 정상완료0, task FD상속, checkpoint바이트 보존2검사. 다른 launch/FQDN 배제·실제오류표시39검사, 읽기오류14검사 통과. 원래30trainer파일 해시 동일. 실제 H100 정체 근본 원인·해결 여부를 이 결과로 판정하지 않는다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/173c50063011aa04019f97812ee36f1b6705bff8",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "remote_verification_pending",
+          "status": "remote_verification_pending",
+          "text": "173c500 원격exact 확인. 실제 H100 추가 할당·OLMo optimizer update·처리량·노드 손실시간은 측정하지 못했다. 체크포인트/optimizer/RNG/25-update 기록은 보존하고 기존 고정 worker는 재실행 때 새 제어가 적용된다. 공개 현황판 배포는 별도 미실행이다.",
           "evidence_kind": "limitation"
         }
       ]

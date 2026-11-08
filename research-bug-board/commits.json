@@ -12972,6 +12972,86 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "21971b346e8a769be8b9af448b167a52c8d929e5",
+      "at": "2026-11-08T14:36:17+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Record coupled startup and opaque stalled generation without closing remote failure",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/21971b346e8a769be8b9af448b167a52c8d929e5",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "34be136975cb74f141dd6031f527b04df331f391",
+      "at": "2026-11-08T14:45:47+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Match SRGC task failure isolation so five MBPP jobs cannot block the node pool",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/34be136975cb74f141dd6031f527b04df331f391",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "f13cd3d1392440d58e96e4f77b4147ad0aa62205",
+      "at": "2026-11-08T14:38:23+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Fix v8 science audit findings SCI-01..SCI-18 (costs, seeds, aliases, budget analysis)",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/f13cd3d1392440d58e96e4f77b4147ad0aa62205",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "fc612ac9edc7d15b129a9649c65d5acc7d8723fb",
+      "at": "2026-11-08T14:46:12+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve concurrent v8 science fixes with task-level failure isolation",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/fc612ac9edc7d15b129a9649c65d5acc7d8723fb",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "b9cddf864a04a12e37dbdfdf1f6f36c1871a226d",
+      "at": "2026-11-08T14:51:39+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Reuse SRGC child watchdog and show actual blockers before GPU work",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/b9cddf864a04a12e37dbdfdf1f6f36c1871a226d",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "0a43515950c1c9880a83ebfee73f1fb4189cbe49",
+      "at": "2026-11-08T14:52:09+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Fix v8 runtime audit findings RT-01..RT-12 (rank faults, kills, stops, exit 75)",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/0a43515950c1c9880a83ebfee73f1fb4189cbe49",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "173c50063011aa04019f97812ee36f1b6705bff8",
+      "at": "2026-11-08T14:52:54+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Report unreadable startup records as status errors",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/173c50063011aa04019f97812ee36f1b6705bff8",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "f17ddeee39b2d536f965664937828a9353584232",
+      "at": "2026-11-08T14:53:52+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve SRGC parity audit, failed reproductions and exact resume sources",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/f17ddeee39b2d536f965664937828a9353584232",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }
