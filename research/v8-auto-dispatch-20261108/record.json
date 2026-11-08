@@ -13,7 +13,9 @@
       "docs/V8_MULTINODE_H100.md": "377effa0669ab4f7ecdda67112308cae10175babf2c21f6c7123c8b9b348cd11"
     },
     "paper_runner_commit": "3d0c08336950d2697dc66cbe3570a230e449f33b",
-    "frozen_trainer_changed_files": 0
+    "frozen_trainer_changed_files": 0,
+    "implementation_commit": "375cd4ed17ec2c2c2f0fdbf49d7d7a8789b5d6f1",
+    "implementation_remote_exact": "375cd4ed17ec2c2c2f0fdbf49d7d7a8789b5d6f1"
   },
   "implementation": {
     "command": "sh \"$EXPORT_CODE_ROOT/scripts/run_v8_nodes.sh\"",
@@ -107,7 +109,8 @@
       "total_tasks": 71,
       "workers": 3
     },
-    "first_suite_tests_passed": 79
+    "first_suite_tests_passed": 79,
+    "bug_ledger_retention_tests_passed": 6
   },
   "training_parallel_capacity": {
     "olmo_math": 55,

@@ -2704,6 +2704,16 @@
         "status": "code_fixed",
         "text": "checkpoint와 evaluation protocol의 전체 해시로 평가 lease를 잡고, control lock 아래 작업당 불변 행렬을 기록한다. 실제 v8 CPU 작업자3개·28작업을 모두 단일 실행으로 확인하고, 모순된 정의와 누락된 출력은 성공으로 보지 않았다. 기존 paper run_h100.sh 자체는 수정하지 않았다. 새 run_v8_nodes.sh 경로에서 적용되며, 실제 다중 H100과 공유 파일시스템 검증은 남아 있다.",
         "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "multi_cohort_dispatch_verified",
+        "status": "code_fixed",
+        "evidence_kind": "code_test",
+        "code_commit": "375cd4ed17ec2c2c2f0fdbf49d7d7a8789b5d6f1",
+        "text": "사용자 지시에 따라 기본명령 하나로 OLMo MATH와 Qwen MBPP의 준비된 작업을 노드가 자동 분담하게 확장했다. 모델별 노드 수를 고정하지 않는다. 각 cohort의 budget/입력/단계와 GPU lease는 보존한다. 실제v8 CPU3worker/2cohort/71작업에서 중복0·같은worker의cohort간작업겹침0·선택된예산endpoint검증을 확인했다. 전체80소프트웨어검사통과. 각55/합110은학습그래프상한이며 실제H100동시실행/속도측정값이아니다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/375cd4ed17ec2c2c2f0fdbf49d7d7a8789b5d6f1/research/v8-auto-dispatch-20261108"
       }
     ]
   },

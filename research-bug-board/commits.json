@@ -12312,6 +12312,26 @@
       "attribution": [],
       "is_fix": true,
       "gemma": false
+    },
+    {
+      "hash": "79c9a64e050bf4d8fe6acb1ee59ec83a0fbb326f",
+      "at": "2026-11-08T09:37:16+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve V8 budget checkpoint omission and correction evidence",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/79c9a64e050bf4d8fe6acb1ee59ec83a0fbb326f",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "375cd4ed17ec2c2c2f0fdbf49d7d7a8789b5d6f1",
+      "at": "2026-11-08T09:54:37+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Automatically share both V8 cohorts with one node command",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/375cd4ed17ec2c2c2f0fdbf49d7d7a8789b5d6f1",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }
