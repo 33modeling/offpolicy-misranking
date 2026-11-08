@@ -12332,6 +12332,16 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "b29e5477448a33caa949ecfa4baf028444dd90ec",
+      "at": "2026-11-08T09:55:13+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Record automatic V8 node dispatch and concurrency scope",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/b29e5477448a33caa949ecfa4baf028444dd90ec",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

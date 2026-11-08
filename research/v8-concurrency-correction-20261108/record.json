@@ -1,0 +1,63 @@
+{
+  "kind": "correction of practical concurrency claim; dependency-and-average-time estimate only",
+  "user_instruction": "모든 분기가 초반에 될리가 없잖아",
+  "code_commit": "b29e5477448a33caa949ecfa4baf028444dd90ec",
+  "runner_commit": "3d0c08336950d2697dc66cbe3570a230e449f33b",
+  "hypothesis": "Useful node concurrency must account for parent checkpoint availability AND earlier branch completion, not static graph width.",
+  "cause": "Answered the real-time node maximum question using a hypothetical all-parents-ready graph bound of55 per cohort/110combined; that does not establish a realized or required node count.",
+  "correction": "Withdraw110 as a practical runtime maximum/allocation answer. Entire-pipeline maximum is unmeasured and cannot be established from currently available durations. Initial20ready jobs is only a starting-state fact.",
+  "inputs": "historical cost_basis averages in pinned cohort configs, reproduced in rough-training-timeline.json; GPU-hours divided by4 for walltime on a4GPU job",
+  "data_model_transformation": {
+    "data": "synthetic dependency timeline using historical cohort average costs; no model weights loaded",
+    "model": "OLMo MATH and Qwen MBPP labels only",
+    "transformation": "none",
+    "seeds": [
+      5,
+      6,
+      7,
+      8,
+      9
+    ],
+    "updates": {
+      "prefix": 25,
+      "horizon": 275
+    },
+    "SR_branches": [
+      25,
+      50,
+      75,
+      100,
+      125,
+      150,
+      175,
+      200,
+      225,
+      250
+    ]
+  },
+  "metric_definition": "Count tasks whose start<=event_time<end on an infinite-worker timeline, with each SR task released at its own parent checkpoint; no actual GPU execution.",
+  "derived_estimates": {
+    "OLMo_training_only_peak": 40,
+    "Qwen_training_only_peak": 30,
+    "same_start_combined_training_only_peak": 55,
+    "combined_training_peak_wall_hours": 4.2945
+  },
+  "exclusions": [
+    "Uniform destination",
+    "budget extension",
+    "final evaluation",
+    "model initialization",
+    "checkpoint/I/O overhead",
+    "per-seed timing variation",
+    "resource contention"
+  ],
+  "scientific_results": {
+    "new_GPU_jobs": 0,
+    "new_RLVR_measurements": 0,
+    "actual_full_pipeline_peak": "unknown",
+    "actual_H100_speedup": "unmeasured"
+  },
+  "provenance": "rough-training-timeline.json has inputs, assumptions and every job/event; estimate-training-only.py recomputes the table; prior graph-only software tests are retained.",
+  "checks": "SR25duration OLMo4.8wallhours, Qwen19.7875wallhours; every task released only after its parent; independent closed-form event count agrees with saved timeline.",
+  "scope": "Documentation and research-record correction only. Executable coordinator, frozen trainer, in-flight data/checkpoints and task definitions unchanged."
+}

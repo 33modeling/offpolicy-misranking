@@ -1,0 +1,1263 @@
+{
+  "kind": "rough dependency-and-average-time TRAINING-only estimate, not measured H100 concurrency",
+  "assumptions": [
+    "All five source prefix25 checkpoints available at time0",
+    "Infinite workers; each SR branch starts immediately when its parent checkpoint is saved",
+    "Each seed uses cohort-average historical timing; no seed variation",
+    "No checkpoint/model-init/I/O/shared-storage scheduling overhead",
+    "Uniform destination, budget extension, evaluation phases excluded because durations/trigger/endpoints are not known"
+  ],
+  "inputs": {
+    "olmo_math": {
+      "cost_basis": {
+        "unit": "GPU-hours on 4xH100 (recorded device-hours)",
+        "sr_update": 0.0768,
+        "on_training_update": 0.0788,
+        "on_refresh": 0.653,
+        "srgc_check_extra": 0.24,
+        "evaluation_final": null,
+        "cache_build": null,
+        "prefix": null,
+        "sources": [
+          "v7/PAPER_EN.txt Fig.4 (seeds 3/4, 250 updates: SR 19.20, On training 19.69 + scoring 6.53, Switch 21.74 GPU-h)",
+          "v7/evidence/2026-10-01/math-selection-components.md (seeds 5-9 candidate side: On 6.19 GPU-h/10 rounds, Switch 1.72 GPU-h/2 rounds)"
+        ]
+      },
+      "On_25_update_wall_hours": 0.7157500000000001,
+      "SR_update_wall_hours": 0.0192
+    },
+    "qwen_mbpp": {
+      "cost_basis": {
+        "unit": "GPU-hours on 4xH100 (recorded device-hours)",
+        "sr_update": 0.3166,
+        "on_training_update": 0.3456,
+        "on_refresh": 5.65,
+        "srgc_check_extra": 2.31,
+        "evaluation_final": 15.5,
+        "cache_build": 18.0,
+        "prefix": 11.8,
+        "sources": [
+          "v7/evidence/2026-10-19/qwen-mbpp-gpu-times.md (SR >=79.16 GPU-h/250 updates; On refresh 5.65, Switch check 7.96 GPU-h; complete cache invocations 18.0-18.4 GPU-h)",
+          "v7/evidence/2026-10-19/qwen-mbpp-gpu-times.csv (evaluation_gpu_hours 12.4-18.5 per endpoint; prefix 11.2-12.4)"
+        ]
+      },
+      "On_25_update_wall_hours": 4.15,
+      "SR_update_wall_hours": 0.07915
+    }
+  },
+  "training_only_peak_by_cohort": {
+    "olmo_math": 40,
+    "qwen_mbpp": 30
+  },
+  "simultaneous_two_cohort_training_peak": {
+    "wall_hours": 4.294500000000001,
+    "active_total": 55,
+    "by_cohort": {
+      "olmo_math": 40,
+      "qwen_mbpp": 15
+    }
+  },
+  "timeline": [
+    {
+      "wall_hours": 0,
+      "active_total": 20,
+      "by_cohort": {
+        "olmo_math": 10,
+        "qwen_mbpp": 10
+      }
+    },
+    {
+      "wall_hours": 0.7157500000000001,
+      "active_total": 25,
+      "by_cohort": {
+        "olmo_math": 15,
+        "qwen_mbpp": 10
+      }
+    },
+    {
+      "wall_hours": 1.4315000000000002,
+      "active_total": 30,
+      "by_cohort": {
+        "olmo_math": 20,
+        "qwen_mbpp": 10
+      }
+    },
+    {
+      "wall_hours": 2.1472500000000005,
+      "active_total": 35,
+      "by_cohort": {
+        "olmo_math": 25,
+        "qwen_mbpp": 10
+      }
+    },
+    {
+      "wall_hours": 2.8630000000000004,
+      "active_total": 40,
+      "by_cohort": {
+        "olmo_math": 30,
+        "qwen_mbpp": 10
+      }
+    },
+    {
+      "wall_hours": 3.5787500000000003,
+      "active_total": 45,
+      "by_cohort": {
+        "olmo_math": 35,
+        "qwen_mbpp": 10
+      }
+    },
+    {
+      "wall_hours": 4.15,
+      "active_total": 50,
+      "by_cohort": {
+        "olmo_math": 35,
+        "qwen_mbpp": 15
+      }
+    },
+    {
+      "wall_hours": 4.294500000000001,
+      "active_total": 55,
+      "by_cohort": {
+        "olmo_math": 40,
+        "qwen_mbpp": 15
+      }
+    },
+    {
+      "wall_hours": 4.8,
+      "active_total": 50,
+      "by_cohort": {
+        "olmo_math": 35,
+        "qwen_mbpp": 15
+      }
+    },
+    {
+      "wall_hours": 5.010250000000001,
+      "active_total": 55,
+      "by_cohort": {
+        "olmo_math": 40,
+        "qwen_mbpp": 15
+      }
+    },
+    {
+      "wall_hours": 5.035749999999999,
+      "active_total": 50,
+      "by_cohort": {
+        "olmo_math": 35,
+        "qwen_mbpp": 15
+      }
+    },
+    {
+      "wall_hours": 5.2715,
+      "active_total": 45,
+      "by_cohort": {
+        "olmo_math": 30,
+        "qwen_mbpp": 15
+      }
+    },
+    {
+      "wall_hours": 5.507250000000001,
+      "active_total": 40,
+      "by_cohort": {
+        "olmo_math": 25,
+        "qwen_mbpp": 15
+      }
+    },
+    {
+      "wall_hours": 5.726000000000001,
+      "active_total": 45,
+      "by_cohort": {
+        "olmo_math": 30,
+        "qwen_mbpp": 15
+      }
+    },
+    {
+      "wall_hours": 5.743,
+      "active_total": 40,
+      "by_cohort": {
+        "olmo_math": 25,
+        "qwen_mbpp": 15
+      }
+    },
+    {
+      "wall_hours": 5.97875,
+      "active_total": 35,
+      "by_cohort": {
+        "olmo_math": 20,
+        "qwen_mbpp": 15
+      }
+    },
+    {
+      "wall_hours": 6.214500000000001,
+      "active_total": 30,
+      "by_cohort": {
+        "olmo_math": 15,
+        "qwen_mbpp": 15
+      }
+    },
+    {
+      "wall_hours": 6.441750000000001,
+      "active_total": 35,
+      "by_cohort": {
+        "olmo_math": 20,
+        "qwen_mbpp": 15
+      }
+    },
+    {
+      "wall_hours": 6.4502500000000005,
+      "active_total": 30,
+      "by_cohort": {
+        "olmo_math": 15,
+        "qwen_mbpp": 15
+      }
+    },
+    {
+      "wall_hours": 6.686000000000001,
+      "active_total": 25,
+      "by_cohort": {
+        "olmo_math": 10,
+        "qwen_mbpp": 15
+      }
+    },
+    {
+      "wall_hours": 6.921750000000001,
+      "active_total": 20,
+      "by_cohort": {
+        "olmo_math": 5,
+        "qwen_mbpp": 15
+      }
+    },
+    {
+      "wall_hours": 7.157500000000001,
+      "active_total": 15,
+      "by_cohort": {
+        "olmo_math": 0,
+        "qwen_mbpp": 15
+      }
+    },
+    {
+      "wall_hours": 8.3,
+      "active_total": 20,
+      "by_cohort": {
+        "olmo_math": 0,
+        "qwen_mbpp": 20
+      }
+    },
+    {
+      "wall_hours": 12.450000000000001,
+      "active_total": 25,
+      "by_cohort": {
+        "olmo_math": 0,
+        "qwen_mbpp": 25
+      }
+    },
+    {
+      "wall_hours": 16.6,
+      "active_total": 30,
+      "by_cohort": {
+        "olmo_math": 0,
+        "qwen_mbpp": 30
+      }
+    },
+    {
+      "wall_hours": 19.787499999999998,
+      "active_total": 25,
+      "by_cohort": {
+        "olmo_math": 0,
+        "qwen_mbpp": 25
+      }
+    },
+    {
+      "wall_hours": 20.75,
+      "active_total": 30,
+      "by_cohort": {
+        "olmo_math": 0,
+        "qwen_mbpp": 30
+      }
+    },
+    {
+      "wall_hours": 21.958750000000002,
+      "active_total": 25,
+      "by_cohort": {
+        "olmo_math": 0,
+        "qwen_mbpp": 25
+      }
+    },
+    {
+      "wall_hours": 24.130000000000003,
+      "active_total": 20,
+      "by_cohort": {
+        "olmo_math": 0,
+        "qwen_mbpp": 20
+      }
+    },
+    {
+      "wall_hours": 24.900000000000002,
+      "active_total": 25,
+      "by_cohort": {
+        "olmo_math": 0,
+        "qwen_mbpp": 25
+      }
+    },
+    {
+      "wall_hours": 26.301250000000003,
+      "active_total": 20,
+      "by_cohort": {
+        "olmo_math": 0,
+        "qwen_mbpp": 20
+      }
+    },
+    {
+      "wall_hours": 28.472500000000004,
+      "active_total": 15,
+      "by_cohort": {
+        "olmo_math": 0,
+        "qwen_mbpp": 15
+      }
+    },
+    {
+      "wall_hours": 29.050000000000004,
+      "active_total": 20,
+      "by_cohort": {
+        "olmo_math": 0,
+        "qwen_mbpp": 20
+      }
+    },
+    {
+      "wall_hours": 30.643749999999997,
+      "active_total": 15,
+      "by_cohort": {
+        "olmo_math": 0,
+        "qwen_mbpp": 15
+      }
+    },
+    {
+      "wall_hours": 32.815000000000005,
+      "active_total": 10,
+      "by_cohort": {
+        "olmo_math": 0,
+        "qwen_mbpp": 10
+      }
+    },
+    {
+      "wall_hours": 33.2,
+      "active_total": 15,
+      "by_cohort": {
+        "olmo_math": 0,
+        "qwen_mbpp": 15
+      }
+    },
+    {
+      "wall_hours": 34.986250000000005,
+      "active_total": 10,
+      "by_cohort": {
+        "olmo_math": 0,
+        "qwen_mbpp": 10
+      }
+    },
+    {
+      "wall_hours": 37.157500000000006,
+      "active_total": 5,
+      "by_cohort": {
+        "olmo_math": 0,
+        "qwen_mbpp": 5
+      }
+    },
+    {
+      "wall_hours": 37.35,
+      "active_total": 10,
+      "by_cohort": {
+        "olmo_math": 0,
+        "qwen_mbpp": 10
+      }
+    },
+    {
+      "wall_hours": 39.32875,
+      "active_total": 5,
+      "by_cohort": {
+        "olmo_math": 0,
+        "qwen_mbpp": 5
+      }
+    },
+    {
+      "wall_hours": 41.5,
+      "active_total": 0,
+      "by_cohort": {
+        "olmo_math": 0,
+        "qwen_mbpp": 0
+      }
+    }
+  ],
+  "jobs": [
+    {
+      "cohort": "olmo_math",
+      "seed": 5,
+      "kind": "On",
+      "start": 0,
+      "end": 7.157500000000001
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 5,
+      "kind": "SR",
+      "tau": 25,
+      "start": 0.0,
+      "end": 4.8
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 5,
+      "kind": "SR",
+      "tau": 50,
+      "start": 0.7157500000000001,
+      "end": 5.035749999999999
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 5,
+      "kind": "SR",
+      "tau": 75,
+      "start": 1.4315000000000002,
+      "end": 5.2715
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 5,
+      "kind": "SR",
+      "tau": 100,
+      "start": 2.1472500000000005,
+      "end": 5.507250000000001
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 5,
+      "kind": "SR",
+      "tau": 125,
+      "start": 2.8630000000000004,
+      "end": 5.743
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 5,
+      "kind": "SR",
+      "tau": 150,
+      "start": 3.5787500000000003,
+      "end": 5.97875
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 5,
+      "kind": "SR",
+      "tau": 175,
+      "start": 4.294500000000001,
+      "end": 6.214500000000001
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 5,
+      "kind": "SR",
+      "tau": 200,
+      "start": 5.010250000000001,
+      "end": 6.4502500000000005
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 5,
+      "kind": "SR",
+      "tau": 225,
+      "start": 5.726000000000001,
+      "end": 6.686000000000001
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 5,
+      "kind": "SR",
+      "tau": 250,
+      "start": 6.441750000000001,
+      "end": 6.921750000000001
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 6,
+      "kind": "On",
+      "start": 0,
+      "end": 7.157500000000001
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 6,
+      "kind": "SR",
+      "tau": 25,
+      "start": 0.0,
+      "end": 4.8
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 6,
+      "kind": "SR",
+      "tau": 50,
+      "start": 0.7157500000000001,
+      "end": 5.035749999999999
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 6,
+      "kind": "SR",
+      "tau": 75,
+      "start": 1.4315000000000002,
+      "end": 5.2715
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 6,
+      "kind": "SR",
+      "tau": 100,
+      "start": 2.1472500000000005,
+      "end": 5.507250000000001
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 6,
+      "kind": "SR",
+      "tau": 125,
+      "start": 2.8630000000000004,
+      "end": 5.743
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 6,
+      "kind": "SR",
+      "tau": 150,
+      "start": 3.5787500000000003,
+      "end": 5.97875
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 6,
+      "kind": "SR",
+      "tau": 175,
+      "start": 4.294500000000001,
+      "end": 6.214500000000001
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 6,
+      "kind": "SR",
+      "tau": 200,
+      "start": 5.010250000000001,
+      "end": 6.4502500000000005
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 6,
+      "kind": "SR",
+      "tau": 225,
+      "start": 5.726000000000001,
+      "end": 6.686000000000001
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 6,
+      "kind": "SR",
+      "tau": 250,
+      "start": 6.441750000000001,
+      "end": 6.921750000000001
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 7,
+      "kind": "On",
+      "start": 0,
+      "end": 7.157500000000001
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 7,
+      "kind": "SR",
+      "tau": 25,
+      "start": 0.0,
+      "end": 4.8
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 7,
+      "kind": "SR",
+      "tau": 50,
+      "start": 0.7157500000000001,
+      "end": 5.035749999999999
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 7,
+      "kind": "SR",
+      "tau": 75,
+      "start": 1.4315000000000002,
+      "end": 5.2715
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 7,
+      "kind": "SR",
+      "tau": 100,
+      "start": 2.1472500000000005,
+      "end": 5.507250000000001
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 7,
+      "kind": "SR",
+      "tau": 125,
+      "start": 2.8630000000000004,
+      "end": 5.743
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 7,
+      "kind": "SR",
+      "tau": 150,
+      "start": 3.5787500000000003,
+      "end": 5.97875
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 7,
+      "kind": "SR",
+      "tau": 175,
+      "start": 4.294500000000001,
+      "end": 6.214500000000001
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 7,
+      "kind": "SR",
+      "tau": 200,
+      "start": 5.010250000000001,
+      "end": 6.4502500000000005
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 7,
+      "kind": "SR",
+      "tau": 225,
+      "start": 5.726000000000001,
+      "end": 6.686000000000001
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 7,
+      "kind": "SR",
+      "tau": 250,
+      "start": 6.441750000000001,
+      "end": 6.921750000000001
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 8,
+      "kind": "On",
+      "start": 0,
+      "end": 7.157500000000001
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 8,
+      "kind": "SR",
+      "tau": 25,
+      "start": 0.0,
+      "end": 4.8
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 8,
+      "kind": "SR",
+      "tau": 50,
+      "start": 0.7157500000000001,
+      "end": 5.035749999999999
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 8,
+      "kind": "SR",
+      "tau": 75,
+      "start": 1.4315000000000002,
+      "end": 5.2715
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 8,
+      "kind": "SR",
+      "tau": 100,
+      "start": 2.1472500000000005,
+      "end": 5.507250000000001
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 8,
+      "kind": "SR",
+      "tau": 125,
+      "start": 2.8630000000000004,
+      "end": 5.743
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 8,
+      "kind": "SR",
+      "tau": 150,
+      "start": 3.5787500000000003,
+      "end": 5.97875
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 8,
+      "kind": "SR",
+      "tau": 175,
+      "start": 4.294500000000001,
+      "end": 6.214500000000001
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 8,
+      "kind": "SR",
+      "tau": 200,
+      "start": 5.010250000000001,
+      "end": 6.4502500000000005
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 8,
+      "kind": "SR",
+      "tau": 225,
+      "start": 5.726000000000001,
+      "end": 6.686000000000001
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 8,
+      "kind": "SR",
+      "tau": 250,
+      "start": 6.441750000000001,
+      "end": 6.921750000000001
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 9,
+      "kind": "On",
+      "start": 0,
+      "end": 7.157500000000001
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 9,
+      "kind": "SR",
+      "tau": 25,
+      "start": 0.0,
+      "end": 4.8
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 9,
+      "kind": "SR",
+      "tau": 50,
+      "start": 0.7157500000000001,
+      "end": 5.035749999999999
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 9,
+      "kind": "SR",
+      "tau": 75,
+      "start": 1.4315000000000002,
+      "end": 5.2715
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 9,
+      "kind": "SR",
+      "tau": 100,
+      "start": 2.1472500000000005,
+      "end": 5.507250000000001
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 9,
+      "kind": "SR",
+      "tau": 125,
+      "start": 2.8630000000000004,
+      "end": 5.743
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 9,
+      "kind": "SR",
+      "tau": 150,
+      "start": 3.5787500000000003,
+      "end": 5.97875
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 9,
+      "kind": "SR",
+      "tau": 175,
+      "start": 4.294500000000001,
+      "end": 6.214500000000001
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 9,
+      "kind": "SR",
+      "tau": 200,
+      "start": 5.010250000000001,
+      "end": 6.4502500000000005
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 9,
+      "kind": "SR",
+      "tau": 225,
+      "start": 5.726000000000001,
+      "end": 6.686000000000001
+    },
+    {
+      "cohort": "olmo_math",
+      "seed": 9,
+      "kind": "SR",
+      "tau": 250,
+      "start": 6.441750000000001,
+      "end": 6.921750000000001
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 5,
+      "kind": "On",
+      "start": 0,
+      "end": 41.5
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 5,
+      "kind": "SR",
+      "tau": 25,
+      "start": 0.0,
+      "end": 19.787499999999998
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 5,
+      "kind": "SR",
+      "tau": 50,
+      "start": 4.15,
+      "end": 21.958750000000002
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 5,
+      "kind": "SR",
+      "tau": 75,
+      "start": 8.3,
+      "end": 24.130000000000003
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 5,
+      "kind": "SR",
+      "tau": 100,
+      "start": 12.450000000000001,
+      "end": 26.301250000000003
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 5,
+      "kind": "SR",
+      "tau": 125,
+      "start": 16.6,
+      "end": 28.472500000000004
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 5,
+      "kind": "SR",
+      "tau": 150,
+      "start": 20.75,
+      "end": 30.643749999999997
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 5,
+      "kind": "SR",
+      "tau": 175,
+      "start": 24.900000000000002,
+      "end": 32.815000000000005
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 5,
+      "kind": "SR",
+      "tau": 200,
+      "start": 29.050000000000004,
+      "end": 34.986250000000005
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 5,
+      "kind": "SR",
+      "tau": 225,
+      "start": 33.2,
+      "end": 37.157500000000006
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 5,
+      "kind": "SR",
+      "tau": 250,
+      "start": 37.35,
+      "end": 39.32875
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 6,
+      "kind": "On",
+      "start": 0,
+      "end": 41.5
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 6,
+      "kind": "SR",
+      "tau": 25,
+      "start": 0.0,
+      "end": 19.787499999999998
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 6,
+      "kind": "SR",
+      "tau": 50,
+      "start": 4.15,
+      "end": 21.958750000000002
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 6,
+      "kind": "SR",
+      "tau": 75,
+      "start": 8.3,
+      "end": 24.130000000000003
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 6,
+      "kind": "SR",
+      "tau": 100,
+      "start": 12.450000000000001,
+      "end": 26.301250000000003
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 6,
+      "kind": "SR",
+      "tau": 125,
+      "start": 16.6,
+      "end": 28.472500000000004
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 6,
+      "kind": "SR",
+      "tau": 150,
+      "start": 20.75,
+      "end": 30.643749999999997
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 6,
+      "kind": "SR",
+      "tau": 175,
+      "start": 24.900000000000002,
+      "end": 32.815000000000005
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 6,
+      "kind": "SR",
+      "tau": 200,
+      "start": 29.050000000000004,
+      "end": 34.986250000000005
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 6,
+      "kind": "SR",
+      "tau": 225,
+      "start": 33.2,
+      "end": 37.157500000000006
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 6,
+      "kind": "SR",
+      "tau": 250,
+      "start": 37.35,
+      "end": 39.32875
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 7,
+      "kind": "On",
+      "start": 0,
+      "end": 41.5
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 7,
+      "kind": "SR",
+      "tau": 25,
+      "start": 0.0,
+      "end": 19.787499999999998
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 7,
+      "kind": "SR",
+      "tau": 50,
+      "start": 4.15,
+      "end": 21.958750000000002
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 7,
+      "kind": "SR",
+      "tau": 75,
+      "start": 8.3,
+      "end": 24.130000000000003
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 7,
+      "kind": "SR",
+      "tau": 100,
+      "start": 12.450000000000001,
+      "end": 26.301250000000003
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 7,
+      "kind": "SR",
+      "tau": 125,
+      "start": 16.6,
+      "end": 28.472500000000004
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 7,
+      "kind": "SR",
+      "tau": 150,
+      "start": 20.75,
+      "end": 30.643749999999997
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 7,
+      "kind": "SR",
+      "tau": 175,
+      "start": 24.900000000000002,
+      "end": 32.815000000000005
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 7,
+      "kind": "SR",
+      "tau": 200,
+      "start": 29.050000000000004,
+      "end": 34.986250000000005
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 7,
+      "kind": "SR",
+      "tau": 225,
+      "start": 33.2,
+      "end": 37.157500000000006
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 7,
+      "kind": "SR",
+      "tau": 250,
+      "start": 37.35,
+      "end": 39.32875
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 8,
+      "kind": "On",
+      "start": 0,
+      "end": 41.5
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 8,
+      "kind": "SR",
+      "tau": 25,
+      "start": 0.0,
+      "end": 19.787499999999998
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 8,
+      "kind": "SR",
+      "tau": 50,
+      "start": 4.15,
+      "end": 21.958750000000002
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 8,
+      "kind": "SR",
+      "tau": 75,
+      "start": 8.3,
+      "end": 24.130000000000003
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 8,
+      "kind": "SR",
+      "tau": 100,
+      "start": 12.450000000000001,
+      "end": 26.301250000000003
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 8,
+      "kind": "SR",
+      "tau": 125,
+      "start": 16.6,
+      "end": 28.472500000000004
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 8,
+      "kind": "SR",
+      "tau": 150,
+      "start": 20.75,
+      "end": 30.643749999999997
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 8,
+      "kind": "SR",
+      "tau": 175,
+      "start": 24.900000000000002,
+      "end": 32.815000000000005
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 8,
+      "kind": "SR",
+      "tau": 200,
+      "start": 29.050000000000004,
+      "end": 34.986250000000005
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 8,
+      "kind": "SR",
+      "tau": 225,
+      "start": 33.2,
+      "end": 37.157500000000006
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 8,
+      "kind": "SR",
+      "tau": 250,
+      "start": 37.35,
+      "end": 39.32875
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 9,
+      "kind": "On",
+      "start": 0,
+      "end": 41.5
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 9,
+      "kind": "SR",
+      "tau": 25,
+      "start": 0.0,
+      "end": 19.787499999999998
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 9,
+      "kind": "SR",
+      "tau": 50,
+      "start": 4.15,
+      "end": 21.958750000000002
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 9,
+      "kind": "SR",
+      "tau": 75,
+      "start": 8.3,
+      "end": 24.130000000000003
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 9,
+      "kind": "SR",
+      "tau": 100,
+      "start": 12.450000000000001,
+      "end": 26.301250000000003
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 9,
+      "kind": "SR",
+      "tau": 125,
+      "start": 16.6,
+      "end": 28.472500000000004
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 9,
+      "kind": "SR",
+      "tau": 150,
+      "start": 20.75,
+      "end": 30.643749999999997
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 9,
+      "kind": "SR",
+      "tau": 175,
+      "start": 24.900000000000002,
+      "end": 32.815000000000005
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 9,
+      "kind": "SR",
+      "tau": 200,
+      "start": 29.050000000000004,
+      "end": 34.986250000000005
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 9,
+      "kind": "SR",
+      "tau": 225,
+      "start": 33.2,
+      "end": 37.157500000000006
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "seed": 9,
+      "kind": "SR",
+      "tau": 250,
+      "start": 37.35,
+      "end": 39.32875
+    }
+  ],
+  "qualification": "Not an exact total-pipeline maximum, recommended allocation, or actual speedup. OLMo evaluation cost is absent in config; final full-run concurrency cannot be inferred."
+}

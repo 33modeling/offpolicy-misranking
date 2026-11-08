@@ -142,5 +142,16 @@
     "Existing queue bindings are immutable for compatibility; stop old worker versions before changing tools and do not rewrite metadata by hand.",
     "Same shared V8_ROOT with cross-node POSIX flock and consistent pinned code/environment required.",
     "No node purchase/allocation or actual GPU execution was performed."
-  ]
+  ],
+  "concurrency_claim_correction": {
+    "record": "research/v8-concurrency-correction-20261108/record.json",
+    "withdrawn_use": "110node static graph bound as an answer for useful real-time maximum concurrency or necessary allocation",
+    "actual_full_pipeline_peak": "not measured or currently calculable from available stage duration records",
+    "rough_training_only_estimate": {
+      "olmo_math": 40,
+      "qwen_mbpp": 30,
+      "both_same_start_peak": 55
+    },
+    "qualification": "These new estimates exclude Uniform/budget extension/evaluation/startup/I/O and are not total-pipeline maxima. Earlier raw graph fixtures and statements remain retained."
+  }
 }

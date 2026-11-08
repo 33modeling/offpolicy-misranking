@@ -2714,6 +2714,16 @@
         "code_commit": "375cd4ed17ec2c2c2f0fdbf49d7d7a8789b5d6f1",
         "text": "사용자 지시에 따라 기본명령 하나로 OLMo MATH와 Qwen MBPP의 준비된 작업을 노드가 자동 분담하게 확장했다. 모델별 노드 수를 고정하지 않는다. 각 cohort의 budget/입력/단계와 GPU lease는 보존한다. 실제v8 CPU3worker/2cohort/71작업에서 중복0·같은worker의cohort간작업겹침0·선택된예산endpoint검증을 확인했다. 전체80소프트웨어검사통과. 각55/합110은학습그래프상한이며 실제H100동시실행/속도측정값이아니다.",
         "url": "https://github.com/33modeling/offpolicy-misranking/tree/375cd4ed17ec2c2c2f0fdbf49d7d7a8789b5d6f1/research/v8-auto-dispatch-20261108"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "concurrency_claim_corrected",
+        "status": "code_fixed",
+        "evidence_kind": "derived_estimate",
+        "code_commit": "b29e5477448a33caa949ecfa4baf028444dd90ec",
+        "text": "사용자가 선행 학습과 분기 완료를 반영한 실제 동시 실행량을 지적했다. 정적 그래프55+55를 실제 최대/필요 노드 수로 안내한110노드 답변을 철회한다. 기존 평균 시간으로 On/SR 주 학습만 계산한 추정 피크는 OLMo40·Qwen30, 같은 시각 시작 합계55이다. Uniform/예산 연장/평가/초기화/I/O/seed별 시간 차이를 제외하므로55도 전체 실행 최대값이나 확보 권장량이 아니다. 실제 전체 피크는 미확정이다. 기존 fixture와 기록은 보존하고 안내 문서를 정정했다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/master/research/v8-concurrency-correction-20261108"
       }
     ]
   },
