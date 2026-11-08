@@ -264,3 +264,22 @@ def test_missing_binding_json_stops_worker_with_clear_message(tmp_path):
     with pytest.raises(nodes.BindingMismatch, match="moved or removed"):
         with pool.control():
             pool.tick(None, "w", None)
+
+
+
+def test_pool_status_reports_unreadable_records_instead_of_crashing(tmp_path):
+    if os.geteuid() == 0:
+        return
+    pool = nodes.Pool(tmp_path / "q", {"cohort": "olmo_math"})
+    pool.initialize()
+    (pool.root / "jobs").mkdir()
+    (pool.root / "jobs" / "a.json").write_text('{"state": "done", "task": {"kind": "train"}, "attempts": []}')
+    (pool.root / "jobs" / "b.json").write_text('{"state": "pen')
+    (pool.root / "state.json").chmod(0)
+    try:
+        result = pool.status()
+    finally:
+        (pool.root / "state.json").chmod(0o644)
+    assert result["known_task_counts"] == {"done": 1}
+    assert any("state.json" in x for x in result["unreadable"]) and any("b.json" in x for x in result["unreadable"])
+    assert "incomplete" in result["note"]

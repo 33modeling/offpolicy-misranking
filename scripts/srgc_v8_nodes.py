@@ -342,10 +342,19 @@ class Pool:
         atomic(path,job)
 
     def status(self):
-        state=read(self.root/'state.json') if (self.root/'state.json').exists() else dict(phase='not_started')
+        problems=[]
+        try:state=read(self.root/'state.json') if (self.root/'state.json').exists() else dict(phase='not_started')
+        except (OSError,ValueError) as exc:
+            state=dict(phase='unknown');problems.append(f"{self.root/'state.json'}: {exc.strerror if isinstance(exc,OSError) else 'unreadable JSON'}")
         counts={};owners=[]
         for path in self.root.glob('jobs/*.json'):
-            job=read(path);counts[job['state']]=counts.get(job['state'],0)+1
+            try:job=read(path)
+            except (OSError,ValueError) as exc:
+                problems.append(f"{path}: {exc.strerror if isinstance(exc,OSError) else 'unreadable JSON'}");continue
+            if not isinstance(job,dict) or not isinstance(job.get('task'),dict):
+                problems.append(f'{path}: not a job record');continue
+            job.setdefault('attempts',[])
+            counts[job.get('state','?')]=counts.get(job.get('state','?'),0)+1
             lease=Lock(self.root/'leases'/(path.stem+'.lock'))
             if not lease.acquire():
                 last=job['attempts'][-1] if job['attempts'] else {}
@@ -356,7 +365,11 @@ class Pool:
                     row.update(log=str(log),log_written_seconds_ago=round(time.time()-log.stat().st_mtime))
                 owners.append(row)
             lease.close()
-        return dict(phase=state['phase'],failure=state.get('failure'),known_task_counts=counts,leased_tasks=owners)
+        unreadable=problems+[str(p) for p in (self.root,self.root/'jobs',self.root/'leases',self.root/'workers')
+                    if p.exists() and not os.access(p,os.R_OK|(os.X_OK if p.is_dir() else 0))]
+        result=dict(phase=state['phase'],failure=state.get('failure'),known_task_counts=counts,leased_tasks=owners)
+        if unreadable:result['unreadable']=unreadable;result['note']='some queue records could not be read; counts are incomplete. Run --status as the account that runs the workers.'
+        return result
 
 
 def worker_loop(pool,runtime,worker,stop,*,poll=3,device_fds=(),retry=False):

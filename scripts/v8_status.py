@@ -70,7 +70,8 @@ def collect(base, cohort, now):
     rows = []
     for path in sorted((queue / 'jobs').glob('*.json')):
         job = read(path)
-        if not job:
+        if not isinstance(job, dict):
+            state.setdefault('_unreadable_jobs', []).append(path.name)
             continue
         task = job.get('task') or {}
         attempts = job.get('attempts') or []
@@ -176,6 +177,27 @@ def node_lines(workers, rows):
     return lines
 
 
+def access_problems(queue):
+    """Queue paths that exist but this account cannot read (status would otherwise look empty)."""
+    import pwd
+    problems = []
+    for path in (queue, queue / 'state.json', queue / 'binding.json', queue / 'jobs', queue / 'workers',
+                 queue / 'logs', queue.parent / 'runs'):
+        try:
+            if not path.exists():
+                continue
+            mode = os.R_OK | (os.X_OK if path.is_dir() else 0)
+            if not os.access(path, mode):
+                try:
+                    owner = pwd.getpwuid(path.stat().st_uid).pw_name
+                except (KeyError, OSError):
+                    owner = '?'
+                problems.append(f"{path} (owner {owner})")
+        except OSError as exc:
+            problems.append(f"{path} ({exc.strerror or exc})")
+    return problems
+
+
 def cell(row):
     status, total = row['status'], row['total']
     if status == 'done':
@@ -238,6 +260,14 @@ def render_cohort(base, cohort, now, gpus, host):
     generated = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(now))
     phase = state.get('phase', 'not started')
     lines = [f"V8 {cohort} · {generated} · phase {phase}", str(Path(base) / cohort), *this_node_lines(rows, gpus, host), '']
+    problems = access_problems(Path(base) / cohort / '.multi-node')
+    if state.get('_unreadable_jobs'):
+        problems.append(f"{len(state['_unreadable_jobs'])} job record(s) unreadable or corrupt: " + ', '.join(state['_unreadable_jobs'][:5]))
+    if problems:
+        import getpass
+        lines.append(f"ERROR some queue records could not be read by {getpass.getuser()}: " + '; '.join(problems[:4])
+                     + " — counts below are incomplete (permission or partial write); run status as the account "
+                       "that runs the workers, or inspect the named files")
     if state.get('failure'):
         lines.append(f"ERROR queue: {str(state['failure'])[:300]}")
     counts = {'done': 0, 'running': 0, 'waiting': 0, 'attention': 0, 'ready': 0}

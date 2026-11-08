@@ -112,3 +112,19 @@ def test_nodes_section_counts_workers_and_available_work(tmp_path):
     assert "ready 1" in text and "waiting" in text
     assert "workers: 2 active" in text
     assert "work available now for 2 workers (1 running + 1 ready to start)" in text
+
+
+def test_unreadable_or_corrupt_records_are_reported_not_hidden(tmp_path):
+    if os.geteuid() == 0:
+        return  # root can read mode-000 files
+    now = time.time()
+    base = fixture(tmp_path, now)
+    q = base / "olmo_math" / ".multi-node"
+    (q / "jobs" / "zz.json").write_text('{"state": "pend')            # partial write
+    (q / "state.json").chmod(0)
+    try:
+        text = status.render([base], now=now, gpus=[("0", 97, 61000)], host="node01")
+    finally:
+        (q / "state.json").chmod(0o644)
+    assert "ERROR some queue records could not be read" in text
+    assert "state.json" in text and "1 job record(s) unreadable or corrupt: zz.json" in text
