@@ -1,0 +1,26 @@
+{
+  "kind": "bounded process cleanup and nonintrusive status; numeric experiment code unchanged",
+  "user_reports": [
+    "Loading weights remains on screen",
+    "Ctrl-C does not exit"
+  ],
+  "confirmed_stop_bug": "Original Runtime.process may wait forever in thread.join when detached ranks retain the stdout pipe; stop handling has no escalation. It must not be equated with proven model-loading deadlock.",
+  "fix": "Outer supervisor inherits output directly, tags only its owned process tree, monitors read-only rank work events, handles Ctrl-C/TERM/HUP, and escalates after10seconds or second Ctrl-C. PID start identity prevents signalling reused PID. Standalone v8_stop.sh handles the already running untagged V8 job on this node/root.",
+  "controls": [
+    "separate-session child ignores TERM: force cleanup completes",
+    "unrelated launch survives",
+    "PID reuse never signalled",
+    "second Ctrl-C returns within5seconds",
+    "normal parent exit with detached stdout writer does not hang",
+    "no-argument existing environment bootstrap preserved",
+    "probe observes current attempt and never calls it durable checkpoint proof"
+  ],
+  "verification": "18 targeted CPU process/bootstrap/probe tests; no model training. Coordinator source, all v8 runtime files, saved-engine selector and30hashed trainer files unchanged.",
+  "scientific_results": {
+    "new_GPU_jobs": 0,
+    "new_RLVR_results": 0,
+    "actual_reported_H100_loading_cause": "unverified; requested log/elapsed time not yet supplied"
+  },
+  "failure_retention": "first.xml retained locally: old test fixture omitted new supervisor dependencies. Fixture corrected; source launch archive includes these dependencies.",
+  "limitations": "Linux uninterruptible kernel I/O can remain pending after SIGKILL; tools report remaining PIDs rather than claiming GPUs released. No checkpoint/lock/queue record is deleted. New supervisor requires restarting that launch; standalone stop/probe can act on the currently running version."
+}

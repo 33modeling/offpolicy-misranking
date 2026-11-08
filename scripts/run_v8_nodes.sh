@@ -3,4 +3,4 @@
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 export PYTHONDONTWRITEBYTECODE=1
-exec python3 "$HERE/v8_bootstrap.py" "$@"
+exec python3 "$HERE/v8_supervisor.py" "$@"
