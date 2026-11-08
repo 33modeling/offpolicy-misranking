@@ -25,8 +25,8 @@ def task(name,kind='train',parent=None):
 
 
 class FakeRuntime:
-    def __init__(self,path,*,fail=None,no_output=None):
-        self.path=Path(path);self.fail=fail;self.no_output=no_output
+    def __init__(self,path,*,fail=None,no_output=None,overlap_gate=False):
+        self.path=Path(path);self.fail=fail;self.no_output=no_output;self.overlap_gate=overlap_gate
         self.binding=dict(schema=nodes.SCHEMA,cohort='fixture',code='fake1')
 
     def file(self,name):return self.path/name
@@ -64,15 +64,20 @@ class FakeRuntime:
         nodes.atomic(self.file('start-'+name+'-'+attempt['id']),dict(at=time.time(),worker=attempt['worker']))
         if name.startswith('on'):
             time.sleep(.025);nodes.atomic(self.file('checkpoint'+name[-1]),dict(at=time.time()))
-            time.sleep(.16)
+            if self.overlap_gate:
+                # Hold the parent open until a worker actually starts a ready branch.
+                # A fixed160ms window made fsync/loaded CI decide the scheduling assertion.
+                deadline=time.monotonic()+10
+                while not list(self.path.glob('start-branch*')) and time.monotonic()<deadline:time.sleep(.005)
+            else:time.sleep(.16)
         else:time.sleep(.035)
         if name==self.fail:return 9
         if name!=self.no_output:nodes.atomic(self.file('done-'+name),dict(at=time.time()))
         return 0
 
 
-def run_fake(root,runtime_path,worker,fail=None,no_output=None):
-    runtime=FakeRuntime(runtime_path,fail=fail,no_output=no_output)
+def run_fake(root,runtime_path,worker,fail=None,no_output=None,overlap_gate=False):
+    runtime=FakeRuntime(runtime_path,fail=fail,no_output=no_output,overlap_gate=overlap_gate)
     try:
         rc=nodes.worker_loop(nodes.Pool(root,runtime.binding),runtime,worker,threading.Event(),poll=.003)
     except Exception:rc=99
@@ -91,7 +96,7 @@ def launch_workers(tmp_path,count=3,**kwargs):
 
 
 def test_three_nodes_share_work_without_duplicates_and_observe_barriers(tmp_path):
-    queue,runtime,rc=launch_workers(tmp_path)
+    queue,runtime,rc=launch_workers(tmp_path,overlap_gate=True)
     assert rc==[0,0,0]
     assert nodes.read(queue/'state.json')['phase']=='complete'
     starts=list(runtime.glob('start-*'))
