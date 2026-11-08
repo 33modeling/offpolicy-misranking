@@ -235,9 +235,9 @@ def test_clean_view_is_compact_with_summary_last(tmp_path):
     top, bottom = text.split("━━ V8 status · ")
     assert "needs attention" not in top
     summary = next(norm(line) for line in bottom.splitlines() if line.startswith(" OLMo MATH "))
-    assert summary.startswith("OLMo MATH training") and " 25% 1/4 " in summary and summary.endswith("37/275")
+    assert summary.startswith("OLMo MATH training") and " 25% 1/3 0/1 " in summary and summary.endswith("37/275")
     header = next(norm(line) for line in bottom.splitlines() if norm(line).startswith("phase progress"))
-    assert header == "phase progress done run wait fail updates"
+    assert header == "phase progress train eval run wait fail updates"
     assert norm(next(line for line in bottom.splitlines() if line.startswith(" Qwen MBPP"))) == "Qwen MBPP not started"
     assert " needs attention (1)" in bottom and "  ✗ OLMo MATH s6 eval eval-final FAILED" in bottom
     assert "      why:  CUDA out of memory" in bottom
@@ -570,3 +570,34 @@ def test_failure_next_step_follows_the_default_retry_rule(tmp_path):
     assert "retried automatically: attempt 2/3 starts in 40s" in text
     assert "retried automatically: attempt 3/3 is waiting for the next free node" in text
     assert "3/3 failures used: no more automatic retries; fix the cause, then start one node with --max-attempts 4" in text
+
+
+
+def test_summary_numbers_add_up_and_updates_count_each_job_once(tmp_path):
+    """'status 집계가 뭔가 이상해 숫자가 안맞아': columns must sum to the task total, train + eval = total, and a
+    branch or extension adds only horizon - start updates (it resumes from its parent's saved update)."""
+    now = time.time()
+    base, q, m = two_cohort_base(tmp_path, now)
+    def job(key, state, kind, arm, seed, horizon=None, start=None, phase="train", attempts=None):
+        task = {"kind": kind, "method_id": arm, "training_seed": seed, "run_id": key}
+        if horizon: task["horizon"] = horizon
+        if start is not None: task["parent"] = {"completed_update": str(start), "path": "/nowhere"}
+        write(q / "jobs" / f"{key}.json", {"state": state, "phase": phase, "task": task, "attempts": attempts or []})
+    job("on", "done", "train", "on_monitored", 5, horizon=75, start=25)          # adds 50
+    job("b25", "done", "train", "bank_sr_t025", 5, horizon=75, start=25)        # adds 50
+    job("b50", "pending", "train", "bank_sr_t050", 5, horizon=75, start=50)     # plans 25
+    job("ext", "pending", "train", "bank_sr_t025", 5, horizon=120, start=75, phase="extension")   # plans 45
+    job("ghost", "running", "train", "bank_uniform_t050", 5, horizon=75, start=50, attempts=[{"id": "g"}])  # no worker
+    job("odd", "weird", "train", "on_monitored", 6, horizon=75)
+    for i in range(3):
+        job(f"ev{i}", "done" if i == 0 else "pending", "evaluate", "evaluate", 5, phase="evaluation")
+    stats = status.clean_block(base, "olmo_math", now, "viewer", 200)[4]
+    assert stats["total"] == 9 and stats["train"] == (2, 6) and stats["eval"] == (1, 3)
+    assert stats["done"] + stats["running"] + stats["ready"] + stats["waiting"] + stats["failed"] + stats["marked"] + \
+        stats["interrupted"] + stats["dead"] + stats["other"] == stats["total"]
+    assert stats["updates"] == (100, 50 + 50 + 25 + 45 + 25 + 75)   # was 75*5 + 120 = 495 before (each job from 0)
+    assert stats["dead"] == 1 and stats["other"] == 1 and stats["running"] == 0
+    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
+    assert "marked running but no worker is recorded for it" in text and "unknown job state 'weird'" in text
+    head = next(line for line in text.splitlines() if " phase " in line and "progress" in line)
+    assert " stuck " in head and " other " in head and " train " in head and " eval " in head

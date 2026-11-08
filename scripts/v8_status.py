@@ -164,6 +164,12 @@ def _collect(base, cohort, now):
                        seed=task.get('training_seed', '-'), status=job.get('state', 'pending'),
                        total=task.get('horizon') or task.get('endpoint') or task.get('total_updates'),
                        attempt=len(attempts), started=attempt.get('started_at'), ended=attempt.get('ended_at'), run_id=task.get('run_id'), kind=task.get('kind'), phase=job.get('phase'), host=shown_worker.rsplit('.', 1)[0] if shown_worker else None, worker=shown_worker, done=None)
+            parent = task.get('parent') if isinstance(task.get('parent'), dict) else {}
+            start = exit_code(parent.get('completed_update'))   # int parse; branches/extensions start here
+            row['start'] = start if isinstance(start, int) and start >= 0 else 0
+            if row['status'] == 'running' and not shown_worker:
+                row['status'] = 'unconfirmed'
+                row['error'] = 'marked running but no worker is recorded for it'
             rid = task.get('run_id')
             if rid:
                 manifest = read(directory / 'runs' / rid / 'manifest.json')
@@ -699,7 +705,10 @@ def render_srgc(live, base, cohort, now, host):
 # One compact block per cohort: short column names, one symbol per cell, one line per running task
 # and per problem, one line for all nodes; the summary (counts, workers, this node) is at the bottom.
 
-LEGEND_TABLE = "fail = real error · marked = marked failed, no training error · intr = interrupted, reruns · dead = on a dead node"
+LEGEND_TABLE = ("train/eval = tasks done/total (train includes budget extension) · updates = optimizer updates this plan adds "
+                "(a branch or extension counts from where it starts) · fail = real error · marked = failed, no training error · "
+                "intr = interrupted, reruns · stuck = marked running but no live node runs it (DEAD node or no worker) · "
+                "other = unknown job state")
 LEGEND = "✓ done  ▶n running (n updates)  ○ ready  · waiting  ✗ failed  ! no training error  ⏸ interrupted  ? no heartbeat"
 COHORT_LABEL = {'olmo_math': 'OLMo MATH', 'qwen_mbpp': 'Qwen MBPP'}
 COHORT_SHORT = {'OLMo MATH': 'OLMo', 'Qwen MBPP': 'Qwen'}
@@ -874,29 +883,43 @@ def clean_block(base, cohort, now, host, width):
             text = f"⏸ {label} {name} interrupted{when(r)}: reruns automatically on the next free node"
         else:
             beat = r.get('beat_age')
-            text = (f"? {label} {name} on {r.get('host') or '?'}: " +
-                    (f"no heartbeat {age_text(beat)}" if beat is not None else 'no heartbeat') + ' — that node is DEAD (see nodes)')
+            if not r.get('worker'):
+                text = f"? {label} {name}: {r.get('error') or 'marked running but no worker is recorded'} — not running anywhere"
+            else:
+                text = (f"? {label} {name} on {r.get('host') or '?'}: " +
+                        (f"no heartbeat {age_text(beat)}" if beat is not None else 'no heartbeat') + ' — that node is DEAD (see nodes)')
         attention.append('  ' + text)
+    for r in rows:
+        if r['status'] not in ('done', 'running', 'pending', 'failed', 'interrupted', 'unconfirmed', 'stopped'):
+            attention.append(f"  ? {label} s{r['seed']} {short_arm(r['arm'])}: unknown job state {r['status']!r} "
+                             f"(see .multi-node/jobs/{r.get('key')}.json)")
     for u in unreadable[:3]:
         attention.append(f"  ! {label}: cannot read {u}")
     workers = worker_records(queue, now)
     live = [w for w in workers if w['status'] != 'stale']
-    counts = {k: 0 for k in ('done', 'running', 'ready', 'waiting', 'attention', 'dead', 'interrupted', 'marked')}
+    counts = {k: 0 for k in ('done', 'running', 'ready', 'waiting', 'attention', 'dead', 'interrupted', 'marked', 'other')}
     for r in rows:
         key = ('done' if r['status'] == 'done' else 'running' if r['status'] == 'running'
                else 'dead' if r['status'] in ('unconfirmed', 'stopped')
                else 'interrupted' if r['status'] == 'interrupted'
                else 'marked' if r['status'] == 'failed' and r.get('failure_real') is False
-               else 'attention' if r['status'] in ATTENTION else 'ready' if r.get('ready') else 'waiting')
+               else 'attention' if r['status'] == 'failed'
+               else ('ready' if r.get('ready') else 'waiting') if r['status'] == 'pending' else 'other')
         counts[key] += 1
+    evals = [r for r in rows if r.get('kind') == 'evaluate']
+    trains = [r for r in rows if r.get('kind') != 'evaluate']
     phase = PHASE_LABEL.get(state.get('phase'), state.get('phase', 'not started'))
     total = len(rows)
     # Training progress in optimizer updates (what 'how far along' means for a run), plus task counts.
+    # Each job counts only the updates it adds itself: a branch or a budget extension resumes from its
+    # parent's saved update (task.parent.completed_update), so counting from 0 would count that part again.
     planned = done_updates = 0
     for r in rows:
         if r.get('kind') == 'train' and isinstance(r.get('total'), int):
-            planned += r['total']
-            done_updates += r['total'] if r['status'] == 'done' else (r['done'] or 0)
+            start = min(r.get('start') or 0, r['total'])
+            planned += r['total'] - start
+            reached = r['total'] if r['status'] == 'done' else (r['done'] if isinstance(r.get('done'), int) else start)
+            done_updates += max(0, min(reached, r['total']) - start)
     pct = round(100 * counts['done'] / total) if total else 0
     filled = round(12 * counts['done'] / total) if total else 0
     bar = '█' * filled + '░' * (12 - filled)
@@ -909,7 +932,9 @@ def clean_block(base, cohort, now, host, width):
     nodes = (len(live), sum(1 for w in live if any(r.get('worker') == w['worker'] and r['status'] in ('running', 'unconfirmed') for r in rows)))
     stats = dict(label=label, phase=phase, done=counts['done'], total=total, pct=pct, running=counts['running'],
                  ready=counts['ready'], waiting=counts['waiting'], failed=counts['attention'],
-                 interrupted=counts['interrupted'], dead=counts['dead'], marked=counts['marked'],
+                 interrupted=counts['interrupted'], dead=counts['dead'], marked=counts['marked'], other=counts['other'],
+                 train=(sum(r['status'] == 'done' for r in trains), len(trains)),
+                 eval=(sum(r['status'] == 'done' for r in evals), len(evals)),
                  updates=(done_updates, planned))
     return lines, summary, (nodes, wanted), attention, stats
 
@@ -1149,14 +1174,17 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
                 if job:
                     mine = f"▶ s{job['seed']} {short_arm(job['arm'])} ({COHORT_SHORT.get(COHORT_LABEL.get(cohort, cohort), cohort)})"
     out.append(paint(clip(LEGEND, width), 'dim'))
-    out.append(paint(clip(LEGEND_TABLE, width), 'dim'))
+    import textwrap
+    for part in textwrap.wrap(LEGEND_TABLE, max(60, width - 2)):
+        out.append(paint(part, 'dim'))
     stamp = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(now))
     head = f"━━ V8 status · {stamp} "
     out.append(paint(head + '━' * max(3, min(width, 100) - len(head)), 'head'))
     out.append(paint('   ' + ', '.join(str(b) for b in bases), 'dim'))
 
     # 1. one aligned row per experiment
-    cols = ('phase', 'progress', 'done', 'running', 'ready', 'waiting', 'failed', 'marked', 'interrupted', 'on dead node', 'updates')
+    cols = ('phase', 'progress', 'train', 'eval', 'running', 'ready', 'waiting', 'failed', 'marked', 'interrupted',
+            'on dead node', 'other', 'updates')
     table = []
     for st in stats:
         if not st.get('total'):
@@ -1164,19 +1192,21 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
             continue
         filled = round(12 * st['done'] / st['total'])
         done_u, planned = st['updates']
+        tr, ev = st.get('train', (0, 0)), st.get('eval', (0, 0))
         table.append(dict(name=st['label'], phase=st['phase'], progress=f"{'█' * filled}{'░' * (12 - filled)} {st['pct']:>3}%",
-                          done=f"{st['done']}/{st['total']}", running=st['running'], ready=st['ready'], waiting=st['waiting'],
+                          train=f"{tr[0]}/{tr[1]}" if tr[1] else '-', eval=f"{ev[0]}/{ev[1]}" if ev[1] else '-',
+                          other=st.get('other', 0), running=st['running'], ready=st['ready'], waiting=st['waiting'],
                           failed=st['failed'], marked=st.get('marked', 0), interrupted=st['interrupted'], **{'on dead node': st['dead']},
                           updates=f"{done_u:,}/{planned:,}" if planned else '-'))
-    used = [c for c in cols if c in ('phase', 'progress', 'done', 'running', 'updates')
+    used = [c for c in cols if c in ('phase', 'progress', 'train', 'eval', 'running', 'updates')
             or any(isinstance(r.get(c), int) and r.get(c) for r in table)]
     def cell(r, c):
         v = r.get(c, '')
         return '-' if v == 0 else str(v)
-    title = {'running': 'run', 'waiting': 'wait', 'failed': 'fail', 'interrupted': 'intr', 'on dead node': 'dead'}
+    title = {'running': 'run', 'waiting': 'wait', 'failed': 'fail', 'interrupted': 'intr', 'on dead node': 'stuck'}
     name_w = max(10, *(len(r['name']) for r in table)) if table else 10
     w = {c: max(len(title.get(c, c)), *(len(cell(r, c)) for r in table)) for c in used}
-    right = {'done', 'running', 'ready', 'waiting', 'failed', 'marked', 'interrupted', 'on dead node', 'updates'}
+    right = {'train', 'eval', 'running', 'ready', 'waiting', 'failed', 'marked', 'interrupted', 'on dead node', 'other', 'updates'}
     fmt = lambda c, v: f"{v:>{w[c]}}" if c in right else f"{v:<{w[c]}}"
     out.append(paint(' ' + ' ' * name_w + '  ' + '  '.join(fmt(c, title.get(c, c)) for c in used), 'dim'))
     for r in table:
@@ -1184,7 +1214,7 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
         for c in used:
             v = fmt(c, cell(r, c))
             style = ('bad' if c in ('failed', 'on dead node') and v.strip() not in ('-', '') else
-                     'warn' if c in ('interrupted', 'marked') and v.strip() not in ('-', '') else
+                     'warn' if c in ('interrupted', 'marked', 'other') and v.strip() not in ('-', '') else
                      'run' if c == 'running' and v.strip() not in ('-', '') else
                      'ok' if c == 'progress' else 'dim' if v.strip() in ('-', '') else None)
             parts.append(paint(v, style))
