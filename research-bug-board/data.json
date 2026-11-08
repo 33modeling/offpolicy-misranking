@@ -1,13 +1,13 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-08T18:37:21+09:00",
+  "recorded_at": "2026-11-08T19:27:03+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "0648f8a767acdbc8eddf152de22b54195c50814f",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/0648f8a767acdbc8eddf152de22b54195c50814f",
-    "all_available_commits": 1288,
-    "fix_commit_records": 137,
+    "source_commit": "719b086cd633c1e509c7406d548a2a7216638777",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/719b086cd633c1e509c7406d548a2a7216638777",
+    "all_available_commits": 1290,
+    "fix_commit_records": 138,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
     "first_commit_at": "2026-08-07T05:56:48+09:00",
@@ -27,7 +27,8 @@
       "refs/heads/bugboard-audit:61a7b68fc2c31bb5b09772852abc860f5ec168e2",
       "refs/heads/bugboard-status2:612312f955ddd7cefe220e90a85696139108c8a5",
       "refs/heads/bugboard-status3:d8d4b024a693301ed78d924375b68fdd81d7dd35",
-      "refs/heads/bugboard-status4:0648f8a767acdbc8eddf152de22b54195c50814f",
+      "refs/heads/bugboard-status4:c188006868a335ed7d46599445f0eb151a2a677a",
+      "refs/heads/bugboard-status5:719b086cd633c1e509c7406d548a2a7216638777",
       "refs/heads/bugboard2:b7432d1cbb1f6cdd2cd044f23cd8ffaf25a57560",
       "refs/heads/bugboard3:b101cd9069dcc6ce920f42a1242174b83b9e6010",
       "refs/heads/docs/mbpp-budget-incident-20260919:fa1c6897b2b26ef002dd165c94f58702b1f9e1ed",
@@ -54,6 +55,7 @@
       "refs/heads/v8-status-nodes2:1e47050b470a5eef8a9ca86fac577e06d3bb5abc",
       "refs/heads/v8-status-progress:7fa90b7f51fc50939a8cc53b9c115abe22bda381",
       "refs/heads/v8-status-robust:0648f8a767acdbc8eddf152de22b54195c50814f",
+      "refs/heads/v8-status-robust2:719b086cd633c1e509c7406d548a2a7216638777",
       "refs/heads/v8-status-sort:9ddc003b613459a8c0df462513743dd2400212d7",
       "refs/heads/v8-status-srgc:d8aa1ed1b99e16dbfb099d49a8f29c4b4add82ac",
       "refs/heads/v8-status2:21b071d2f2478b1f72a2c237368395cc2ebd179a",
@@ -67,7 +69,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:0648f8a767acdbc8eddf152de22b54195c50814f"
+      "refs/remotes/origin/master:719b086cd633c1e509c7406d548a2a7216638777"
     ]
   },
   "incidents": [
@@ -7186,6 +7188,43 @@
           "status": "code_fixed",
           "text": "worker id 는 표시용으로 문자열화(heartbeat 파일 찾기는 원래 값), manifest·attempts 형식 검사, 작업 기록마다 예외를 잡아 '읽을 수 없는 기록'으로 표시. 회귀 시험: 숫자 worker·attempt_id 없는 manifest·dict 가 아닌 task·None attempt 로 세 가지 화면 모두 렌더.",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/0648f8a",
+          "evidence_kind": "code_test"
+        }
+      ]
+    },
+    {
+      "id": "V8-105",
+      "title": "V8 status v1.0.17 이 숫자가 아닌 시도 시각 기록에서 needs attention 정렬 중 죽음",
+      "area": "V8 실행·재개·상태 감사",
+      "severity": "medium",
+      "first_reported": "2026-11-08",
+      "introduction_commit": "",
+      "cause": "0648f8a 의 needs attention 정렬이 started_at/ended_at 을 형식 확인 없이 음수로 바꿨다(-(ended or started)). 문자열 시각이 있는 실패·중단 기록에서 TypeError.",
+      "impact": "v1.0.17 전체 점검(원본 체크아웃 있음, 실제 큐 8,384개)에서 592번 v8_status·sh status 가 'bad operand type for unary -: str' 로 종료.",
+      "attribution": "Claude 의 상태 화면 결함. 같은 날 수정. 이미 게시된 커밋 행을 바꾸지 않으려고 introduction_commit 은 비움.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "수정 커밋 719b086",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/719b086"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "reproduced",
+          "status": "open",
+          "text": "v1.0.17 전체 점검에서 592건 재현. 회귀 시험이 옛 코드에서 같은 TypeError 로 실패함을 확인.",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "시각은 숫자일 때만 사용. 이 PC /dev/shm 의 큐 11,651개를 clean·simple·classic 세 화면으로 34,953번 그려 오류 0. v1.0.18 묶음.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/719b086",
           "evidence_kind": "code_test"
         }
       ]

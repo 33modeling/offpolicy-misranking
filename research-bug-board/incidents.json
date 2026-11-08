@@ -7117,5 +7117,42 @@
         "evidence_kind": "code_test"
       }
     ]
+  },
+  {
+    "id": "V8-105",
+    "title": "V8 status v1.0.17 이 숫자가 아닌 시도 시각 기록에서 needs attention 정렬 중 죽음",
+    "area": "V8 실행·재개·상태 감사",
+    "severity": "medium",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "",
+    "cause": "0648f8a 의 needs attention 정렬이 started_at/ended_at 을 형식 확인 없이 음수로 바꿨다(-(ended or started)). 문자열 시각이 있는 실패·중단 기록에서 TypeError.",
+    "impact": "v1.0.17 전체 점검(원본 체크아웃 있음, 실제 큐 8,384개)에서 592번 v8_status·sh status 가 'bad operand type for unary -: str' 로 종료.",
+    "attribution": "Claude 의 상태 화면 결함. 같은 날 수정. 이미 게시된 커밋 행을 바꾸지 않으려고 introduction_commit 은 비움.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "수정 커밋 719b086",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/719b086"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "reproduced",
+        "status": "open",
+        "text": "v1.0.17 전체 점검에서 592건 재현. 회귀 시험이 옛 코드에서 같은 TypeError 로 실패함을 확인.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "시각은 숫자일 때만 사용. 이 PC /dev/shm 의 큐 11,651개를 clean·simple·classic 세 화면으로 34,953번 그려 오류 0. v1.0.18 묶음.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/719b086",
+        "evidence_kind": "code_test"
+      }
+    ]
   }
 ]
