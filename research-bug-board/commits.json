@@ -12292,6 +12292,26 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "5d1e8f50fcd7160978511850d4959d43af0544dc",
+      "at": "2026-11-08T02:26:37+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Record V8 multi-node race fixes and retain audit evidence",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/5d1e8f50fcd7160978511850d4959d43af0544dc",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "8cebbaa7406ef89c3d00023e02ed83a91409aebe",
+      "at": "2026-11-08T09:36:39+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Fix V8 budget evaluation to use the selected checkpoint run",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/8cebbaa7406ef89c3d00023e02ed83a91409aebe",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
     }
   ]
 }

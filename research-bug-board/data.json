@@ -1,13 +1,13 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-08T02:26:28+09:00",
+  "recorded_at": "2026-11-08T09:37:15+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "c44f6d9921a0e38e7bc9734ce3d28970d8a52f6f",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/c44f6d9921a0e38e7bc9734ce3d28970d8a52f6f",
-    "all_available_commits": 1158,
-    "fix_commit_records": 116,
+    "source_commit": "8cebbaa7406ef89c3d00023e02ed83a91409aebe",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/8cebbaa7406ef89c3d00023e02ed83a91409aebe",
+    "all_available_commits": 1160,
+    "fix_commit_records": 117,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
     "first_commit_at": "2026-08-07T05:56:48+09:00",
@@ -23,7 +23,7 @@
       "refs/heads/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:c44f6d9921a0e38e7bc9734ce3d28970d8a52f6f",
+      "refs/heads/master:8cebbaa7406ef89c3d00023e02ed83a91409aebe",
       "refs/remotes/origin/audit/codecheck-20260820:5dd447990296042e334679c85e7672477cd7c5d3",
       "refs/remotes/origin/audit/p1-integrity:5dfda89ec3be2cc4d60f8f0371eeaf00790f6644",
       "refs/remotes/origin/docs/mbpp-budget-incident-20260919:fa1c6897b2b26ef002dd165c94f58702b1f9e1ed",
@@ -32,7 +32,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:c44f6d9921a0e38e7bc9734ce3d28970d8a52f6f"
+      "refs/remotes/origin/master:8cebbaa7406ef89c3d00023e02ed83a91409aebe"
     ]
   },
   "incidents": [
@@ -2786,6 +2786,47 @@
           "type": "source_fix_verified",
           "status": "code_fixed",
           "text": "새 coordinator는 seed별 bundle로 해당 seed run만 평가 계획을 만든다. 실제 v8 CPU 실행에서 seeds5/6/7의100/70/40개 문항을 구분하고 서로 다른3개 문항 해시를 확인했다. 기존 paper run_h100.sh 자체는 수정하지 않았다. 새 run_v8_nodes.sh 경로에서 적용되며, 실제 다중 H100과 공유 파일시스템 검증은 남아 있다.",
+          "evidence_kind": "code_test"
+        }
+      ]
+    },
+    {
+      "id": "V8-016",
+      "title": "예산 endpoint의 실제 run 대신 matched-horizon run으로 평가를 계획함",
+      "area": "체크포인트·최종 평가",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "introduction_commit": "c44f6d9921a0e38e7bc9734ce3d28970d8a52f6f",
+      "cause": "초기 다중 노드 coordinator가 published cluster.budget_eval_tasks의 row.run_id와 budget_endpoint_update 조합을 따랐다. 실제 예산 endpoint는 extension run이나 전환 전 trajectory에 있을 수 있어 eval_tasks가 빈 목록을 돌려줬다.",
+      "impact": "큐가 complete여도 일부 예산 checkpoint의 최종 평가가 누락될 수 있었다. 초기70검사는 실행한28작업의 중복·완료만 확인했고 canonical budget endpoint 전체 coverage를 확인하지 못했다.",
+      "attribution": "Codex가 체크포인트 재사용 검토 중 발견했고 code master의 다중 노드 경로를 수정했다. 기존 paper runner는 원본 그대로다.",
+      "evidence": [
+        {
+          "kind": "code_test",
+          "label": "이전 코드 실패·수정 후70검사·37작업 원시 근거",
+          "url": "https://github.com/33modeling/offpolicy-misranking/tree/8cebbaa7406ef89c3d00023e02ed83a91409aebe/research/v8-budget-endpoint-20261108"
+        },
+        {
+          "kind": "source",
+          "label": "실제 선택된 run/update/hash를 사용하는 수정",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/8cebbaa7406ef89c3d00023e02ed83a91409aebe"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "reproduced",
+          "status": "open",
+          "text": "기존5d1e8f5 coordinator blob에 강화된 실제 v8 CPU 검사를 실행해 예산이 선택한 extension checkpoint(예:seed5 SR25 update96)의 평가 부재로 실패하는 것을 재현했다. 누락된환경변수로skip된 첫시도와 parent import fixture 실패도 별도 보존했다.",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "SeedBank의 canonical budget_endpoint 반환값에서 실제run_id/update/hash를 직접 수집한다. 없는/달라진 checkpoint는 성공 처리하지 않는다. 실제v8 CPU3작업자37작업·중복0·선택된16checkpoint의평가해시 일치, 전체70검사통과. 원래30trainer파일은동일하다. 실제H100검증/속도측정은없다.",
           "evidence_kind": "code_test"
         }
       ]

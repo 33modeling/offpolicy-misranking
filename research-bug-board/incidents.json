@@ -2752,5 +2752,46 @@
         "evidence_kind": "code_test"
       }
     ]
+  },
+  {
+    "id": "V8-016",
+    "title": "예산 endpoint의 실제 run 대신 matched-horizon run으로 평가를 계획함",
+    "area": "체크포인트·최종 평가",
+    "severity": "high",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "c44f6d9921a0e38e7bc9734ce3d28970d8a52f6f",
+    "cause": "초기 다중 노드 coordinator가 published cluster.budget_eval_tasks의 row.run_id와 budget_endpoint_update 조합을 따랐다. 실제 예산 endpoint는 extension run이나 전환 전 trajectory에 있을 수 있어 eval_tasks가 빈 목록을 돌려줬다.",
+    "impact": "큐가 complete여도 일부 예산 checkpoint의 최종 평가가 누락될 수 있었다. 초기70검사는 실행한28작업의 중복·완료만 확인했고 canonical budget endpoint 전체 coverage를 확인하지 못했다.",
+    "attribution": "Codex가 체크포인트 재사용 검토 중 발견했고 code master의 다중 노드 경로를 수정했다. 기존 paper runner는 원본 그대로다.",
+    "evidence": [
+      {
+        "kind": "code_test",
+        "label": "이전 코드 실패·수정 후70검사·37작업 원시 근거",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/8cebbaa7406ef89c3d00023e02ed83a91409aebe/research/v8-budget-endpoint-20261108"
+      },
+      {
+        "kind": "source",
+        "label": "실제 선택된 run/update/hash를 사용하는 수정",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/8cebbaa7406ef89c3d00023e02ed83a91409aebe"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "reproduced",
+        "status": "open",
+        "text": "기존5d1e8f5 coordinator blob에 강화된 실제 v8 CPU 검사를 실행해 예산이 선택한 extension checkpoint(예:seed5 SR25 update96)의 평가 부재로 실패하는 것을 재현했다. 누락된환경변수로skip된 첫시도와 parent import fixture 실패도 별도 보존했다.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "SeedBank의 canonical budget_endpoint 반환값에서 실제run_id/update/hash를 직접 수집한다. 없는/달라진 checkpoint는 성공 처리하지 않는다. 실제v8 CPU3작업자37작업·중복0·선택된16checkpoint의평가해시 일치, 전체70검사통과. 원래30trainer파일은동일하다. 실제H100검증/속도측정은없다.",
+        "evidence_kind": "code_test"
+      }
+    ]
   }
 ]

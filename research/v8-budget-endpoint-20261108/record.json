@@ -86,5 +86,8 @@
     "initial_condition": "all five seed25 prefixes available; five On trajectories plus five SR25 branches",
     "qualification": "Later checkpoint branches unlock more tasks; concurrency changes with dependencies and remaining tasks. Not a speedup or allocation measurement."
   },
-  "reproduce": "CUDA_VISIBLE_DEVICES= V8_NODES_TEST_RUNTIME=/path/to/v8/experiments V8_HISTORY_TEST_RUNTIME=/path/to/v8/experiments python3 -m pytest --noconftest -q tests/test_srgc_v8_nodes.py tests/test_srgc_v8_history.py"
+  "reproduce": "CUDA_VISIBLE_DEVICES= V8_NODES_TEST_RUNTIME=/path/to/v8/experiments V8_HISTORY_TEST_RUNTIME=/path/to/v8/experiments python3 -m pytest --noconftest -q tests/test_srgc_v8_nodes.py tests/test_srgc_v8_history.py",
+  "implementation_commit": "8cebbaa7406ef89c3d00023e02ed83a91409aebe",
+  "source_remote_exact": "8cebbaa7406ef89c3d00023e02ed83a91409aebe",
+  "bug_incident": "V8-016"
 }
