@@ -129,10 +129,18 @@ worker는60초마다 현황을 출력한다. 자식 출력은 터미널과 각 c
 정책 버전이 나온다. 표 형식 `status`는 `dispatch current <hash>`(현재 checkout과
 같음), `dispatch different <hash>`(다름), `dispatch unverified`(기록 없음)를 구분한다.
 정책 파일이 디스크에 있다는 것만으로 실행 중인 worker에 적용됐다고 판단하지 않는다.
-현재 배정 정책은 `independent-cohort-startup-live-leases-v3`다. 유휴 worker는 배정 전에 모든 작업을
+현재 배정 정책은 `independent-cohort-task-failures-v4`다. 유휴 worker는 배정 전에 모든 작업을
 중복 검사하지 않으며, 그 노드의 입력 검증을 통과한 뒤에만 claim할 수 있다.
 원본 Runtime 초기화에는120초 제한을 두고, 한 cohort가 초기화에 응답하지 않으면
 오류를 표시하고 다른 cohort를 계속한다. 학습 실행 시간에는 이 초기화 제한을 적용하지 않는다.
+
+기존 SRGC처럼 개별 작업 실패는 그 작업에만 남긴다. 실패한 작업을 자동 재시도하지
+않고 다른 seed와 준비된 분기는 계속 배정한다. 실패가 남아 있고 독립적으로 실행할
+작업도 더 없으면 실패로 종료하며 freeze·평가·완료로 넘어가지 않는다. 이전 V8가
+개별 `task exit=...` 실패를 cohort 전체 중단으로 저장한 경우, 같은 failed job이
+존재할 때만 그 중단을 작업 범위로 옮긴다. 원래 실패는 history에 보존하고 작업·시도·
+binding·checkpoint를 고치거나 지우지 않는다. 신원·설정·CPU 준비 오류는 이 방식으로
+해제하지 않는다. `--retry-failed`를 명시하면 보존된 failed job만 다시 pending으로 연다.
 
 Ctrl-C/SIGTERM은 자식 실행기에 전달된다. 종료 유예는10초이며 강제 종료되면 마지막으로
 저장된 체크포인트에서 같은 명령으로 재개한다. 종료 직전 업데이트의 저장은 보장하지 않는다.

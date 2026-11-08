@@ -85,3 +85,39 @@ def test_twenty_initial_jobs_and_ten_new_checkpoint_branches_fill_thirty_nodes(t
             p.join(4)
             if p.is_alive():p.kill();p.join();raise AssertionError('CPU dispatch worker failed to stop')
             assert p.exitcode==0
+
+
+def test_five_legacy_qwen_jobs_do_not_leave_all_new_nodes_idle_after_a_task_failure(tmp_path):
+    ctx=mp.get_context('fork');stop=ctx.Event();processes=[];legacy=[];failed_runs=set()
+    for cohort in ('olmo_math','qwen_mbpp'):
+        folder=tmp_path/cohort;folder.mkdir()
+        for seed in range(5,10):(folder/f'prefix-{seed}.pt').write_bytes(b'CPU dependency fixture')
+        runtime=ProductionPlan(tmp_path,cohort,stop)
+        pool=nodes.Pool(folder/'.multi-node',runtime.binding);pool.initialize()
+        state=nodes.read(pool.root/'state.json');state['phase']='train';nodes.atomic(pool.root/'state.json',state)
+        tasks,_=runtime.plan('train')
+        failed=next(t for t in tasks if t['method_id']=='bank_sr_t025')
+        for task in tasks:
+            key=pool.register(task,'train')
+            if cohort=='qwen_mbpp' and task['method_id']=='on_monitored':
+                held=nodes.Lock(pool.root/'leases'/(key+'.lock'));assert held.acquire();legacy.append(held)
+        key=nodes.task_key(failed);job=nodes.read(pool.root/'jobs'/(key+'.json'))
+        job['state']='failed';job['attempts']=[dict(id='legacy-failure',exit_code=1)]
+        nodes.atomic(pool.root/'jobs'/(key+'.json'),job);failed_runs.add(failed['run_id'])
+        pool.fail('task exit=1; output verified=False',key)
+    try:
+        assert len(legacy)==5
+        for i in range(12):
+            p=ctx.Process(target=worker,args=(tmp_path,'new-node-'+str(i),stop));p.start();processes.append(p)
+        rows=wait_claims(tmp_path,12)
+        counts=collections.Counter(r['cohort'] for r in rows)
+        assert counts['olmo_math']>=5 and counts['qwen_mbpp']>=1
+        assert not (failed_runs & {r['run_id'] for r in rows})
+        assert len({r['run_id'] for r in rows})==12
+    finally:
+        stop.set()
+        for p in processes:
+            p.join(4)
+            if p.is_alive():p.kill();p.join();raise AssertionError('CPU worker failed to stop')
+            assert p.exitcode==0
+        for held in legacy:held.close()

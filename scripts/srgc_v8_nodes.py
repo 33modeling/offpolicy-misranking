@@ -29,7 +29,7 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'independent-cohort-startup-live-leases-v3'
+DISPATCH_POLICY = 'independent-cohort-task-failures-v4'
 TERMINAL = {'completed_horizon', 'completed_budget'}
 PHASES = ('train', 'extension', 'evaluation')
 
@@ -206,8 +206,23 @@ class Pool:
         state_path=self.root/'state.json'
         if not state_path.exists():atomic(state_path,dict(phase='prepare',failure=None,actions=[],failure_history=[]))
         state=read(state_path)
-        if retry and state['failure']:
-            state['failure_history'].append(state['failure']);state['failure']=None
+        failure=state.get('failure')
+        # Original SRGC keeps a failed task separate from independent ready work.
+        # Older V8 finish() promoted any single task exit into a cohort-wide stop.
+        # Preserve that incident and the failed job; do not retry or reset either.
+        if (isinstance(failure,dict) and re.fullmatch(r'[0-9a-f]{64}',str(failure.get('task','')))
+                and str(failure.get('detail','')).startswith('task exit=')):
+            failed_path=self.root/'jobs'/(str(failure['task'])+'.json')
+            if failed_path.exists() and read(failed_path).get('state')=='failed':
+                state.setdefault('failure_history',[]).append(failure)
+                state.setdefault('task_failures',[]).append(failure)
+                state.setdefault('actions',[]).append(dict(action='isolate_legacy_task_failure',task=failure['task'],at=time.time()))
+                state['failure']=None;atomic(state_path,state)
+                print(f'[v8] {self.binding.get("cohort")}: kept failed task {failure["task"]}; '
+                      'independent ready jobs may continue. The failed task was not retried.',flush=True)
+        if retry:
+            if state['failure']:
+                state['failure_history'].append(state['failure']);state['failure']=None
             for file in self.root.glob('jobs/*.json'):
                 job=read(file)
                 if job['state']=='failed':
@@ -293,13 +308,16 @@ class Pool:
             if job['phase']==phase:jobs.append((path,job))
         if not jobs and phase!='extension':
             raise ValueError('No tasks produced for '+phase+'; refusing to declare an empty experiment complete')
-        pending=[];all_done=True
+        pending=[];all_done=True;failed=[];active=False
         for path,job in jobs:
             lease=Lock(self.root/'leases'/(path.stem+'.lock'))
             if not lease.acquire():
-                all_done=False;continue
+                all_done=False;active=True;continue
             try:
+                if job['state']=='failed':
+                    all_done=False;failed.append(path.stem);continue
                 native_busy=runtime.native_busy(job['task'])
+                active=active or native_busy
                 done=False if native_busy else runtime.done(job['task'])
                 if done:
                     if job['state']!='done':
@@ -314,6 +332,10 @@ class Pool:
             state['phase']={'train':'freeze','extension':'evaluation','evaluation':'finalize'}[phase]
             atomic(self.root/'state.json',state)
             return 'advance',None
+        if failed and not pending and not active:
+            self.fail(f'{len(failed)} task(s) failed; no independent ready/running work remains. '
+                      'Failed attempts are preserved; inspect their logs before --retry-failed.')
+            return 'failed',None
         # Fill trajectories first, then checkpoint-ready branches. Ties rotate
         # toward tasks with fewer launch attempts so a busy task cannot starve others.
         pending.sort(key=lambda item:(item[1]['task'].get('method_id')!='on_monitored',len(item[1]['attempts']),item[0].stem))
@@ -339,7 +361,10 @@ class Pool:
         elif rc==75 or stop.is_set():job['state']='interrupted'
         else:
             job['state']='failed'
-            self.fail(f'task exit={rc}; output verified={done}',key)
+            state=self.queue_state()
+            state.setdefault('task_failures',[]).append(dict(detail=f'task exit={rc}; output verified={done}',
+                                                           task=key,attempt=job['attempts'][-1]['id'],at=time.time()))
+            atomic(self.root/'state.json',state)
         atomic(path,job)
 
     def status(self):
