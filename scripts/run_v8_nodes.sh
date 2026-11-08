@@ -1,5 +1,5 @@
 #!/bin/sh
-# No arguments: reuse the existing SRGC environment and dispatch both cohorts.
+# No arguments: reuse SRGC, verify this node and resume older-controller failures once.
 #   sh scripts/run_v8_nodes.sh            worker for this node (same command on every node)
 #   sh scripts/run_v8_nodes.sh --status   queue state of both cohorts (read-only, JSON)
 #   sh scripts/run_v8_nodes.sh status     status table like `run_srgc.sh <dataset> status` (read-only;

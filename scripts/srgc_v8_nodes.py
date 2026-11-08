@@ -29,7 +29,7 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'independent-cohort-task-scans-v5'
+DISPATCH_POLICY = 'independent-cohort-source-recovery-v6'
 TERMINAL = {'completed_horizon', 'completed_budget'}
 PHASES = ('train', 'extension', 'evaluation')
 
@@ -136,6 +136,7 @@ class Pool:
     """All queue writes occur under control.lock; jobs have independent leases."""
     def __init__(self,root,binding,*,new_queue=False):
         self.root=Path(root);self.binding=binding;self.new_queue=new_queue
+        self.controller_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
         self.root.mkdir(parents=True,exist_ok=True)
 
     def held_leases(self):
@@ -174,7 +175,7 @@ class Pool:
             yield lock if lock.acquire() else None
         finally:lock.close()
 
-    def initialize(self,retry=False,worker=None):
+    def initialize(self,retry=False,worker=None,*,recover=None):
         path=self.root/'binding.json'
         if self.new_queue and path.exists():
             if read(path)==self.binding:
@@ -220,6 +221,8 @@ class Pool:
                 state['failure']=None;atomic(state_path,state)
                 print(f'[v8] {self.binding.get("cohort")}: kept failed task {failure["task"]}; '
                       'independent ready jobs may continue. The failed task was not retried.',flush=True)
+        if recover:self.recover_failed(recover,worker)
+        state=read(state_path)
         if retry:
             if state['failure']:
                 state['failure_history'].append(state['failure']);state['failure']=None
@@ -230,6 +233,45 @@ class Pool:
                     if not lease.acquire():raise ValueError('Failed job is still leased; cannot retry it yet')
                     lease.close();job['state']='pending';atomic(file,job)
             atomic(state_path,state)
+
+    def recover_failed(self,controller,worker):
+        """After node verification, retry an older controller's failed tasks once per fix.
+
+        This is control recovery, not a new experiment: binding, inputs, attempts and checkpoints stay.
+        An input/setup failure or a task that already failed on this controller is never cleared here.
+        """
+        state=self.queue_state();failure=state.get('failure')
+        aggregate=(isinstance(failure,dict) and failure.get('task') is None
+                   and re.match(r'^\d+ task\(s\) failed; no independent ready/running work remains\.',
+                                str(failure.get('detail',''))))
+        if failure and not aggregate:return
+        recovered=[];resumable=False
+        for path in sorted(self.root.glob('jobs/*.json')):
+            job=read(path);history=job.get('recovery_history',[])
+            already=any(row.get('controller_sha256')==controller or row.get('controller_policy')==DISPATCH_POLICY
+                        for row in history)
+            if already and job['state'] in ('pending','interrupted'):resumable=True
+            if job['state']!='failed' or already:continue
+            attempts=job.get('attempts',[])
+            if attempts and (attempts[-1].get('controller_sha256')==controller
+                             or attempts[-1].get('controller_policy')==DISPATCH_POLICY):continue
+            lease=Lock(self.root/'leases'/(path.stem+'.lock'))
+            if not lease.acquire():continue
+            try:
+                job.setdefault('recovery_history',[]).append(dict(controller_sha256=controller,
+                    controller_policy=DISPATCH_POLICY,worker=worker,
+                    previous_attempt=attempts[-1].get('id') if attempts else None,at=time.time(),
+                    reason='verified_node_join_after_controller_update'))
+                job['state']='pending';atomic(path,job);recovered.append(path.stem)
+            finally:lease.close()
+        if aggregate and (recovered or resumable):
+            state.setdefault('failure_history',[]).append(failure);state['failure']=None
+        if recovered or (aggregate and resumable):
+            state.setdefault('actions',[]).append(dict(action='recover_failed_after_controller_update',
+                controller_sha256=controller,worker=worker,tasks=recovered,at=time.time()))
+            atomic(self.root/'state.json',state)
+            print(f'[v8] {self.binding.get("cohort")}: resumed {len(recovered)} older-controller failed task(s) '
+                  'after node verification; original attempts/checkpoints retained; no retry flag needed',flush=True)
 
     def queue_state(self):
         """state.json, recreated as a fresh 'prepare' record (with a printed note) if it is missing,
@@ -368,7 +410,8 @@ class Pool:
             if job['state'] in ('failed','done'):continue
             lease=Lock(self.root/'leases'/(path.stem+'.lock'))
             if not lease.acquire():continue
-            attempt=dict(id=uuid.uuid4().hex,worker=worker,started_at=time.time(),pid=os.getpid())
+            attempt=dict(id=uuid.uuid4().hex,worker=worker,started_at=time.time(),pid=os.getpid(),
+                         controller_sha256=self.controller_sha256,controller_policy=DISPATCH_POLICY)
             if job['state']=='running' and job['attempts']:
                 job['attempts'][-1]['lease_released_without_worker_completion']=time.time()
             job['attempts'].append(attempt);job['state']='running';atomic(path,job)
@@ -447,7 +490,8 @@ class TaskScan:
         def scan():
             try:
                 if verify:
-                    runtime.verify_node();pool.initialize(retry=retry,worker=worker);self.result=('verified',None)
+                    runtime.verify_node();pool.initialize(retry=retry,worker=worker,recover=pool.controller_sha256)
+                    self.result=('verified',None)
                 else:self.result=pool.tick(runtime,worker,stop,claim=False,offer=True)
             except BaseException as exc:
                 self.error=exc
@@ -484,7 +528,8 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
             print(f'[{worker}] {cohort(pool)}: no work is taken for this cohort on this node; nothing was changed.',flush=True)
         else:
             print(f'[{worker}] {cohort(pool)}: no new work is taken for this cohort; the other cohort continues. '
-                  f'Logs: {pool.root/"logs"}. After fixing the cause, run the same command with --retry-failed.',flush=True)
+                  f'Logs: {pool.root/"logs"}. Inspect the cause; the plain launcher recovers older-controller '
+                  'failed tasks once after verification.',flush=True)
     def advance_barrier(pool,action):
         if read(pool.root/'binding.json')!=pool.binding:raise BindingMismatch('Queue identity changed during CPU stage')
         state=pool.queue_state()
@@ -545,7 +590,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                         if getattr(runtime,'independent_startup',False):
                             scans[index]=TaskScan(pool,runtime,worker,stop,control.fd,verify=True,retry=retry)
                             continue
-                        try:runtime.verify_node();pool.initialize(retry=retry,worker=worker)
+                        try:runtime.verify_node();pool.initialize(retry=retry,worker=worker,recover=pool.controller_sha256)
                         except QueueReset:
                             progressed=True;continue  # re-lock control.lock of the fresh directory first
                         except Exception as exc:
@@ -589,7 +634,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                 state=pool.queue_state()
                 reasons[cohort(pool)]=canonical(state.get('failure'))
                 print(f'[{worker}] {cohort(pool)}: queue has a recorded failure: {reasons[cohort(pool)]}. '
-                      f'Fix it, then run the same command with --retry-failed.',flush=True)
+                      f'Inspect the recorded error and logs at {pool.root/"logs"}.',flush=True)
             if action in ('complete','failed'):
                 terminal[index]=action;progressed=True;continue
             if action=='advance':progressed=True
@@ -1047,7 +1092,9 @@ def main(argv=None):
     parser.add_argument('--python',default=os.environ.get('V8_PYTHON',sys.executable),help='fallback Python; cohort-specific environments take priority')
     parser.add_argument('--gpus',default=os.environ.get('CUDA_VISIBLE_DEVICES','0,1,2,3'))
     parser.add_argument('--poll-seconds',type=float,default=3)
-    parser.add_argument('--retry-failed',action='store_true')
+    parser.add_argument('--retry-failed',action='store_true',
+                        help='manual override: retry failed tasks even if they already failed on this controller; '
+                             'ordinary node joins need no retry flag')
     parser.add_argument('--status',action='store_true')
     parser.add_argument('--new-queue',action='store_true',
                         help='after stopping the workers on ALL nodes: keep the existing queue as .multi-node.superseded-<time> '

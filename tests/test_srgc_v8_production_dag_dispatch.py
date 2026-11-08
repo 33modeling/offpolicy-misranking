@@ -102,7 +102,8 @@ def test_five_legacy_qwen_jobs_do_not_leave_all_new_nodes_idle_after_a_task_fail
             if cohort=='qwen_mbpp' and task['method_id']=='on_monitored':
                 held=nodes.Lock(pool.root/'leases'/(key+'.lock'));assert held.acquire();legacy.append(held)
         key=nodes.task_key(failed);job=nodes.read(pool.root/'jobs'/(key+'.json'))
-        job['state']='failed';job['attempts']=[dict(id='legacy-failure',exit_code=1)]
+        job['state']='failed';job['attempts']=[dict(id='current-failure',exit_code=1,
+                                                 controller_sha256=pool.controller_sha256)]
         nodes.atomic(pool.root/'jobs'/(key+'.json'),job);failed_runs.add(failed['run_id'])
         pool.fail('task exit=1; output verified=False',key)
     try:
@@ -119,5 +120,44 @@ def test_five_legacy_qwen_jobs_do_not_leave_all_new_nodes_idle_after_a_task_fail
         for p in processes:
             p.join(4)
             if p.is_alive():p.kill();p.join();raise AssertionError('CPU worker failed to stop')
+            assert p.exitcode==0
+        for held in legacy:held.close()
+
+
+def test_plain_new_nodes_recover_all_old_failed_olmo_while_five_qwen_jobs_keep_running(tmp_path):
+    ctx=mp.get_context('fork');stop=ctx.Event();processes=[];legacy=[];old_olmo=set()
+    for cohort in ('olmo_math','qwen_mbpp'):
+        folder=tmp_path/cohort;folder.mkdir()
+        for seed in range(5,10):(folder/f'prefix-{seed}.pt').write_bytes(b'original checkpoint optimizer RNG reward sentinel')
+        runtime=ProductionPlan(tmp_path,cohort,stop)
+        pool=nodes.Pool(folder/'.multi-node',runtime.binding);pool.initialize()
+        state=pool.queue_state();state['phase']='train';nodes.atomic(pool.root/'state.json',state)
+        tasks,_=runtime.plan('train')
+        for task in tasks:
+            key=pool.register(task,'train')
+            if cohort=='olmo_math':
+                path=pool.root/'jobs'/(key+'.json');job=nodes.read(path)
+                job['state']='failed';job['attempts']=[dict(id='old-'+key,exit_code=1)]
+                nodes.atomic(path,job);old_olmo.add(task['run_id'])
+            elif task['method_id']=='on_monitored':
+                held=nodes.Lock(pool.root/'leases'/(key+'.lock'));assert held.acquire();legacy.append(held)
+        if cohort=='olmo_math':pool.fail('10 task(s) failed; no independent ready/running work remains.')
+    before={p:p.read_bytes() for p in tmp_path.glob('*/prefix-*.pt')}
+    try:
+        assert len(old_olmo)==10 and len(legacy)==5
+        for i in range(12):
+            p=ctx.Process(target=worker,args=(tmp_path,'plain-node-'+str(i),stop));p.start();processes.append(p)
+        rows=wait_claims(tmp_path,12)
+        assert sum(r['run_id'] in old_olmo for r in rows)>=5
+        assert all(p.read_bytes()==content for p,content in before.items())
+        assert len({r['run_id'] for r in rows})==12
+        for path in (tmp_path/'olmo_math/.multi-node/jobs').glob('*.json'):
+            job=nodes.read(path)
+            assert len(job['recovery_history'])==1 and job['attempts'][0]['exit_code']==1
+    finally:
+        stop.set()
+        for p in processes:
+            p.join(4)
+            if p.is_alive():p.kill();p.join();raise AssertionError('CPU node did not stop')
             assert p.exitcode==0
         for held in legacy:held.close()

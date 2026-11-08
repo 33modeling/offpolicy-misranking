@@ -80,7 +80,8 @@ class Runtime:
 
 
 @pytest.mark.parametrize('partial',[False,True])
-def test_existing_cohort_bindings_and_checkpoints_survive_new_dispatcher(tmp_path,modules,monkeypatch,partial):
+@pytest.mark.parametrize('old_failed',[False,True])
+def test_existing_cohort_bindings_and_checkpoints_survive_new_dispatcher(tmp_path,modules,monkeypatch,partial,old_failed):
     dispatch,rpc=modules;root=tmp_path/'experiments';entries=[];bindings={};checkpoints={}
     alias=tmp_path/'other-python';alias.symlink_to(sys.executable)
     for i,cohort in enumerate(('olmo_math','qwen_mbpp')):
@@ -98,6 +99,15 @@ def test_existing_cohort_bindings_and_checkpoints_survive_new_dispatcher(tmp_pat
             bindings[pool.root/'binding.json']=(pool.root/'binding.json').read_bytes()
             checkpoint=root/entry['cohort']/'snapshots/step-000025.pt';checkpoint.parent.mkdir(parents=True)
             checkpoint.write_bytes(b'existing optimizer RNG rewards checkpoint25');checkpoints[checkpoint]=checkpoint.read_bytes()
+            if old_failed:
+                (root/entry['cohort']/'prefix.pt').write_bytes(b'existing original prefix')
+                state=pool.queue_state();state['phase']='train';dispatch.nodes.atomic(pool.root/'state.json',state)
+                tasks,_=actor.plan('train')
+                for task in tasks:
+                    key=pool.register(task,'train');path=pool.root/'jobs'/(key+'.json');job=dispatch.nodes.read(path)
+                    job['state']='failed';job['attempts']=[dict(id='old-launch-failure',exit_code=1)]
+                    dispatch.nodes.atomic(path,job)
+                pool.fail('1 task(s) failed; no independent ready/running work remains.')
         finally:actor.close()
     monkeypatch.setenv('V8_ROOT',str(root));monkeypatch.setenv('V8_ALLOW_ANY_ROOT','1')
     monkeypatch.setattr(sys,'argv',['v8_dispatch.py',str(planfile)])
