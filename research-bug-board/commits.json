@@ -12902,6 +12902,36 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "f04ca218445bebba8a0520de4d1b72993bea6993",
+      "at": "2026-11-08T13:36:33+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Record Qwen-only allocation and OLMo starvation as V8-035",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/f04ca218445bebba8a0520de4d1b72993bea6993",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "18ec7886b2b5fe58958a12ea9a8b9def1bd221ca",
+      "at": "2026-11-08T14:00:40+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Remove idle-node scan convoy and guard verified V8 dispatch",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/18ec7886b2b5fe58958a12ea9a8b9def1bd221ca",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "6f9a802e8dc7580b874d570cf23be092707667f3",
+      "at": "2026-11-08T14:01:55+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve resume sources and adversarial dispatch audit evidence",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/6f9a802e8dc7580b874d570cf23be092707667f3",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

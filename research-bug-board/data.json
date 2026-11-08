@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-08T13:36:32+09:00",
+  "recorded_at": "2026-11-08T14:02:19+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "071ac0dfbc2df4069f3b9c50d45a5d3e3a2b973d",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/071ac0dfbc2df4069f3b9c50d45a5d3e3a2b973d",
-    "all_available_commits": 1219,
+    "source_commit": "6f9a802e8dc7580b874d570cf23be092707667f3",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/6f9a802e8dc7580b874d570cf23be092707667f3",
+    "all_available_commits": 1222,
     "fix_commit_records": 123,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
@@ -29,7 +29,7 @@
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hang-fix-20261108:f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:071ac0dfbc2df4069f3b9c50d45a5d3e3a2b973d",
+      "refs/heads/master:6f9a802e8dc7580b874d570cf23be092707667f3",
       "refs/heads/v8-modes:6821c9c09292662008eb4f933c74bae7490358ed",
       "refs/heads/v8-nodes:3adf26925b2b1c1bf572cf0e68f75b26bbae3ddc",
       "refs/heads/v8-perm:0719ee96d5a109e131c2626943d474a6b2e7a0b7",
@@ -46,7 +46,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:071ac0dfbc2df4069f3b9c50d45a5d3e3a2b973d"
+      "refs/remotes/origin/master:18ec7886b2b5fe58958a12ea9a8b9def1bd221ca"
     ]
   },
   "incidents": [
@@ -3937,6 +3937,182 @@
           "status": "remote_verification_pending",
           "text": "수정본 origin/master 원격 exact 확인. 기존에 실행 중인 worker는 고정된 옛 코드를 계속 사용하고 새 worker부터 적용된다. 기존 Qwen을 중단하거나 큐를 초기화하지 않는다. 실제 H100 OLMo 로그/상태는 아직 수신하지 않아 실제 시작·처리량·노드 손실시간은 미검증이다. 공개 현황판 배포도 이 소스 푸시와 별개이며 완료로 표시하지 않는다.",
           "evidence_kind": "limitation"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "user",
+          "type": "remote_failure_report",
+          "status": "remote_verification_pending",
+          "text": "수정 후에도 사용자 보고: 지금 제대로 도는건 5개 밖에 없어 전부 idle 임 / olmo 는 돌지도 않는다고 / olom 시작이 안된다고. 코드 검사·원격 push 확인은 실제 OLMo 시작 확인이 아니며, 원시 status·대기/오류 출력은 아직 수신하지 못했다. 기존 원격 미검증 상태를 유지한다.",
+          "evidence_kind": "user_report"
+        }
+      ]
+    },
+    {
+      "id": "V8-036",
+      "title": "잠금 경합 뒤 검증하지 못한 노드가 두 번째 배정 단계에서 작업을 claim",
+      "area": "V8 공통 배정·원본 Runtime 제어",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "introduction_commit": "071ac0d",
+      "cause": "원래 초기 검사에서 control.lock을 얻지 못하면 initialized에 들어가지 않았지만, 전역 배정 후보는 이를 확인하지 않았다. 검증이 실패할 노드도 먼저 작업을 claim할 수 있었다. 원래 Runtime.execute의 추가 검증이 모델 실행을 차단할 수 있어도 불필요한 claim·공유 큐 실패를 만들 수 있는 제어 결함이다.",
+      "impact": "OLMo 미시작·Qwen5개 이외 idle이라는 사용자 추가 보고를 조사하면서 독립 CPU 재현으로 확인했다. 어느 결함이 실제 H100에서 발생했는지는 원격 출력 미수신으로 미검증이다.",
+      "attribution": "Codex 배정기·exact-source 통합 코드의 제어 결함. 원래 수치 trainer30파일과 실험 binding·체크포인트는 변경하지 않았다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "수정 코드",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/18ec7886b2b5fe58958a12ea9a8b9def1bd221ca"
+        },
+        {
+          "kind": "code_test",
+          "label": "실패·재현·최종196검사 및 실제 DAG 배정 기록",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/6f9a802e8dc7580b874d570cf23be092707667f3/research/v8-dispatch-audit-20261108/record.json"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "reproduced",
+          "status": "open",
+          "text": "원래 초기 검사에서 control.lock을 얻지 못하면 initialized에 들어가지 않았지만, 전역 배정 후보는 이를 확인하지 않았다. 검증이 실패할 노드도 먼저 작업을 claim할 수 있었다. 원래 Runtime.execute의 추가 검증이 모델 실행을 차단할 수 있어도 불필요한 claim·공유 큐 실패를 만들 수 있는 제어 결함이다.",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "잠금 획득을 첫 번에 실패시키고 입력 검증은 오류를 내도록 한 CPU 재현에서 검증 전 execute 경로에 진입했다. 모든 정상 cohort의 노드 검증이 완료될 때까지 배정을 기다리고 initialized 후보만 claim한다. 최종 전체196검사와 원본 resume14검사 통과. 실제 H100 모델 시작·처리량·금전 손실은 측정하지 않았고 OLMo 실제 미시작 사용자 보고는 종료 처리하지 않는다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/18ec7886b2b5fe58958a12ea9a8b9def1bd221ca",
+          "evidence_kind": "code_test"
+        }
+      ]
+    },
+    {
+      "id": "V8-037",
+      "title": "원본 Runtime 초기화 응답을 무한 대기해 양쪽 cohort가 시작되지 않음",
+      "area": "V8 공통 배정·원본 Runtime 제어",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "introduction_commit": "071ac0d",
+      "cause": "RuntimeProxy 생성자가 초기화 응답 socket을 기한 없이 읽고, 두 cohort 생성은 순차여서 한쪽 초기화가 멈추면 다른 쪽도 도달하지 못했다.",
+      "impact": "OLMo 미시작·Qwen5개 이외 idle이라는 사용자 추가 보고를 조사하면서 독립 CPU 재현으로 확인했다. 어느 결함이 실제 H100에서 발생했는지는 원격 출력 미수신으로 미검증이다.",
+      "attribution": "Codex 배정기·exact-source 통합 코드의 제어 결함. 원래 수치 trainer30파일과 실험 binding·체크포인트는 변경하지 않았다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "수정 코드",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/18ec7886b2b5fe58958a12ea9a8b9def1bd221ca"
+        },
+        {
+          "kind": "code_test",
+          "label": "실패·재현·최종196검사 및 실제 DAG 배정 기록",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/6f9a802e8dc7580b874d570cf23be092707667f3/research/v8-dispatch-audit-20261108/record.json"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "reproduced",
+          "status": "open",
+          "text": "RuntimeProxy 생성자가 초기화 응답 socket을 기한 없이 읽고, 두 cohort 생성은 순차여서 한쪽 초기화가 멈추면 다른 쪽도 도달하지 못했다.",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "30초 잠든 원본 Runtime fixture에서 제한시간 안에 반환하지 못했다. 초기화만120초 기본 제한을 두고 실패 자식을 정리하며 오류를 해당 cohort에 남긴다. 실제 학습 시간 제한을 추가하지 않았다. 첫 수정의 종료 유예로0.2초 테스트가4초를 넘긴 실패도 보존하고 초기화 실패 종료 유예를 단축했다. 최종 전체196검사와 원본 resume14검사 통과. 실제 H100 모델 시작·처리량·금전 손실은 측정하지 않았고 OLMo 실제 미시작 사용자 보고는 종료 처리하지 않는다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/18ec7886b2b5fe58958a12ea9a8b9def1bd221ca",
+          "evidence_kind": "code_test"
+        }
+      ]
+    },
+    {
+      "id": "V8-038",
+      "title": "원본 Qwen 실행기와 다른 Python 우선순위로 환경 선택",
+      "area": "V8 공통 배정·원본 Runtime 제어",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "introduction_commit": "071ac0d",
+      "cause": "정확한 원본 소스 선택 코드 existing_python은 SWITCH_PYTHON을 QWEN_PYTHON보다 먼저 선택했으나 원래 Qwen 실행기와 cohort_python은 QWEN_PYTHON 우선이었다.",
+      "impact": "OLMo 미시작·Qwen5개 이외 idle이라는 사용자 추가 보고를 조사하면서 독립 CPU 재현으로 확인했다. 어느 결함이 실제 H100에서 발생했는지는 원격 출력 미수신으로 미검증이다.",
+      "attribution": "Codex 배정기·exact-source 통합 코드의 제어 결함. 원래 수치 trainer30파일과 실험 binding·체크포인트는 변경하지 않았다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "수정 코드",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/18ec7886b2b5fe58958a12ea9a8b9def1bd221ca"
+        },
+        {
+          "kind": "code_test",
+          "label": "실패·재현·최종196검사 및 실제 DAG 배정 기록",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/6f9a802e8dc7580b874d570cf23be092707667f3/research/v8-dispatch-audit-20261108/record.json"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "reproduced",
+          "status": "open",
+          "text": "정확한 원본 소스 선택 코드 existing_python은 SWITCH_PYTHON을 QWEN_PYTHON보다 먼저 선택했으나 원래 Qwen 실행기와 cohort_python은 QWEN_PYTHON 우선이었다.",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "두 interpreter override를 함께 둔 fixture가 원래 순서와 다른 선택을 재현했다. 명시적 cohort별 override 다음 QWEN_PYTHON 다음 SWITCH_PYTHON 순서로 통일하고 기존 package 신원 검사는 유지했다. 최종 전체196검사와 원본 resume14검사 통과. 실제 H100 모델 시작·처리량·금전 손실은 측정하지 않았고 OLMo 실제 미시작 사용자 보고는 종료 처리하지 않는다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/18ec7886b2b5fe58958a12ea9a8b9def1bd221ca",
+          "evidence_kind": "code_test"
+        }
+      ]
+    },
+    {
+      "id": "V8-039",
+      "title": "모든 유휴 worker가 배정 전에 같은 전체 DAG를 중복 검사하며 metadata 잠금을 점유",
+      "area": "V8 공통 배정·원본 Runtime 제어",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "introduction_commit": "071ac0d",
+      "cause": "각 worker가 discovery에서 Pool.tick(claim=False)로 모든 작업·원본 RPC를 검사하고 곧바로 전역 배정에서 다시 검사했다. 많은 유휴 노드가 각 cohort control.lock을 계속 점유하여 claim 경합과 중복 I/O를 만든다. 실제 원격 idle 원인인지 로그로는 아직 확인하지 못했다.",
+      "impact": "OLMo 미시작·Qwen5개 이외 idle이라는 사용자 추가 보고를 조사하면서 독립 CPU 재현으로 확인했다. 어느 결함이 실제 H100에서 발생했는지는 원격 출력 미수신으로 미검증이다.",
+      "attribution": "Codex 배정기·exact-source 통합 코드의 제어 결함. 원래 수치 trainer30파일과 실험 binding·체크포인트는 변경하지 않았다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "수정 코드",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/18ec7886b2b5fe58958a12ea9a8b9def1bd221ca"
+        },
+        {
+          "kind": "code_test",
+          "label": "실패·재현·최종196검사 및 실제 DAG 배정 기록",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/6f9a802e8dc7580b874d570cf23be092707667f3/research/v8-dispatch-audit-20261108/record.json"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "reproduced",
+          "status": "open",
+          "text": "각 worker가 discovery에서 Pool.tick(claim=False)로 모든 작업·원본 RPC를 검사하고 곧바로 전역 배정에서 다시 검사했다. 많은 유휴 노드가 각 cohort control.lock을 계속 점유하여 claim 경합과 중복 I/O를 만든다. 실제 원격 idle 원인인지 로그로는 아직 확인하지 못했다.",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "한 번의 최초 claim 전에 unsealed DAG plan이2회 호출되는 재현을 보존했다. discovery는 신원·단계 metadata와 CPU barrier만 처리하고 실제 DAG 검사는 전역 claim 단계에서1회 수행한다. 실제5seed DAG의 CPU lease fixture:24 worker가 초기20개를 모두 배정, 부모가 계속 실행 중인 상태에서 step50 추가 후30 worker에30개 고유 작업 배정(각 cohort15), 중복0. 최종 전체196검사와 원본 resume14검사 통과. 실제 H100 모델 시작·처리량·금전 손실은 측정하지 않았고 OLMo 실제 미시작 사용자 보고는 종료 처리하지 않는다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/18ec7886b2b5fe58958a12ea9a8b9def1bd221ca",
+          "evidence_kind": "code_test"
         }
       ]
     }
