@@ -850,3 +850,11 @@ def test_worker_loop_relocks_the_fresh_queue_before_ticking(tmp_path):
     pool.tick=tick
     assert nodes.worker_loop(pool,Rt(),'w',threading.Event(),poll=.001)==0
     assert seen==[True]  # the worker held the NEW directory's control.lock when it ticked
+
+
+def test_bundle_mismatch_message_does_not_suggest_retry_failed(tmp_path,capsys):
+    runtime=FakeRuntime(tmp_path/'runtime');pool=nodes.Pool(tmp_path/'q',runtime.binding);pool.initialize()
+    pool.register(task('started'),'train')
+    assert nodes.worker_loop(nodes.Pool(pool.root,dict(runtime.binding,code='newer')),runtime,'n',threading.Event(),poll=.001)==1
+    out=capsys.readouterr().out
+    assert '--new-queue' in out and '--retry-failed' not in out

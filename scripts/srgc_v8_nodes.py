@@ -370,8 +370,11 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
     def give_up(index,pool,kind,exc):
         terminal[index]='failed';reasons[cohort(pool)]=f'{type(exc).__name__}: {exc}'
         print(f'[{worker}] {cohort(pool)}: {kind} failed: {type(exc).__name__}: {exc}',flush=True)
-        print(f'[{worker}] {cohort(pool)}: no new work is taken for this cohort; the other cohort continues. '
-              f'Logs: {pool.root/"logs"}. After fixing the cause, run the same command with --retry-failed.',flush=True)
+        if isinstance(exc,BindingMismatch):
+            print(f'[{worker}] {cohort(pool)}: no work is taken for this cohort on this node; nothing was changed.',flush=True)
+        else:
+            print(f'[{worker}] {cohort(pool)}: no new work is taken for this cohort; the other cohort continues. '
+                  f'Logs: {pool.root/"logs"}. After fixing the cause, run the same command with --retry-failed.',flush=True)
     while not stop.is_set():
         progressed=False;dispatched=False
         claim_ok,busy=(True,None) if gpu_gate is None else gpu_gate()
