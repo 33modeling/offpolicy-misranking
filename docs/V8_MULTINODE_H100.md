@@ -133,7 +133,7 @@ worker는60초마다 현황을 출력한다. 자식 출력은 터미널과 각 c
 정책 버전이 나온다. 표 형식 `status`는 `dispatch current <hash>`(현재 checkout과
 같음), `dispatch different <hash>`(다름), `dispatch unverified`(기록 없음)를 구분한다.
 정책 파일이 디스크에 있다는 것만으로 실행 중인 worker에 적용됐다고 판단하지 않는다.
-현재 배정 정책은 `source-recovery-rank-errors-v8`다. 작업 검사는 해당 cohort의
+현재 배정 정책은 `source-recovery-verifier-rollout-guards-v9`다. 작업 검사는 해당 cohort의
 control lease만 잡고 별도로 수행한다. 검사 결과가 준비되면 공유 잠금 안에서 현재
 binding·phase·실패 상태·작업 정의·작업 lease를 다시 확인한 뒤 claim한다.
 검사와 claim 사이에 다른 노드가 가져간 작업이나 실패한 작업은 가져오지 않는다.
@@ -155,6 +155,18 @@ binding·checkpoint를 고치거나 지우지 않는다. 신원·설정·CPU 준
 고급 옵션이다. 새 노드의 기본 실행 명령에는 붙이지 않는다.
 
 GPU 자식의 시작·중단·정체 감시는 기존 `srgc_rebuttal.cluster.run_child()`를 사용한다.
+옛 child가 strict MATH verifier를 선택하면 Context 구성 뒤 기존 seed 실행의
+`srgc_verifier_fallback.py`를 연결한다. 읽히는 gold는 math-verify를 쓰고, 읽히지 않는
+gold는 기존 정규화·마지막 `Answer:` 일치 방식으로 판정한다. 빈 gold는 입력 오류로
+남기며 사용자 정의·MBPP verifier는 바꾸지 않는다. 적용 시 실제 reward runtime 변경과
+verifier identity를 `runtime-repair-rank-N.json`에 기록한다. 기존 원본 코드·입력·이미
+기록된 보상은 보존하고, 검증 helper도 실행기와 함께 고정해 이후 git pull의 영향을 막는다.
+옛 backend에는 rollout 뒤 캐시 해제와 OOM 시 동일 prompt·응답 수·seed로 한 번 재시도를
+연결한다. 기존 보호가 있는 backend는 학습의 rollout에도 같은 보호를 적용한다.
+optimizer update 전체를 다시 호출하지 않는다. 계속되는 OOM과 다른 CUDA RuntimeError는
+실패로 남긴다. CUDA 오류의 원문·마지막 작업 기록·확인 가능한 allocator 통계는
+`cuda-failure-rank-N.json`에 보존한다. 이 처리가 실제 H100 메모리 용량이나 아직 원문이
+없는 `RegisterCUDA … SymIntArrayRef` 오류의 해결을 보장하지는 않는다.
 자식이 점유 중이거나 중단되어 종료75를 기록하면 torchrun의 종료1을 작업 실패로
 오인하지 않는다. 실제 rank 예외·치명적 signal이 함께 있으면 실패 기록을 우선한다.
 `ChildFailedError` 앞의 원래 traceback은 PyTorch 오류 기록기로 보존한다. 원래 입력

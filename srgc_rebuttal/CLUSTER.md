@@ -536,8 +536,8 @@ Anything unrecognised is kept verbatim under `LOG`.
 to abort a prefix/arm child whenever `math_verify.parse` returned nothing for
 a gold (its 5 s alarm expires on long golds when the node is loaded; all 800
 golds per seed parse on an idle machine). The training child now installs
-`scripts/srgc_verifier_fallback.py`: golds are parsed once with a retry at
-60 s, and a gold that still fails is scored by the original experiment's
+`scripts/srgc_verifier_fallback.py`: each gold has one bounded 5-second parse
+attempt and is cached; a gold that fails is scored by the original experiment's
 normalized exact match on the response's last `Answer:` line, logged once as
 `VERIFY fallback exact-match gold=...`. Parsable golds keep math-verify.
 
