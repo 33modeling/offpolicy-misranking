@@ -3919,6 +3919,14 @@
         "status": "remote_verification_pending",
         "text": "추가 사용자 보고: preparing this node no GPU work has been / 지금 노드 5개 mbpp 말고 안늘어난다. 기존 SRGC 코드 참고 지시에 따라 task 실패 범위와 child 감시를 비교했고 V8-042/043을 재현·수정했다. 실제 H100 OLMo 추가 배정·학습 시작은 원격 로그를 아직 받지 못해 미검증으로 남긴다.",
         "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "user",
+        "type": "remote_failure_report",
+        "status": "remote_verification_pending",
+        "text": "사용자 추가 보고: 아직도 olmo는 시작 안해. 원시 H100 status/log/stack은 아직 미수신이다. 추가 CPU 재현으로 공통 잠금을 잡은 원본 작업 검사와 동기 노드 검증이 다른 cohort를 막는 V8-045를 확인했다. 실제 OLMo 시작 확인으로 간주하지 않는다.",
+        "evidence_kind": "user_report"
       }
     ]
   },
@@ -4361,6 +4369,69 @@
         "type": "remote_verification_pending",
         "status": "remote_verification_pending",
         "text": "코드235ded0 원격exact 확인. 이미 실패로 기록된 작업은 명시적 --retry-failed로 재배정할 수 있다. 실제 H100 OLMo의 학습 시작/완료는 아직 관찰하지 못했고 자동 성공으로 집계하지 않는다. 공개 현황판 배포는 별도 미실행이다.",
+        "evidence_kind": "limitation"
+      }
+    ]
+  },
+  {
+    "id": "V8-045",
+    "title": "원본 작업 검사 중 공통 배정 잠금을 잡아 한 cohort의 지연이 다른 모델과 추가 노드까지 차단",
+    "area": "V8 OLMo·Qwen 독립 배정·노드 검증·작업 검사",
+    "severity": "critical",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "",
+    "cause": "공통 배정 잠금 안에서 Pool.tick이 Runtime.plan/native_busy/done/ready를 동기 호출했다. 원본 작업 검사 하나가 지연되면 다른 cohort의 claim도 공통 잠금 뒤에서 대기했다. 노드 검증도 한 worker의 다른 cohort 확인을 동기 차단했다.",
+    "impact": "사용자는 이전 수정 후에도 OLMo가 시작되지 않는다고 보고했다. CPU 원본 actor 재현에서는 Qwen 작업 검사가 OLMo 실제 fixture execute 진입을 막고 반대 방향도 막았다. 실제 H100 대기의 원인이 이 경로인지와 노드 손실시간은 로그가 없어 미측정이다.",
+    "attribution": "Codex 공통 배정기 설계. 기존 독립 초기화/CPU 준비 검사에 작업 목록·native lock·완료·입력 검증 지연을 포함하지 않아 놓친 결함이다. 실패한 테스트 harness argv 처리와 이후 테스트 hook 불일치도 원시 XML에 보존했다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "cohort별 원본 검사 분리와 공유 잠금 범위 축소",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/d347995f65c351c5b4f1d5ba8014c763d40e7e16"
+      },
+      {
+        "kind": "code_test",
+        "label": "재현·239개 CPU 검사·한계 및 실패 보존",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/161ec7af6603ecb1164f8feb2dbbc3046f8fc217/research/v8-plan-lock-20261108/record.json"
+      },
+      {
+        "kind": "code_test",
+        "label": "두 방향의 원본 actor 초기화/준비/검증/plan/native_busy/done/ready 차단 검사",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/d347995f65c351c5b4f1d5ba8014c763d40e7e16/tests/test_srgc_v8_dispatch_runtime.py"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "user",
+        "type": "reported",
+        "status": "open",
+        "text": "아직도 olmo는 시작 안해",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "reproduced",
+        "status": "open",
+        "text": "before-runtime.xml: 느린 cohort를 반드시 먼저 확인하도록 고정하면 원본 actor plan이 다른 cohort의 실제 CPU fixture execute 진입을 막아 양쪽 모두 timeout. before.xml의 초기 argv fixture 오류와 core.xml의 옛 test hook 실패도 삭제하지 않았다.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "원본 actor의 노드 검증과 작업 검사는 해당 cohort의 control lease만 잡고 독립 수행한다. 준비된 작업 offer는 공유 잠금 안에서 최신 binding/phase/failure/작업 정의/실제 task lease를 다시 검증한 뒤 claim한다. 원본 Runtime RPC와 ledger 검사는 공통 잠금 밖이다. 95 core+142 회귀+2 기존 CPU model/RNG·history export 검사=239 unique pass. 30 trainer 파일 해시 동일, 기존 binding/checkpoint/optimizer/RNG/보상/실패 이력 보존, archive19 coordinator/7 runner.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/d347995f65c351c5b4f1d5ba8014c763d40e7e16",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "remote_verification_pending",
+        "status": "remote_verification_pending",
+        "text": "수정·증거·실행 원본 묶음을 master에 push하고 exact remote 확인. 실제 H100 OLMo 시작·optimizer update·처리량은 아직 미검증이다. 실행 중인 worker는 고정된 옛 코드를 유지하며 대기/실패 worker 재실행부터 적용된다. 공개 버그 현황판의 배포는 이 소스 push와 별개로 수행하지 않았다.",
         "evidence_kind": "limitation"
       }
     ]
