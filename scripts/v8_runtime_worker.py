@@ -11,8 +11,22 @@ import threading
 from v8_rpc import send,receive
 
 
+def activate_trainer(environment):
+    """The frozen actor lives outside the checkout; use the already selected trainer root."""
+    value=environment.get('V8_CODE_ROOT')
+    if not value:return
+    code=Path(value).resolve()
+    if not (code/'srgc_rebuttal/srgc.py').is_file():
+        raise ValueError(f'Original trainer package is missing at {code}/srgc_rebuttal; queue unchanged')
+    for directory in (code/'src',code):
+        path=str(directory)
+        if path in sys.path:sys.path.remove(path)
+        sys.path.insert(0,path)
+
+
 def run_srgc_child(runtime,command,log,fds,stop,*,extra=None,label=None,interval=5):
     """Use the existing SRGC lifecycle/progress watchdog; supervisor already spools its console."""
+    activate_trainer(runtime.environment)
     from srgc_rebuttal.cluster import run_child
     from srgc_rebuttal.progress import signature
     environment=dict(runtime.environment,CUDA_VISIBLE_DEVICES=','.join(runtime.gpus),**(extra or {}))
@@ -40,6 +54,7 @@ def main():
     for sig in (signal.SIGINT,signal.SIGTERM):signal.signal(sig,lambda *_:stop.set())
     runtime=None
     try:
+        activate_trainer(os.environ)
         spec=importlib.util.spec_from_file_location('_original_v8_coordinator',entry['script'])
         module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
         runtime=module.Runtime(entry['runner'],plan['root'],cohort,sys.executable,plan['gpus'])

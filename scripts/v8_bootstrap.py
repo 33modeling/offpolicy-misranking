@@ -65,6 +65,10 @@ def environment(tools,source,*,cwd=None,warn=None,defer_cohort_errors=False):
         for root in candidates:
             if all((root/name).is_file() for name in ('cluster_child.py','run_h100.sh','switching/cli.py','configs/base.json')):
                 env['V8_RUNNER_ROOT']=str(root.resolve());break
+    if env.get('V8_CODE_ROOT'):
+        code=Path(env['V8_CODE_ROOT']).resolve()
+        paths=[str(code),str(code/'src'),*env.get('PYTHONPATH','').split(os.pathsep)]
+        env['PYTHONPATH']=os.pathsep.join(dict.fromkeys(path for path in paths if path))
     return env
 
 

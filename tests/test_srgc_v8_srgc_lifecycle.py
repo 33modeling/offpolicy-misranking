@@ -3,6 +3,7 @@ import importlib
 import os
 from pathlib import Path
 import sys
+import subprocess
 import threading
 import time
 import types
@@ -44,3 +45,23 @@ for i in range(6):p.write_text(str(i));time.sleep(.06)
         assert worker.run_srgc_child(runtime,[sys.executable,'-c',code,str(held.fd),str(tmp_path/'task.lock')],
                    tmp_path/'task.log',[held.fd],threading.Event(),interval=.02)==0
     finally:held.close()
+
+
+def test_frozen_actor_outside_checkout_can_import_original_srgc_without_pythonpath(tmp_path):
+    controls=tmp_path/'private-cache/control';controls.mkdir(parents=True)
+    for name in ('v8_runtime_worker.py','v8_rpc.py'):
+        (controls/name).write_bytes((REPO/'scripts'/name).read_bytes())
+    script=controls/'probe.py'
+    script.write_text('''import os,sys,threading,types
+from pathlib import Path
+from v8_runtime_worker import run_srgc_child
+r=types.SimpleNamespace(cohort='olmo_math',gpus=[],heartbeat=lambda _:None,environment=dict(os.environ))
+assert run_srgc_child(r,[sys.executable,'-c','print("original SRGC child reached")'],
+ Path(sys.argv[1]),[],threading.Event(),interval=.01)==0
+''')
+    env=dict(os.environ,V8_CODE_ROOT=str(REPO),SRGC_PROGRESS_DIR=str(tmp_path/'progress'))
+    env.pop('PYTHONPATH',None)
+    result=subprocess.run([sys.executable,str(script),str(tmp_path/'task.log')],cwd=tmp_path,
+                          env=env,capture_output=True,text=True,timeout=4)
+    assert result.returncode==0,result.stdout+result.stderr
+    assert 'original SRGC child reached' in (tmp_path/'task.log').read_text()
