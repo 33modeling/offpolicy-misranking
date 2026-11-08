@@ -1,0 +1,12 @@
+{
+  "code_commit": "bc8728753e5799c6a4305d23676eb5e15983cb06",
+  "paper_commit": "3d0c08336950d2697dc66cbe3570a230e449f33b",
+  "archive": "/home/kms/dev/offpolicy-v3/dist/rlvr-v8-h100-autopath-bc87287.tar.gz",
+  "download": "/home/kms/Downloads/rlvr-v8-h100-autopath-bc87287.tar.gz",
+  "archive_sha256": "21f692f19fd578ac2d0e859b15321991fcc24122383e9d1e6946b5e0c9934624",
+  "files": 67,
+  "all_archive_file_hashes_verified": true,
+  "offline_shell_status": "both cohorts not_started from unrelated cwd, without any V8 path settings",
+  "normal_no_argument_start": "verified against temporary existing-environment fixture in87-test suite; no model/GPU execution",
+  "new_GPU_jobs": 0
+}

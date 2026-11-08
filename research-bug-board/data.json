@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-08T10:12:11+09:00",
+  "recorded_at": "2026-11-08T10:55:14+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "b29e5477448a33caa949ecfa4baf028444dd90ec",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/b29e5477448a33caa949ecfa4baf028444dd90ec",
-    "all_available_commits": 1163,
+    "source_commit": "bc8728753e5799c6a4305d23676eb5e15983cb06",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/bc8728753e5799c6a4305d23676eb5e15983cb06",
+    "all_available_commits": 1165,
     "fix_commit_records": 117,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
@@ -23,7 +23,7 @@
       "refs/heads/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:b29e5477448a33caa949ecfa4baf028444dd90ec",
+      "refs/heads/master:bc8728753e5799c6a4305d23676eb5e15983cb06",
       "refs/remotes/origin/audit/codecheck-20260820:5dd447990296042e334679c85e7672477cd7c5d3",
       "refs/remotes/origin/audit/p1-integrity:5dfda89ec3be2cc4d60f8f0371eeaf00790f6644",
       "refs/remotes/origin/docs/mbpp-budget-incident-20260919:fa1c6897b2b26ef002dd165c94f58702b1f9e1ed",
@@ -32,7 +32,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:b29e5477448a33caa949ecfa4baf028444dd90ec"
+      "refs/remotes/origin/master:bc8728753e5799c6a4305d23676eb5e15983cb06"
     ]
   },
   "incidents": [
@@ -2847,6 +2847,47 @@
           "type": "source_fix_verified",
           "status": "code_fixed",
           "text": "SeedBank의 canonical budget_endpoint 반환값에서 실제run_id/update/hash를 직접 수집한다. 없는/달라진 checkpoint는 성공 처리하지 않는다. 실제v8 CPU3작업자37작업·중복0·선택된16checkpoint의평가해시 일치, 전체70검사통과. 원래30trainer파일은동일하다. 실제H100검증/속도측정은없다.",
+          "evidence_kind": "code_test"
+        }
+      ]
+    },
+    {
+      "id": "V8-017",
+      "title": "신규 V8 실행기가 기존 작업 경로·가상환경 재사용 대신 수동 설정을 요구함",
+      "area": "클러스터 시작",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "introduction_commit": "c44f6d9921a0e38e7bc9734ce3d28970d8a52f6f",
+      "cause": "기존 SRGC 스크립트는 OM_WORK/GROUP_VOLUME/OM_USER와 .venv-cu126를 자동 사용하지만 신규 wrapper는 V8_ROOT·V8_CODE_ROOT 등의 설정과 실행 위치를 사용자에게 요구했다.",
+      "impact": "이미 있는 클러스터 환경에서 인자 없는 시작이 실패하거나 잘못된 작업 폴더를 지정할 수 있었다. GitHub 연결이 없는 기존 클러스터에 git fetch 안내도 맞지 않았다.",
+      "attribution": "Codex의 신규 wrapper와 실행 안내. 기존 trainer/클러스터 환경 문제로 돌리지 않는다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "기존 환경 자동 사용 bootstrap",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/bc8728753e5799c6a4305d23676eb5e15983cb06"
+        },
+        {
+          "kind": "code_test",
+          "label": "87개 소프트웨어 검사·설정 fixture",
+          "url": "https://github.com/33modeling/offpolicy-misranking/tree/bc8728753e5799c6a4305d23676eb5e15983cb06/research/v8-existing-environment-20261108"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "user",
+          "type": "reported",
+          "status": "open",
+          "text": "노드 경로를 직접 지정하게 하지 말고 기존 코드와 기존 작업 환경을 사용하라는 지시.",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "기존 실행 스크립트의 작업 폴더·venv 규칙과 저장된 원본 locator를 bootstrap으로 연결했다. 원래 trainer와87개 검사에서 입력 신원 보존·잘못된 Python/깨진 receipt 거부·인자 없는 시작·아무 cwd의 오프라인 묶음 사용을 확인했다. package 설치/데이터 이전/원격 접속은 없다. 실제 H100 시작 검증은 수행하지 않았다.",
           "evidence_kind": "code_test"
         }
       ]

@@ -8,7 +8,9 @@
       "scripts/v8_bootstrap.py": "45b02e220c1faefd4c7352cbab88acca3924763bab148084b3bbd1579f1db597",
       "scripts/run_v8_nodes.sh": "47d7fc638207c084002c11133f713193caab5b8f5058111a63ef4fe4dc224005",
       "tests/test_srgc_v8_bootstrap.py": "9ad7a232a28740c62c5e225cec0d4ab516cc61fbd02d00917f36bfc9de4d3ef2"
-    }
+    },
+    "implementation_commit": "bc8728753e5799c6a4305d23676eb5e15983cb06",
+    "remote_exact_at_publication": "bc8728753e5799c6a4305d23676eb5e15983cb06"
   },
   "implementation": {
     "command": "sh scripts/run_v8_nodes.sh",
@@ -94,5 +96,6 @@
     }
   },
   "packaging": "Offline bundle uses unchanged paper runtime3d0c083 and latest code source; no GitHub connection required on the cluster.",
-  "limitations": "Existing assets must actually be present. Ambiguous/inconsistent source identity still fails validation; bootstrap does not replace or reset in-flight experiments."
+  "limitations": "Existing assets must actually be present. Ambiguous/inconsistent source identity still fails validation; bootstrap does not replace or reset in-flight experiments.",
+  "bug_incident": "V8-017"
 }

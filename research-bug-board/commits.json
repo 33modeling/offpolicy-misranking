@@ -12342,6 +12342,26 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "bcc92bc336d67084ad0f22de92b697f38fe32e27",
+      "at": "2026-11-08T10:12:11+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Correct static V8 graph width versus time-dependent concurrency",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/bcc92bc336d67084ad0f22de92b697f38fe32e27",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "bc8728753e5799c6a4305d23676eb5e15983cb06",
+      "at": "2026-11-08T10:53:38+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Reuse existing SRGC environment for no-argument V8 startup",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/bc8728753e5799c6a4305d23676eb5e15983cb06",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }
