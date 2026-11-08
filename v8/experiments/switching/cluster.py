@@ -72,7 +72,14 @@ def cmd_locate(args):
                        prefix_completed_updates=r["completed_updates"])
         if run.exists():
             impl = read_json(run).get("implementation_sha256")
-            rec.update(run_implementation_sha256=impl, implementation_matches_code_root=impl == digest)
+            rec.update(run_implementation_sha256=impl, implementation_matches_code_root=False)
+            try:
+                selection=coderepo.source_runtime(root,cfg['runtime']['profile'],impl)
+                prefix_impl=r.get('implementation_sha256') if ready.exists() else None
+                if prefix_impl!=impl:raise ValueError('prefix-ready.json and run.json runtime identities differ')
+                rec.update(runtime_selection=selection,implementation_matches_code_root=True)
+            except (OSError,ValueError) as exc:
+                rec['runtime_error']=str(exc)
         if cfg["model"]["revision"] and plan.get("model_revision") not in (None, cfg["model"]["revision"]):
             rec["model_revision_mismatch"] = True
         out["seeds"][str(seed)] = rec
@@ -82,8 +89,11 @@ def cmd_locate(args):
            "prefix_sha256" not in r or r.get("model_revision_mismatch")]
     print(json.dumps({"written": str(path), "problems": bad}, indent=2))
     if bad and not args.allow_mismatch:
-        raise SystemExit("locator problems: point V8_CODE_ROOT at the frozen checkout that produced these runs "
-                         "(implementation_sha256 must match run.json) or pass --allow-mismatch for read-only use")
+        reasons={s:{k:v for k,v in out['seeds'][s].items() if k in ('runtime_error','model_revision_mismatch')}
+                 for s in bad}
+        for s in bad:
+            if 'prefix_sha256' not in out['seeds'][s]:reasons[s]['missing_prefix']=True
+        raise SystemExit('source verification failed: '+json.dumps(reasons,sort_keys=True))
 
 
 class ClusterLocator:

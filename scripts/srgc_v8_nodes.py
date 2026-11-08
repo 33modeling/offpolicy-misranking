@@ -107,7 +107,20 @@ class Pool:
         path=self.root/'binding.json'
         if path.exists():
             if read(path)!=self.binding:
-                raise ValueError('Worker/runner/config/trainer identity differs from this queue; use the same pinned code on all nodes.')
+                old=read(path)
+                state_path=self.root/'state.json'
+                state=read(state_path) if state_path.exists() else {}
+                stable=('schema','cohort','root','config_sha256','trainer_sha256','world_size','python_version','packages')
+                if (state.get('phase')=='prepare' and state.get('failure')
+                        and not list(self.root.glob('jobs/*.json'))
+                        and not (self.root/'input-identity.json').exists()
+                        and all(old.get(k)==self.binding.get(k) for k in stable)):
+                    atomic(self.root/'setup-history'/(digest(old)+'.json'),dict(binding=old,state=state))
+                    state['failure_history'].append(state['failure']);state['failure']=None
+                    state['actions'].append(dict(action='retry_failed_setup_with_verified_source',at=time.time()))
+                    atomic(path,self.binding);atomic(state_path,state)
+                else:
+                    raise ValueError('Worker/runner/config/trainer identity differs from this queue; use the same pinned code on all nodes.')
         else:atomic(path,self.binding)
         state_path=self.root/'state.json'
         if not state_path.exists():atomic(state_path,dict(phase='prepare',failure=None,actions=[],failure_history=[]))

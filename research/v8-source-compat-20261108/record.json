@@ -1,0 +1,89 @@
+{
+  "kind": "source runtime compatibility fix; no new scientific model results",
+  "user_error": "point V8_CODE_ROOT at the frozen checkout that produced these runs",
+  "causes": [
+    "Published locator compared only current base package digest with original run identity, ignoring the existing saved-runtime selector.",
+    "Qwen stores sha256(base engine digest + adapter digest); a raw base-only comparison always rejects that identity.",
+    "The same old message also represented missing prefix or model revision mismatch."
+  ],
+  "fix": [
+    "Verify full archived source bytes using the existing saved-runtime helper and load the actual archived module before child model/optimizer construction.",
+    "Verify Qwen exact composite identity and matching run/prefix receipts; activate known archived base plus adapter only after both verify.",
+    "Retain original source/checkpoint hashes; do not bypass validation or relabel a new engine.",
+    "Retry a failed preparation-only queue with no jobs and no frozen input identity after compatible verified code correction; preserve previous binding and failures. Any existing task prevents this automatic rebinding.",
+    "Report unsupported runtime, missing prefix and model revision mismatches distinctly."
+  ],
+  "software": {
+    "tests_passed": 96,
+    "upstream_tests_run": 102,
+    "upstream_passed": 101,
+    "upstream_skipped": 1,
+    "original_trainer_files_unchanged": 30,
+    "actual_saved_engine_CPU_training": "both OLMo and Qwen identity paths load archived f581 engine then execute ToyBackend25-to50 continuation",
+    "production_locator": "five-seed legacy OLMo and Qwen synthetic receipts pass; missing prefix rejected with specific message"
+  },
+  "failure_retention": {
+    "initial_93_tests": "passed before extending proxy activation and production-locator tests",
+    "release": "2CPU fixture timeouts during fsync/journal stalls;51 checks passed before intentional interrupt. Raw release.xml and intermediate checkpoints retained locally. Final CPU-only fixtures disable V8_FSYNC, as existing ToyBackend integration already does; production durability defaults unchanged."
+  },
+  "data_model_transformation": {
+    "model": "CPU ToyBackend; no actual OLMo/Qwen model weights trained",
+    "data": "synthetic records and receipt fixtures",
+    "transformation": "none",
+    "seeds": [
+      5,
+      6,
+      7
+    ],
+    "updates": "archived engine25-to50 probe plus existing prefix25/H75/safety100 and resume60-to100 cases"
+  },
+  "scientific_results": {
+    "new_GPU_jobs": 0,
+    "new_RLVR_measurements": 0,
+    "actual_node_progress": "not observed"
+  },
+  "source": {
+    "baseline": "cc26be0c925f4f8fa289b9aceae1f7d3ef866ac4",
+    "archived_hashes": [
+      "9435e80003f41e1f65cb9dcc4074f1b06f063880d4823f433d5cd8fb5e2d74a7",
+      "f581eb043e89409e0e68d8ed77201fa030e34bd93d4d5babbab65304c24a5d6b"
+    ],
+    "frozen_trainer_sha256": {
+      "srgc_rebuttal/__init__.py": "daff68712fd7115469febaaad3c782d020ad450bce6e0f883a0259cadd3a258f",
+      "srgc_rebuttal/admission.py": "befe3a6514875e24a23979b795602b281ef2ea2a9abadb01e19c9977cd7b8024",
+      "srgc_rebuttal/build_cache.py": "91a3776141b2d83eca30dc45ecc1df964b24d43d1f8baa26b8e569e80894672e",
+      "srgc_rebuttal/build_inputs.py": "59a8f3ba3f023a475fb600cc75b2ad5a26eca59c9de611adc2bf89096eef11c9",
+      "srgc_rebuttal/cluster.py": "0aa3a50fb18170a5ee4ca00f36a641ab5e3ac9c5c395cd691324c59e8387d142",
+      "srgc_rebuttal/cluster_queue.py": "960bc8a63c4ecdc3e2ae40131faf637f6e0e4af006007ef4577fe4dcc065153f",
+      "srgc_rebuttal/code_assertions.py": "51b4a2fd02664d0f02b4f154cf18172cc654931404a45515e3423da14f666e76",
+      "srgc_rebuttal/code_check.py": "38f708dcec041d9e2434c52a9b947284938acc3216fd06e99f0f9cd5b606450b",
+      "srgc_rebuttal/cost_ledger.py": "2b878384943e5e24c912884a20b71d31bca0b45e280e666d5caf81147222f5e7",
+      "srgc_rebuttal/cost_report.py": "53ceba5a2753391f46331fbedaf26e210b0d33027ddb4237bbdbf0d07bc60521",
+      "srgc_rebuttal/distributed.py": "222fd71362b442ed6c63afb3c4a2937add9ef7130be010d7b093277c2a21e265",
+      "srgc_rebuttal/existing_runtime.py": "a1702f2907da3decf7f7356fd1c68c933442a460d1fc8360ef1d2dbdcb37c7f4",
+      "srgc_rebuttal/import_pair_inputs.py": "7b5332bdba9476b86d2cbf42fb997a3b865d5547b5fc3ac6575704e8d549429f",
+      "srgc_rebuttal/objectives.py": "1e686c118c79ab5b51c7d6973ae897aaf2bfdde0824470937ef7c30e18293ba4",
+      "srgc_rebuttal/plan.py": "643ed49f1ad74297cfecec8f453a9cf3e737260b960479e6e116e48c9377dc3e",
+      "srgc_rebuttal/plan_dataset.py": "468af80b4f59e9b7f2683eaa724f308fc91872bb1918e65e127e557ee6e992b2",
+      "srgc_rebuttal/prepare_inputs.py": "71f6a8e0f1cc6df586df8bd4bd234b413a5945895d3cdf3ae0446fd9763230e1",
+      "srgc_rebuttal/prepare_rebuttal.py": "f0978d96f418bfd90fd3cd291b977b61f50b6a14d30d876e489fc65ed3073cba",
+      "srgc_rebuttal/progress.py": "d3202b65e9eb53557fb45b6b54f1cce0ae50d196486bd5bc11d0de2e8e19440f",
+      "srgc_rebuttal/reports.py": "97317b77c9f57536a34d421a70d6c57a714ad4184630253f6c41297cf21194bf",
+      "srgc_rebuttal/run_demo.py": "0f69daf7c1f255f1690b5354e40fb56a2a20bc6a11ef39a6666207392697bd7e",
+      "srgc_rebuttal/run_experiment.py": "9f2dc57536fdb5f6f5a7f5016129a6814120089bf8135431d1f8bd4da804e885",
+      "srgc_rebuttal/runtime.py": "518d37beb7c733e1497599bfe0f9131cd1caf7e9cfdea887f20060291f335e10",
+      "srgc_rebuttal/srgc.py": "d2dc8e3b83df63139f06f97574009e03b1f6bf26f47c3013dedf98e1076516e7",
+      "srgc_rebuttal/summarize.py": "0d7179717ede53de7ccebaf9f5e691bd4ea8eb954a5cd8c0803bf077bba31c49",
+      "srgc_rebuttal/timing.py": "82e53cc63751177188fa6da4abdca6dc0567f4ac27524488c643ff863b08efa5",
+      "srgc_rebuttal/torch_backend.py": "94a8d2d98b6312ee584c32674dbfc194a9e95e714b484a5a64b84b3e78631e11",
+      "srgc_rebuttal/torch_state.py": "eda68cecdd6ed5f5312a7b5f5a026d14d86db4f9f329aaf45a825a867c72e2d6",
+      "srgc_rebuttal/toy_backend.py": "159a6b72e8923620469600d3acb09bf36fb2eb629cdbee0ca6058a0cfba08272",
+      "srgc_rebuttal/verifiers.py": "5062befe4ed5a8e21f6de01a73dca4f1d3544dd033c5d2c846bff391d1148a90"
+    }
+  },
+  "provenance": {
+    "raw_tests_logs_checkpoints": "/home/kms/reports/rlvr-v8-source-compat-20261108",
+    "unmodified_import_baseline": "v8/experiments/UPSTREAM.txt"
+  },
+  "limitations": "Unknown original runtime or unavailable/mismatched adapter remains blocked with its precise identity. Actual H100 model progress is not established by CPU tests."
+}

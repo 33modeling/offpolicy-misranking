@@ -67,6 +67,24 @@ model초기화·I/O·checkpoint 비용과 실제 seed별 속도 차이를 제외
 `research/v8-concurrency-correction-20261108/`에 보존한다. 새로운 GPU 측정이나
 속도 향상 결과로 사용하지 않는다.
 
+## 저장된 원본 런타임 선택
+
+기존 saved-prefix 런처의 원본 package 검증을 재사용한다. OLMo의 알려진
+보존 런타임 두 버전은 전체 보존 package·engine 바이트를 검증한 뒤 자식이
+모델을 만들기 전에 실제 원본 모듈을 불러온다. 현재 엔진을 옛 해시로 바꾸어
+표시하거나 다른 체크포인트를 새 결과로 대체하지 않는다.
+
+Qwen은 기존 코드가 기록한 `sha256(engine_digest + adapter_digest)`를 그대로
+검증한다. 기본 엔진 해시만 비교하지 않는다. 각 seed의 run.json과
+prefix-ready.json도 같은 원본 신원이어야 한다. 모르는 원본 해시나 모델 revision
+차이는 그대로 거부하고 원인별로 출력한다. prefix가 없으면 코드 경로 대신
+missing_prefix로 표시한다.
+
+수정 전 준비 단계에서 실패했고 아직 작업/입력 고정 기록이 하나도 없는 큐만,
+동일한 trainer/config 환경에서 새 검증 코드로 준비를 다시 시도한다. 이전
+binding·실패 기록은 setup-history에 보존한다. 학습이 시작된 큐는 이 방식으로
+바꾸지 않는다.
+
 ## 체크포인트 재사용과 단계
 
 범위는 기존 seeds5–9의 rebuttal Branch Bank다. OLMo MATH는 주 실험, Qwen

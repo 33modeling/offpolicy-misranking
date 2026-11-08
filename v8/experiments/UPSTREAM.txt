@@ -1,4 +1,4 @@
-Unmodified runtime source from offpolicy-misranking-paper-v2
+Imported runtime baseline from offpolicy-misranking-paper-v2
 Commit 3d0c08336950d2697dc66cbe3570a230e449f33b
 Public entrypoint: sh scripts/run_v8_nodes.sh from the CODE repository root.
 Existing trainer/checkpoints remain separate and are verified by their original hashes.
@@ -64,3 +64,5 @@ b567e4084fdc3c0063f744296dbde4530797c6cf465011cc4bf24058de2bd6d6  ../../v7/evide
 92b906f68e1cd5ba844075efb2c7d2e1727f2da0da3d1b96922793994eb6f138  ../../v7/evidence/2026-10-19/qwen-mbpp-seeds5-9.csv
 92c2b615b8fff0a3db80841f810db20fdd423f06bc3d96907521e362a5b2c3d7  ../../v7/evidence/2026-11-02/gemma-math-seeds5-9.csv
 0ad5e9e20ba0d6f5a1ad63c1b08db43874b83cf10dca197dadc3de74d7da17ee  ../../v7/evidence/2026-11-03/gemma-mbpp-seeds5-9.csv
+
+Local compatibility changes: switching/coderepo.py, switching/cluster.py and cluster_child.py now verify the original saved-runtime and Qwen composite identities. Original upstream hashes above are retained for provenance; current code is tracked by this repository.

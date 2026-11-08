@@ -14,6 +14,8 @@ Integration points used (verified locally at master 0937526):
 from __future__ import annotations
 
 import hashlib
+import importlib.util
+import json
 import os
 from pathlib import Path
 import sys
@@ -54,6 +56,52 @@ def implementation_digest(root=None) -> str:
         value.update(path.name.encode())
         value.update(path.read_bytes())
     return value.hexdigest()
+
+
+def source_runtime(root, profile, recorded):
+    """Verify actual source bytes, including the existing saved engine/Qwen adapter."""
+    root=code_root(root)
+    current=implementation_digest(root)
+    adapter=None
+    if profile=='qwen':
+        path=root/'scripts/srgc_qwen35.py'
+        spec=importlib.util.spec_from_file_location('_v8_qwen_identity',path)
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        adapter=module.adapter_digest()
+    options=[(current,'current')]
+    helper_path=root/'scripts/srgc_saved_runtime.py'
+    helper=None
+    if helper_path.is_file():
+        spec=importlib.util.spec_from_file_location('_v8_saved_identity',helper_path)
+        helper=importlib.util.module_from_spec(spec);spec.loader.exec_module(helper)
+        options += [(helper.PREVIOUS_HASH,'saved'),(helper.SAVED_HASH,'saved')]
+    for base,mode in options:
+        identity=hashlib.sha256((base+adapter).encode()).hexdigest() if adapter else base
+        if identity!=recorded:continue
+        if mode=='saved':
+            engine=helper.SAVED_ENGINE if base==helper.SAVED_HASH else root/'srgc_rebuttal/srgc.py'
+            data=engine.read_bytes()
+            if base==helper.SAVED_HASH and hashlib.sha256(data).hexdigest()!=helper.ENGINE_HASH:
+                raise ValueError('Archived engine bytes differ from the original release')
+            if helper.engine_digest(root/'srgc_rebuttal',data)!=base:
+                raise ValueError('Archived source package does not match its recorded digest')
+        return dict(mode=mode,implementation_sha256=identity,base_implementation_sha256=base,
+                    adapter_sha256=adapter)
+    raise ValueError(f'Recorded training runtime {recorded} is unavailable; current base={current}, adapter={adapter}')
+
+
+def activate_source_runtime(root,plan,seed,selection):
+    """Use the updated selector with the original checkout's verified archive."""
+    if selection['mode']!='saved':return
+    root=code_root(root)
+    paths=[Path(__file__).resolve().parents[3]/'scripts/srgc_saved_runtime.py',
+           root/'scripts/srgc_saved_runtime.py']
+    spec=importlib.util.spec_from_file_location('_v8_saved_activation',paths[0])
+    helper=importlib.util.module_from_spec(spec);spec.loader.exec_module(helper)
+    helper.ARCHIVED_MODULES=root/'scripts/frozen_srgc/pre_20261004'
+    helper.SAVED_ENGINE=root/'scripts/frozen_srgc/f581eb043e89409e.py'
+    helper.activate(Path(plan),seed,base_implementation=selection['base_implementation_sha256'],
+                    adapter_sha256=selection['adapter_sha256'])
 
 
 def frozen_file_hashes(root=None) -> dict:

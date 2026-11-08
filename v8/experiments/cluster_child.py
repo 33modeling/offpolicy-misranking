@@ -45,6 +45,11 @@ def main():
     profile = cfg["runtime"]["profile"]
     if not seed_loc.get("implementation_matches_code_root"):
         raise SystemExit("V8_CODE_ROOT srgc_rebuttal digest differs from the seed run's implementation_sha256")
+    verified=coderepo.source_runtime(code_root,profile,seed_loc['run_implementation_sha256'])
+    if seed_loc.get('runtime_selection')!=verified:
+        raise SystemExit('Verified source runtime selection changed before child startup')
+    if verified['mode']=='saved':
+        coderepo.activate_source_runtime(code_root,seed_loc['plan_path'],task['training_seed'],verified)
 
     import torch
     import torch.distributed as dist

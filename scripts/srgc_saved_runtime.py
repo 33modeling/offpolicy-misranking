@@ -35,7 +35,7 @@ def engine_digest(package, engine):
     return value.hexdigest()
 
 
-def activate(plan_path, seed):
+def activate(plan_path, seed, *, base_implementation=None, adapter_sha256=None):
     from srgc_rebuttal import runtime
     from srgc_rebuttal.plan import load_plan
     plan = load_plan(plan_path)
@@ -47,6 +47,12 @@ def activate(plan_path, seed):
     if not isinstance(receipt, dict):
         raise ValueError(f"invalid prefix receipt: {receipt_path}")
     saved = receipt.get("implementation_sha256")
+    if base_implementation is not None:
+        combined = (hashlib.sha256((base_implementation + adapter_sha256).encode()).hexdigest()
+                    if adapter_sha256 is not None else base_implementation)
+        if saved != combined:
+            raise ValueError("saved prefix runtime/adapter identity differs from the verified selection")
+        saved = base_implementation
     if saved == runtime.code_digest():
         return
     if saved not in {SAVED_HASH, PREVIOUS_HASH}:
