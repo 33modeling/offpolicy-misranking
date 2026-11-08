@@ -63,6 +63,51 @@ def last_error_line(lines):
     return None
 
 
+def progress_events(base, queue, attempt_id, host, now):
+    """Work records the frozen trainer writes while a task runs (SRGC_PROGRESS_DIR/rank-N.json):
+    first the attempt's own directory (.multi-node/progress/<attempt>), else this host's most recent
+    launch directory (<V8_ROOT>/.node-progress/<host>/<launch>). Returns [(rank, stage, details, age)]."""
+    candidates = [Path(queue) / 'progress' / str(attempt_id)] if attempt_id else []
+    if host:
+        try:
+            launches = sorted((Path(base) / '.node-progress' / host).iterdir(), key=lambda d: d.stat().st_mtime, reverse=True)
+        except OSError:
+            launches = []
+        candidates += launches[:3]
+    for directory in candidates:
+        events = []
+        try:
+            files = sorted(directory.glob('rank-*.json'))
+        except OSError:
+            files = []
+        for path in files:
+            event = read(path)
+            if isinstance(event, dict) and isinstance(event.get('updated'), (int, float)):
+                rank = path.stem.split('-', 1)[-1]
+                events.append((rank, str(event.get('stage', '?')), event, now - event['updated']))
+        if events:
+            return events
+    return []
+
+
+def progress_text(events):
+    if not events:
+        return None, None
+    try:
+        from v8_progress_text import describe
+    except ImportError:  # older bundle
+        def describe(stage, details):
+            return stage
+    rank, stage, details, age = min(events, key=lambda e: e[3])
+    text = describe(stage, details)
+    if len(events) > 1:
+        ages = [e[3] for e in events]
+        text += f" · {len(events)} GPU processes, last record {age_text(min(ages))}-{age_text(max(ages))} ago"
+    else:
+        text += f" · last record {age_text(age)} ago"
+    return text, age
+
+
 def collect(base, cohort, now):
     directory = Path(base) / cohort
     queue = directory / '.multi-node'
@@ -108,6 +153,13 @@ def collect(base, cohort, now):
             lines = [x for x in tail(log, 32768) if x.strip()]
             row['last_line'] = lines[-1].strip()[:160] if lines else None
             row['error'] = row.get('error') or last_error_line(lines) or (str(attempt.get('error'))[:200] if attempt.get('error') else None)
+        if row['status'] in ('running', 'unconfirmed') and attempt.get('id'):
+            events = progress_events(base, queue, attempt.get('id'), row.get('host'), now)
+            row['progress'], progress_age = progress_text(events)
+            ages = [a for a in (row.get('log_age'), progress_age) if a is not None]
+            row['activity_age'] = min(ages) if ages else None
+        else:
+            row['activity_age'] = row.get('log_age')
         if row['status'] == 'pending':
             row['ready'] = task_ready(task)
         rows.append(row)
@@ -218,12 +270,14 @@ def running_detail(row):
     parts = []
     if row['done'] is not None:
         parts.append(f"{row['done']}/{row['total'] or '?'} done")
-    if row.get('log_age') is not None:
-        parts.append(f"log {age_text(row['log_age'])} ago")
+    if row.get('activity_age') is not None:
+        parts.append(f"activity {age_text(row['activity_age'])} ago")
     if row.get('host'):
         parts.append(f"node {row['host']}")
+    if row.get('progress'):
+        parts.append(f"now: {row['progress']}")
     if row.get('last_line'):
-        parts.append(f"last: {row['last_line']}")
+        parts.append(f"log: {row['last_line']}")
     return ' · '.join(parts) or 'starting'
 
 
@@ -247,7 +301,7 @@ def this_node_lines(rows, gpus, host):
     if mine:
         row = mine[0]
         what = f"running {row['task']}" + (f" · {row['done']}/{row['total']} done" if row['done'] is not None and row['total'] else '')
-        line = f"this node ({host}): {what}" + (f" · log {age_text(row['log_age'])} ago" if row.get('log_age') is not None else '')
+        line = f"this node ({host}): {what}" + (f" · activity {age_text(row['activity_age'])} ago" if row.get('activity_age') is not None else '')
     else:
         uncertain=[r for r in rows if r['status']=='unconfirmed' and r.get('host')==host]
         line = (f"this node ({host}): task activity unconfirmed" if uncertain
@@ -300,8 +354,8 @@ def render_cohort(base, cohort, now, gpus, host):
     lines += node_lines(worker_records(Path(base) / cohort / '.multi-node', now), rows)
     idle = gpus is not None and not any(u >= 10 for _, u, _ in gpus)
     for r in running:
-        if r.get('host') == host and idle and (r.get('log_age') or 0) > 1800:
-            lines.append(f"WARNING {r['task']}: no log output for {age_text(r['log_age'])} and this node's GPUs are idle "
+        if r.get('host') == host and idle and (r.get('activity_age') or 0) > 1800:
+            lines.append(f"WARNING {r['task']}: no log or progress record for {age_text(r['activity_age'])} and this node's GPUs are idle "
                          f"(stack dumps: {Path(base) / cohort / '.multi-node' / 'stacks'})")
     return '\n'.join(lines) + '\n'
 

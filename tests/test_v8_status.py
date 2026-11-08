@@ -51,11 +51,11 @@ def test_snapshot_matches_run_srgc_status_layout(tmp_path):
     base = fixture(tmp_path, now)
     text = status.render([base], now=now, gpus=[("0", 97, 61000), ("1", 95, 60000)], host="node01")
     assert "V8 olmo_math · " in text and " · phase train" in text
-    assert "this node (node01): running traj-5 · 37/275 done · log 40s ago" in text
+    assert "this node (node01): running traj-5 · 37/275 done · activity 40s ago" in text
     assert "gpu memory used: 0:61000MiB 1:60000MiB · util 0:97% 1:95%" in text
     assert "done 1 · running 1 · waiting 1 · needs attention 1" in text
     assert "seed  " in text and "on_monitored" in text and "running 37/275" in text
-    assert "running now:" in text and "37/275 done · log 40s ago · node node01 · last: PROGRESS 12:00:00" in text
+    assert "running now:" in text and "37/275 done · activity 40s ago · node node01 · log: PROGRESS 12:00:00" in text
     assert "needs attention:" in text and "failed · last error: CUDA out of memory · 1 attempt" in text
     assert "V8 qwen_mbpp · " in text and "no tasks" in text
     assert "WARNING" not in text
@@ -66,7 +66,7 @@ def test_stall_warning_only_when_silent_and_gpus_idle(tmp_path):
     base = fixture(tmp_path, now)
     log = base / "olmo_math/.multi-node/logs/att1.log"
     os.utime(log, (now - 3600, now - 3600))
-    assert "WARNING traj-5: no log output for 60 min" in status.render([base], now=now, gpus=[("0", 0, 500)], host="node01")
+    assert "WARNING traj-5: no log or progress record for 60 min" in status.render([base], now=now, gpus=[("0", 0, 500)], host="node01")
     assert "WARNING" not in status.render([base], now=now, gpus=[("0", 98, 60000)], host="node01")
 
 
@@ -139,3 +139,40 @@ def test_status_distinguishes_applied_controller_from_old_and_unknown_workers(tm
     assert 'dispatch current '+expected[:12] in text
     assert 'dispatch different ffffffffffff' in text
     assert 'dispatch unverified' in text
+
+
+def test_running_task_shows_live_trainer_progress_and_activity(tmp_path):
+    """The child no longer prints PROGRESS lines; status must read SRGC_PROGRESS_DIR rank files (11-08 report:
+    'v8_status 제대로 업데이트 안되는 것 같아')."""
+    now = time.time()
+    base = fixture(tmp_path, now)
+    q = base / "olmo_math" / ".multi-node"
+    log = q / "logs" / "att1.log"
+    os.utime(log, (now - 2400, now - 2400))                      # log silent for 40 min
+    prog = q / "progress" / "att1"
+    write(prog / "rank-0.json", {"stage": "generation", "updated": now - 7, "question_index": 3, "questions_total": 40,
+                                 "response_tokens": 812, "max_new_tokens": 2048})
+    write(prog / "rank-1.json", {"stage": "generation", "updated": now - 12})
+    text = status.render([base], now=now, gpus=[("0", 0, 500)], host="node01")
+    assert "activity 7s ago" in text
+    assert "now: Writing model answers for the current question | question 3/40 on this GPU" in text
+    assert "2 GPU processes, last record 7s-12s ago" in text
+    assert "WARNING" not in text                                  # progress is fresh even though the log is silent
+
+
+def test_progress_falls_back_to_this_hosts_latest_launch_directory(tmp_path):
+    now = time.time()
+    base = fixture(tmp_path, now)
+    launch = base / ".node-progress" / "node01" / "launch-abc"
+    write(launch / "rank-0.json", {"stage": "checkpoint_save", "updated": now - 3})
+    text = status.render([base], now=now, gpus=[("0", 97, 60000)], host="node01")
+    assert "now: Saving model, optimizer and RNG state · last record 3s ago" in text
+
+
+def test_stall_warning_needs_both_log_and_progress_silent(tmp_path):
+    now = time.time()
+    base = fixture(tmp_path, now)
+    q = base / "olmo_math" / ".multi-node"
+    os.utime(q / "logs" / "att1.log", (now - 3600, now - 3600))
+    write(q / "progress" / "att1" / "rank-0.json", {"stage": "generation", "updated": now - 3500})
+    assert "WARNING traj-5: no log or progress record for 58 min" in status.render([base], now=now, gpus=[("0", 0, 1)], host="node01")
