@@ -1,0 +1,57 @@
+{
+  "source_commit": "f1cfb075d6b6eb90c74ffdefd17c9c7ed523d5e7",
+  "user_reports": [
+    "매커니즘이 뭔지 모르겠어 mbpp 는14개가 되고 math는왜5개 최대 이후는 다 idle",
+    "고쳐",
+    "아 좆같은 새끼 버그 현황에 니가 못고친거 다 박제해"
+  ],
+  "hypothesis": "worker_loop_many cached a shared cohort failure in its local terminal dictionary forever. If another verified worker recovered the shared MATH queue while this worker kept waiting on Qwen, this worker never reconsidered ready MATH jobs. This can keep old idle workers from helping the recovered cohort; actual user-node attribution is unverified.",
+  "reproduction": "A real Pool and worker_loop_many serve a failed MATH queue and a waiting Qwen queue. Another-node fixture preserves the previous failure/attempt and reopens MATH. Before fix the waiting dispatcher never claims the now-ready MATH task. After fix it revalidates the original inputs and claims it. Wrong binding and invalid inputs prevent rejoining.",
+  "fix": "Revisit only remembered shared-queue failures under that cohort control lock, at bounded polling intervals. A cleared shared failure with identical binding removes the stale terminal decision, then requires normal node/input admission again. Never clear failures, modify jobs, bypass input identity, or retry a current-policy failure merely by observing it. Node-local Runtime/source/access failures stay excluded.",
+  "mechanism": "Both current cohort configs have5 seeds and initial On+SR25 per seed:10 independently ready jobs each when prefix25 exists and none is complete/failed/leased. Individual On snapshots50/75/... release corresponding branches without waiting for every parent or endpoint275. No hard-coded MATH5 limit found. Actual MBPP14/MATH5 can also reflect different completions, failures, existing leases and checkpoint readiness; the live queue was not observed.",
+  "controls": {
+    "model": "No model; CPU control and lease fixtures only",
+    "data": "Pool/job metadata and immutable optimizer/RNG/reward checkpoint sentinel; no dataset transformation",
+    "seeds": "training_seed5 in regression fixture; actual production DAG tests exercise seeds5–9 for both cohorts",
+    "updates": "0 GPU inference/optimizer updates",
+    "metrics": "Claims, revalidation call counts, input/binding rejection, checkpoint preservation, simultaneous-node fairness, source/archive compatibility",
+    "results": "before-real.xml:2 failures/1 guard pass; fixed21 pass; all315 pass; archive65 pass. No measured training-batch reward, held-out reward, GPU utilization or H100 throughput."
+  },
+  "evidence": {
+    "all.xml": {
+      "tests": 315,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "archive.xml": {
+      "tests": 65,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "before-real.xml": {
+      "tests": 3,
+      "failures": 2,
+      "errors": 0,
+      "skipped": 0
+    },
+    "before.xml": {
+      "tests": 1,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0
+    },
+    "fixed.xml": {
+      "tests": 21,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "retained_failures": "before.xml preserves initial minimal reproduction; before-real.xml uses a real failed job/current controller policy and external pending-state recovery, with2 expected failures before the fix. Existing failed attempts are never erased.",
+  "original_trainer_files": 30,
+  "original_trainer_sha256_unchanged": true,
+  "dispatch_policy": "source-recovery-dense-memory-guards-v10 (unchanged; this scheduler fix does not authorize another automatic retry of an already-failed v10 task)",
+  "limitations": "Actual H100 workers, their queue state, dispatcher hashes, MATH On/SR25 identities, traceback and job advancement are unavailable. The concrete CPU-reproduced defect is fixed in source; do not claim every idle node or OLMo OOM was solved. Already-running frozen workers need the latest controller on their next start. No web service, model API, GPU allocation or checkpoint deletion."
+}

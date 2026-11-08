@@ -1,0 +1,1311 @@
+{
+  "source_commit": "f1cfb075d6b6eb90c74ffdefd17c9c7ed523d5e7",
+  "scope": "All canonical V8 incidents; existing fields/events retained",
+  "counts": {
+    "open": 2,
+    "remote_verification_pending": 15,
+    "code_fixed": 85
+  },
+  "definitions": {
+    "open": "원인 또는 해결이 미확정",
+    "remote_verification_pending": "코드 수정/시험 후 실제 노드 해결 확인 대기",
+    "code_fixed": "기록된 코드 시험 근거의 수정 상태; 실제 H100 성공으로 자동 승격하지 않음"
+  },
+  "incidents_by_status": {
+    "open": [
+      {
+        "id": "V8-020",
+        "title": "실제 H100의 Loading weights 이후 진행 정지 보고",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "user / Codex",
+          "type": "unresolved_retention_audit",
+          "status": "open",
+          "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+          "evidence_kind": "user_instruction_and_limitation"
+        }
+      },
+      {
+        "id": "V8-093",
+        "title": "RegisterCUDA / SymIntArrayRef CUDA RuntimeError: 전체 오류·연산 원인 미확인",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "user / Codex",
+          "type": "unresolved_retention_audit",
+          "status": "open",
+          "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+          "evidence_kind": "user_instruction_and_limitation"
+        }
+      }
+    ],
+    "remote_verification_pending": [
+      {
+        "id": "V8-035",
+        "title": "동시 시작 노드가 Qwen 10개에 쏠리고 OLMo가 배정되지 않음; 원본 큐 재개가 새 배정기를 우회",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "user / Codex",
+          "type": "unresolved_retention_audit",
+          "status": "remote_verification_pending",
+          "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+          "evidence_kind": "user_instruction_and_limitation"
+        }
+      },
+      {
+        "id": "V8-040",
+        "title": "한쪽 Runtime 초기화·CPU 준비가 다른 cohort의 학습 시작까지 막음",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "user / Codex",
+          "type": "unresolved_retention_audit",
+          "status": "remote_verification_pending",
+          "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+          "evidence_kind": "user_instruction_and_limitation"
+        }
+      },
+      {
+        "id": "V8-041",
+        "title": "generation 단계명만으로 진행을 알 수 없고 생성 호출에 무진행 종료 경로가 없음",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "user / Codex",
+          "type": "unresolved_retention_audit",
+          "status": "remote_verification_pending",
+          "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+          "evidence_kind": "user_instruction_and_limitation"
+        }
+      },
+      {
+        "id": "V8-042",
+        "title": "작업 하나의 실패가 모델 큐 전체를 중단시켜 기존 MBPP 5개 이외 노드가 배정되지 않을 수 있음",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "user / Codex",
+          "type": "unresolved_retention_audit",
+          "status": "remote_verification_pending",
+          "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+          "evidence_kind": "user_instruction_and_limitation"
+        }
+      },
+      {
+        "id": "V8-043",
+        "title": "모델 작업 전 상태를 무조건 Preparing으로 표시하고 기존 SRGC의 전체 child 정체 감시를 재사용하지 않음",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "user / Codex",
+          "type": "unresolved_retention_audit",
+          "status": "remote_verification_pending",
+          "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+          "evidence_kind": "user_instruction_and_limitation"
+        }
+      },
+      {
+        "id": "V8-044",
+        "title": "캐시 actor가 원본 srgc_rebuttal import 경로를 활성화하지 않아 ModuleNotFoundError",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "user / Codex",
+          "type": "unresolved_retention_audit",
+          "status": "remote_verification_pending",
+          "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+          "evidence_kind": "user_instruction_and_limitation"
+        }
+      },
+      {
+        "id": "V8-045",
+        "title": "원본 작업 검사 중 공통 배정 잠금을 잡아 한 cohort의 지연이 다른 모델과 추가 노드까지 차단",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "user / Codex",
+          "type": "unresolved_retention_audit",
+          "status": "remote_verification_pending",
+          "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+          "evidence_kind": "user_instruction_and_limitation"
+        }
+      },
+      {
+        "id": "V8-046",
+        "title": "수정 후 새 노드의 기본 실행도 이전 failed OLMo를 건너뛰고 수동 retry 옵션을 요구함",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "user / Codex",
+          "type": "unresolved_retention_audit",
+          "status": "remote_verification_pending",
+          "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+          "evidence_kind": "user_instruction_and_limitation"
+        }
+      },
+      {
+        "id": "V8-067",
+        "title": "[RT-03] (a) child 의 'exit 75 = busy/interrupted' 약속이 torchrun 을 거치면 rc=1 이 된다",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "user / Codex",
+          "type": "unresolved_retention_audit",
+          "status": "remote_verification_pending",
+          "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+          "evidence_kind": "user_instruction_and_limitation"
+        }
+      },
+      {
+        "id": "V8-069",
+        "title": "[RT-05] seed 5-9 실행보다 v8 child 가 메모리 오류에 약하고 verifier 환경 실패를 조용히 넘긴다",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "user / Codex",
+          "type": "unresolved_retention_audit",
+          "status": "remote_verification_pending",
+          "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+          "evidence_kind": "user_instruction_and_limitation"
+        }
+      },
+      {
+        "id": "V8-090",
+        "title": "ChildFailedError 뒤 원래 rank 오류 미보존·요약 오류 우선 표시·동시 busy marker의 실제 오류 은폐",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "user / Codex",
+          "type": "unresolved_retention_audit",
+          "status": "remote_verification_pending",
+          "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+          "evidence_kind": "user_instruction_and_limitation"
+        }
+      },
+      {
+        "id": "V8-091",
+        "title": "보존된 옛 child가 strict math_reward를 계속 선택해 gold parse 실패 시 OLMo 작업 중단",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "user / Codex",
+          "type": "unresolved_retention_audit",
+          "status": "remote_verification_pending",
+          "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+          "evidence_kind": "user_instruction_and_limitation"
+        }
+      },
+      {
+        "id": "V8-092",
+        "title": "옛 V8 backend의 rollout 캐시 해제·OOM 복구 누락과 현재 보호의 train 경로 누락",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "user / Codex",
+          "type": "unresolved_retention_audit",
+          "status": "remote_verification_pending",
+          "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+          "evidence_kind": "user_instruction_and_limitation"
+        }
+      },
+      {
+        "id": "V8-099",
+        "title": "로드한 prefix25를 표시하지 않고 새 update가 없으면0/275로 보이는 V8 현황판",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "user / Codex",
+          "type": "unresolved_retention_audit",
+          "status": "remote_verification_pending",
+          "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+          "evidence_kind": "user_instruction_and_limitation"
+        }
+      },
+      {
+        "id": "V8-102",
+        "title": "다른 노드가 MATH 대기열을 복구해도 기존 idle worker가 실패 판단을 영구 보관해 재배정에 복귀하지 않음",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "remote_verification_pending",
+          "status": "remote_verification_pending",
+          "text": "소스수정은push확인했지만실제H100의worker정책·대기열·MATH재개·OOM해결은미확인이다. 사용자노드의5개현상을해결했다고닫지않는다.",
+          "evidence_kind": "limitation"
+        }
+      }
+    ],
+    "code_fixed": [
+      {
+        "id": "V8-001",
+        "title": "상태 해시에서 서로 다른 정수 목록이 충돌",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex + Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "typed length-delimited 직렬화로 바꾼 source의 회귀 검사 통과. 검증 범위는 기록된 파일 SHA의 CPU 소프트웨어 동작이며 실제 H100/Gemma 진행·성능이나 원격 실험 완료는 확인하지 않았다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/peer-review-final-verified.json"
+        }
+      },
+      {
+        "id": "V8-002",
+        "title": "불변 체크포인트 비교에서 RNG·컨트롤러 상태 누락",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex + Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "완전 payload 불변성 검사와 sibling learner/RNG 동일성 검사를 분리한 source 검사 통과. 검증 범위는 기록된 파일 SHA의 CPU 소프트웨어 동작이며 실제 H100/Gemma 진행·성능이나 원격 실험 완료는 확인하지 않았다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/peer-review-final-verified.json"
+        }
+      },
+      {
+        "id": "V8-003",
+        "title": "체크 기록 누락을 리셋으로 간주해 첫 전환을 확정",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex + Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "누락 prefix를 censored로 남기는 source 회귀 검사 통과. 검증 범위는 기록된 파일 SHA의 CPU 소프트웨어 동작이며 실제 H100/Gemma 진행·성능이나 원격 실험 완료는 확인하지 않았다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/peer-review-final-verified.json"
+        }
+      },
+      {
+        "id": "V8-004",
+        "title": "같은 체크의 상충하는 중복값을 무시",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex + Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "동일 중복은 idempotent, 상충 중복은 ValueError인 source 회귀 검사 통과. 검증 범위는 기록된 파일 SHA의 CPU 소프트웨어 동작이며 실제 H100/Gemma 진행·성능이나 원격 실험 완료는 확인하지 않았다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/peer-review-final-verified.json"
+        }
+      },
+      {
+        "id": "V8-005",
+        "title": "미측정 GPU 비용이 0·complete로 집계",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex + Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "미측정 비용을 incomplete로 남기는 source 회귀 검사 통과. 검증 범위는 기록된 파일 SHA의 CPU 소프트웨어 동작이며 실제 H100/Gemma 진행·성능이나 원격 실험 완료는 확인하지 않았다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/peer-review-final-verified.json"
+        }
+      },
+      {
+        "id": "V8-006",
+        "title": "prefix·cache 미측정인데 상각 비용을 숫자로 출력",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex + Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "필수 비용이 없으면 상각 결과를 unknown으로 남기는 source 회귀 검사 통과. 검증 범위는 기록된 파일 SHA의 CPU 소프트웨어 동작이며 실제 H100/Gemma 진행·성능이나 원격 실험 완료는 확인하지 않았다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/peer-review-final-verified.json"
+        }
+      },
+      {
+        "id": "V8-007",
+        "title": "예산 경계의 미측정 비용을 선택 완료·불가능으로 오분류",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex + Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "unknown/undetermined와 measured infeasibility를 구분하는 source 회귀 검사 통과. 검증 범위는 기록된 파일 SHA의 CPU 소프트웨어 동작이며 실제 H100/Gemma 진행·성능이나 원격 실험 완료는 확인하지 않았다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/peer-review-final-verified.json"
+        }
+      },
+      {
+        "id": "V8-008",
+        "title": "평가 평균을 반올림해 측정하지 않은 정답 수 생성",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex + Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "비정수 응답 분모·NaN·범위 밖 입력 거부, 유효3/8 대조군 검사 통과. 검증 범위는 기록된 파일 SHA의 CPU 소프트웨어 동작이며 실제 H100/Gemma 진행·성능이나 원격 실험 완료는 확인하지 않았다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking-paper-v2/blob/a96147e58c6b33e1f4b1da2a9dd0ad73efb178b9/research/v8-independent-audit-20261108/evidence/peer-review-final-verified.json"
+        }
+      },
+      {
+        "id": "V8-009",
+        "title": "실행 중·중단된 v8 기록을 완료 요약 없이 내보내기",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "implemented",
+          "status": "code_fixed",
+          "text": "60에서 중단한 CPU ToyBackend의35개 live update와100까지 재개한 전체100행, retained checkpoint3개의 SHA, 별도 final/dev 평가를 확인했다. 미평가50/75는 unmeasured이며 학습 중 평가를 실행하지 않는다. 이는 소프트웨어 검증이고 실제 모델 결과가 아니다.",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-010",
+        "title": "H100 실행 셸에서 CPU 실패 종료 코드가 숨겨짐",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex + Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "CPU check·pending·status의 강제 실패42를 모두 보존하는 shell source 확인. fake Python만 사용한5개 검사가 통과했다. GPU·학습·평가 실행은 없으며 실제 클러스터 연결은 별도 확인이 필요하다. source SHA=add133dd191b69a70b15657f4949043b5613f8db52b55ccaf833f528522b2cb8",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-011",
+        "title": "개발·테스트 행렬을 재생성할 때 방법 목록 소실",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex + Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "dev/test의 모든 make-matrix 호출에서 --methods를 전달하는 shell source 확인. fake Python만 사용한5개 검사가 통과했다. GPU·학습·평가 실행은 없으며 실제 클러스터 연결은 별도 확인이 필요하다. source SHA=add133dd191b69a70b15657f4949043b5613f8db52b55ccaf833f528522b2cb8",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-012",
+        "title": "같은 예산 고정 명령 재실행에서 시각 차이로 거부될 수 있음",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex + Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "서로 다른 시각으로 같은 command를 두 번 호출해 원래 budget 파일 바이트·시각을 그대로 재사용하고, 실제 예산을 바꾸면 거부하는 것을 CPU fake-bank로 확인했다. GPU·평가·학습 실행은 없다.",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-013",
+        "title": "다중 노드의 busy 작업을 남긴 채 다음 단계로 진행 가능",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "공유 큐의 task lease와 출력 검증을 모두 통과해야 단계가 바뀐다. 진행 중인 lease가 있으면 기다린다. 3·6작업자 CPU 검사에서 단계별 완료 대기와 조기 분기를 확인했다. 기존 paper run_h100.sh 자체는 수정하지 않았다. 새 run_v8_nodes.sh 경로에서 적용되며, 실제 다중 H100과 공유 파일시스템 검증은 남아 있다.",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-014",
+        "title": "여러 노드의 동일 평가 중복 실행과 가변 행렬 공유",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "concurrency_claim_corrected",
+          "status": "code_fixed",
+          "evidence_kind": "derived_estimate",
+          "code_commit": "b29e5477448a33caa949ecfa4baf028444dd90ec",
+          "text": "사용자가 선행 학습과 분기 완료를 반영한 실제 동시 실행량을 지적했다. 정적 그래프55+55를 실제 최대/필요 노드 수로 안내한110노드 답변을 철회한다. 기존 평균 시간으로 On/SR 주 학습만 계산한 추정 피크는 OLMo40·Qwen30, 같은 시각 시작 합계55이다. Uniform/예산 연장/평가/초기화/I/O/seed별 시간 차이를 제외하므로55도 전체 실행 최대값이나 확보 권장량이 아니다. 실제 전체 피크는 미확정이다. 기존 fixture와 기록은 보존하고 안내 문서를 정정했다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/tree/master/research/v8-concurrency-correction-20261108"
+        }
+      },
+      {
+        "id": "V8-015",
+        "title": "모든 seed의 평가 행렬에 첫 seed 입력 bundle 재사용",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "새 coordinator는 seed별 bundle로 해당 seed run만 평가 계획을 만든다. 실제 v8 CPU 실행에서 seeds5/6/7의100/70/40개 문항을 구분하고 서로 다른3개 문항 해시를 확인했다. 기존 paper run_h100.sh 자체는 수정하지 않았다. 새 run_v8_nodes.sh 경로에서 적용되며, 실제 다중 H100과 공유 파일시스템 검증은 남아 있다.",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-016",
+        "title": "예산 endpoint의 실제 run 대신 matched-horizon run으로 평가를 계획함",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "SeedBank의 canonical budget_endpoint 반환값에서 실제run_id/update/hash를 직접 수집한다. 없는/달라진 checkpoint는 성공 처리하지 않는다. 실제v8 CPU3작업자37작업·중복0·선택된16checkpoint의평가해시 일치, 전체70검사통과. 원래30trainer파일은동일하다. 실제H100검증/속도측정은없다.",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-017",
+        "title": "신규 V8 실행기가 기존 작업 경로·가상환경 재사용 대신 수동 설정을 요구함",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "delivery_regression_recorded",
+          "status": "code_fixed",
+          "text": "단일 버전 호환 묶음을 현재 큐 확인 없이 전달한 후 identity differs가 재발했다. 별도 V8-022에 사용자 보고와 Codex 책임, 모든 실패·원본 신원 자동 선택 수정을 보존했다. 실제 H100 진행은 미확인이다.",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-018",
+        "title": "V8 원본 코드 검증에서 저장된 엔진과 Qwen 어댑터 해시 누락",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "later_migration_correction",
+          "status": "code_fixed",
+          "text": "후속 f1bb211에서 추가된 첫 update 전 started-queue 자동교체는 V8-021에서 검토·재현 후7d89fb9로 제거했다. 기존 초기 실패 복구 범위와 history는 보존한다.",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-019",
+        "title": "V8 종료 시 분리된 rank가 stdout을 붙잡으면 무한 대기",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "followup_control_audit",
+          "status": "code_fixed",
+          "text": "후속 코드/현황판 대조에서V8-023~030의8결함을 재현해 수정했다. 원래 실패와 수정 전후 XML을 보존한다. CPU검사는 실제 H100의 Loading weights 원인을 확정하거나 학습 완료를 뜻하지 않는다.",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-021",
+        "title": "첫 update 전 큐 자동 교체가 공유 control.lock 경로와 실행 신원을 바꿈",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "작업이 생성된 큐의 자동교체를 제거했다. 첫 update 전에도 이전 binding/control.lock을 보존하고 다른 runtime을 거부한다. 작업/고정입력이 없는 준비 실패 복구만 유지한다. 기존 실행용 호환판은 cbd68a4 coordinator와 v8 원본52파일을 그대로 보존한다.",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-022",
+        "title": "현재 큐 신원을 확인하지 않고 단일 버전 호환 묶음을 배포·재시작 안내",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "followup_control_audit",
+          "status": "code_fixed",
+          "text": "후속 코드/현황판 대조에서V8-023~030의8결함을 재현해 수정했다. 원래 실패와 수정 전후 XML을 보존한다. CPU검사는 실제 H100의 Loading weights 원인을 확정하거나 학습 완료를 뜻하지 않는다.",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-023",
+        "title": "콘솔 출력이 막히면 종료 처리·마지막 flush도 무한 대기",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "korean_explanation",
+          "status": "code_fixed",
+          "text": "터미널이 출력을 받지 않으면 종료 안내문을 찍는 곳에서 다시 멈춰 종료 신호 전달까지 못 갔다. 출력은 별도 로그로 받으며, 종료 정리와 마지막 프로그램 종료가 콘솔 쓰기를 기다리지 않게 바꿨다. 수정 전 실패·수정 후 CPU 검사를 보존했으며 실제 H100의 재실행 성공은 아직 확인하지 못했다.",
+          "evidence_kind": "code_review_and_test"
+        }
+      },
+      {
+        "id": "V8-024",
+        "title": "종료 스냅샷 뒤 생긴 legacy rank가 정리 대상에서 빠짐",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "korean_explanation",
+          "status": "code_fixed",
+          "text": "종료 대상을 처음 한 번만 집계했다. 그 뒤 부모가 새 rank를 만들고 사라지면 새 PID가 살아남았다. 종료 중에도 같은 사용자·노드·V8_ROOT의 프로세스를 다시 찾아 추가 정리한다. 수정 전 실패·수정 후 CPU 검사를 보존했으며 실제 H100의 재실행 성공은 아직 확인하지 못했다.",
+          "evidence_kind": "code_review_and_test"
+        }
+      },
+      {
+        "id": "V8-025",
+        "title": "한 cohort의 시작 오류가 정상인 다른 cohort까지 막음",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "korean_explanation",
+          "status": "code_fixed",
+          "text": "OLMo 큐 메타데이터나 PAIR_PYTHON 경로 하나가 잘못되면 정상인 Qwen 시작 검증까지 가지 못했다. 모델별 오류를 나누어 Qwen은 계속 실행하고, 일부 실패는 전체 종료 코드1로 남긴다. 수정 전 실패·수정 후 CPU 검사를 보존했으며 실제 H100의 재실행 성공은 아직 확인하지 못했다.",
+          "evidence_kind": "code_review_and_test"
+        }
+      },
+      {
+        "id": "V8-026",
+        "title": "다른 Python 환경의 두 모델이 한 admission interpreter를 공유",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "korean_explanation",
+          "status": "code_fixed",
+          "text": "두 모델의 가상환경이 달라도 한 coordinator로 묶어 NCCL 사전 검사가 첫 모델의 Python에서 실행될 수 있었다. Python 경로가 다르면 원래 worker를 각각 띄워 해당 환경으로 검사한다. 한 GPU 그룹에서는 순차 실행한다. 수정 전 실패·수정 후 CPU 검사를 보존했으며 실제 H100의 재실행 성공은 아직 확인하지 못했다.",
+          "evidence_kind": "code_review_and_test"
+        }
+      },
+      {
+        "id": "V8-027",
+        "title": "실행 중 git pull로 이후 child·config 소스가 바뀔 수 있음",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "korean_explanation",
+          "status": "code_fixed",
+          "text": "시작 때 해시만 확인하고 계속 checkout 경로를 사용했다. 실행 도중 git pull을 하면 다음 child가 다른 코드·설정을 읽을 수 있었다. 선택된 worker·child·config·helper·CSV 바이트를 별도 캐시에 복사·검증해 고정하고, 다음 재개에도 같은 사본을 쓴다. 수정 전 실패·수정 후 CPU 검사를 보존했으며 실제 H100의 재실행 성공은 아직 확인하지 못했다.",
+          "evidence_kind": "code_review_and_test"
+        }
+      },
+      {
+        "id": "V8-028",
+        "title": "상태 화면의 원격 GPU 유휴 오판과 FQDN 소실",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "korean_explanation",
+          "status": "code_fixed",
+          "text": "이 노드의 GPU 유휴 상태를 공유 큐의 다른 노드 작업에 적용했고, hostname을 첫 점에서 잘라 FQDN도 틀렸다. 전체 hostname을 보존하고 같은 노드의 작업에만 GPU 상태 경고를 적용한다. 수정 전 실패·수정 후 CPU 검사를 보존했으며 실제 H100의 재실행 성공은 아직 확인하지 못했다.",
+          "evidence_kind": "code_review_and_test"
+        }
+      },
+      {
+        "id": "V8-029",
+        "title": "이전 worker의 신원 오류가 새 큐의 실패 상태를 오염",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "korean_explanation",
+          "status": "code_fixed",
+          "text": "이전 worker가 큐 신원 변경을 발견해도 일반 학습 실패처럼 처리해 새 큐의 failure에 오류를 써버렸다. 신원 불일치는 별도로 처리해 새 큐에 실패를 쓰지 않고 그 worker의 해당 cohort를 중지한다. 수정 전 실패·수정 후 CPU 검사를 보존했으며 실제 H100의 재실행 성공은 아직 확인하지 못했다.",
+          "evidence_kind": "code_review_and_test"
+        }
+      },
+      {
+        "id": "V8-030",
+        "title": "오래된 heartbeat만으로 학습 중단·재개 가능을 확정",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "korean_explanation",
+          "status": "code_fixed",
+          "text": "하트비트가 없거나180초 넘었다는 사실만으로 학습이 중단됐고 다음 worker가 재개할 수 있다고 안내했다. NCCL 검사·I/O 중에도 heartbeat가 늦을 수 있고 rank나 lease는 살아 있을 수 있다. 실제 중단으로 단정하지 않고 생존 미확인으로 표시한다. 수정 전 실패·수정 후 CPU 검사를 보존했으며 실제 H100의 재실행 성공은 아직 확인하지 못했다.",
+          "evidence_kind": "code_review_and_test"
+        }
+      },
+      {
+        "id": "V8-031",
+        "title": "큐 폴더에 state.json 이 없으면 실행이 FileNotFoundError 로 멈춤",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "correction",
+          "status": "code_fixed",
+          "text": "정정: 사용자의 'status.json 파일 없다' 보고의 실제 원인은 state.json 이 아니라 V8-033(status 를 cohort 이름으로 받아 configs/cohorts/status.json 을 찾음)이었다. a085f26 의 state.json 보강은 별도 방어로 유지하되, 이 사건을 사용자 보고의 원인으로 단정한 첫 기록은 잘못이었다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/3a80d1c",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-032",
+        "title": "배포 묶음 v1.0.5 에 새 import 모듈 v8_control_output.py 누락",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "audit_metadata",
+          "status": "code_fixed",
+          "text": "함께 발견: 12:46 현황판 기록(38bb6b3)이 `git log --all` 로 Claude 작업 트리의 임시 stash 커밋 2개(985e95e 'WIP on v8-status3', 9b48040 'index on v8-status3')를 실제 커밋처럼 commits.json 에 올렸다. stash 를 적용·삭제하자 기록 보존 검사가 'history lost' 로 막혔다. 지우지 않고 refs/archive/board-stash-985e95e·board-stash-index-9b48040 로 보존·push 해 기존 행을 그대로 유지했다. 이 두 행은 코드 변경 이력이 아니다.",
+          "evidence_kind": "audit_metadata"
+        }
+      },
+      {
+        "id": "V8-033",
+        "title": "run_v8_nodes.sh status 가 status 를 cohort 이름으로 받아 status.json 을 찾다가 멈춤",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "재점검: 3a80d1c 는 'status' 한 단어만 막았다. 6821c9c 에서 run_srgc.sh 와 같은 단어 전부([olmo_math|qwen_mbpp|all|math|mbpp] [run|status|stop] [--watch])를 받고, --gpus 4,5,6,7·--root(공백 경로) 같은 옵션 값을 순서 그대로 넘기며, 충돌·모르는 단어는 사용법(종료 2)으로 처리. 검증: v1.0.9 묶음에서 실제 큐 폴더 742개(과거 coordinator 11개 판이 만든 큐 포함)와 손상 변형 11종 × 상태 입구 3개(v8_status.py, srgc_v8_nodes.py --status, run_v8_nodes.sh status) 실패 0, 명령 단어 12가지 조합 확인, 시험 173 통과.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/6821c9c",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-034",
+        "title": "읽을 수 없거나 쓰다 끊긴 큐 기록이 있으면 현황이 '시작 전·작업 없음'으로 보임",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "새 supervisor의 v8_probe 기반 준비 상태에서도 손상·읽기 불가 state/job을 정상 준비·not_started로 숨기지 않게 unknown/STATUS ERROR로 표시했다. 노드 이름은 prefix가 아닌 FQDN 전체를 비교하고 launch PID가 다른 작업은 현재 실행 증거에서 제외한다. readonly-errors.xml14검사 통과; 파일 변경·신호·학습 시작 없음.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/173c50063011aa04019f97812ee36f1b6705bff8",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-036",
+        "title": "잠금 경합 뒤 검증하지 못한 노드가 두 번째 배정 단계에서 작업을 claim",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "잠금 획득을 첫 번에 실패시키고 입력 검증은 오류를 내도록 한 CPU 재현에서 검증 전 execute 경로에 진입했다. 모든 정상 cohort의 노드 검증이 완료될 때까지 배정을 기다리고 initialized 후보만 claim한다. 최종 전체196검사와 원본 resume14검사 통과. 실제 H100 모델 시작·처리량·금전 손실은 측정하지 않았고 OLMo 실제 미시작 사용자 보고는 종료 처리하지 않는다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/18ec7886b2b5fe58958a12ea9a8b9def1bd221ca",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-037",
+        "title": "원본 Runtime 초기화 응답을 무한 대기해 양쪽 cohort가 시작되지 않음",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "30초 잠든 원본 Runtime fixture에서 제한시간 안에 반환하지 못했다. 초기화만120초 기본 제한을 두고 실패 자식을 정리하며 오류를 해당 cohort에 남긴다. 실제 학습 시간 제한을 추가하지 않았다. 첫 수정의 종료 유예로0.2초 테스트가4초를 넘긴 실패도 보존하고 초기화 실패 종료 유예를 단축했다. 최종 전체196검사와 원본 resume14검사 통과. 실제 H100 모델 시작·처리량·금전 손실은 측정하지 않았고 OLMo 실제 미시작 사용자 보고는 종료 처리하지 않는다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/18ec7886b2b5fe58958a12ea9a8b9def1bd221ca",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-038",
+        "title": "원본 Qwen 실행기와 다른 Python 우선순위로 환경 선택",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "두 interpreter override를 함께 둔 fixture가 원래 순서와 다른 선택을 재현했다. 명시적 cohort별 override 다음 QWEN_PYTHON 다음 SWITCH_PYTHON 순서로 통일하고 기존 package 신원 검사는 유지했다. 최종 전체196검사와 원본 resume14검사 통과. 실제 H100 모델 시작·처리량·금전 손실은 측정하지 않았고 OLMo 실제 미시작 사용자 보고는 종료 처리하지 않는다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/18ec7886b2b5fe58958a12ea9a8b9def1bd221ca",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-039",
+        "title": "모든 유휴 worker가 배정 전에 같은 전체 DAG를 중복 검사하며 metadata 잠금을 점유",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "한 번의 최초 claim 전에 unsealed DAG plan이2회 호출되는 재현을 보존했다. discovery는 신원·단계 metadata와 CPU barrier만 처리하고 실제 DAG 검사는 전역 claim 단계에서1회 수행한다. 실제5seed DAG의 CPU lease fixture:24 worker가 초기20개를 모두 배정, 부모가 계속 실행 중인 상태에서 step50 추가 후30 worker에30개 고유 작업 배정(각 cohort15), 중복0. 최종 전체196검사와 원본 resume14검사 통과. 실제 H100 모델 시작·처리량·금전 손실은 측정하지 않았고 OLMo 실제 미시작 사용자 보고는 종료 처리하지 않는다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/18ec7886b2b5fe58958a12ea9a8b9def1bd221ca",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-047",
+        "title": "[SCI-01] E10 갱신 SR 팔(sr_early_refreshed_k050/k100, srgc_current_refreshed_k*)의 비용이 정적 SR과 거의 같게 나온다",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: refresh를 meter.phase('cache_refresh')로 계측(METER_PHASES에 이미 component cache_refresh 매핑 있음)하거나 refresh 이벤트를 cache_refresh로 태깅; srgc_current_refreshed용 family(REQUIRED에 cache_refresh 포함) 추가. / 회귀 시험: toy sr_early_refreshed_k050 100 update: continuation(refreshed)-continuation(sr_early) >= refresh 이벤트 gpu_seconds 합; snapshots.jsonl own_continuation에도 포함되는지 확인.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/f13cd3d",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-048",
+        "title": "[SCI-02] `sh run_h100.sh olmo_math prefix|dev|test`를 --seeds 없이 실행하면 이미 결과를 본 seed 5-9로 prospective run이 role=development/test 라벨",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: development/test role은 locator seed_roles(또는 명시 --seeds)만 사용하고, test seed가 registry에서 eligible_as_fresh_test가 아니거나 dev와 겹치면 make-matrix를 실패시킨다. test_access_status는 runs/의 role=test manifest 존재 여부로 자동 계산. / 회귀 시험: --role test를 seed 지정 없이 만들면 10-14 또는 오류; --role test --seeds 5 -> 오류.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/f13cd3d",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-049",
+        "title": "[SCI-03] policy_outcomes_development/test(.csv/.json)에서 학습 이벤트 일부가 미측정(interrupted)인데 continuation은 null이면서 cold_start_gpu_second",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: family별 필요 성분 기준 missing 판정(composed와 동일)을 prospective_rows에도 적용: 필요 이벤트가 미측정이면 cold_start=None, lower_bound=known+prefix+cache, cost_missing에 이벤트 표시. / 회귀 시험: 위 합성 입력 -> cold_start None, lower_bound 349, cost_missing 비어 있지 않음.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/f13cd3d",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-050",
+        "title": "[SCI-04] 개발 튜닝이 τ=25(격자에 있고 동률 시 작은 τ 규칙)를 고르면 fixed_sr_tuned가 sr_early의 alias로 흡수되어 test 분석에 fixed_sr_tuned 행이 없다 -> primary 'sr",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: manifest에 aliases 기록, collect/prospective_rows에서 alias마다 같은 run_id를 가리키는 행(policy_id=alias)을 추가. 또는 보고 대상 method 간에는 dedupe하지 않음. / 회귀 시험: τ=25 tuned로 test matrix 생성 후 collect -> fixed_sr_tuned 행이 모든 test seed에 존재; no-switch draw seed가 E9 짝에 on_continued 보상으로 포함.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/f13cd3d",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-051",
+        "title": "[SCI-05] E4 check 간격 50 규칙(srgc_*_c50)의 continuation/cold-start/budget 비용에 50 간격 정책이 실행하지 않는 25,75,125..",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: cadence가 trajectory cadence와 다르면 그 정책 일정((u-first)%cadence==0)에 없는 boundary의 sr_comparison 성분을 제외하도록 component_totals에 schedule 필터 전달. / 회귀 시험: 위 합성 입력에서 c50=123, c25=131.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/f13cd3d",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-052",
+        "title": "[SCI-06] 한 seed에 on_monitored run이 둘 이상(이전 protocol/config hash, 실패한 이전 run)이면 SeedBank가 정렬상 첫 번째(실패·미완이어도)를 trajectory로 쓰고, bran",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: 현재 matrix의 config_hash/완료 상태로 trajectory를 고르고 모호하면 오류; branch·extension은 parent.run_id가 그 trajectory인 것만 사용. / 회귀 시험: 위 합성 -> 오류 또는 일치하는 branch만 사용.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/f13cd3d",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-053",
+        "title": "[SCI-07] rebuttal 전체 순서(freeze-budget, budget-extension, eval-budget GPU 평가)를 다 돌려도 analysis.json/report.md에는 275-update 비교만 있다",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: cmd_analyze에 budget endpoint 기준 LOSO·test primary와 E3를 추가(by_policy(rows,'budget_reward_fraction')), endpoint_type 라벨, test용 짝(plateau_sr_tuned, sampled_time_sr, sr_early_refreshed_k*) 추가, physical 비용 view 보고. / 회귀 시험: smoke 산출물에 cmd_analyze 실행 -> budget 대비 키와 n 존재, 없는 짝은 missing으로 표시.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/f13cd3d",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-054",
+        "title": "[SCI-08] Uniform branch(fixed_uniform_t*, srgc_uniform_destination), 모든 prospective dev/test 팔, On trajectory는 275 비용이 B보다 낮아도 27",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: 275 비용 < B인 모든 완료 run(uniform branch, prospective run)도 연장하거나, 그런 팔의 budget 결과를 'capped_at_horizon'으로 표시하고 budget 대비에서 제외; On 제외 전 On 비용 ≥ B 확인. / 회귀 시험: 합성 bank에서 uniform branch 비용 < B -> extension task 생성 또는 capped 상태 표시.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/f13cd3d",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-055",
+        "title": "[SCI-09] E0 audit가 OLMo MATH/MBPP Switch 셀(전환 시점 50,50,150,50,50 등)과 Gemma MBPP seed 7 'never_switched' 셀을 endpoint switched_at 비",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: never_switched면 endpoint switched_at is None 요구; counts 셀은 원고 전환 시점 표를 별도로 읽어 비교하거나 전환 시점 provenance를 incomplete로 표시. / 회귀 시험: 위 합성 -> inconsistent.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/f13cd3d",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-056",
+        "title": "[SCI-10] 유일한 tune-freeze 구현(smoke toy)이 E9 개발 τ 분포에서 실패·미완 srgc_current dev run을 no-switch 질량으로 센다",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: ran+transition_update -> triggered, ran+no_switch -> not_triggered, 그 밖 상태는 오류; tau_distribution은 알 수 없는 상태에서 raise. / 회귀 시험: failed dev run 포함 -> ValueError.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/f13cd3d",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-057",
+        "title": "[SCI-11] (잠재) cache_gpu_seconds가 주어지면 B는 cold_start scope로 고정되는데 모든 endpoint 선택은 continuation 누적 비용과 비교 -> 모든 팔에 prefix+cache만큼 예",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: budget.json의 scope와 같은 scope로 누적 비용 계산(cold-start면 prefix+cache를 더함), 불일치면 오류. / 회귀 시험: 위 합성 -> 275 선택.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/f13cd3d",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-058",
+        "title": "[SCI-12] B가 srgc_current가 triggered/not_triggered인 seed만의 평균으로 고정되고 unavailable/censored seed는 조용히 빠진다(n_seeds로만 드러남)",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: 설정된 seed 전부를 요구하고 빠진 seed를 나열해 실패(명시 플래그로만 허용). / 회귀 시험: 4/5 행 -> ValueError.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/f13cd3d",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-059",
+        "title": "[SCI-13] claim guard가 'statistically significant (p < 0.05)', 'significantly outperforms', 'significant across seeds'를 통과시킨다(현재 생",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: r'\\bsignifican' 계열을 사전 등록 검정 없이는 차단; interval_method None 처리. / 회귀 시험: 세 문장 guard -> ValueError; n=1 -> 'CI not computed (n=1)' 문장.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/f13cd3d",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-060",
+        "title": "[SCI-14] 단일 노드 경로에서 run_h100.sh 머리말 순서대로(eval-final 다음 freeze-budget) 단계를 하나씩 실행하면 평가 기록이 있는 상태에서 B가 경고 없이 고정된다",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: cmd_freeze_budget에서 budget.json이 없고 evaluations/*.json이 있으면 실패; 머리말 순서 수정. / 회귀 시험: 평가 파일 하나 만든 뒤 freeze-budget -> nonzero 종료.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/f13cd3d",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-061",
+        "title": "[SCI-15] 반박 계획 v2 §6.1은 primary Δ(Switch - LOSO tuned)에 paired t 95% CI(df=4)를 §6.2의 의존성 한계와 함께 보고하라고 하는데, 출력에는 CI/df가 없고 'naive_",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: ci_naive_paired_t(df, 경고 문구 포함) 키로 단순 CI를 함께 내고 플래그 이름 수정. / 회귀 시험: 5 seed 입력 -> ci_naive 값과 df=4 존재.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/f13cd3d",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-062",
+        "title": "[SCI-16] (V8-004 유형 재발, in-flight 경로) 실행 중 trajectory를 collect하면 폐기된 attempt의 D와 살아남은 attempt의 D가 다를 때 충돌 오류 없이 하나가 조용히 선택되어 규칙 r",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: in-flight 경로도 manifest attempts(start_update) 기준 lineage만 읽고 같은 update 값은 normalize_observations로 넘겨 충돌 시 오류. / 회귀 시험: 위 합성 -> 재개 attempt 값 사용 또는 ValueError.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/f13cd3d",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-063",
+        "title": "[SCI-17] (선택 E8) method 'switch_repeat_external'을 v8 engine으로 돌리면 역전환이 절대 일어나지 않는 one-way SR-GC가 되는데 E8 결과처럼 기록될 수 있다.",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: v8 engine에서 bidirectional policy를 거부하거나 SR phase 모니터링·역전환을 구현. / 회귀 시험: switch_repeat_external task 생성 시 오류.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/f13cd3d",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-064",
+        "title": "[SCI-18] prospective(test) E3의 srgc_uniform_destination은 srgc_current 발사 snapshot에서의 형제 분기가 아니라 prefix에서 독립 실행이라 GPU 비결정성으로 τ가 달라",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: test에서도 srgc_current의 transition snapshot에서 uniform branch를 만들고 τ 일치 검증; dev 튜닝은 budget_reward_fraction 사용. / 회귀 시험: test matrix에 uniform 분기 parent가 srgc_current snapshot인지 확인.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/f13cd3d",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-065",
+        "title": "[RT-01] 한 rank 에서만 예외가 나면(CUDA OOM, 'model produced no response tokens', verifier 오류 등) 프로세스가 바로 끝나지 않고 collective timeout(운영 NC",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: 잠금은 rank0 에만 있으므로 finally 를 'if ctx.is_primary: _release(rdir)' 로 바꿔 예외 경로에서 collective 를 없앤다. _maybe_refresh_cache 의 rank 별 except 는 없애거나, 성공 여부를 all_reduce 로 합의한 뒤 모든 rank 가 같은 분기를 타게 한다. / 회귀 시험: 2-rank gloo 시험: rank k(0 과 1 각각)에서 update 중 예외 → 10초 안에 종료하고 해당 rank 의 원래 예외 문자열이 출력·(rank0 이면) manifest 에 남는지 확인. E10 refresh 경로도 같은 시험.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/19a0161",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-066",
+        "title": "[RT-02] retained snapshot 파일을 쓴 직후, snapshots.jsonl 에 그 줄을 쓰기 전에 child 가 죽으면(정지 시 torchrun/supervisor 의 SIGKILL, 노드 장애) 재개 후 run",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: 재개 시 '색인에 그 update 가 없으면' _save_retained 를 부른다(snapshots.save(immutable=True) 는 같은 payload 이면 기존 파일 sha 를 돌려주므로 색인만 보충된다). 끝날 때(_finalize 전) retained 전부에 대해 파일↔색인 일치를 검사한다. / 회귀 시험: snapshot 파일 저장 후·색인 append 전 강제 종료 → 재개 → 색인에 해당 update 가 있고 sha 가 파일과 같으며 branch 계획이 생기는지 확인. 275 endpoint 에 대해서도 같은 시험.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/19a0161",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-068",
+        "title": "[RT-04] 중단된 attempt 의 진행 중이던 GPU 작업(정지·노드 장애로 죽은 update)이 events.jsonl 에 흔적 없이 사라진다",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: started 이벤트를 즉시 JSONL 에 쓰고(measurement_status='started'), physical/algorithm 집계에서 짝 없는 start 를 interrupted(unknown)로 센다. child 에서 model load·parent/latest load·_save_latest/_save_retained 를 meter.phase 로 감싼다(component=startup/checkpoint, algorithm view 와는 분리). / 회귀 시험: phase 도중 os._exit → 재개 → 원시 events 에 interrupted 표시가 있고 physical complete=False 인지. 모델 적재·checkpoint I/O 이벤트가 attempt 마다 생기는지.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/19a0161",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-070",
+        "title": "[RT-06] Qwen child 가 seed 실행이 요구하던 Qwen 런타임(fla-core==0.5.2 빠른 linear-attention kernel, transformers==5.14.1, peft==0.20.0)을 확인하",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: Qwen child 에서 모델 적재 전에 srgc_qwen35.runtime_packages() 를 부르거나 runtime_adapter() 를 함께 쓴다. run_h100.sh 의 Qwen cohort 에서 QWEN_PYTHON 을 우선한다. binding 의 package 목록에 fla-core 를 넣는다. / 회귀 시험: fla-core 가 없는 Python 으로 qwen_mbpp child 를 시작하면 모델 적재 전에 명확한 오류로 끝나는지. QWEN_PYTHON 과 SWITCH_PYTHON 을 다르게 줬을 때 선택되는 interpreter 확인.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/19a0161",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-071",
+        "title": "[RT-07] prospective 절차(prepare-seeds → prefix/dev/test 단계)의 새 seed 는 GPU child 가 모두 'Verified source runtime selection changed b",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: prepare-seeds 에서 runtime_selection 과 source seed 의 attention(prefix checkpoint_policy)을 함께 기록한다. saved 모드에서는 prefix receipt 가 없어도 locator 의 selection 으로 archived engine 을 활성화한다. / 회귀 시험: prepare-seeds 후 새 seed child 가 검사를 통과하고, 활성 engine 의 SAMPLING_PROTOCOL 과 attention 이 bank seed 와 같은지 확인.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/19a0161",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-072",
+        "title": "[RT-08] JSONL 마지막 줄이 쓰다 끊기면(쓰기 중 SIGKILL·노드 장애) 그 run 은 재개할 때마다 JSONDecodeError 로 failed 가 된다",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: 읽을 때 개행으로 끝나지 않은 마지막 줄 하나만 잘린 쓰기로 보고 무시하거나 .torn 으로 옮기고 기록한다. 중간 줄 손상은 계속 오류로 둔다. 쓸 때는 한 번의 os.write(O_APPEND) 로 줄 전체를 쓴다. / 회귀 시험: 각 JSONL(events/updates/snapshots/history)에 잘린 꼬리를 넣고 재개 → 정상 진행·경고 기록. 중간 줄 손상은 여전히 실패하는지.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/19a0161",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-073",
+        "title": "[RT-09] 실행 잠금 파일을 열거나 잠글 때 나는 실제 오류(EACCES 권한, NFS ENOLCK/ESTALE 등)가 'busy'(다른 곳에서 실행 중)로 보고된다",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: except Busy 만 'busy' 로 바꾸고 나머지 OSError 는 메시지와 함께 그대로 올린다(primary 가 모든 rank 에 전달). / 회귀 시험: 읽기 전용 run 폴더에서 child/execute_train 이 PermissionError 를 보고하고 busy(75)가 아닌지.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/19a0161",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-074",
+        "title": "[RT-10] 평가 기록과 evaluation_spec_hash 에 verifier 신원이 'null' 로 들어간다",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: child 가 쓰는 실제 verifier(plan['verifier'], fallback 설치 여부, math_verify bundle id)를 task·spec hash·기록에 넣는다. / 회귀 시험: verifier 설정을 바꾸면 evaluation_spec_hash 가 달라지고 기존 기록이 재사용되지 않는지.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/19a0161",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-075",
+        "title": "[RT-11] E10 periodic cache refresh 에서 4개 rank 가 모두 같은 cache 를 commit 한다",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: commit 을 rank0 에서만 하고(primary) cache id 를 broadcast 한다. / 회귀 시험: 2-rank gloo E10 시험에서 cache_versions.jsonl 의 committed 줄이 1개이고 모든 rank 의 sr_ranked_ids 가 같은지.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/19a0161",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-076",
+        "title": "[RT-12] harvest 묶음에 rank 별 stack dump(.multi-node/stacks/*.txt)가 빠진다",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: find 에 -path '*/.multi-node/stacks/*.txt' 를 넣는다(또는 stack 파일 확장자를 .log 로 바꾼다). / 회귀 시험: harvest 묶음 목록에 stacks/*.txt 가 들어가는지.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/19a0161",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-077",
+        "title": "[COORD-01] 노드 한 대의 국소 장애(NCCL admission 실패, runtime actor 프로세스 OOM/사망, GPU 없는 노드에서 torchrun 실패)가 공유 큐 state.json 의 failure 로 기록돼, 모",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: claim 전에 노드 단위 admission 을 1회 수행하고(원래 SRGC 와 같은 순서) 실패 시 그 노드만 해당 cohort 를 terminal 로 두기. execute/launch 예외·actor 통신 오류·rc 가 인프라 실패로 분류되는 경우는 job 을 failed 가 아닌 interrupted(+attempt 에 worker·예외 문자열 기록)로 남기고 Pool.fail() 을 쓰지 않기. 큐 failure 에는 worker/host 와 원인 문자열을 남기기. / 회귀 시험: 3~4 프로세스 공유 큐 시험: 한 노드만 execute 에서 RuntimeError, 또는 한 노드 actor 를 SIGKILL → 다른 노드가 두 cohort 를 모두 complete 하고 state.failure 가 비어 있으며 문제 job attempt 에 worker·예외가 남는지 확인.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/23b549a",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-078",
+        "title": "[COORD-02] nvidia-smi 가 없는 노드(로그인 노드·CPU pod)에서 sh scripts/run_v8_nodes.sh 를 실수로 실행해도 거절되지 않고 \"uuids=nvidia-smi unavailable\" 로 work",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: nvidia-smi 가 없거나 4개 GPU 를 보고하지 못하면 큐를 건드리기 전에 종료(명시적 CPU 시험용 환경변수로만 허용). / 회귀 시험: PATH 에 nvidia-smi 가 없는 환경에서 main() 이 queue 폴더를 만들지 않고 0 이 아닌 코드로 끝나는지.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/23b549a",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-079",
+        "title": "[COORD-03] [재발 V8-019, V8-016] 큐가 옛 coordinator(c44f6d9·8cebbaa·375cd4e·cbd68a4 — V8-022 에서 사용자 큐로 가정했던 cbd68a4 포함)로 만들어졌으면, 새 배정기(",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: actor 에는 수치·계획 결정(plan/done/ready, trainer 인자)만 옛 소스로 두고 process/heartbeat/admit 같은 제어는 현재 구현으로 감싸기(예: actor 에서 module.Runtime.process 를 현재 process 로 교체), 또는 V8-016/V8-019 결함이 있는 coordinator hash 목록을 두고 해당 큐는 명시적 안내와 함께 거절·이관. / 회귀 시험: zip 의 각 coordinator hash 로 binding 을 만든 뒤 actor 가 \"setsid 손자 + 즉시 종료\" 명령을 실행해도 제한 시간 안에 rc 를 돌려주는지; c44f6d9 binding 큐의 evaluation plan 이 SeedBank.budget_endpoint 의 실제 run_id/update/hash 와 같은지.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/23b549a",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-080",
+        "title": "[COORD-04] GPU 작업 중 Ctrl-C(또는 run_v8_nodes.sh stop)를 하면 매번 콘솔에 KeyboardInterrupt traceback 이 찍히고, 그 job 은 interrupted 로 기록되지 않고 sta",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: RuntimeProxy 가 dispatcher 의 stop Event 를 보유해 interrupted 응답이면 stop.set() 하고 결과를 그대로 반환(예외 금지). finish() 는 stop 중에도 rc/ended_at 을 먼저 쓰고 done 검증 실패는 interrupted 로 처리. / 회귀 시험: actor 경로로 작업 실행 중 tagged 프로세스 전체에 SIGTERM → dispatcher 가 traceback 없이 75 로 끝나고 job.state=interrupted, attempt 에 exit_code·ended_at 이 있는지.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/23b549a",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-081",
+        "title": "[COORD-05] 새 큐(첫 시작 또는 --new-queue)에서 SWITCH_PYTHON 과 QWEN_PYTHON 이 둘 다 설정된 노드는 Qwen MBPP 를 SWITCH_PYTHON(OLMo MBPP 환경)으로 실행하고 그 패키",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: existing_python 의 후보·requested 순서를 cohort_python 과 하나로 통일(qwen_*: V8_PYTHON_<C> → QWEN_PYTHON → dataset별 PAIR/SWITCH → V8_PYTHON → venv), --python 은 마지막 fallback 으로. / 회귀 시험: SWITCH_PYTHON·QWEN_PYTHON 동시 설정 + 빈 V8_ROOT 에서 selections() 결과 entries 의 qwen_mbpp python 이 QWEN_PYTHON 인지(실행 경로 기준 시험).",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/23b549a",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-082",
+        "title": "[COORD-06] run_v8_nodes.sh status 의 seed×arm 표에서 한 칸이 여러 작업을 덮어쓴다",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: 키에 phase/kind 를 넣어 train·extension·evaluation 을 별도 열/표로 분리하고, 한 칸에 여러 작업이면 상태별 개수(예: \"eval 1/3 done, 1 failed\")로 표시. / 회귀 시험: 같은 (seed, method_id) 의 train done + extension failed, eval 여러 개 혼합 큐에서 표가 failed/pending 을 숨기지 않는지.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/23b549a",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-083",
+        "title": "[COORD-07] 다른 계정이 만든 큐(잠금 파일 0644/디렉터리 0755 등)에 worker 를 띄우면 안내 없이 \"PermissionError: [Errno 13] Permission denied: …/control.lock\" ",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: 큐 폴더 쓰기 가능 여부를 초기화 단계에서 검사해 소유 계정과 함께 cohort 별 오류로 처리(give_up), dispatch main 에 OSError 처리기. / 회귀 시험: 잠금 파일을 읽기 전용으로 둔 큐에서 worker 가 traceback 없이 계정·경로 안내와 함께 해당 cohort 만 포기하는지.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/23b549a",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-084",
+        "title": "[COORD-08] 작업을 끝낸 뒤 다른 노드를 기다리며 유휴 상태이거나 CPU 단계(prepare/freeze/finalize)·NCCL admission 중일 때 콘솔에 15초마다 \"[v8 status] startup: no ran",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: dispatcher heartbeat(task 없음/child)·마지막 완료 작업을 함께 보고 \"idle: 준비된 작업 없음\", \"CPU stage\", \"admission\" 등으로 구분. / 회귀 시험: 작업 완료 후 유휴 상태에서 report() 문구가 startup 이 아닌 idle 계열인지.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/23b549a",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-085",
+        "title": "[COORD-09] (a) launcher 가 받아 주는 cohort(configs/cohorts/*.json, 예 qwen_math) 로 \"sh scripts/run_v8_nodes.sh qwen_math status\" 를 하면 \"a",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: status/probe 의 cohort 목록을 configs 에서 읽거나 launcher 를 두 cohort 로 제한, --watch 다음 숫자 허용, stop 에 cohort 를 주면 거절하거나 명확히 \"노드 전체 정지\" 안내, MISMATCH_HELP 에 cohort 단어 포함(\"--new-queue qwen_mbpp\"). / 회귀 시험: launcher 단어 조합 시험에 \"<기타 cohort> status\", \"status --watch 30\", \"math stop\" 추가.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/23b549a",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-086",
+        "title": "[COORD-10] Ctrl-C/stop 은 SIGTERM 10초 뒤 무조건 SIGKILL 한다",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "수정: 첫 Ctrl-C 는 SIGTERM 후 경계 도달/종료를 기다리며 경과를 표시하고, 두 번째 Ctrl-C 에서만 SIGKILL(또는 V8_STOP_GRACE 설정). SIGKILL 시 attempt 에 forced_kill 과 경과 시간을 기록해 actual expenditure 에 남기기. / 회귀 시험: ToyBackend 로 update 1회에 15초 걸리는 run 을 stop → 첫 Ctrl-C 만으로 latest.pt 가 경계에서 저장되고 rc=75, attempt 가 interrupted 로 기록되는지.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/23b549a",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-087",
+        "title": "v8_status 가 학습 진행을 보지 못해 첫 update 동안 멈춘 것처럼 보임",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "사용자 보고 'v8_status 제대로 업데이트 안되는 것 같아'. 실제로는 진행 중인데 정지로 오해할 수 있었다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/7fa90b7",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-088",
+        "title": "--status 를 다른 계정으로 실행하면 lease 파일 권한 오류로 멈춤",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "상태 확인 불가. v1.0.10 묶음 하네스에서 발견.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/f418288",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-089",
+        "title": "상태 화면이 기존 run_srgc.sh status 와 다르고 평가·예산 연장 칸이 서로 덮임",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "사용자 요청 '기존거랑 비슷하게', 'status 다시 만들어'. 원래 렌더러를 그대로 쓰도록 다시 만듦.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/d8aa1ed",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-094",
+        "title": "V8 status 요약이 화면 위쪽에 있어 긴 표에 밀려 보이지 않음",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "요약(머리줄·this node·gpu·개수·workers)을 실험 블록 맨 아래로 옮김. 원래 화면과 간단 화면 모두. 회귀 시험: 표 → running → 요약 순서와 마지막 줄 workers 확인.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/94a76aa",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-095",
+        "title": "V8 status 화면이 길고 칸 이름이 길어 OLMo·MBPP가 각각 몇 개, 얼마나 진행됐는지 한눈에 안 보임",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "기본 화면을 정리 화면으로 바꿈: 짧은 칸(On·SR25·U50·ext·eval)과 기호 하나, 맨 아래 실험별 한 줄(단계·막대·끝난 작업/전체(%)·running·ready·waiting·failed·update 끝남/전체). --classic 은 예전 모양. 회귀 시험: 칸 이름·요약 줄 문자열·폭 제한.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/2f6994f",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-096",
+        "title": "V8 status 에서 죽은 노드를 구분할 수 없고, 죽은 노드에 걸린 작업이 failed 로 셈해짐",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "요약 아래 노드 표(running/idle/DEAD/gone/finished). DEAD 는 작업 lease 를 읽기 전용으로 확인해 '다른 노드가 이어받음' 또는 '잠금 잡힘: 그 노드에서 죽이고 재실행'을 표시. 죽은 노드 작업은 'on dead node N' 으로 따로 셈. 회귀 시험: 잠금 풀림·잡힘·gone·finished, probe 가 lease 파일을 만들지 않음.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/1e47050",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-097",
+        "title": "V8 status 노드 표가 노드별로 무엇을 하는지 보여 주지 않고 gpus 칸에 pid 를 찍음",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "worker 마다 한 줄: host·gpus(이 노드는 프로세스, 다른 노드는 admission 기록, 8장 노드 worker 둘이면 '0-3 or 4-7')·state·실험·작업·updates n/N·돈 시간·heartbeat·지금 단계. 회귀 시험: 실제 형식 id(host.pid)로 8개 worker 표 검사.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/21b58c0",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-098",
+        "title": "V8 status 노드 표에 재시작마다 남는 옛 worker(gone) 줄이 쌓여 살아 있는 노드를 가림",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "표에는 running → starting → idle → DEAD 만 상태 순서(같은 상태는 호스트 순)로 보이고 gone·finished 는 윗줄에 개수만('N gone not shown; --all-nodes'). --all-nodes 로 전부 보기, run_v8_nodes.sh 가 --all-nodes·--classic·--simple 전달. 회귀 시험: gone 줄 없음·순서·--all-nodes.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/9ddc003",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-100",
+        "title": "V8 status 가 지운 노드를 idle 로 보이고, 다른 실험 쪽에서 일하는 노드도 idle 로 보이며, 갱신이 느림",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "--watch 기본 3초, 갱신마다 실험별 큐 한 번만 읽기(0.10→0.08초, 이 PC tmpfs). 작업 없는 worker 는 30초 안 heartbeat 만 살아 있음(지운 노드는 30초 안에 gone). 한 실험에서는 heartbeat 가 새로운데 열린 다른 실험에서 끊겼으면 busy(CPU 단계는 단계와 로그 시각, 아니면 작업 확인·claim). 10분 넘게 끊겼으면 idle 에 'not serving … (gave up?)'. 작업이 걸린 worker 는 작업 lease 잠금 기준: 잡혀 있으면 조용해도 running, 풀렸고 heartbeat 60초 넘게 없으면 DEAD, 잡혀 있는데 10분 넘게 조용하면 DEAD(hung). 준비된 작업이 있는데 놀면 'idle while N tasks are ready'. 회귀 시험 5개: 지운 노드 사라짐·busy 판정 3가지·lease 판정·준비 작업 표시·갱신당 큐 1회와 3초 기본값.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/a870f59",
+          "evidence_kind": "code_test"
+        }
+      },
+      {
+        "id": "V8-101",
+        "title": "v1.0.14·v1.0.15 묶음에 srgc_verifier_fallback.py 가 빠져 새로 시작하면 'Shared dispatcher files are missing' 으로 멈춤",
+        "latest_event": {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "v1.0.16 에 파일을 넣고, 빌드 검사에 (1) v8 실행 코드가 문자열로 가리키는 scripts/*.py 가 모두 묶음에 있는지 (2) v8_bootstrap.py required 목록이 모두 있는지를 추가. 재현: v1.0.15 를 풀어 run 하면 'V8 startup: Shared dispatcher files are missing'; v1.0.16 은 '[v8] dispatch policy=… controller=…' 까지 진행(이 PC 는 GPU 없음으로 그 뒤 종료).",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/a870f59",
+          "evidence_kind": "code_test"
+        }
+      }
+    ]
+  }
+}

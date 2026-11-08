@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="1.558" timestamp="2026-11-08T18:18:42.084291+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_recovered_cohort" name="test_idle_worker_rejoins_math_after_another_node_recovers_its_failure" time="1.503"><failure message="AssertionError: worker permanently excluded the externally recovered MATH queue&#10;assert [] == ['olmo_math']&#10;  &#10;  Right contains one more item: 'olmo_math'&#10;  Use -v to get more diff">tmp_path = PosixPath('/dev/shm/v8-rejoin-before-20261108/test_idle_worker_rejoins_math_0')
+
+    def test_idle_worker_rejoins_math_after_another_node_recovers_its_failure(tmp_path):
+        stop=threading.Event();started=[];checks=[];recovered=[];pairs=[]
+        for cohort in ('olmo_math','qwen_mbpp'):
+            pool=nodes.Pool(tmp_path/cohort/'.multi-node',dict(cohort=cohort,fixture=True))
+            pool.initialize();state=pool.queue_state();state['phase']='train'
+            if cohort=='olmo_math':state['failure']={'detail':'1 task(s) failed; no independent ready/running work remains.','task':None}
+            nodes.atomic(pool.root/'state.json',state)
+            task=dict(kind='train',run_id=cohort,method_id='on_monitored',training_seed=5,
+                      config_hash=cohort,parent={},horizon=275)
+            pool.register(task,'train')
+            class Runtime:
+                def __init__(self,pool,task):self.pool=pool;self.task=task;self.scans=0
+                def verify_node(self):checks.append(self.task['run_id'])
+                def plan(self,phase):
+                    self.scans+=1
+                    if self.task['run_id']=='qwen_mbpp' and self.scans==3:
+                        other=pairs[0][0];state=other.queue_state()
+                        state['failure_history'].append(state['failure']);state['failure']=None
+                        nodes.atomic(other.root/'state.json',state);recovered.append(True)
+                    return [self.task],False
+                def ready(self,task):return task['run_id']=='olmo_math'
+                def native_busy(self,task):return False
+                def done(self,task):return False
+                def execute(self,task,*args):started.append(task['run_id']);stop.set();return 75
+            pairs.append((pool,Runtime(pool,task)))
+        # The failure is current-policy and must not be cleared by ordinary node admission.
+        pool=pairs[0][0];path=next((pool.root/'jobs').glob('*.json'));job=nodes.read(path)
+        job['attempts']=[dict(id='failed',exit_code=1,controller_policy=nodes.DISPATCH_POLICY)]
+        nodes.atomic(path,job)
+        timer=threading.Timer(1.5,stop.set);timer.start()
+        try:
+            nodes.worker_loop_many(pairs,'waiting-node',stop,poll=.002)
+        finally:stop.set();timer.cancel();timer.join()
+        assert recovered,'external recovery fixture did not execute'
+&gt;       assert started==['olmo_math'],'worker permanently excluded the externally recovered MATH queue'
+E       AssertionError: worker permanently excluded the externally recovered MATH queue
+E       assert [] == ['olmo_math']
+E         
+E         Right contains one more item: 'olmo_math'
+E         Use -v to get more diff
+
+tests/test_srgc_v8_recovered_cohort.py:41: AssertionError</failure></testcase></testsuite></testsuites>
