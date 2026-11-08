@@ -177,7 +177,7 @@ raise SystemExit(d.main())
 '''
     child=subprocess.Popen([sys.executable,'-c',code,str(planfile),str(tmp_path/'gpu-leases'),blocked],start_new_session=True,
         env=dict(os.environ,PYTHONPATH=os.environ.get('V8_INDEPENDENT_TEST_CONTROLS',str(REPO/'scripts')),
-                 V8_ROOT=str(root),V8_ALLOW_ANY_ROOT='1',CUDA_VISIBLE_DEVICES='0,1,2,3'),
+                 V8_ROOT=str(root),V8_ALLOW_ANY_ROOT='1',CUDA_VISIBLE_DEVICES='0,1,2,3',V8_CPU_FIXTURE_NO_GPU='1'),
         stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
     try:
         try:out,err=child.communicate(timeout=6)

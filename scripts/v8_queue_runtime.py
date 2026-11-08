@@ -39,14 +39,17 @@ def private_cache():
 def existing_python(binding,env,cohort,explicit=None,identities=None):
     """Find the recorded environment among existing interpreters; never install or relabel packages."""
     identities={} if identities is None else identities
-    profile='PAIR_PYTHON' if cohort=='olmo_math' else 'SWITCH_PYTHON'
+    # Same precedence as the original launchers and srgc_v8_nodes.cohort_python: run_srgc.sh picks PAIR_PYTHON
+    # for math and SWITCH_PYTHON for mbpp; run_srgc_qwen35.sh puts QWEN_PYTHON before both. --python (explicit)
+    # is only the fallback, as its help says; it never replaces a cohort-specific environment.
+    profile={'math':'PAIR_PYTHON','mbpp':'SWITCH_PYTHON'}.get(cohort.rsplit('_',1)[-1])
     work=Path(env.get('OM_WORK',Path(env['V8_ROOT']).parent))
     preferred=[env.get('V8_PYTHON_'+cohort.upper()),
-               env.get('QWEN_PYTHON') if cohort=='qwen_mbpp' else None,env.get(profile)]
-    requested=explicit or next((x for x in preferred if x),None)
+               env.get('QWEN_PYTHON') if cohort.startswith('qwen_') else None,env.get(profile) if profile else None]
+    requested=next((x for x in (*preferred,explicit) if x),None)
     if requested and not shutil.which(requested):
         raise ValueError(f'{cohort}: configured Python is unavailable: {requested}; no replacement was installed')
-    candidates=[explicit] if explicit else [*preferred,env.get('V8_PYTHON'),
+    candidates=[*preferred,explicit,env.get('V8_PYTHON'),
         str(Path(env.get('VENV_DIR',work/'.venv-cu126'))/'bin/python'),sys.executable,shutil.which('python3')]
     expected={k:binding[k] for k in ('python_version','packages') if k in binding}
     for candidate in dict.fromkeys(x for x in candidates if x):
@@ -56,7 +59,7 @@ def existing_python(binding,env,cohort,explicit=None,identities=None):
         if executable not in identities:
             script="""import importlib.metadata,json,sys
 packages={}
-for name in ('torch','transformers','peft','numpy','math-verify'):
+for name in ('torch','transformers','peft','numpy','math-verify','fla-core'):
  try:packages[name]=importlib.metadata.version(name)
  except importlib.metadata.PackageNotFoundError:packages[name]=None
 print(json.dumps({'python_version':sys.version,'packages':packages}))
@@ -65,7 +68,11 @@ print(json.dumps({'python_version':sys.version,'packages':packages}))
                 result=subprocess.run([executable,'-c',script],capture_output=True,text=True,timeout=15)
                 identities[executable]=json.loads(result.stdout) if result.returncode==0 else {}
             except (OSError,ValueError,subprocess.TimeoutExpired):identities[executable]={}
-        if all(identities[executable].get(k)==v for k,v in expected.items()):return executable
+        found=identities[executable]
+        # Compare exactly the packages the queue recorded (older bindings have no fla-core entry).
+        if (found.get('python_version')==expected.get('python_version',found.get('python_version'))
+                and all((found.get('packages') or {}).get(name,'<absent>')==version
+                        for name,version in (expected.get('packages') or {}).items())):return executable
     raise ValueError(f'{cohort}: original Python/package versions are not available in the existing environments. '
                      'No package was installed and the queue was not changed.')
 
@@ -178,7 +185,7 @@ def selections(tools,env,args):
     tools=Path(tools)
     parser=argparse.ArgumentParser(add_help=False)
     parser.add_argument('cohort',nargs='?',default='all')
-    for flag in ('root','runner-root','python','gpus','poll-seconds'):parser.add_argument('--'+flag)
+    for flag in ('root','runner-root','python','gpus','poll-seconds','max-attempts','retry-delay'):parser.add_argument('--'+flag)
     parser.add_argument('--retry-failed',action='store_true')
     parser.add_argument('--new-queue',action='store_true')
     options,unknown=parser.parse_known_args(args)

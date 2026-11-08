@@ -52,8 +52,8 @@ def biased_names(count):
 
 def wait_claims(root,count):
     deadline=time.monotonic()+15
-    while len(list((root/'claims').glob('*')))<count and time.monotonic()<deadline:time.sleep(.01)
-    rows=[nodes.read(p) for p in (root/'claims').glob('*')]
+    while len(list((root/'claims').glob('[!.]*')))<count and time.monotonic()<deadline:time.sleep(.01)
+    rows=[nodes.read(p) for p in (root/'claims').glob('[!.]*')]
     assert len(rows)==count
     assert len({(r['cohort'],r['run_id']) for r in rows})==count
     return collections.Counter(r['cohort'] for r in rows)

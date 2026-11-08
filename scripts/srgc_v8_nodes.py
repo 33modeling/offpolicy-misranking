@@ -29,9 +29,10 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'independent-cohort-task-scans-v5'
+DISPATCH_POLICY = 'task-scans-node-local-faults-v6'
 TERMINAL = {'completed_horizon', 'completed_budget'}
 PHASES = ('train', 'extension', 'evaluation')
+CORRECTED_PLANNER = 'current-v8-016'  # evaluation planner replaced for pre-V8-016 coordinators
 
 
 def canonical(value):
@@ -62,8 +63,11 @@ class Lock:
         self.path=Path(path);self.fd=None
 
     def acquire(self):
-        self.path.parent.mkdir(parents=True,exist_ok=True)
-        self.fd=os.open(self.path,os.O_CREAT|os.O_RDWR,0o660)
+        try:
+            self.path.parent.mkdir(parents=True,exist_ok=True)
+            self.fd=os.open(self.path,os.O_CREAT|os.O_RDWR,0o660)
+        except PermissionError as exc:
+            raise NodeFailure(access_message(self.path,exc)) from None
         try:fcntl.flock(self.fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:
             os.close(self.fd);self.fd=None;return False
@@ -92,13 +96,48 @@ class BindingMismatch(ValueError):
     pass
 
 
+class NodeFailure(RuntimeError):
+    """A fault of this node or of its local runtime process: NCCL admission, a dead runtime actor,
+    missing GPUs, local file access. It is never written into the shared queue; this node stops
+    serving the cohort and the other nodes continue."""
+
+
+def access_message(path,exc):
+    import getpass,pwd
+    target=Path(path)
+    owner='?'
+    for candidate in (target,*target.parents):
+        try:owner=pwd.getpwuid(candidate.stat().st_uid).pw_name;break
+        except (OSError,KeyError):continue
+    return (f'{target}: {exc.strerror or exc} for account {getpass.getuser()} (queue files owned by {owner}). '
+            'Run the worker as the account that created this queue; nothing was changed.')
+
+
+MAX_ATTEMPTS=3     # srgc_rebuttal/cluster.py --max-attempts default
+RETRY_DELAY=60.0   # srgc_rebuttal/cluster.py --retry-delay default (seconds)
+
+
+def counted_failures(job):
+    """Original SRGC accounting: intentional interruptions and node-local launch faults are refunded."""
+    count=0
+    for attempt in job.get('attempts',[]):
+        outcome=attempt.get('outcome')
+        if outcome is None and attempt.get('exit_code') not in (None,0,75):outcome='failed'  # pre-outcome records
+        count+=outcome=='failed'
+    return count
+
+
 class QueueReset(Exception):
     """--new-queue replaced the queue directory; the caller must re-acquire control.lock in the new one."""
 
 
-MISMATCH_HELP=('This queue was started with a different bundle. Either keep using that bundle on every node, or stop '
-               'the workers on ALL nodes and run `sh scripts/run_v8_nodes.sh --new-queue` once on one node (allowed '
-               'only while no update has completed).')
+def mismatch_help(cohort='<cohort>'):
+    return ('This queue was started with a different bundle. Either keep using that bundle on every node, or stop '
+            f'the workers on ALL nodes and run `sh scripts/run_v8_nodes.sh {cohort} --new-queue` once on one node (allowed '
+            'only while no update has completed; without a cohort word --new-queue applies to every cohort).')
+
+
+MISMATCH_HELP=mismatch_help()
 
 
 def completed_training(cohort_root):
@@ -134,16 +173,34 @@ def task_key(task):
 
 class Pool:
     """All queue writes occur under control.lock; jobs have independent leases."""
-    def __init__(self,root,binding,*,new_queue=False):
+    def __init__(self,root,binding,*,new_queue=False,retry_failed=False,max_attempts=MAX_ATTEMPTS,retry_delay=RETRY_DELAY):
         self.root=Path(root);self.binding=binding;self.new_queue=new_queue
+        self.retry_failed=retry_failed;self.max_attempts=max_attempts;self.retry_delay=retry_delay
         self.root.mkdir(parents=True,exist_ok=True)
+
+    def retry_requested(self,state=None):
+        """--retry-failed on this worker, or recorded in the queue by a worker started with it: then every node
+        follows the same rule, so plain workers never re-block a queue that is waiting for a retry delay."""
+        return self.retry_failed or bool((state or {}).get('retry_failed_requested_at'))
+
+    def retryable(self,job,now=None,state=None):
+        """A failed task is claimed again only with --retry-failed, below --max-attempts and after --retry-delay."""
+        if job.get('state')!='failed':return True
+        if not self.retry_requested(state) or counted_failures(job)>=self.max_attempts:return False
+        ended=max([a.get('ended_at') or a.get('started_at') or 0 for a in job.get('attempts',[])] or [0])
+        return (time.time() if now is None else now)>=ended+self.retry_delay
+
+    def retry_later(self,job,state=None):
+        return job.get('state')=='failed' and self.retry_requested(state) and counted_failures(job)<self.max_attempts
 
     def held_leases(self):
         """Jobs whose lease a live worker or its training child still holds."""
         held=[]
         for path in sorted((self.root/'leases').glob('*.lock')):
             lease=Lock(path)
-            if lease.acquire():lease.close()
+            try:free=lease.acquire()
+            except NodeFailure:free=False  # unreadable here: never assume a free slot
+            if free:lease.close()
             else:held.append(path.stem)
         return held
 
@@ -161,8 +218,22 @@ class Pool:
                                   'worker or training child. Stop the workers on ALL nodes first.')
         kept=self.root.with_name(self.root.name+'.superseded-'+time.strftime('%Y%m%dT%H%M%S'))
         while kept.exists():kept=kept.with_name(kept.name+'x')
-        os.replace(self.root,kept);self.root.mkdir(parents=True)
-        atomic(self.root/'binding.json',self.binding)
+        os.replace(self.root,kept)
+        # A still-running worker of another node may recreate the folder (heartbeat, control.lock) right after
+        # the rename. Take the fresh folder's own control.lock before writing its identity record.
+        self.root.mkdir(parents=True,exist_ok=True)
+        fresh=Lock(self.root/'control.lock');deadline=time.monotonic()+30
+        while not fresh.acquire():
+            if time.monotonic()>deadline:
+                raise BindingMismatch(f'{cohort}: --new-queue moved the old queue to {kept}, but another running worker keeps '
+                                      f'the fresh queue locked. Stop the workers on ALL nodes, then run the plain command.')
+            time.sleep(.05)
+        try:
+            if list(self.root.glob('jobs/*.json')):
+                raise BindingMismatch(f'{cohort}: another running worker started jobs in the fresh queue {self.root} during '
+                                      f'--new-queue (old queue kept as {kept}). Stop the workers on ALL nodes first.')
+            atomic(self.root/'binding.json',self.binding)
+        finally:fresh.close()
         print(f'[v8] {cohort}: --new-queue kept the previous queue unchanged as {kept} and started a fresh queue in '
               f'{self.root}. Restart every other node with this same bundle (plain command, without --new-queue).',flush=True)
         raise QueueReset(str(kept))
@@ -200,7 +271,7 @@ class Pool:
                     # completed update. Moving control.lock would also split its locking domain.
                     # Keep the original binding and inode; supervisor/stop/probe remain usable.
                     raise BindingMismatch(
-                        f"{self.binding.get('cohort')}: {MISMATCH_HELP} (Worker/runner/config/trainer identity differs "
+                        f"{self.binding.get('cohort')}: {mismatch_help(self.binding.get('cohort','<cohort>'))} (Worker/runner/config/trainer identity differs "
                         f"from this queue: {', '.join(binding_changes(old,self.binding)[:12])}; record: {path})")
         else:atomic(path,self.binding)
         state_path=self.root/'state.json'
@@ -221,14 +292,11 @@ class Pool:
                 print(f'[v8] {self.binding.get("cohort")}: kept failed task {failure["task"]}; '
                       'independent ready jobs may continue. The failed task was not retried.',flush=True)
         if retry:
+            # Queue-level failures (CPU stage, failed tasks blocking all work) are cleared here. Failed tasks keep
+            # their attempt history; tick() retries them under the original SRGC --max-attempts/--retry-delay rules.
+            self.retry_failed=True;state['retry_failed_requested_at']=time.time()
             if state['failure']:
                 state['failure_history'].append(state['failure']);state['failure']=None
-            for file in self.root.glob('jobs/*.json'):
-                job=read(file)
-                if job['state']=='failed':
-                    lease=Lock(self.root/'leases'/(file.stem+'.lock'))
-                    if not lease.acquire():raise ValueError('Failed job is still leased; cannot retry it yet')
-                    lease.close();job['state']='pending';atomic(file,job)
             atomic(state_path,state)
 
     def queue_state(self):
@@ -290,12 +358,17 @@ class Pool:
             return phase,None
         try:
             cached=self.root/'plans'/(phase+'.json')
+            corrected=phase in getattr(runtime,'corrected_plans',())
             if cached.exists():
                 plan=read(cached);tasks,sealed=plan['tasks'],True
+                if corrected and plan.get('planner')!=CORRECTED_PLANNER:
+                    raise ValueError(f'{phase} plan was cached by this queue\'s original coordinator, whose evaluation '
+                                     'planner predates the V8-016 budget-endpoint fix; it is not used. Inspect '
+                                     f'{cached} and its jobs before deciding how to evaluate this queue.')
             else:
                 tasks,sealed=runtime.plan(phase)
                 if sealed and (tasks or phase=='extension'):
-                    atomic(cached,dict(tasks=tasks,sealed=True))
+                    atomic(cached,dict(tasks=tasks,sealed=True,**({'planner':CORRECTED_PLANNER} if corrected else {})))
         except json.JSONDecodeError:
             # Only incomplete append-only metadata with an active writer is
             # transient. Broken completed metadata must fail visibly.
@@ -313,14 +386,14 @@ class Pool:
             if job['phase']==phase:jobs.append((path,job))
         if not jobs and phase!='extension':
             raise ValueError('No tasks produced for '+phase+'; refusing to declare an empty experiment complete')
-        pending=[];all_done=True;failed=[];active=False
+        pending=[];all_done=True;active=False;failed=[];later=False
         for path,job in jobs:
             lease=Lock(self.root/'leases'/(path.stem+'.lock'))
             if not lease.acquire():
                 all_done=False;active=True;continue
             try:
-                if job['state']=='failed':
-                    all_done=False;failed.append(path.stem);continue
+                if job['state']=='failed' and not self.retryable(job,state=state):
+                    all_done=False;failed.append(path.stem);later=later or self.retry_later(job,state);continue
                 native_busy=runtime.native_busy(job['task'])
                 active=active or native_busy
                 done=False if native_busy else runtime.done(job['task'])
@@ -330,16 +403,21 @@ class Pool:
                     continue
                 all_done=False
                 if job['state']=='done':raise ValueError('Previously completed output disappeared or became inconsistent: '+path.stem)
-                if native_busy or not runtime.ready(job['task']):continue
+                if native_busy:active=True;continue
+                if not runtime.ready(job['task']):continue
                 pending.append((path,job))
             finally:lease.close()
         if all_done and sealed:
             state['phase']={'train':'freeze','extension':'evaluation','evaluation':'finalize'}[phase]
             atomic(self.root/'state.json',state)
             return 'advance',None
-        if failed and not pending and not active:
-            self.fail(f'{len(failed)} task(s) failed; no independent ready/running work remains. '
-                      'Failed attempts are preserved; inspect their logs before --retry-failed.')
+        if failed and not pending and not active and not later:
+            state=self.queue_state();state.pop('retry_failed_requested_at',None)
+            state['failure']=dict(detail=f'{len(failed)} task(s) failed; no independent ready/running work remains. '
+                                  'Failed attempts are preserved; inspect their logs before --retry-failed (each failed '
+                                  f'task is retried at most {self.max_attempts} times, {self.retry_delay:g}s after its failure).',
+                                  task=None,at=time.time())
+            atomic(self.root/'state.json',state)
             return 'failed',None
         # Fill trajectories first, then checkpoint-ready branches. Ties rotate
         # toward tasks with fewer launch attempts so a busy task cannot starve others.
@@ -365,31 +443,41 @@ class Pool:
             path=self.root/'jobs'/(item['key']+'.json');job=read(path)
             if job['phase']!=offer['phase'] or semantic_task(job['task'])!=item['task']:
                 raise ValueError('Inspected task definition changed before claim: '+item['key'])
-            if job['state'] in ('failed','done'):continue
+            # A failed task is claimable only under the retry rules (--retry-failed, attempts, delay).
+            if job['state']=='done' or not self.retryable(job,state=state):continue
             lease=Lock(self.root/'leases'/(path.stem+'.lock'))
             if not lease.acquire():continue
             attempt=dict(id=uuid.uuid4().hex,worker=worker,started_at=time.time(),pid=os.getpid())
             if job['state']=='running' and job['attempts']:
                 job['attempts'][-1]['lease_released_without_worker_completion']=time.time()
+            if job['state']=='failed':attempt['retry_of_failed_attempts']=counted_failures(job)
             job['attempts'].append(attempt);job['state']='running';atomic(path,job)
             return 'claimed',(lease,path.stem,job['task'],attempt)
         return 'waiting',None
 
-    def finish(self,key,rc,runtime,stop):
-        path=self.root/'jobs'/(key+'.json');job=read(path)
-        job['attempts'][-1].update(exit_code=rc,ended_at=time.time())
-        try:done=runtime.done(job['task'])
-        except Exception as exc:
-            done=False;job['attempts'][-1]['output_validation_error']=str(exc)
-        if rc==0 and done:job['state']='done'
-        elif rc==75 or stop.is_set():job['state']='interrupted'
+    def finish(self,key,rc,runtime,stop,node_error=None):
+        """Record one attempt. A task failure is a task record (retried under the original rules); a node-local
+        launch/runtime fault is refunded like an interruption. Neither marks the shared queue failed."""
+        path=self.root/'jobs'/(key+'.json');job=read(path);attempt=job['attempts'][-1]
+        attempt.update(exit_code=rc,ended_at=time.time());done=False
+        if node_error is None:
+            try:done=runtime.done(job['task'])
+            except NodeFailure as exc:node_error=f'{type(exc).__name__}: {exc}'
+            except Exception as exc:attempt['output_validation_error']=str(exc)
+        if node_error is not None:
+            attempt.update(outcome='node_failure',error=node_error);job['state']='interrupted'
+        elif rc==0 and done:attempt['outcome']='done';job['state']='done'
+        elif rc==75 or stop.is_set():attempt['outcome']='interrupted';job['state']='interrupted'
         else:
+            attempt.update(outcome='failed',error=f'task exit={rc}; output verified={done}'+
+                           (f"; {attempt['output_validation_error']}" if attempt.get('output_validation_error') else ''))
             job['state']='failed'
             state=self.queue_state()
             state.setdefault('task_failures',[]).append(dict(detail=f'task exit={rc}; output verified={done}',
                                                            task=key,attempt=job['attempts'][-1]['id'],at=time.time()))
             atomic(self.root/'state.json',state)
         atomic(path,job)
+        return job['state']
 
     def status(self):
         problems=[]
@@ -406,7 +494,9 @@ class Pool:
             job.setdefault('attempts',[])
             counts[job.get('state','?')]=counts.get(job.get('state','?'),0)+1
             lease=Lock(self.root/'leases'/(path.stem+'.lock'))
-            if not lease.acquire():
+            try:free=lease.acquire()
+            except NodeFailure as exc:problems.append(str(exc));continue
+            if not free:
                 last=job['attempts'][-1] if job['attempts'] else {}
                 row=dict(task=path.stem,worker=last.get('worker'),method=job['task'].get('method_id'),
                          seed=job['task'].get('training_seed'),kind=job['task'].get('kind'))
@@ -431,8 +521,11 @@ class Pool:
         return result
 
 
-def worker_loop(pool,runtime,worker,stop,*,poll=3,device_fds=(),retry=False):
-    return worker_loop_many([(pool,runtime)],worker,stop,poll=poll,device_fds=device_fds,retry=retry)
+def worker_loop(pool,runtime,worker,stop,*,poll=3,device_fds=(),retry=False,**policy):
+    return worker_loop_many([(pool,runtime)],worker,stop,poll=poll,device_fds=device_fds,retry=retry,**policy)
+
+
+NODE_LOCAL=(NodeFailure,PermissionError)  # local access faults; other OSErrors stay queue-visible
 
 
 class TaskScan:
@@ -448,7 +541,8 @@ class TaskScan:
             except BaseException as exc:
                 self.error=exc
                 if isinstance(exc,(KeyboardInterrupt,SystemExit)):stop.set()
-                if not verify and not stop.is_set() and not isinstance(exc,BindingMismatch):
+                # Node-local faults (dead actor, local access) stop only this node: never a queue failure.
+                if not verify and not stop.is_set() and not isinstance(exc,(BindingMismatch,*NODE_LOCAL)):
                     try:pool.fail(f'{type(exc).__name__}: {exc}')
                     except Exception as record_error:self.error=record_error
             finally:os.close(held);self.finished.set()
@@ -457,7 +551,8 @@ class TaskScan:
         except BaseException:os.close(held);raise
 
 
-def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_gate=None):
+def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_gate=None,
+                     max_attempts=MAX_ATTEMPTS,retry_delay=RETRY_DELAY):
     """Original actors prepare independently; serialize lease-count comparison and task claim."""
     if not pairs:raise ValueError('At least one cohort is required')
     initialized=set();terminal={};offers={};scans={};last_report=0;reasons={};busy_report=0;setup_report=0
@@ -466,6 +561,8 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
     dispatch_lock=Path(os.path.commonpath([str(p.resolve()) for p in roots]))/'.v8-dispatch.lock'
     controller_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     for pool,runtime in pairs:
+        pool.retry_failed=retry;pool.max_attempts=max_attempts;pool.retry_delay=retry_delay
+        runtime.stop_event=stop  # runtime actors report signals through the same stop event
         def heartbeat(task=None,pool=pool):
             atomic(pool.root/'workers'/(digest(worker)+'.json'),
                    dict(worker=worker,pid=os.getpid(),at=time.time(),task=task,
@@ -478,11 +575,17 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
         print(f'[{worker}] {cohort(pool)}: {kind} failed: {type(exc).__name__}: {exc}',flush=True)
         if isinstance(exc,BindingMismatch):
             print(f'[{worker}] {cohort(pool)}: no work is taken for this cohort on this node; nothing was changed.',flush=True)
+        elif isinstance(exc,NODE_LOCAL):
+            print(f'[{worker}] {cohort(pool)}: this node stops serving {cohort(pool)}. The shared queue was NOT marked '
+                  'failed and the other nodes continue. Fix this node (message above), then start the same command '
+                  'here again.',flush=True)
         else:
             print(f'[{worker}] {cohort(pool)}: no new work is taken for this cohort; the other cohort continues. '
                   f'Logs: {pool.root/"logs"}. After fixing the cause, run the same command with --retry-failed.',flush=True)
     def advance_barrier(pool,action):
-        if read(pool.root/'binding.json')!=pool.binding:raise BindingMismatch('Queue identity changed during CPU stage')
+        try:current=read(pool.root/'binding.json')
+        except FileNotFoundError:current=None
+        if current!=pool.binding:raise BindingMismatch('Queue identity changed or queue folder moved during CPU stage')
         state=pool.queue_state()
         state['actions'].append(dict(action=action,worker=worker,at=time.time()))
         state['phase']={'prepare':'train','freeze':'extension','finalize':'complete'}[action]
@@ -520,7 +623,9 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                 continue
             if index in offers:continue
             if hasattr(runtime,'startup_ready') and not runtime.startup_ready():
-                runtime.heartbeat('runtime_initialization');continue
+                try:runtime.heartbeat('runtime_initialization')
+                except (OSError,NodeFailure):pass  # reported by the next queue access below
+                continue
             if getattr(runtime,'pending_barrier',None) is not None:
                 result=runtime.poll_barrier(stop)
                 if result is None:continue
@@ -530,11 +635,16 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                     if error is not None:raise error
                     advance_barrier(pool,stage);progressed=True
                 except BindingMismatch as exc:give_up(index,pool,'queue identity',exc)
+                except NODE_LOCAL as exc:give_up(index,pool,'node runtime',exc)
                 except Exception as exc:
                     pool.fail(f'{type(exc).__name__}: {exc}');give_up(index,pool,'CPU stage',exc)
                 finally:os.close(held)
                 continue
-            with pool.control() as control:
+            try:
+                control_context=pool.control();control=control_context.__enter__()
+            except NODE_LOCAL as exc:
+                give_up(index,pool,'queue access',exc);progressed=True;continue
+            try:
                 if control is not None:
                     if index not in initialized:
                         # A mismatched joining node must not poison healthy workers: no pool.fail here.
@@ -551,8 +661,13 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                         # Inspect only phase metadata here. Re-scanning the whole DAG on every
                         # idle node keeps control.lock busy before the shared claim gate, and
                         # repeats the same RPC/filesystem work immediately before the real tick.
-                        if read(pool.root/'binding.json')!=pool.binding:
-                            raise BindingMismatch('Queue identity changed while this worker was running')
+                        try:current=read(pool.root/'binding.json')
+                        except FileNotFoundError:current=None
+                        if current!=pool.binding:
+                            # Moved/replaced by another node's --new-queue: never write this worker's failure there.
+                            raise BindingMismatch('Queue identity changed while this worker was running' if current else
+                                                  f'This queue folder ({pool.root}) was moved or replaced while this worker '
+                                                  'was running; restart this worker (same command).')
                         state=pool.queue_state()
                         if isinstance(state.get('failure'),dict) and state['failure'].get('task'):
                             pool.initialize();state=pool.queue_state()
@@ -576,11 +691,21 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                     except BindingMismatch as exc:
                         # This is now somebody else's queue. Do not write our failure into its state.
                         give_up(index,pool,'queue identity',exc);progressed=True;continue
+                    except NODE_LOCAL as exc:
+                        if stop.is_set():return 75
+                        give_up(index,pool,'node runtime',exc);progressed=True;continue
                     except Exception as exc:
                         if stop.is_set():return 75
                         if (pool.root/'state.json').exists():pool.fail(f'{type(exc).__name__}: {exc}')
                         give_up(index,pool,'stage',exc);progressed=True;continue
-            runtime.heartbeat(None)
+            finally:control_context.__exit__(None,None,None)
+            try:runtime.heartbeat(None)
+            except NODE_LOCAL as exc:
+                give_up(index,pool,'queue access',exc);progressed=True;continue
+            except (FileNotFoundError,FileExistsError,NotADirectoryError) as exc:
+                moved=BindingMismatch(f'{cohort(pool)}: this queue folder ({pool.root}) was moved or replaced while this worker '
+                                      f'was running ({type(exc).__name__}); restart this worker (same command).')
+                give_up(index,pool,'queue identity',moved);progressed=True;continue
             if action=='failed':
                 state=pool.queue_state()
                 reasons[cohort(pool)]=canonical(state.get('failure'))
@@ -607,7 +732,12 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
         elif claim_ok and len(terminal)<len(pairs):
             gate=Lock(dispatch_lock)
             try:
-                if gate.acquire():
+                try:gate_held=gate.acquire()
+                except NodeFailure as exc:
+                    for i,(p,_) in enumerate(pairs):
+                        if i not in terminal:give_up(i,p,'queue access',exc)
+                    gate_held=False;progressed=True
+                if gate_held:
                     # Kernel-held task leases, not heartbeat age or stale running labels, are
                     # authoritative. Claim while this same shared lock remains held.
                     live={i:len(pool.held_leases()) for i,(pool,_) in enumerate(pairs)
@@ -615,10 +745,18 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                     order=sorted(live,key=lambda i:(live[i],(i-cursor)%len(pairs)))
                     for candidate in order:
                         pool,runtime=pairs[candidate]
-                        state=read(pool.root/'state.json')
-                        if state.get('phase') not in PHASES or state.get('failure'):
-                            offers.pop(candidate,None);continue
-                        with pool.control() as control:
+                        try:
+                            # Another node's --new-queue may be replacing this folder right now: the next
+                            # phase-1 pass reports the moved/replaced queue; never recreate its state here.
+                            try:state=read(pool.root/'state.json')
+                            except FileNotFoundError:
+                                offers.pop(candidate,None);continue
+                            if state.get('phase') not in PHASES or state.get('failure'):
+                                offers.pop(candidate,None);continue
+                            control_context=pool.control();control=control_context.__enter__()
+                        except NODE_LOCAL as exc:
+                            give_up(candidate,pool,'queue access',exc);progressed=True;continue
+                        try:
                             if control is None:
                                 # Metadata contention is not evidence that the less busy cohort
                                 # has no work. Retry instead of sending everyone to the other model.
@@ -627,12 +765,16 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                                 action,claimed=pool.claim_offered(offers.pop(candidate),worker,stop)
                             except BindingMismatch as exc:
                                 give_up(candidate,pool,'queue identity',exc);progressed=True;continue
+                            except NODE_LOCAL as exc:
+                                if stop.is_set():return 75
+                                give_up(candidate,pool,'node runtime',exc);progressed=True;continue
                             except Exception as exc:
                                 if stop.is_set():return 75
                                 pool.fail(f'{type(exc).__name__}: {exc}')
                                 give_up(candidate,pool,'stage',exc);progressed=True;continue
                             if claimed:index=candidate;break
                             if action=='advance':progressed=True
+                        finally:control_context.__exit__(None,None,None)
             finally:gate.close()
         # GPU execution, admission and CPU barriers NEVER hold the cross-cohort lock.
         if claimed is not None:
@@ -641,21 +783,33 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
             log=pool.root/'logs'/(attempt['id']+'.log')
             print(f'[{worker}] {time.strftime("%Y-%m-%d %H:%M:%S")} {cohort(pool)} {task["kind"]} '
                   f'{task.get("method_id",task.get("task_id"))} seed={task.get("training_seed")} log={log}',flush=True)
+            node_error=None
             try:
                 try:
                     rc=75 if stop.is_set() else runtime.execute(task,pool.root/'tasks'/(key+'.json'),lease.fd,stop,device_fds,attempt)
                 except Exception as exc:
-                    rc=1;print(f'[{worker}] launch failure: {type(exc).__name__}: {exc}',flush=True)
-                while True:
-                    with pool.control() as control:
-                        if control is not None:
-                            pool.finish(key,rc,runtime,stop);break
-                    time.sleep(min(poll,.2))
+                    # Launch-side faults (admission, node verification, dead actor, missing interpreter) happen on
+                    # this node before a training result exists: never a task failure or a queue failure.
+                    rc=None;node_error=f'{type(exc).__name__}: {exc} (node {worker})'
+                    print(f'[{worker}] launch failure on this node: {node_error}',flush=True)
+                recorded=None
+                while recorded is None:
+                    try:
+                        with pool.control() as control:
+                            if control is not None:recorded=pool.finish(key,rc,runtime,stop,node_error=node_error)
+                    except NODE_LOCAL as exc:
+                        node_error=node_error or f'{type(exc).__name__}: {exc}';recorded='unrecorded'
+                        print(f'[{worker}] could not record the attempt ({exc}); the released lease lets another '
+                              'node adopt or rerun it',flush=True)
+                    if recorded is None:time.sleep(min(poll,.2))
             finally:lease.close()
-            print(f'[{worker}] {time.strftime("%Y-%m-%d %H:%M:%S")} {cohort(pool)} task finished rc={rc} log={log}',flush=True)
+            print(f'[{worker}] {time.strftime("%Y-%m-%d %H:%M:%S")} {cohort(pool)} task finished rc={rc} '
+                  f'state={recorded} log={log}',flush=True)
+            if node_error is not None:give_up(index,pool,'node launch',NodeFailure(node_error))
             dispatched=True
         if time.monotonic()-last_report>=60:
-            print(f'[{worker}] '+canonical({p.binding.get('cohort','?'):p.status() for p,_ in pairs}),flush=True)
+            try:print(f'[{worker}] '+canonical({p.binding.get('cohort','?'):p.status() for p,_ in pairs}),flush=True)
+            except NODE_LOCAL as exc:print(f'[{worker}] status unavailable: {exc}',flush=True)
             last_report=time.monotonic()
         if len(terminal)==len(pairs):
             failed=[cohort(pairs[i][0]) for i,v in terminal.items() if v=='failed']
@@ -667,10 +821,30 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
     return 75
 
 
-def python_identity(executable):
+BASE_PACKAGES=('torch','transformers','peft','numpy','math-verify')
+# Qwen seed runs pinned fla-core (srgc_qwen35.runtime_packages, checked again by cluster_child.prepare_runtime):
+# without it transformers silently falls back to the slow torch DeltaNet kernel, so it is part of the identity.
+QWEN_PACKAGES=('fla-core',)
+
+
+def child_exit(code,exit_file):
+    """The attempt's real exit code. torchrun reports a worker's exit 75 (stopped at a safe point, or the task is
+    busy elsewhere) as its own exit 1; rank 0 records the real code in $V8_EXIT_FILE."""
+    if code in (0,75):return code
+    try:record=json.loads(Path(exit_file).read_text())
+    except (OSError,ValueError):return code
+    if isinstance(record,dict) and record.get('exit_code')==75 and record.get('status') in ('busy','interrupted'):
+        print(f"[v8] child recorded exit 75 ({record.get('status')}); torchrun exit {code} is an interruption, "
+              'not a task failure',flush=True)
+        return 75
+    return code
+
+
+def python_identity(executable,extra=()):
+    names=(*BASE_PACKAGES,*extra)
     code="""import importlib.metadata,json,sys
 packages={}
-for name in ('torch','transformers','peft','numpy','math-verify'):
+for name in """+repr(names)+""":
  try:packages[name]=importlib.metadata.version(name)
  except importlib.metadata.PackageNotFoundError:packages[name]=None
 print(json.dumps({'python_version':sys.version,'packages':packages}))
@@ -783,7 +957,7 @@ class Runtime:
         if len(gpus)!=self.cfg['runtime']['world_size']:raise ValueError('GPU count must match the frozen runtime world_size')
         files=sorted(list((self.runner/'switching').glob('*.py'))+list((self.runner/'configs').rglob('*.json'))+
                      [self.runner/'cluster_child.py',self.runner/'run_h100.sh'])
-        environment_identity=python_identity(python)
+        environment_identity=python_identity(python,QWEN_PACKAGES if self.cfg['runtime'].get('profile')=='qwen' else ())
         self.binding=dict(schema=SCHEMA,cohort=cohort,root=str(self.root),**environment_identity,
                           coordinator_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                           runner_sha256={str(p.relative_to(self.runner)):hashlib.sha256(p.read_bytes()).hexdigest() for p in files},
@@ -984,8 +1158,12 @@ class Runtime:
                  str(self.runner/'cluster_child.py'),'--cohort',self.cohort,'--matrix',str(matrix),
                  '--task',task.get('task_id') or task['run_id']]
         progress=self.root/'.multi-node'/'progress'/attempt['id']
-        return self.process(command,self.root/'.multi-node'/'logs'/(attempt['id']+'.log'),[fd,*device_fds],stop,
-                            extra={'SRGC_PROGRESS_DIR':str(progress)},label=task.get('task_id') or task['run_id'])
+        log=self.root/'.multi-node'/'logs'/(attempt['id']+'.log');exit_file=log.with_name(attempt['id']+'.exit.json')
+        try:exit_file.unlink()
+        except FileNotFoundError:pass
+        rc=self.process(command,log,[fd,*device_fds],stop,label=task.get('task_id') or task['run_id'],
+                        extra={'SRGC_PROGRESS_DIR':str(progress),'V8_EXIT_FILE':str(exit_file)})
+        return child_exit(rc,exit_file)
 
     def process(self,command,log,fds,stop,*,cpu=False,extra=None,label=None):
         """Child output goes straight to its log file (a stalled terminal can no longer block the child);
@@ -1021,7 +1199,10 @@ class Runtime:
         while process.poll() is None:
             now=time.monotonic()
             if now-last_heartbeat>=10:
-                if hasattr(self,'heartbeat'):self.heartbeat('child:'+str(process.pid))
+                # A heartbeat write failure (moved queue, full or read-only volume) must never abandon a running child.
+                try:
+                    if hasattr(self,'heartbeat'):self.heartbeat('child:'+str(process.pid))
+                except Exception:pass
                 last_heartbeat=now
             if not cpu and interval>0 and now-last_status>=interval:
                 last_status=now
@@ -1043,7 +1224,10 @@ def main(argv=None):
     parser.add_argument('--python',default=os.environ.get('V8_PYTHON',sys.executable),help='fallback Python; cohort-specific environments take priority')
     parser.add_argument('--gpus',default=os.environ.get('CUDA_VISIBLE_DEVICES','0,1,2,3'))
     parser.add_argument('--poll-seconds',type=float,default=3)
-    parser.add_argument('--retry-failed',action='store_true')
+    parser.add_argument('--retry-failed',action='store_true',
+                        help='retry failed tasks (at most --max-attempts counted failures, --retry-delay seconds after the last one)')
+    parser.add_argument('--max-attempts',type=int,default=MAX_ATTEMPTS)
+    parser.add_argument('--retry-delay',type=float,default=RETRY_DELAY)
     parser.add_argument('--status',action='store_true')
     parser.add_argument('--new-queue',action='store_true',
                         help='after stopping the workers on ALL nodes: keep the existing queue as .multi-node.superseded-<time> '
@@ -1060,6 +1244,8 @@ def main(argv=None):
         print(json.dumps(statuses if args.cohort=='all' else statuses[args.cohort],indent=2));return 0
     if not args.python:parser.error('V8_PYTHON or --python is required')
     if not args.poll_seconds>0:parser.error('poll-seconds must be positive')
+    if args.max_attempts<1 or not math.isfinite(args.retry_delay) or args.retry_delay<0:
+        parser.error('--max-attempts must be >= 1 and --retry-delay a finite number >= 0')
     gpus=[gpu.strip() for gpu in args.gpus.split(',')]
     if any(not x.strip() for x in gpus) or len(set(gpus))!=len(gpus):parser.error('GPU IDs must be nonempty and distinct')
     group=Path(os.environ.get('GROUP_VOLUME','/group-volume')).resolve()
@@ -1076,6 +1262,10 @@ def main(argv=None):
                 # nvidia-smi works but does not report these four GPUs: a task would fail at rank startup.
                 parser.error(f'this node does not expose the GPUs {",".join(gpus)} (CUDA_VISIBLE_DEVICES); '
                              'nvidia-smi -L reports:\n'+listing.stdout.strip())
+            if not os.environ.get('V8_CPU_FIXTURE_NO_GPU'):
+                # A login/CPU node would claim GPU work and fail every launch: refuse before any queue write.
+                parser.error(f'nvidia-smi is not available or failed on this node, so the GPUs {",".join(gpus)} cannot '
+                             'be verified. Start the V8 worker on an allocated 4x80 GB GPU node; no queue file was changed.')
         if inventory is not None:
             small=[r for r in inventory if r['total_mib']<75000]
             if small:parser.error('each task needs four full 80 GB GPUs; got '+', '.join(f"{r['index']}:{r['name']} {r['total_mib']} MiB" for r in small))
@@ -1105,7 +1295,8 @@ def main(argv=None):
                   f'queue={pool.root} logs={pool.root/"logs"}',flush=True)
         print(f'[{worker}] progress: sh scripts/run_v8_nodes.sh --status   (from any node)',flush=True)
         return worker_loop_many(pairs,worker,stop,poll=args.poll_seconds,device_fds=tuple(lock.fd for lock in locks),
-                                retry=args.retry_failed,gpu_gate=GpuGate(gpus) if inventory is not None else None)
+                                retry=args.retry_failed,gpu_gate=GpuGate(gpus) if inventory is not None else None,
+                                max_attempts=args.max_attempts,retry_delay=args.retry_delay)
     finally:
         for signum,handler in previous.items():signal.signal(signum,handler)
         for lock in reversed(locks):lock.close()

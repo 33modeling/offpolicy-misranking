@@ -81,7 +81,7 @@ def test_explicit_retry_reopens_only_failed_tasks_even_without_cohort_failure(tm
     lease,key,task,attempt=claim(pool,runtime,stop)
     pool.finish(key,9,runtime,stop);lease.close()
     assert nodes.read(pool.root/'state.json')['failure'] is None
-    pool.initialize(retry=True)
+    pool.initialize(retry=True);pool.retry_delay=0  # original SRGC rule: retried --retry-delay after the failure
     lease,retry_key,task,attempt=claim(pool,runtime,stop)
     assert retry_key==key
     assert len(nodes.read(pool.root/'jobs'/(key+'.json'))['attempts'])==2

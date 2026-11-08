@@ -46,7 +46,7 @@ def worker(root,name,stop):
 def wait_claims(root,count):
     end=time.monotonic()+15
     while time.monotonic()<end:
-        rows=[nodes.read(p) for p in (root/'claims').glob('*')]
+        rows=[nodes.read(p) for p in (root/'claims').glob('[!.]*')]
         if len(rows)==count:return rows
         time.sleep(.01)
     raise AssertionError(f'only {len(rows)}/{count} production DAG tasks were claimed')
