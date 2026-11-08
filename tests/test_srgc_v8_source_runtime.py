@@ -71,17 +71,23 @@ def test_failed_setup_can_retry_corrected_source_without_erasing_failure(tmp_pat
 
 
 @pytest.mark.parametrize('profile',['olmo','qwen'])
-def test_saved_runtime_is_actually_loaded_before_cpu_v8_training(tmp_path,profile):
+@pytest.mark.parametrize('frozen',[False,True])
+def test_saved_runtime_is_actually_loaded_before_cpu_v8_training(tmp_path,profile,frozen):
     plan=json.loads((ROOT/'srgc_rebuttal/experiments/pair_seeds.json').read_text())
     plan['output_root']='runs';path=tmp_path/'plan.json';path.write_text(json.dumps(plan))
     saved='f581eb043e89409e0e68d8ed77201fa030e34bd93d4d5babbab65304c24a5d6b'
     folder=tmp_path/'runs/seed-5';folder.mkdir(parents=True)
     recorded=hashlib.sha256((saved+adapter_hash()).encode()).hexdigest() if profile=='qwen' else saved
     (folder/'prefix-ready.json').write_text(json.dumps({'implementation_sha256':recorded}))
+    runner=ROOT/'v8/experiments'
+    if frozen:
+        from scripts.v8_queue_runtime import selections
+        runner=selections(ROOT,dict(V8_ROOT=str(tmp_path/'empty-queue'),V8_RUNNER_ROOT=str(runner),
+                                    V8_PYTHON=sys.executable),['olmo_math'])[0]['runner']
     code='''import sys,json
 from pathlib import Path
-root,plan,out,saved,profile,recorded=map(str,sys.argv[1:])
-sys.path.insert(0,root);sys.path.insert(0,str(Path(root)/'v8/experiments'))
+root,plan,out,saved,profile,recorded,runner_root=map(str,sys.argv[1:])
+sys.path.insert(0,root);sys.path.insert(0,runner_root)
 from switching import coderepo
 coderepo.activate(root)
 selection=coderepo.source_runtime(root,profile,recorded)
@@ -102,7 +108,7 @@ result=runner.execute_train(task,ctx)
 assert result['completed_updates']==50,result
 print('SAVED_RUNTIME_CPU_TRAINING_OK')
 '''
-    result=subprocess.run([sys.executable,'-c',code,str(ROOT),str(path),str(tmp_path/'cpu'),saved,profile,recorded],
+    result=subprocess.run([sys.executable,'-c',code,str(ROOT),str(path),str(tmp_path/'cpu'),saved,profile,recorded,str(runner)],
                           env=dict(os.environ,CUDA_VISIBLE_DEVICES='',V8_CODE_ROOT=str(ROOT),OMP_NUM_THREADS='1',
                                    V8_FSYNC='0',PYTHONDONTWRITEBYTECODE='1'),
                           text=True,capture_output=True,timeout=30)

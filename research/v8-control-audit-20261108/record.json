@@ -147,5 +147,45 @@
     "Actual H100 progress, GPU throughput and cross-node filesystem lock behavior were not measured."
   ],
   "publication": "git pull in existing checkout; same sh scripts/run_v8_nodes.sh. No archive extraction required.",
-  "secret_redactions": 0
+  "secret_redactions": 0,
+  "final_integration_verification": {
+    "full_control_and_runtime_suite": "173 passed after integrating missing-state recovery; no skips in this suite",
+    "frozen_engine_continuation": "4cases passed: current checkout and frozen snapshot, OLMo and Qwen recorded identity paths; saved original engine actual CPU continuation25to50. Two new frozen-source cases supplement the173cases.",
+    "distinct_core_cases_passed": 175,
+    "upstream": "104passed /1skip /12subtests passed",
+    "retention_tests": "6passed",
+    "source_archive": {
+      "coordinators": 12,
+      "runners": 5,
+      "coordinator_runner_pairs_checked": 60
+    },
+    "runtime_science": "No real model/H100/GPU measurements; original30trainerhashes unchanged, no checkpoints/optimizer/RNG/rewards modified by the control fix",
+    "live_publication": {
+      "data_only_dry_run": "blocked before upload: current production backend lacks the verified bundle record required by existing safe publisher",
+      "production_deployment_performed": false,
+      "readonly_verification": [
+        {
+          "path": "incidents.json",
+          "http_status": 200,
+          "exact_local_bytes": false
+        },
+        {
+          "path": "data.json",
+          "http_status": 200,
+          "exact_local_bytes": false,
+          "public_incidents": 51,
+          "public_source_commit": "3e1a3ba3f953cb0bab7688d447c6f6d1ac29737c"
+        },
+        {
+          "path": "commits.json",
+          "http_status": 200,
+          "exact_local_bytes": false
+        }
+      ],
+      "canonical_source_incidents": 81,
+      "public_incidents_observed": 51,
+      "public_publication_pending": true
+    },
+    "incoming_changes": "Integrated21b071d/bebbd08status layout/heartbeat changes and a085f26missing-state recovery; preserved their history and corrected the stale-heartbeat inference with a retained failing test."
+  }
 }
