@@ -133,7 +133,7 @@ worker는60초마다 현황을 출력한다. 자식 출력은 터미널과 각 c
 정책 버전이 나온다. 표 형식 `status`는 `dispatch current <hash>`(현재 checkout과
 같음), `dispatch different <hash>`(다름), `dispatch unverified`(기록 없음)를 구분한다.
 정책 파일이 디스크에 있다는 것만으로 실행 중인 worker에 적용됐다고 판단하지 않는다.
-현재 배정 정책은 `independent-cohort-source-recovery-v6`다. 작업 검사는 해당 cohort의
+현재 배정 정책은 `source-recovery-rank-errors-v8`다. 작업 검사는 해당 cohort의
 control lease만 잡고 별도로 수행한다. 검사 결과가 준비되면 공유 잠금 안에서 현재
 binding·phase·실패 상태·작업 정의·작업 lease를 다시 확인한 뒤 claim한다.
 검사와 claim 사이에 다른 노드가 가져간 작업이나 실패한 작업은 가져오지 않는다.
@@ -155,6 +155,14 @@ binding·checkpoint를 고치거나 지우지 않는다. 신원·설정·CPU 준
 고급 옵션이다. 새 노드의 기본 실행 명령에는 붙이지 않는다.
 
 GPU 자식의 시작·중단·정체 감시는 기존 `srgc_rebuttal.cluster.run_child()`를 사용한다.
+자식이 점유 중이거나 중단되어 종료75를 기록하면 torchrun의 종료1을 작업 실패로
+오인하지 않는다. 실제 rank 예외·치명적 signal이 함께 있으면 실패 기록을 우선한다.
+`ChildFailedError` 앞의 원래 traceback은 PyTorch 오류 기록기로 보존한다. 원래 입력
+검사의 `SystemExit`도 보존하며, 실패 뒤 `RANK FAILURE`에 원문 오류와 경로를 출력한다.
+각 `.multi-node/progress/<attempt>/rank-N-error.json`과 `child-failure.json`에 남기고,
+작업 attempt와 `status`에도 실제 rank 오류를 표시한다. 강제 종료 signal에는 Python
+traceback이 없으므로 관찰한 signal만 기록한다. 이전 실행의 marker나 오류 파일을
+현재 실패에 사용하지 않는다.
 모델 준비 때부터 rank별 작업 파일의 실제 변경을 확인하고1800초 동안 변경이 없으면
 해당 작업을 timeout으로 기록한다. worker heartbeat와 실제 모델 작업은 구분한다.
 아직 rank 작업 기록이 없으면 supervisor는 `ASSIGNED`/`NOT ASSIGNED`/`BLOCKED`로

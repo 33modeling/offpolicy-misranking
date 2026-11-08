@@ -56,6 +56,14 @@ def gpu_rows(run=subprocess.run):
 
 
 def last_error_line(lines):
+    # torchrun appends ChildFailedError after the actual rank traceback. Show the
+    # specific exception from existing logs before falling back to that wrapper.
+    for line in reversed(lines):
+        stripped=line.strip();plain=re.sub(r'^\[rank\d+\]:\s*','',stripped)
+        if plain.startswith('RANK FAILURE'):return stripped[:600]
+        if (re.match(r'^(?:[\w.]+(?:Error|Exception)|SystemExit):',plain)
+                and 'ChildFailedError' not in plain.split(':',1)[0]):return stripped[:600]
+        if re.search(r'Signal \d+ \(SIG(?:KILL|SEGV|BUS|ABRT)\)',plain):return stripped[:600]
     for line in reversed(lines):
         stripped = line.strip()
         if re.search(r"(Error|Exception|error:|out of memory|Killed|Traceback)", stripped) and not stripped.startswith("File "):

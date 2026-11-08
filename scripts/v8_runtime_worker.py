@@ -4,6 +4,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import signal
 import socket
 import sys
@@ -40,7 +41,7 @@ def activate_trainer(environment):
     return code
 
 
-def child_result(rc,directory,environment,log,label):
+def child_result(rc,directory,environment,log,label,*,log_offset=0):
     """A real rank fault wins over an interruption marker; never turn errors into success."""
     if not rc:return rc
     failures=[]
@@ -54,8 +55,22 @@ def child_result(rc,directory,environment,log,label):
                 traceback=message.get('extraInfo',{}).get('py_callstack'),error_file=str(path),original_error=error))
         except (OSError,ValueError,KeyError,TypeError,AttributeError) as exc:
             print(f'Cannot read rank error {path}: {exc}; original process exit={rc}',flush=True)
+    # SIGKILL/segfaults cannot write a Python traceback. A rank0 busy marker must
+    # not hide another rank's recorded fatal signal. TERM/INT can be torchrun cleanup.
+    if not failures:
+        try:
+            with Path(log).open('rb') as handle:
+                handle.seek(max(log_offset,Path(log).stat().st_size-131072))
+                tail=handle.read(131072).decode(errors='replace')
+            for number in sorted({int(n) for n in re.findall(r'exitcode\s*:\s*-(\d+)',tail)}-{2,15}):
+                try:name=signal.Signals(number).name
+                except ValueError:name='signal '+str(number)
+                failures.append(dict(rank=None,message=f'Torchrun reported {name} (exit -{number}); '
+                    'a signal-killed process cannot retain a Python traceback',signal=number,error_file=str(log)))
+        except OSError as exc:print(f'Cannot inspect torchrun failure output: {exc}',flush=True)
     if failures:
-        report=dict(schema=1,attempt_id=directory.name,exit_code=rc,task=label,failures=failures)
+        failure_rc=1 if rc==75 else rc
+        report=dict(schema=1,attempt_id=directory.name,exit_code=failure_rc,original_exit_code=rc,task=label,failures=failures)
         try:
             target=directory/'child-failure.json';temporary=target.with_suffix('.tmp')
             temporary.write_text(json.dumps(report)+'\n');os.replace(temporary,target)
@@ -66,7 +81,7 @@ def child_result(rc,directory,environment,log,label):
             try:
                 with Path(log).open('a') as handle:handle.write(text+'\n')
             except OSError as exc:print(f'Cannot append rank failure to {log}: {exc}',flush=True)
-        return rc
+        return failure_rc
     marker=Path(environment['V8_EXIT_FILE'])
     try:
         row=json.loads(marker.read_text())
@@ -99,10 +114,11 @@ def run_srgc_child(runtime,command,log,fds,stop,*,extra=None,label=None,interval
     print(f'RUN {runtime.cohort}:{label or "task"}; log={log}; '
           f'SRGC progress watchdog={stall:g}s; no completed optimizer update is implied',flush=True)
     try:
+        log_offset=Path(log).stat().st_size if Path(log).exists() else 0
         rc=run_child(command,Path(log),environment,pass_fds=tuple(fds),
                          heartbeat=lambda pid:runtime.heartbeat('child:'+str(pid)),should_stop=stop.is_set,
                          interval=interval,progress=lambda:signature(directory),stall_seconds=stall)
-        return child_result(rc,directory,environment,log,label)
+        return child_result(rc,directory,environment,log,label,log_offset=log_offset)
     except TimeoutError as exc:
         with Path(log).open('a') as handle:handle.write(f'TIMEOUT: {exc}\n')
         print(f'TIMEOUT {runtime.cohort}:{label or "task"}: {exc}; checkpoints retained',flush=True)

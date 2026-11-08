@@ -288,7 +288,8 @@ def test_child_exit_record_turns_torchrun_exit_1_into_an_interruption(tmp_path,m
     log=tmp_path/'logs/attempt-1.log';log.parent.mkdir()
     stale=log.with_name('attempt-1.exit.json');stale.write_text(json.dumps(dict(exit_code=75,status='busy')))
     assert worker.run_srgc_child(runtime,['true'],log,[],threading.Event())==75
-    assert seen['V8_EXIT_FILE']==str(stale)
+    assert Path(seen['V8_EXIT_FILE']).parent==tmp_path/'progress'
+    assert Path(seen['V8_EXIT_FILE'])!=stale and stale.exists()
     def fails(command,log,environment,**_):return 1   # no record written: stale record must not be reused
     stale.write_text(json.dumps(dict(exit_code=75,status='busy')))
     monkeypatch.setattr(srgc_cluster,'run_child',fails)
@@ -338,7 +339,7 @@ def test_launcher_words_watch_seconds_other_cohorts_and_stop_note(tmp_path):
 
 def test_supervisor_waits_for_a_safe_update_boundary_before_sigkill(tmp_path):
     """COORD-10: one Ctrl-C waits up to V8_STOP_WAIT_SECONDS (here a child needing 10.5 s > the old fixed 10 s)."""
-    for name in ('v8_supervisor.py','v8_processes.py','v8_probe.py','v8_control_output.py'):
+    for name in ('v8_supervisor.py','v8_processes.py','v8_probe.py','v8_control_output.py','v8_progress_text.py'):
         shutil.copyfile(SCRIPTS/name,tmp_path/name)
     (tmp_path/'cluster_child.py').write_text(
         'import signal,sys,time\nfrom pathlib import Path\n'
