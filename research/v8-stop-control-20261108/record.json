@@ -22,5 +22,7 @@
     "actual_reported_H100_loading_cause": "unverified; requested log/elapsed time not yet supplied"
   },
   "failure_retention": "first.xml retained locally: old test fixture omitted new supervisor dependencies. Fixture corrected; source launch archive includes these dependencies.",
-  "limitations": "Linux uninterruptible kernel I/O can remain pending after SIGKILL; tools report remaining PIDs rather than claiming GPUs released. No checkpoint/lock/queue record is deleted. New supervisor requires restarting that launch; standalone stop/probe can act on the currently running version."
+  "limitations": "Linux uninterruptible kernel I/O can remain pending after SIGKILL; tools report remaining PIDs rather than claiming GPUs released. No checkpoint/lock/queue record is deleted. New supervisor requires restarting that launch; standalone stop/probe can act on the currently running version.",
+  "command": "sh scripts/v8_stop.sh",
+  "new_start": "sh scripts/run_v8_nodes.sh"
 }

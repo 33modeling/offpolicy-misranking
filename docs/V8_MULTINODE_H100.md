@@ -142,3 +142,32 @@ GPU 작업의 자동 제출은 수행하지 않는다.
 
 검증 기록: `research/v8-auto-dispatch-20261108/`. 초기 분리 실행과 예산 endpoint
 수정 이력은 `research/v8-multinode-20261108/`, `research/v8-budget-endpoint-20261108/`에 보존한다.
+
+## 로딩 표시와 종료
+
+`Loading weights` 출력만으로 학습 정지를 판단하지 않는다. 현재 상태를 바꾸지 않고
+GPU 사용과 이 노드의 현재 attempt 기록·로그를 확인할 때:
+
+```sh
+sh scripts/v8_probe.sh
+```
+
+현재 노드의 해당 V8 실행을 종료할 때:
+
+```sh
+sh scripts/v8_stop.sh
+```
+
+원래 checkpoint/queue/lock 파일은 지우지 않는다. 종료 신호 뒤10초 동안 기다리고
+남아 있는 해당 실행의 프로세스만 강제 정리한다. 다른 UID·root·launch 또는 재사용된
+PID는 신호 대상에서 제외한다. kernel의 중단 불가능한 I/O 대기는 남은 PID로 출력하며
+GPU가 해제됐다고 성공 처리하지 않는다.
+
+새 기본 실행기는 별도 supervisor를 사용한다. Ctrl-C/TERM/HUP을 처리하고 두 번째
+Ctrl-C는 즉시 정리를 요청한다. 자식 출력 pipe의 EOF를 기다리는 무한 join을 사용하지
+않는다.15초마다 rank가 실제 기록한 rollout/gradient_scoring/policy_update 단계와
+기록 나이를 출력한다. 이 출력은 완료 update나 checkpoint 저장 확인과 구별한다.
+
+이 변경은 wrapper·진단·종료 경로만 바꾼다. coordinator 본체·수치 실행기·원본 kernel은
+동일하므로 새 supervisor를 쓰기 위해 학습 기록을 초기화하거나 binding을 바꾸지 않는다.
+모델 로딩에서 실제로 멈췄는지에 대한 원격 원인은 로그/노드 관측 전에는 미확인이다.
