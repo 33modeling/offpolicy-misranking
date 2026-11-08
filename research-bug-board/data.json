@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-08T12:46:13+09:00",
+  "recorded_at": "2026-11-08T12:47:49+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "b1598373d9ca1c0934204d3fbd65229e0f1705f7",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/b1598373d9ca1c0934204d3fbd65229e0f1705f7",
-    "all_available_commits": 1201,
+    "source_commit": "38bb6b3697842dc071b4b139232fce21f6f47ae9",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/38bb6b3697842dc071b4b139232fce21f6f47ae9",
+    "all_available_commits": 1203,
     "fix_commit_records": 119,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
@@ -24,8 +24,8 @@
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hang-fix-20261108:f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:b1598373d9ca1c0934204d3fbd65229e0f1705f7",
-      "refs/heads/v8-statefix:e7f8f5ae018092e6e825b14bb7cdacfd050606d7",
+      "refs/heads/master:38bb6b3697842dc071b4b139232fce21f6f47ae9",
+      "refs/heads/v8-statefix:a085f266bf68849d1e24b0b96048680e77ef6563",
       "refs/heads/v8-status:a3675bbd4b6f678b3ef8fbacde56aaf072d0aafa",
       "refs/heads/v8-status2:21b071d2f2478b1f72a2c237368395cc2ebd179a",
       "refs/heads/v8-status3:bebbd08eef8377eb1fe9723c087031c0e5612ed8",
@@ -37,7 +37,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:e7f8f5ae018092e6e825b14bb7cdacfd050606d7",
+      "refs/remotes/origin/master:a085f266bf68849d1e24b0b96048680e77ef6563",
       "refs/stash:985e95e92ad644edc967db41bf2b48c7bd9a91fd"
     ]
   },
@@ -3221,6 +3221,14 @@
           "text": "앞의 소스커밋 링크 시점에는 후속 검증 폴더가 아직 없었다. 보존 검사가 URL 덮어쓰기를 거부한 이력도 남긴다. 원문을 보존하고 실제 검증 파일이 있는 후속 커밋으로 정정한다: https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
           "url": "https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
           "evidence_kind": "audit_metadata"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "korean_explanation",
+          "status": "code_fixed",
+          "text": "터미널이 출력을 받지 않으면 종료 안내문을 찍는 곳에서 다시 멈춰 종료 신호 전달까지 못 갔다. 출력은 별도 로그로 받으며, 종료 정리와 마지막 프로그램 종료가 콘솔 쓰기를 기다리지 않게 바꿨다. 수정 전 실패·수정 후 CPU 검사를 보존했으며 실제 H100의 재실행 성공은 아직 확인하지 못했다.",
+          "evidence_kind": "code_review_and_test"
         }
       ]
     },
@@ -3271,6 +3279,14 @@
           "text": "앞의 소스커밋 링크 시점에는 후속 검증 폴더가 아직 없었다. 보존 검사가 URL 덮어쓰기를 거부한 이력도 남긴다. 원문을 보존하고 실제 검증 파일이 있는 후속 커밋으로 정정한다: https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
           "url": "https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
           "evidence_kind": "audit_metadata"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "korean_explanation",
+          "status": "code_fixed",
+          "text": "종료 대상을 처음 한 번만 집계했다. 그 뒤 부모가 새 rank를 만들고 사라지면 새 PID가 살아남았다. 종료 중에도 같은 사용자·노드·V8_ROOT의 프로세스를 다시 찾아 추가 정리한다. 수정 전 실패·수정 후 CPU 검사를 보존했으며 실제 H100의 재실행 성공은 아직 확인하지 못했다.",
+          "evidence_kind": "code_review_and_test"
         }
       ]
     },
@@ -3321,6 +3337,14 @@
           "text": "앞의 소스커밋 링크 시점에는 후속 검증 폴더가 아직 없었다. 보존 검사가 URL 덮어쓰기를 거부한 이력도 남긴다. 원문을 보존하고 실제 검증 파일이 있는 후속 커밋으로 정정한다: https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
           "url": "https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
           "evidence_kind": "audit_metadata"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "korean_explanation",
+          "status": "code_fixed",
+          "text": "OLMo 큐 메타데이터나 PAIR_PYTHON 경로 하나가 잘못되면 정상인 Qwen 시작 검증까지 가지 못했다. 모델별 오류를 나누어 Qwen은 계속 실행하고, 일부 실패는 전체 종료 코드1로 남긴다. 수정 전 실패·수정 후 CPU 검사를 보존했으며 실제 H100의 재실행 성공은 아직 확인하지 못했다.",
+          "evidence_kind": "code_review_and_test"
         }
       ]
     },
@@ -3371,6 +3395,14 @@
           "text": "앞의 소스커밋 링크 시점에는 후속 검증 폴더가 아직 없었다. 보존 검사가 URL 덮어쓰기를 거부한 이력도 남긴다. 원문을 보존하고 실제 검증 파일이 있는 후속 커밋으로 정정한다: https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
           "url": "https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
           "evidence_kind": "audit_metadata"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "korean_explanation",
+          "status": "code_fixed",
+          "text": "두 모델의 가상환경이 달라도 한 coordinator로 묶어 NCCL 사전 검사가 첫 모델의 Python에서 실행될 수 있었다. Python 경로가 다르면 원래 worker를 각각 띄워 해당 환경으로 검사한다. 한 GPU 그룹에서는 순차 실행한다. 수정 전 실패·수정 후 CPU 검사를 보존했으며 실제 H100의 재실행 성공은 아직 확인하지 못했다.",
+          "evidence_kind": "code_review_and_test"
         }
       ]
     },
@@ -3421,6 +3453,14 @@
           "text": "앞의 소스커밋 링크 시점에는 후속 검증 폴더가 아직 없었다. 보존 검사가 URL 덮어쓰기를 거부한 이력도 남긴다. 원문을 보존하고 실제 검증 파일이 있는 후속 커밋으로 정정한다: https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
           "url": "https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
           "evidence_kind": "audit_metadata"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "korean_explanation",
+          "status": "code_fixed",
+          "text": "시작 때 해시만 확인하고 계속 checkout 경로를 사용했다. 실행 도중 git pull을 하면 다음 child가 다른 코드·설정을 읽을 수 있었다. 선택된 worker·child·config·helper·CSV 바이트를 별도 캐시에 복사·검증해 고정하고, 다음 재개에도 같은 사본을 쓴다. 수정 전 실패·수정 후 CPU 검사를 보존했으며 실제 H100의 재실행 성공은 아직 확인하지 못했다.",
+          "evidence_kind": "code_review_and_test"
         }
       ]
     },
@@ -3471,6 +3511,14 @@
           "text": "앞의 소스커밋 링크 시점에는 후속 검증 폴더가 아직 없었다. 보존 검사가 URL 덮어쓰기를 거부한 이력도 남긴다. 원문을 보존하고 실제 검증 파일이 있는 후속 커밋으로 정정한다: https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
           "url": "https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
           "evidence_kind": "audit_metadata"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "korean_explanation",
+          "status": "code_fixed",
+          "text": "이 노드의 GPU 유휴 상태를 공유 큐의 다른 노드 작업에 적용했고, hostname을 첫 점에서 잘라 FQDN도 틀렸다. 전체 hostname을 보존하고 같은 노드의 작업에만 GPU 상태 경고를 적용한다. 수정 전 실패·수정 후 CPU 검사를 보존했으며 실제 H100의 재실행 성공은 아직 확인하지 못했다.",
+          "evidence_kind": "code_review_and_test"
         }
       ]
     },
@@ -3521,6 +3569,14 @@
           "text": "앞의 소스커밋 링크 시점에는 후속 검증 폴더가 아직 없었다. 보존 검사가 URL 덮어쓰기를 거부한 이력도 남긴다. 원문을 보존하고 실제 검증 파일이 있는 후속 커밋으로 정정한다: https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
           "url": "https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
           "evidence_kind": "audit_metadata"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "korean_explanation",
+          "status": "code_fixed",
+          "text": "이전 worker가 큐 신원 변경을 발견해도 일반 학습 실패처럼 처리해 새 큐의 failure에 오류를 써버렸다. 신원 불일치는 별도로 처리해 새 큐에 실패를 쓰지 않고 그 worker의 해당 cohort를 중지한다. 수정 전 실패·수정 후 CPU 검사를 보존했으며 실제 H100의 재실행 성공은 아직 확인하지 못했다.",
+          "evidence_kind": "code_review_and_test"
         }
       ]
     },
@@ -3571,6 +3627,14 @@
           "text": "앞의 소스커밋 링크 시점에는 후속 검증 폴더가 아직 없었다. 보존 검사가 URL 덮어쓰기를 거부한 이력도 남긴다. 원문을 보존하고 실제 검증 파일이 있는 후속 커밋으로 정정한다: https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
           "url": "https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
           "evidence_kind": "audit_metadata"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "korean_explanation",
+          "status": "code_fixed",
+          "text": "하트비트가 없거나180초 넘었다는 사실만으로 학습이 중단됐고 다음 worker가 재개할 수 있다고 안내했다. NCCL 검사·I/O 중에도 heartbeat가 늦을 수 있고 rank나 lease는 살아 있을 수 있다. 실제 중단으로 단정하지 않고 생존 미확인으로 표시한다. 수정 전 실패·수정 후 CPU 검사를 보존했으며 실제 H100의 재실행 성공은 아직 확인하지 못했다.",
+          "evidence_kind": "code_review_and_test"
         }
       ]
     }

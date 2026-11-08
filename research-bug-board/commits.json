@@ -12604,16 +12604,6 @@
       "gemma": false
     },
     {
-      "hash": "acfb9e0cb4aacba1d2653acf7fe4b067dfaf9784",
-      "at": "2026-11-08T12:36:48+09:00",
-      "author": "33modeling",
-      "title": "[Skip CI] [skip review] Fix V8 control deadlocks, immutable resume, cohort isolation and ownership checks",
-      "url": "https://github.com/33modeling/offpolicy-misranking/commit/acfb9e0cb4aacba1d2653acf7fe4b067dfaf9784",
-      "attribution": [],
-      "is_fix": true,
-      "gemma": false
-    },
-    {
       "hash": "4b75e8cc57324f19fba6e534e1b8178c5923241e",
       "at": "2026-11-08T12:24:19+09:00",
       "author": "33modeling",
@@ -12644,6 +12634,46 @@
       "gemma": false
     },
     {
+      "hash": "bebbd08eef8377eb1fe9723c087031c0e5612ed8",
+      "at": "2026-11-08T12:37:56+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: a job whose worker stopped is shown as stopped, not running",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/bebbd08eef8377eb1fe9723c087031c0e5612ed8",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "9b4804084cde6639035980009f63c0ec2eb121f2",
+      "at": "2026-11-08T12:45:48+09:00",
+      "author": "33modeling",
+      "title": "index on v8-status3: bebbd08 [Skip CI] [skip review] V8 status: a job whose worker stopped is shown as stopped, not running",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/9b4804084cde6639035980009f63c0ec2eb121f2",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "985e95e92ad644edc967db41bf2b48c7bd9a91fd",
+      "at": "2026-11-08T12:45:48+09:00",
+      "author": "33modeling",
+      "title": "WIP on v8-status3: bebbd08 [Skip CI] [skip review] V8 status: a job whose worker stopped is shown as stopped, not running",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/985e95e92ad644edc967db41bf2b48c7bd9a91fd",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "acfb9e0cb4aacba1d2653acf7fe4b067dfaf9784",
+      "at": "2026-11-08T12:36:48+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Fix V8 control deadlocks, immutable resume, cohort isolation and ownership checks",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/acfb9e0cb4aacba1d2653acf7fe4b067dfaf9784",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
       "hash": "029b9d62c219fe31a4860e12c62d0c70dd15afe6",
       "at": "2026-11-08T12:37:37+09:00",
       "author": "33modeling",
@@ -12659,16 +12689,6 @@
       "author": "33modeling",
       "title": "[Skip CI] [skip review] Keep healthy V8 cohort available with an invalid peer interpreter",
       "url": "https://github.com/33modeling/offpolicy-misranking/commit/95869e4af0e588122e163e2fda96c3c30a1074c2",
-      "attribution": [],
-      "is_fix": false,
-      "gemma": false
-    },
-    {
-      "hash": "bebbd08eef8377eb1fe9723c087031c0e5612ed8",
-      "at": "2026-11-08T12:37:56+09:00",
-      "author": "33modeling",
-      "title": "[Skip CI] [skip review] V8 status: a job whose worker stopped is shown as stopped, not running",
-      "url": "https://github.com/33modeling/offpolicy-misranking/commit/bebbd08eef8377eb1fe9723c087031c0e5612ed8",
       "attribution": [],
       "is_fix": false,
       "gemma": false
@@ -12704,21 +12724,21 @@
       "gemma": false
     },
     {
-      "hash": "9b4804084cde6639035980009f63c0ec2eb121f2",
-      "at": "2026-11-08T12:45:48+09:00",
+      "hash": "38bb6b3697842dc071b4b139232fce21f6f47ae9",
+      "at": "2026-11-08T12:46:13+09:00",
       "author": "33modeling",
-      "title": "index on v8-status3: bebbd08 [Skip CI] [skip review] V8 status: a job whose worker stopped is shown as stopped, not running",
-      "url": "https://github.com/33modeling/offpolicy-misranking/commit/9b4804084cde6639035980009f63c0ec2eb121f2",
+      "title": "[Skip CI] [skip review] Permanently record eight V8 audit defects, failures and evidence corrections",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/38bb6b3697842dc071b4b139232fce21f6f47ae9",
       "attribution": [],
       "is_fix": false,
       "gemma": false
     },
     {
-      "hash": "985e95e92ad644edc967db41bf2b48c7bd9a91fd",
-      "at": "2026-11-08T12:45:48+09:00",
+      "hash": "a085f266bf68849d1e24b0b96048680e77ef6563",
+      "at": "2026-11-08T12:47:06+09:00",
       "author": "33modeling",
-      "title": "WIP on v8-status3: bebbd08 [Skip CI] [skip review] V8 status: a job whose worker stopped is shown as stopped, not running",
-      "url": "https://github.com/33modeling/offpolicy-misranking/commit/985e95e92ad644edc967db41bf2b48c7bd9a91fd",
+      "title": "[Skip CI] [skip review] V8 queue: a missing state.json no longer stops the run",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/a085f266bf68849d1e24b0b96048680e77ef6563",
       "attribution": [],
       "is_fix": false,
       "gemma": false
