@@ -3816,5 +3816,77 @@
         "evidence_kind": "code_test"
       }
     ]
+  },
+  {
+    "id": "V8-035",
+    "title": "동시 시작 노드가 Qwen 10개에 쏠리고 OLMo가 배정되지 않음; 원본 큐 재개가 새 배정기를 우회",
+    "area": "V8 다중 노드 배정·기존 큐 재개",
+    "severity": "critical",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "c44f6d99",
+    "cause": "각 worker의 hostname/PID 해시로 시작 cohort를 고르고 첫 claim에서 중단했다. 느린 OLMo 준비 잠금을 다른 노드가 건너뛰어 Qwen을 선점했고, 기존 실행 중인 Qwen lease 수도 배정에 반영하지 않았다. coordinator만 수정하면 exact-source 재개가 과거 coordinator를 선택하여 새 배정기를 우회했다.",
+    "impact": "사용자는 Qwen MBPP에만 10개 노드가 배정되고 추가 수십 노드가 idle이며 OLMo가 시작되지 않는다고 반복 보고했다. 사용자 보고 노드 낭비의 실제 시간·금액은 원시 노드 기록을 받지 못해 미측정이다. CPU 재현에서 편향된 10 worker 모두 Qwen을 선택했다.",
+    "attribution": "Codex의 최초 다중 cohort 배정 설계와 coordinator 수정만으로 기존 큐에 적용되지 않는 연결 누락. 사용자 보고와 CPU 검증, 실제 H100 미확인을 구분한다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "기존 큐에 공통 배정기 적용",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/071ac0dfbc2df4069f3b9c50d45a5d3e3a2b973d"
+      },
+      {
+        "kind": "code_test",
+        "label": "수정 전 재현·수정 후 179개 회귀검사·범위/한계",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/071ac0dfbc2df4069f3b9c50d45a5d3e3a2b973d/research/v8-fair-dispatch-20261108/record.json"
+      },
+      {
+        "kind": "code_test",
+        "label": "동시 노드·기존 Qwen lease 회귀검사",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/071ac0dfbc2df4069f3b9c50d45a5d3e3a2b973d/tests/test_srgc_v8_fair_dispatch.py"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "user",
+        "type": "reported",
+        "status": "open",
+        "text": "야 10개 노드가 mbpp 에만 할당되는데 olmo는 언제 할당되냐 / 여러개 동시에 노드 잡히는거 고려해서 수정해. 버그에 박제 / idle이 몇십개 쌓인다고 / olmo 시작 안된다고 이거 먼저 고쳐서 git push",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "reproduced",
+        "status": "open",
+        "text": "원래 함수에 Qwen 우선 해시 worker 10개를 동시에 시작하면 Qwen10/OLMo0. 기존 Qwen10 lease가 있어도 새 노드의 OLMo 우선 배정 검사가 실패. 수정 전 2실패/1대조통과 XML을 삭제하지 않고 보존했다.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "partial_source_fix",
+        "status": "open",
+        "text": "ea68d28에서 정상 초기 준비 확인 후 공유 잠금 안에서 실제 held lease를 비교하는 핵심 배정기를 수정했다. ed86295에서 과거 원본 코드 보존 묶음을 갱신했다. 이 단계만으로는 기존 큐의 과거 배정기 우회가 해결되지 않아 완료로 취급하지 않았다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/ea68d28",
+        "evidence_kind": "source"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "071ac0d에서 새 공통 제어 배정기와 cohort별 원본 Runtime/Python 자식을 연결했다. 기존 binding·학습코드·optimizer/RNG·reward·checkpoint는 바꾸지 않고 별도 불변 정책 영수증을 기록한다. CPU: 동시10노드5/5, 4추가7/7, 기존Qwen10lease에 새4노드 전부 OLMo, OLMo ready없으면 Qwen차용. 전체179검사 통과, 원래 trainer30파일 해시 동일, 기존 checkpoint25와 binding 바이트 동일 및 25/50/75 fixture snapshot 보존. 초기 테스트 환경 오류3건도 보존했다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/071ac0dfbc2df4069f3b9c50d45a5d3e3a2b973d",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "remote_runtime_pending",
+        "status": "remote_verification_pending",
+        "text": "수정본 origin/master 원격 exact 확인. 기존에 실행 중인 worker는 고정된 옛 코드를 계속 사용하고 새 worker부터 적용된다. 기존 Qwen을 중단하거나 큐를 초기화하지 않는다. 실제 H100 OLMo 로그/상태는 아직 수신하지 않아 실제 시작·처리량·노드 손실시간은 미검증이다. 공개 현황판 배포도 이 소스 푸시와 별개이며 완료로 표시하지 않는다.",
+        "evidence_kind": "limitation"
+      }
+    ]
   }
 ]

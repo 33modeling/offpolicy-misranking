@@ -12852,6 +12852,56 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "ea68d28db5f0433ff827b8b8be022cb73b570c54",
+      "at": "2026-11-08T13:19:05+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Balance simultaneous V8 node claims by shared live task leases",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/ea68d28db5f0433ff827b8b8be022cb73b570c54",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "b101cd9069dcc6ce920f42a1242174b83b9e6010",
+      "at": "2026-11-08T13:12:29+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Bug board: V8-034 unreadable/partial records hidden as an empty queue; V8-033 re-audit and full word handling",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/b101cd9069dcc6ce920f42a1242174b83b9e6010",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "97816cc6071d9e99ac0a2fab3bb04ff36d991998",
+      "at": "2026-11-08T13:19:40+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve peer bug records with concurrent V8 dispatch fix",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/97816cc6071d9e99ac0a2fab3bb04ff36d991998",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "ed862955a6037c27d3d0e61ceaffd7b95fc7da89",
+      "at": "2026-11-08T13:19:41+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Include every previous V8 coordinator in exact-source resume archive",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/ed862955a6037c27d3d0e61ceaffd7b95fc7da89",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "071ac0dfbc2df4069f3b9c50d45a5d3e3a2b973d",
+      "at": "2026-11-08T13:35:45+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Apply fair OLMo dispatch to existing exact-source queues",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/071ac0dfbc2df4069f3b9c50d45a5d3e3a2b973d",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }
