@@ -686,10 +686,15 @@ def clean_block(base, cohort, now, host, width):
     if state.get('failure'):
         attention.append(f"  ✗ {label}: queue failure: {state['failure']}")
     def when(r):
-        t = r.get('ended') or r.get('started')
-        return f" {age_text(now - t)} ago" if isinstance(t, (int, float)) else ''
+        t = stamp(r)
+        return f" {age_text(now - t)} ago" if t else ''
+    def stamp(r):
+        for t in (r.get('ended'), r.get('started')):
+            if isinstance(t, (int, float)) and not isinstance(t, bool):
+                return t
+        return 0
     order = {'failed': 0, 'unconfirmed': 1, 'stopped': 1, 'interrupted': 2}
-    for r in sorted(problems, key=lambda r: (order.get(r['status'], 3), -(r.get('ended') or r.get('started') or 0))):
+    for r in sorted(problems, key=lambda r: (order.get(r['status'], 3), -stamp(r))):
         name = f"s{r['seed']} " + ('eval ' if r.get('kind') == 'evaluate' else '') + short_arm(r['arm']) + \
                (' ext' if r.get('phase') == 'extension' else '')
         if r['status'] == 'failed':

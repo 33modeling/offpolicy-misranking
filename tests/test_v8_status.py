@@ -440,6 +440,11 @@ def test_odd_records_never_crash_the_screen(tmp_path):
     write(q / "jobs" / "a2.json", {"state": "pending", "task": ["not", "a", "dict"], "attempts": "nope"})
     write(q / "jobs" / "a3.json", {"state": "running", "task": {"kind": "train", "run_id": "r3"}, "attempts": [None]})
     write(base / "olmo_math" / "runs" / "r3" / "manifest.json", {"attempts": "broken"})
+    # v1.0.17 harness: a failed/interrupted attempt whose times are strings crashed the attention sort.
+    write(q / "jobs" / "a4.json", {"state": "failed", "task": {"kind": "train", "run_id": "r4", "training_seed": 6},
+          "attempts": [{"id": "y", "started_at": "2026-11-08T10:00", "ended_at": "later"}]})
+    write(q / "jobs" / "a5.json", {"state": "interrupted", "task": {"kind": "train", "run_id": "r5"},
+          "attempts": [{"id": "z", "started_at": True}]})
     (q / "leases").mkdir(); (q / "leases" / "a1.lock").touch()
     for style in ("clean", "simple", "srgc"):
         text = status.render([base], now=now, gpus=[], host="viewer", style=style)
