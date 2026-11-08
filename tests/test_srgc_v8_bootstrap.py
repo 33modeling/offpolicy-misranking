@@ -25,6 +25,7 @@ def dispatcher_stub(scripts):
     file(scripts/'v8_task_entry.py','# task entry stub\n')
     file(scripts/'v8_generation_probe.py','# decode observer stub\n')
     file(scripts/'v8_progress_text.py','def describe(stage,details):return str(stage)\n')
+    file(scripts/'srgc_verifier_fallback.py','# frozen verifier stub\n')
 
 
 def layout(tmp_path):

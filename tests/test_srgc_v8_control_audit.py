@@ -192,15 +192,19 @@ def test_git_pull_cannot_change_already_selected_worker_or_child(tmp_path,monkey
     tools=tmp_path/'checkout';(tools/'scripts').mkdir(parents=True)
     shutil.copyfile(REPO/'scripts/srgc_v8_nodes.py',tools/'scripts/srgc_v8_nodes.py')
     shutil.copyfile(REPO/'scripts/srgc_saved_runtime.py',tools/'scripts/srgc_saved_runtime.py')
+    helper=tools/'scripts/srgc_verifier_fallback.py'
+    shutil.copyfile(REPO/'scripts/srgc_verifier_fallback.py',helper)
     shutil.copytree(REPO/'v8/experiments',tools/'v8/experiments',ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
     worker=tools/'scripts/srgc_v8_nodes.py';child=tools/'v8/experiments/cluster_child.py'
-    expected=(worker.read_bytes(),child.read_bytes())
+    expected=(worker.read_bytes(),child.read_bytes(),helper.read_bytes())
     plan=source.selections(tools,dict(V8_ROOT=str(tmp_path/'experiments'),V8_RUNNER_ROOT=str(tools/'v8/experiments'),
                                     V8_PYTHON=sys.executable),[])
     worker.write_text(worker.read_text()+'\n# simulated git pull replacing worker\n')
     child.write_text(child.read_text()+'\n# simulated git pull replacing child\n')
+    helper.write_text(helper.read_text()+'\n# simulated git pull replacing verifier\n')
     assert plan[0]['script'].read_bytes()==expected[0],'selected worker changed after checkout update'
     assert (plan[0]['runner']/'cluster_child.py').read_bytes()==expected[1],'selected child changed after checkout update'
+    assert (plan[0]['control']/'srgc_verifier_fallback.py').read_bytes()==expected[2],'selected verifier changed after checkout update'
     make_queue(tmp_path/'experiments','olmo_math',plan[0]['coordinator_sha256'],plan[0]['runner_sha256'])
     resumed=source.selections(tools,dict(V8_ROOT=str(tmp_path/'experiments'),V8_RUNNER_ROOT=str(tools/'v8/experiments'),
                                         V8_PYTHON=sys.executable),['olmo_math'])

@@ -137,7 +137,7 @@ def main():
     entries={entry['cohort']:entry for entry in plan['entries']}
     controls={name:hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
               for name in ('v8_dispatch.py','v8_runtime_worker.py','v8_rpc.py','srgc_v8_nodes.py',
-                           'v8_task_entry.py','v8_generation_probe.py','v8_progress_text.py')}
+                           'v8_task_entry.py','v8_generation_probe.py','v8_progress_text.py','srgc_verifier_fallback.py')}
     plan['dispatch_policy']=nodes.DISPATCH_POLICY
     plan['controller_sha256']=controls['srgc_v8_nodes.py']
     print(f'[v8] dispatch policy={nodes.DISPATCH_POLICY} controller={controls["srgc_v8_nodes.py"][:12]}',flush=True)
@@ -146,7 +146,10 @@ def main():
         runfile.write_text(json.dumps(plan))
         def record_policy(actor):
             record=dict(schema=1,policy=nodes.DISPATCH_POLICY,controller_source=controls,
-                        original_runtime_binding=actor.binding,numerical_runtime_changed=False)
+                        original_runtime_binding=actor.binding,numerical_source_changed=False,
+                        conditional_runtime_repairs=dict(strict_math_verifier='recorded-seed-fallback',
+                            rollout_memory='cache-release-and-one-identical-retry',
+                            per_rank_receipt='progress/<attempt>/runtime-repair-rank-N.json'))
             if actor.overrides:record['control_overrides']=actor.overrides
             receipt=Path(root)/'.v8-dispatch-policies'/(cohort+'-'+nodes.digest(record)+'.json')
             if receipt.exists():

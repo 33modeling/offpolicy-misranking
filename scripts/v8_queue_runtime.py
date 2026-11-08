@@ -127,7 +127,7 @@ def freeze(choice,tools):
     if helper.is_file():payload['source/scripts/srgc_saved_runtime.py']=helper.read_bytes()
     for path in sorted((parent/'v7/evidence').rglob('*.csv')):
         payload['source/'+str(path.relative_to(parent))]=path.read_bytes()
-    controls=('v8_dispatch.py','v8_runtime_worker.py','v8_rpc.py','srgc_v8_nodes.py','v8_task_entry.py','v8_generation_probe.py','v8_progress_text.py')
+    controls=('v8_dispatch.py','v8_runtime_worker.py','v8_rpc.py','srgc_v8_nodes.py','v8_task_entry.py','v8_generation_probe.py','v8_progress_text.py','srgc_verifier_fallback.py')
     for name in controls:
         path=Path(tools)/'scripts'/name
         if path.is_file():payload['control/'+name]=path.read_bytes()

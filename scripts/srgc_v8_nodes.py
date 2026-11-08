@@ -29,7 +29,7 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'source-recovery-rank-errors-v8'
+DISPATCH_POLICY = 'source-recovery-verifier-rollout-guards-v9'
 TERMINAL = {'completed_horizon', 'completed_budget'}
 PHASES = ('train', 'extension', 'evaluation')
 CORRECTED_PLANNER = 'current-v8-016'  # evaluation planner replaced for pre-V8-016 coordinators

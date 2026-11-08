@@ -97,7 +97,7 @@ def main(argv=None):
             entries.append(dict(cohort=cohort,script=str(group['script']),runner=str(group['runner']),
                                 python=group['pythons'][cohort]))
     control=groups[0]['control']
-    required=('v8_dispatch.py','v8_runtime_worker.py','v8_rpc.py','srgc_v8_nodes.py','v8_task_entry.py','v8_generation_probe.py','v8_progress_text.py')
+    required=('v8_dispatch.py','v8_runtime_worker.py','v8_rpc.py','srgc_v8_nodes.py','v8_task_entry.py','v8_generation_probe.py','v8_progress_text.py','srgc_verifier_fallback.py')
     if any(not (control/name).is_file() for name in required):
         raise ValueError('Shared dispatcher files are missing; run git pull in the complete existing checkout')
     plan=private_cache()/('dispatch-plan-'+uuid.uuid4().hex+'.json')

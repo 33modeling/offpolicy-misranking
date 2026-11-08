@@ -124,7 +124,7 @@ def test_existing_cohort_bindings_and_checkpoints_survive_new_dispatcher(tmp_pat
         assert len(list((root/entry['cohort']/'snapshots').glob('*.pt')))==3
     receipts=list((root/'.v8-dispatch-policies').glob('*.json'))
     assert len(receipts)==len(entries)
-    assert all(json.loads(p.read_text())['numerical_runtime_changed'] is False for p in receipts)
+    assert all(json.loads(p.read_text())['numerical_source_changed'] is False for p in receipts)
 
 
 @pytest.mark.parametrize('cohort',['olmo_math','qwen_mbpp'])
