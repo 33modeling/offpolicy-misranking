@@ -637,3 +637,33 @@ def test_cells_to_fill_are_planned_totals_before_and_after_each_phase_is_sealed(
     assert stats["planned"]["eval"] == (1, 1, "exact")
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
     assert "cells to fill: OLMo MATH 4 (train 1 + ext 2 + eval 1)" in text and "exact when each phase" not in text
+
+
+
+def test_seed_table_draws_every_planned_branch_before_its_job_exists(tmp_path, monkeypatch):
+    """'SR25 부터 결국 250 까지 있는거 아니야', '왜 아예 표시를 안하냐고': all planned seeds and SR25..SR250 + U columns
+    are drawn from the start; cells without a job yet are '·' (not created yet); after sealing, the jobs decide."""
+    now = time.time()
+    base, q, m = two_cohort_base(tmp_path, now)
+    cfg = {"seeds": {"training": [5, 6, 7, 8, 9]}, "bank": {"core_grid": [50, 100, 150, 200], "extended_grid": [25, 75, 125, 175, 225, 250]},
+           "training": {"matched_update_endpoint": 275, "prefix_updates": 25}}
+    monkeypatch.setattr(status, "runner_config", lambda cohort: cfg)
+    write(q / "jobs" / "on5.json", {"state": "running", "phase": "train", "task": {"kind": "train", "method_id": "on_monitored",
+          "training_seed": 5, "run_id": "on5", "horizon": 275, "parent": {"completed_update": "25"}},
+          "attempts": [{"id": "a", "worker": "h-1.1", "started_at": now - 60}]})
+    worker_beat(q, "h-1.1", 2, "child:1", now)
+    write(q / "jobs" / "u6.json", {"state": "done", "phase": "train", "task": {"kind": "train", "method_id": "bank_uniform_t150",
+          "training_seed": 6, "run_id": "u6", "horizon": 275, "parent": {"completed_update": "150"}}, "attempts": []})
+    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
+    block = text.split("Qwen MBPP ·")[0]
+    header = next(line for line in block.splitlines() if line.startswith(" seed"))
+    assert header.split() == ["seed", "On", "SR25", "SR50", "SR75", "SR100", "SR125", "SR150", "SR175", "SR200", "SR225",
+                              "SR250", "U", "│", "ext", "eval"]
+    rows = {line.split()[0]: line.split() for line in block.splitlines() if line.strip()[:1].isdigit()}
+    assert sorted(rows) == ["5", "6", "7", "8", "9"]
+    assert rows["5"][1] == "▶" and rows["5"][2:12] == ["·"] * 10 and rows["9"][1:] == ["·"] * 12 + ["│", "·", "·"]
+    assert rows["6"][12] == "✓" and "U = Uniform at the seed's switch point: s6 @150" in block
+    for phase in ("train", "extension", "evaluation"):
+        write(q / "plans" / f"{phase}.json", {"sealed": True, "tasks": []})
+    sealed = status.render_clean([base], now=now, gpus=[], host="viewer", width=200).split("Qwen MBPP ·")[0]
+    assert next(line for line in sealed.splitlines() if line.startswith(" seed")).split()[:3] == ["seed", "On", "U"]
