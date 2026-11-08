@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="0.072" timestamp="2026-11-08T12:42:22.036282+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_control_audit" name="test_stale_heartbeat_is_not_proof_that_remote_training_stopped" time="0.003"><failure message="AssertionError: stale heartbeat alone was labelled as a stopped learner&#10;assert 'stopped' == 'unconfirmed'&#10;  &#10;  - unconfirmed&#10;  + stopped">tmp_path = PosixPath('/dev/shm/v8-control-heartbeat-before-kms/test_stale_heartbeat_is_not_pr0')
+
+    def test_stale_heartbeat_is_not_proof_that_remote_training_stopped(tmp_path):
+        from scripts import v8_status
+        import hashlib
+        now=time.time();cohort='olmo_math';queue=tmp_path/cohort/'.multi-node';(queue/'jobs').mkdir(parents=True)
+        (queue/'state.json').write_text('{"phase":"train"}')
+        worker='remote.cluster.example.123'
+        (queue/'jobs/a.json').write_text(json.dumps(dict(state='running',task=dict(kind='train',run_id='r',horizon=275),
+            attempts=[dict(id='a',worker=worker,started_at=now-4000)])))
+        (queue/'workers').mkdir();key=hashlib.sha256(json.dumps(worker).encode()).hexdigest()
+        (queue/'workers'/(key+'.json')).write_text(json.dumps(dict(worker=worker,at=now-900)))
+        (queue/'logs').mkdir();log=queue/'logs/a.log';log.write_text('PROGRESS stage=policy_update\n');os.utime(log,(now-1,now-1))
+        _,rows=v8_status.collect(tmp_path,cohort,now)
+&gt;       assert rows[0]['status']=='unconfirmed','stale heartbeat alone was labelled as a stopped learner'
+E       AssertionError: stale heartbeat alone was labelled as a stopped learner
+E       assert 'stopped' == 'unconfirmed'
+E         
+E         - unconfirmed
+E         + stopped
+
+tests/test_srgc_v8_control_audit.py:259: AssertionError</failure></testcase></testsuite></testsuites>

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="0.078" timestamp="2026-11-08T12:35:29.301317+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_control_audit" name="test_old_worker_does_not_poison_a_queue_with_a_different_binding" time="0.011"><failure message="AssertionError: old worker wrote its mismatch into the new queue&#10;assert {'at': 1794108929.3675942, 'detail': &quot;BindingMismatch: fixture: another node replaced this queue's code/Python record while this worker was running; restart this worker with the same bundle as the others.&quot;, 'task': None} is None">tmp_path = PosixPath('/dev/shm/v8-control-poison-before-kms/test_old_worker_does_not_poiso0')
+
+    def test_old_worker_does_not_poison_a_queue_with_a_different_binding(tmp_path):
+        from scripts import srgc_v8_nodes as nodes
+        import threading
+        original=dict(schema=1,cohort='fixture',revision='old')
+        updated=dict(original,revision='new')
+        class Pool(nodes.Pool):
+            calls=0
+            def tick(self,*args,**kwargs):
+                self.calls+=1
+                if self.calls==2:
+                    nodes.atomic(self.root/'binding.json',updated)
+                return super().tick(*args,**kwargs)
+        class Idle:
+            def verify_node(self):pass
+            def barrier(self,*args):pass
+        pool=Pool(tmp_path/'queue',original)
+        assert nodes.worker_loop(pool,Idle(),'old-worker',threading.Event(),poll=.001)==1
+        assert nodes.read(pool.root/'binding.json')==updated
+&gt;       assert nodes.read(pool.root/'state.json')['failure'] is None,'old worker wrote its mismatch into the new queue'
+E       AssertionError: old worker wrote its mismatch into the new queue
+E       assert {'at': 1794108929.3675942, 'detail': "BindingMismatch: fixture: another node replaced this queue's code/Python record while this worker was running; restart this worker with the same bundle as the others.", 'task': None} is None
+
+tests/test_srgc_v8_control_audit.py:229: AssertionError</failure></testcase></testsuite></testsuites>

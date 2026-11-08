@@ -1,0 +1,267 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="5" skipped="0" tests="5" time="6.792" timestamp="2026-11-08T12:25:28.368906+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_control_audit" name="test_supervisor_stops_when_console_pipe_is_full" time="3.325"><failure message="Failed: full console pipe prevented bounded Ctrl-C cleanup">tmp_path = PosixPath('/dev/shm/v8-control-audit-before-kms/test_supervisor_stops_when_con0')
+
+    def test_supervisor_stops_when_console_pipe_is_full(tmp_path):
+        copy_controls(tmp_path);pidfile=tmp_path/'bootstrap.pid'
+        (tmp_path/'v8_bootstrap.py').write_text('import os,signal\nfrom pathlib import Path\n'
+            'Path(__file__).with_name("bootstrap.pid").write_text(str(os.getpid()))\n'
+            'signal.signal(signal.SIGTERM,signal.SIG_IGN)\n'
+            'while True:os.write(1,b"x"*65536)\n')
+        parent=subprocess.Popen([sys.executable,str(tmp_path/'v8_supervisor.py')],
+            env=dict(os.environ,V8_ROOT=str(tmp_path/'v8')),stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+        child=None
+        try:
+            wait_for(pidfile);child=int(pidfile.read_text());time.sleep(.15)
+            parent.send_signal(signal.SIGINT);time.sleep(.1);parent.send_signal(signal.SIGINT)
+&gt;           try:parent.wait(timeout=3)
+                ^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_srgc_v8_control_audit.py:49: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/lib/python3.12/subprocess.py:1264: in wait
+    return self._wait(timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;Popen: returncode: -9 args: ['/usr/bin/python3', '/dev/shm/v8-control-audit...&gt;
+timeout = 3
+
+    def _wait(self, timeout):
+        """Internal implementation of wait() on POSIX."""
+        if self.returncode is not None:
+            return self.returncode
+    
+        if timeout is not None:
+            endtime = _time() + timeout
+            # Enter a busy loop if we have a timeout.  This busy loop was
+            # cribbed from Lib/threading.py in Thread.wait() at r71065.
+            delay = 0.0005 # 500 us -&gt; initial delay of 1 ms
+            while True:
+                if self._waitpid_lock.acquire(False):
+                    try:
+                        if self.returncode is not None:
+                            break  # Another thread waited.
+                        (pid, sts) = self._try_wait(os.WNOHANG)
+                        assert pid == self.pid or pid == 0
+                        if pid == self.pid:
+                            self._handle_exitstatus(sts)
+                            break
+                    finally:
+                        self._waitpid_lock.release()
+                remaining = self._remaining_time(endtime)
+                if remaining &lt;= 0:
+&gt;                   raise TimeoutExpired(self.args, timeout)
+E                   subprocess.TimeoutExpired: Command '['/usr/bin/python3', '/dev/shm/v8-control-audit-before-kms/test_supervisor_stops_when_con0/v8_supervisor.py']' timed out after 3 seconds
+
+/usr/lib/python3.12/subprocess.py:2045: TimeoutExpired
+
+During handling of the above exception, another exception occurred:
+
+tmp_path = PosixPath('/dev/shm/v8-control-audit-before-kms/test_supervisor_stops_when_con0')
+
+    def test_supervisor_stops_when_console_pipe_is_full(tmp_path):
+        copy_controls(tmp_path);pidfile=tmp_path/'bootstrap.pid'
+        (tmp_path/'v8_bootstrap.py').write_text('import os,signal\nfrom pathlib import Path\n'
+            'Path(__file__).with_name("bootstrap.pid").write_text(str(os.getpid()))\n'
+            'signal.signal(signal.SIGTERM,signal.SIG_IGN)\n'
+            'while True:os.write(1,b"x"*65536)\n')
+        parent=subprocess.Popen([sys.executable,str(tmp_path/'v8_supervisor.py')],
+            env=dict(os.environ,V8_ROOT=str(tmp_path/'v8')),stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+        child=None
+        try:
+            wait_for(pidfile);child=int(pidfile.read_text());time.sleep(.15)
+            parent.send_signal(signal.SIGINT);time.sleep(.1);parent.send_signal(signal.SIGINT)
+            try:parent.wait(timeout=3)
+&gt;           except subprocess.TimeoutExpired:pytest.fail('full console pipe prevented bounded Ctrl-C cleanup')
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: full console pipe prevented bounded Ctrl-C cleanup
+
+tests/test_srgc_v8_control_audit.py:50: Failed</failure></testcase><testcase classname="tests.test_srgc_v8_control_audit" name="test_stop_command_does_not_wait_for_a_full_console_before_signalling" time="3.021"><failure message="Failed: stop command blocked on console before signalling its target">tmp_path = PosixPath('/dev/shm/v8-control-audit-before-kms/test_stop_command_does_not_wai0')
+
+    def test_stop_command_does_not_wait_for_a_full_console_before_signalling(tmp_path):
+        copy_controls(tmp_path)
+        rank=tmp_path/'cluster_child.py';rank.write_text('import time\nprint("READY",flush=True)\ntime.sleep(30)\n')
+        env=dict(os.environ,V8_ROOT=str(tmp_path/'v8'))
+        child=subprocess.Popen([sys.executable,str(rank)],env=env,stdout=subprocess.PIPE,text=True,start_new_session=True)
+        readfd,writefd=os.pipe();os.set_blocking(writefd,False)
+        try:
+            while True:os.write(writefd,b'x'*4096)
+        except BlockingIOError:pass
+        os.set_blocking(writefd,True)
+        parent=None
+        try:
+            assert child.stdout.readline().strip()=='READY'
+            parent=subprocess.Popen([sys.executable,str(tmp_path/'v8_stop.py')],env=env,stdout=writefd,stderr=writefd)
+&gt;           try:parent.wait(timeout=3)
+                ^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_srgc_v8_control_audit.py:73: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/lib/python3.12/subprocess.py:1264: in wait
+    return self._wait(timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;Popen: returncode: -9 args: ['/usr/bin/python3', '/dev/shm/v8-control-audit...&gt;
+timeout = 3
+
+    def _wait(self, timeout):
+        """Internal implementation of wait() on POSIX."""
+        if self.returncode is not None:
+            return self.returncode
+    
+        if timeout is not None:
+            endtime = _time() + timeout
+            # Enter a busy loop if we have a timeout.  This busy loop was
+            # cribbed from Lib/threading.py in Thread.wait() at r71065.
+            delay = 0.0005 # 500 us -&gt; initial delay of 1 ms
+            while True:
+                if self._waitpid_lock.acquire(False):
+                    try:
+                        if self.returncode is not None:
+                            break  # Another thread waited.
+                        (pid, sts) = self._try_wait(os.WNOHANG)
+                        assert pid == self.pid or pid == 0
+                        if pid == self.pid:
+                            self._handle_exitstatus(sts)
+                            break
+                    finally:
+                        self._waitpid_lock.release()
+                remaining = self._remaining_time(endtime)
+                if remaining &lt;= 0:
+&gt;                   raise TimeoutExpired(self.args, timeout)
+E                   subprocess.TimeoutExpired: Command '['/usr/bin/python3', '/dev/shm/v8-control-audit-before-kms/test_stop_command_does_not_wai0/v8_stop.py']' timed out after 3 seconds
+
+/usr/lib/python3.12/subprocess.py:2045: TimeoutExpired
+
+During handling of the above exception, another exception occurred:
+
+tmp_path = PosixPath('/dev/shm/v8-control-audit-before-kms/test_stop_command_does_not_wai0')
+
+    def test_stop_command_does_not_wait_for_a_full_console_before_signalling(tmp_path):
+        copy_controls(tmp_path)
+        rank=tmp_path/'cluster_child.py';rank.write_text('import time\nprint("READY",flush=True)\ntime.sleep(30)\n')
+        env=dict(os.environ,V8_ROOT=str(tmp_path/'v8'))
+        child=subprocess.Popen([sys.executable,str(rank)],env=env,stdout=subprocess.PIPE,text=True,start_new_session=True)
+        readfd,writefd=os.pipe();os.set_blocking(writefd,False)
+        try:
+            while True:os.write(writefd,b'x'*4096)
+        except BlockingIOError:pass
+        os.set_blocking(writefd,True)
+        parent=None
+        try:
+            assert child.stdout.readline().strip()=='READY'
+            parent=subprocess.Popen([sys.executable,str(tmp_path/'v8_stop.py')],env=env,stdout=writefd,stderr=writefd)
+            try:parent.wait(timeout=3)
+&gt;           except subprocess.TimeoutExpired:pytest.fail('stop command blocked on console before signalling its target')
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: stop command blocked on console before signalling its target
+
+tests/test_srgc_v8_control_audit.py:74: Failed</failure></testcase><testcase classname="tests.test_srgc_v8_control_audit" name="test_stop_catches_rank_spawned_after_first_snapshot" time="0.180"><failure message="AssertionError: rank spawned during stop survived cleanup&#10;assert (not [] and (990879 not in {2108: {'ppid': 1940, 'start': '2254', 'state': 'S', 'env': {}, ...}, 2113: {'ppid': 1940, 'start': '2254', 'state': '...tart': '2255', 'state': 'S', 'env': {}, ...}, 2126: {'ppid': 1940, 'start': '2255', 'state': 'S', 'env': {}, ...}, ...} or 'S' == 'Z'&#10;  &#10;  - Z&#10;  + S))">tmp_path = PosixPath('/dev/shm/v8-control-audit-before-kms/test_stop_catches_rank_spawned0')
+
+    def test_stop_catches_rank_spawned_after_first_snapshot(tmp_path):
+        rank=tmp_path/'cluster_child.py'
+        rank.write_text('import signal,time\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\n'
+                        'print("RANK_READY",flush=True)\nwhile True:time.sleep(.02)\n')
+        script=tmp_path/'srgc_v8_nodes.py';pidfile=tmp_path/'late.pid'
+        script.write_text('import os,subprocess,sys,signal,time\nfrom pathlib import Path\n'
+            'def stop(*_):\n'
+            ' p=subprocess.Popen([sys.executable,str(Path(__file__).with_name("cluster_child.py"))],stdout=subprocess.PIPE,text=True,start_new_session=True)\n'
+            ' assert p.stdout.readline().strip()=="RANK_READY"\n'
+            ' Path(__file__).with_name("late.pid").write_text(str(p.pid))\n'
+            ' os._exit(0)\n'
+            'signal.signal(signal.SIGTERM,stop)\nprint("READY",flush=True)\nwhile True:time.sleep(.02)\n')
+        root=str(tmp_path/'v8');parent=subprocess.Popen([sys.executable,str(script)],env=dict(os.environ,V8_ROOT=root),
+                                                      stdout=subprocess.PIPE,text=True,start_new_session=True)
+        late=None
+        try:
+            assert parent.stdout.readline().strip()=='READY'
+            targets=proc.select(proc.table(),root=root)
+            # Stop API used by the standalone tool must refresh this legacy root throughout cleanup.
+            if 'root' in __import__('inspect').signature(proc.stop).parameters:
+                remaining=proc.stop(targets,root=root,grace=.2)
+            else:remaining=proc.stop(targets,grace=.2)
+            wait_for(pidfile);late=int(pidfile.read_text());parent.wait(timeout=2)
+            rows=proc.table()
+&gt;           assert not remaining and (late not in rows or rows[late]['state']=='Z'),'rank spawned during stop survived cleanup'
+E           AssertionError: rank spawned during stop survived cleanup
+E           assert (not [] and (990879 not in {2108: {'ppid': 1940, 'start': '2254', 'state': 'S', 'env': {}, ...}, 2113: {'ppid': 1940, 'start': '2254', 'state': '...tart': '2255', 'state': 'S', 'env': {}, ...}, 2126: {'ppid': 1940, 'start': '2255', 'state': 'S', 'env': {}, ...}, ...} or 'S' == 'Z'
+E             
+E             - Z
+E             + S))
+
+tests/test_srgc_v8_control_audit.py:109: AssertionError</failure></testcase><testcase classname="tests.test_srgc_v8_control_audit" name="test_bad_cohort_source_does_not_block_healthy_cohort" time="0.060"><failure message="ValueError: olmo_math: queue source is unavailable (coordinator=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, runner files=37). Queue untouched; no identity bypass.">tmp_path = PosixPath('/dev/shm/v8-control-audit-before-kms/test_bad_cohort_source_does_no0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7d4000b81d60&gt;
+
+    def test_bad_cohort_source_does_not_block_healthy_cohort(tmp_path,monkeypatch):
+        monkeypatch.setattr(tempfile,'tempdir',str(tmp_path))
+        base=tmp_path/'experiments';runner=REPO/'v8/experiments'
+        make_queue(base,'olmo_math','f'*64,source.runner_identity(runner))
+        good=make_queue(base,'qwen_mbpp',source.sha(REPO/'scripts/srgc_v8_nodes.py'),source.runner_identity(runner))
+        before={p:p.read_bytes() for p in base.rglob('*') if p.is_file()}
+&gt;       plan=source.selections(REPO,dict(V8_ROOT=str(base),V8_RUNNER_ROOT=str(runner),V8_PYTHON=sys.executable),[])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_srgc_v8_control_audit.py:130: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+tools = PosixPath('/home/kms/dev/offpolicy-misranking')
+env = {'V8_ROOT': '/dev/shm/v8-control-audit-before-kms/test_bad_cohort_source_does_no0/experiments', 'V8_RUNNER_ROOT': '/home/kms/dev/offpolicy-misranking/v8/experiments', 'V8_PYTHON': '/usr/bin/python3'}
+args = []
+
+    def selections(tools,env,args):
+        """Return original source groups; retain normal all-cohort dispatch when identities match."""
+        tools=Path(tools)
+        parser=argparse.ArgumentParser(add_help=False)
+        parser.add_argument('cohort',nargs='?',default='all')
+        for flag in ('root','runner-root','python','gpus','poll-seconds'):parser.add_argument('--'+flag)
+        parser.add_argument('--retry-failed',action='store_true')
+        parser.add_argument('--new-queue',action='store_true')
+        options,unknown=parser.parse_known_args(args)
+        if unknown:raise ValueError('Unsupported V8 launch arguments: '+' '.join(unknown))
+        cohorts=['olmo_math','qwen_mbpp'] if options.cohort=='all' else [options.cohort]
+        root=Path(options.root or env['V8_ROOT']).resolve()
+        bindings={}
+        for cohort in cohorts:
+            queue=root/cohort/'.multi-node';path=queue/'binding.json'
+            if not path.exists():continue
+            old=json.loads(path.read_text());state=json.loads((queue/'state.json').read_text()) if (queue/'state.json').exists() else {}
+            # Keep the existing, intentionally narrow source-locator retry; no job has started here.
+            if state.get('phase')=='prepare' and state.get('failure') and not list(queue.glob('jobs/*.json')) and not (queue/'input-identity.json').exists():continue
+            if old.get('cohort')!=cohort or old.get('root')!=str(root/cohort):
+                raise ValueError(f'{cohort}: saved queue root/cohort changed; original={old.get("root")}, current={root/cohort}. Queue untouched.')
+            bindings[cohort]=old
+        if options.new_queue:bindings={}
+        current_script=tools/'scripts/srgc_v8_nodes.py'
+        current_runner=Path(options.runner_root or env['V8_RUNNER_ROOT']).resolve()
+        current=dict(script=current_script,runner=current_runner,coordinator_sha256=sha(current_script),
+                     runner_sha256=runner_identity(current_runner),supports_all=True)
+        archived=None;groups={};identities={}
+        for cohort in cohorts:
+            old=bindings.get(cohort);choice=dict(current)
+            if old and (old.get('coordinator_sha256')!=current['coordinator_sha256'] or old.get('runner_sha256')!=current['runner_sha256']):
+                path=tools/'v8/queue-runtimes.zip'
+                if not path.is_file():raise ValueError(f'{cohort}: historical V8 sources missing from bundle; need coordinator {old.get("coordinator_sha256")}. Queue untouched.')
+                if archived is None:archived=unpack(path)
+                cache,catalog=archived
+                coordinator=next((x for x in catalog['coordinators'] if x['sha256']==old.get('coordinator_sha256')),None)
+                runner=next((x for x in catalog['runners'] if x['runner_sha256']==old.get('runner_sha256')),None)
+                if old.get('coordinator_sha256')==current['coordinator_sha256']:coordinator=dict(file=str(current_script),supports_all=True)
+                if old.get('runner_sha256')==current['runner_sha256']:runner=dict(root=str(current_runner))
+                if coordinator is None or runner is None:
+&gt;                   raise ValueError(f'{cohort}: queue source is unavailable (coordinator={old.get("coordinator_sha256")}, runner files={len(old.get("runner_sha256",{}))}). Queue untouched; no identity bypass.')
+E                   ValueError: olmo_math: queue source is unavailable (coordinator=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, runner files=37). Queue untouched; no identity bypass.
+
+scripts/v8_queue_runtime.py:133: ValueError</failure></testcase><testcase classname="tests.test_srgc_v8_control_audit" name="test_different_python_environments_do_not_share_admission_process" time="0.006"><failure message="AssertionError: separate Python environments would otherwise run admission under the first cohort interpreter&#10;assert 1 == 2&#10; +  where 1 = len([{'script': PosixPath('/home/kms/dev/offpolicy-misranking/scripts/srgc_v8_nodes.py'), 'runner': PosixPath('/home/kms/d...f7', 'configs/cohorts/gemma_mbpp.json': '6741194bccd15b78cb36971c8a599997e5c5296d744b3fcbe52038ca7b1c08bd', ...}, ...}])">tmp_path = PosixPath('/dev/shm/v8-control-audit-before-kms/test_different_python_environm0')
+
+    def test_different_python_environments_do_not_share_admission_process(tmp_path):
+        left=tmp_path/'left-python';left.symlink_to(sys.executable)
+        right=tmp_path/'right-python';right.symlink_to(sys.executable)
+        env=dict(V8_ROOT=str(tmp_path/'experiments'),V8_RUNNER_ROOT=str(REPO/'v8/experiments'),
+                 V8_PYTHON_OLMO_MATH=str(left),V8_PYTHON_QWEN_MBPP=str(right))
+        plan=source.selections(REPO,env,[])
+&gt;       assert len(plan)==2,'separate Python environments would otherwise run admission under the first cohort interpreter'
+E       AssertionError: separate Python environments would otherwise run admission under the first cohort interpreter
+E       assert 1 == 2
+E        +  where 1 = len([{'script': PosixPath('/home/kms/dev/offpolicy-misranking/scripts/srgc_v8_nodes.py'), 'runner': PosixPath('/home/kms/d...f7', 'configs/cohorts/gemma_mbpp.json': '6741194bccd15b78cb36971c8a599997e5c5296d744b3fcbe52038ca7b1c08bd', ...}, ...}])
+
+tests/test_srgc_v8_control_audit.py:142: AssertionError</failure></testcase></testsuite></testsuites>

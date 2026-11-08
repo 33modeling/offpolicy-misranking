@@ -1,0 +1,151 @@
+{
+  "kind": "Existing V8 code and permanent bug-board regression audit",
+  "code_commit": "e7f8f5ae018092e6e825b14bb7cdacfd050606d7",
+  "scope": [
+    "queue source and Python selection",
+    "cohort availability and GPU admission context",
+    "Ctrl-C/stop and detached rank ownership",
+    "checkout updates during an active worker",
+    "status locality and heartbeat semantics",
+    "branch bank/budget endpoints/checkpoint and reward export"
+  ],
+  "confirmed_defects": [
+    {
+      "incident": "V8-023",
+      "problem": "Full console can block supervisor stop logging and standalone stop before cleanup, then Python final flush.",
+      "fix": "Control diagnostics are best effort in daemon writers; exit is bounded after cleanup. Child output goes to private local console log and is relayed separately.",
+      "evidence": "before.xml first2failures; blocked receiver still allows simulated2MiB work milestone and bounded SIGINT cleanup after fix."
+    },
+    {
+      "incident": "V8-024",
+      "problem": "Legacy untagged coordinator can spawn a detached rank after initial stop snapshot; stop falsely returns success.",
+      "fix": "Refresh the selected same-node/UID/root scope throughout termination; retain PID creation-time checks.",
+      "evidence": "before.xml thirdfailure; newly spawned TERM-ignoring rank removed after fix."
+    },
+    {
+      "incident": "V8-025",
+      "problem": "One cohort source/metadata/missing interpreter can abort preflight before the healthy other cohort starts.",
+      "fix": "Collect per-cohort selection errors, continue only valid cohorts, preserve failure exit1 after valid work. Explicit missing cohort interpreter is never silently replaced.",
+      "evidence": "before.xml/environment-before.xml; unknown source/malformed identity/partial JSON/missing interpreter and aggregate-exit checks."
+    },
+    {
+      "incident": "V8-026",
+      "problem": "Different cohort interpreters were grouped under one coordinator; frozen admission uses sys.executable, possibly the other cohort environment.",
+      "fix": "Separate workers by exact selected Python path as well as source. Each admission and child starts in its own recorded environment.",
+      "evidence": "before.xml lastfailure; actual launch argument/environment interception verifies both selected Python contexts."
+    },
+    {
+      "incident": "V8-027",
+      "problem": "Live current source paths could change after selection and before a later child launch during git pull.",
+      "fix": "Freeze selected production coordinator/runner/helper/CSV bytes before exec. Verify hashes and retain a private source registry for later pulls/restarts.",
+      "evidence": "hot-pull-before.xml; simulate checkout worker+child replacement, verify selected bytes unchanged and queue reopens from the original local snapshot without the old checkout."
+    },
+    {
+      "incident": "V8-028",
+      "problem": "Status used local GPU idle state for remote jobs and truncated FQDN at the first dot.",
+      "fix": "Merge current status layout, preserve full host and scope GPU warning to the same host.",
+      "evidence": "status-before.xml; remote hostname/GPU ownership controls and local positive control."
+    },
+    {
+      "incident": "V8-029",
+      "problem": "Old worker detecting a changed binding called pool.fail and poisoned the new queue state.",
+      "fix": "Handle BindingMismatch separately and stop the old cohort without writing its failure into the new queue.",
+      "evidence": "poison-before.xml; simulated source replacement verifies the new binding and its failure=None stay unchanged."
+    },
+    {
+      "incident": "V8-030",
+      "problem": "Incoming status change inferred stopped learner and safe resume from stale/missing heartbeat, even with fresh remote work logs.",
+      "fix": "Mark activity unconfirmed and liveness unverified, never claim ranks/leases stopped or promise automatic resume from heartbeat age.",
+      "evidence": "heartbeat-before.xml; fresh work log +900s stale heartbeat cannot become stopped or next-worker-resumes advice."
+    }
+  ],
+  "verification": {
+    "reports": {
+      "before.xml": {
+        "tests": 5,
+        "failures": 5,
+        "errors": 0,
+        "skipped": 0
+      },
+      "hot-pull-before.xml": {
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "status-before.xml": {
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "poison-before.xml": {
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "environment-before.xml": {
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "heartbeat-before.xml": {
+        "tests": 1,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "after.xml": {
+        "tests": 48,
+        "failures": 3,
+        "errors": 0,
+        "skipped": 0
+      },
+      "release.xml": {
+        "tests": 56,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "runtime-final.xml": {
+        "tests": 115,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "upstream-final.xml": {
+        "tests": 117,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      }
+    },
+    "root_control_passed": 56,
+    "root_runtime_source_history_passed": 115,
+    "upstream_passed": 104,
+    "upstream_skipped": 1,
+    "upstream_subtests_passed": 12,
+    "frozen_trainer_files_unchanged": 30,
+    "archive_coordinators": 11,
+    "archive_runners": 5,
+    "historical_source_combinations": 55
+  },
+  "failure_retention": "Original failed reproductions retained. after.xml also retains3development fixture failures: two whole-stdout JSON assumptions after explicit console log relay, one stale status fixture assumed a remote hostname was local. Updated fixtures preserve the intended controls; no failure deleted.",
+  "scientific_results": {
+    "new_GPU_jobs": 0,
+    "new_benchmark_training_or_reward": null,
+    "CPU_simulated_checks_only": true,
+    "actual_user_H100_loading_cause": "unverified; V8-020 remains open",
+    "intermediate_records": "Actual CPU runner interruption/resume, checkpoint hashes and distinct training/held-out exports verified. Unmeasured held-out intermediate points stay unmeasured; no real model reward inferred."
+  },
+  "preservation": "No original frozen trainer/adapter/numerical child modifications. Existing queue bindings, checkpoints, optimizer/RNG and reward records are not rewritten by source selection. Historical runtimes remain exact bytes; current coordinator ownership fix does not silently relabel an existing historical queue.",
+  "limitations": [
+    "Different source/Python groups run sequentially on one GPU group; identical source/environment keeps original automatic two-cohort dispatch.",
+    "Linux uninterruptible kernel I/O can outlive SIGKILL; remaining PIDs must not be reported as released.",
+    "Actual H100 progress, GPU throughput and cross-node filesystem lock behavior were not measured."
+  ],
+  "publication": "git pull in existing checkout; same sh scripts/run_v8_nodes.sh. No archive extraction required.",
+  "secret_redactions": 0
+}

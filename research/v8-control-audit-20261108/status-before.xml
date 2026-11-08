@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="0.064" timestamp="2026-11-08T12:28:34.221051+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_control_audit" name="test_local_idle_gpu_is_not_evidence_that_a_remote_worker_stalled" time="0.003"><failure message="AssertionError: local GPU state was incorrectly attributed to a remote worker&#10;assert '멈춤 의심' not in '━ olmo_math...work started'&#10;  &#10;  '멈춤 의심' is contained here:&#10;    PU 쉬는 중 → 멈춤 의심 (.multi-node/stacks 확인)&#10;  ?           +++++&#10;         └ work started">tmp_path = PosixPath('/dev/shm/v8-control-status-before-kms/test_local_idle_gpu_is_not_evi0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x74508aed9b20&gt;
+
+    def test_local_idle_gpu_is_not_evidence_that_a_remote_worker_stalled(tmp_path,monkeypatch):
+        from scripts import v8_status
+        import socket
+        now=time.time();cohort='olmo_math';queue=tmp_path/cohort/'.multi-node';(queue/'jobs').mkdir(parents=True)
+        (queue/'state.json').write_text('{"phase":"train"}')
+        (queue/'jobs/a.json').write_text(json.dumps(dict(state='running',task=dict(kind='train',run_id='r',horizon=275),
+            attempts=[dict(id='a',worker='remote.cluster.example.123',started_at=now-4000)])))
+        (queue/'logs').mkdir();log=queue/'logs/a.log';log.write_text('work started\n');os.utime(log,(now-4000,now-4000))
+        monkeypatch.setattr(socket,'gethostname',lambda:'local.cluster.example')
+        output='\n'.join(v8_status.cohort_report(tmp_path,cohort,now,False))
+&gt;       assert '멈춤 의심' not in output,'local GPU state was incorrectly attributed to a remote worker'
+E       AssertionError: local GPU state was incorrectly attributed to a remote worker
+E       assert '멈춤 의심' not in '━ olmo_math...work started'
+E         
+E         '멈춤 의심' is contained here:
+E           PU 쉬는 중 → 멈춤 의심 (.multi-node/stacks 확인)
+E         ?           +++++
+E                └ work started
+
+tests/test_srgc_v8_control_audit.py:172: AssertionError</failure></testcase></testsuite></testsuites>

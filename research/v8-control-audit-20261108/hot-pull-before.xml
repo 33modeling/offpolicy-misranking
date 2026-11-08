@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="0.066" timestamp="2026-11-08T12:27:46.708017+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_control_audit" name="test_git_pull_cannot_change_already_selected_worker_or_child" time="0.008"><failure message="AssertionError: selected worker changed after checkout update&#10;assert b'#!/usr/bin/...cing worker\n' == b'#!/usr/bin/...stemExit(1)\n'&#10;  &#10;  Use -v to get more diff">tmp_path = PosixPath('/dev/shm/v8-control-hot-pull-before-kms/test_git_pull_cannot_change_al0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7ca95a89d5e0&gt;
+
+    def test_git_pull_cannot_change_already_selected_worker_or_child(tmp_path,monkeypatch):
+        monkeypatch.setattr(tempfile,'tempdir',str(tmp_path))
+        tools=tmp_path/'checkout';(tools/'scripts').mkdir(parents=True)
+        shutil.copyfile(REPO/'scripts/srgc_v8_nodes.py',tools/'scripts/srgc_v8_nodes.py')
+        shutil.copyfile(REPO/'scripts/srgc_saved_runtime.py',tools/'scripts/srgc_saved_runtime.py')
+        shutil.copytree(REPO/'v8/experiments',tools/'v8/experiments',ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
+        worker=tools/'scripts/srgc_v8_nodes.py';child=tools/'v8/experiments/cluster_child.py'
+        expected=(worker.read_bytes(),child.read_bytes())
+        plan=source.selections(tools,dict(V8_ROOT=str(tmp_path/'experiments'),V8_RUNNER_ROOT=str(tools/'v8/experiments'),
+                                        V8_PYTHON=sys.executable),[])
+        worker.write_text(worker.read_text()+'\n# simulated git pull replacing worker\n')
+        child.write_text(child.read_text()+'\n# simulated git pull replacing child\n')
+&gt;       assert plan[0]['script'].read_bytes()==expected[0],'selected worker changed after checkout update'
+E       AssertionError: selected worker changed after checkout update
+E       assert b'#!/usr/bin/...cing worker\n' == b'#!/usr/bin/...stemExit(1)\n'
+E         
+E         Use -v to get more diff
+
+tests/test_srgc_v8_control_audit.py:158: AssertionError</failure></testcase></testsuite></testsuites>

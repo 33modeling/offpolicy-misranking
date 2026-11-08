@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="0.073" timestamp="2026-11-08T12:39:15.690318+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_control_audit" name="test_missing_cohort_interpreter_does_not_block_other_environment" time="0.002"><failure message="ValueError: Existing Python is unavailable: PAIR_PYTHON=/dev/shm/v8-control-env-before-kms/test_missing_cohort_interprete0/missing-python">tmp_path = PosixPath('/dev/shm/v8-control-env-before-kms/test_missing_cohort_interprete0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x753c51b022d0&gt;
+
+    def test_missing_cohort_interpreter_does_not_block_other_environment(tmp_path,monkeypatch):
+        from scripts import v8_bootstrap as bootstrap
+        monkeypatch.setattr(tempfile,'tempdir',str(tmp_path))
+        env=dict(os.environ,V8_ROOT=str(tmp_path/'experiments'),V8_CODE_ROOT=str(REPO),
+                 V8_RUNNER_ROOT=str(REPO/'v8/experiments'),V8_PYTHON=sys.executable,
+                 PAIR_PYTHON=str(tmp_path/'missing-python'),SWITCH_PYTHON=sys.executable)
+        monkeypatch.setattr(bootstrap.os,'environ',env)
+        seen=[]
+        def run(command,**kwargs):seen.append(command);return subprocess.CompletedProcess(command,0)
+        monkeypatch.setattr(bootstrap.subprocess,'run',run)
+        monkeypatch.setattr(bootstrap.os,'execvpe',lambda *a,**k:pytest.fail('one invalid environment must remain a partial failure'))
+&gt;       assert bootstrap.main([])==1
+               ^^^^^^^^^^^^^^^^^^
+
+tests/test_srgc_v8_control_audit.py:187: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+scripts/v8_bootstrap.py:72: in main
+    env=environment(tools,os.environ,warn=lambda m:print('V8 startup warning: '+m,file=sys.stderr,flush=True))
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+tools = PosixPath('/home/kms/dev/offpolicy-misranking')
+source = {'CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS': '1', 'CODEX_CI': '1', 'CODEX_HOME': '/home/kms/.codex-h', 'CODEX_MANAGED_BY_NPM': '1', ...}
+cwd = PosixPath('/home/kms/dev/offpolicy-misranking')
+warn = &lt;function main.&lt;locals&gt;.&lt;lambda&gt; at 0x753c51d36fc0&gt;
+
+    def environment(tools,source,*,cwd=None,warn=None):
+        # An exported-but-empty path variable means unset, like the shell launchers' ${VAR:-default}.
+        env={k:v for k,v in dict(source).items() if v!='' or k not in PATH_VARIABLES}
+        tools=Path(tools).resolve();cwd=Path(cwd or Path.cwd())
+        group=Path(env.get('GROUP_VOLUME','/group-volume'))
+        user=env.get('OM_USER','minsoo3.kim')
+        work=Path(env.get('OM_WORK',str(group/user/'offpolicy-misranking')))
+        env.setdefault('OM_WORK',str(work))
+        env.setdefault('V8_ROOT',str(work/'v8'))
+        env.setdefault('EXPORT_CODE_ROOT',str(tools))
+        env.setdefault('PYTHONDONTWRITEBYTECODE','1')
+        for name in PYTHON_VARIABLES:
+            # An explicitly configured interpreter must exist; it is never silently replaced.
+            if env.get(name) and not shutil.which(env[name]):
+&gt;               raise ValueError(f'Existing Python is unavailable: {name}={env[name]}')
+E               ValueError: Existing Python is unavailable: PAIR_PYTHON=/dev/shm/v8-control-env-before-kms/test_missing_cohort_interprete0/missing-python
+
+scripts/v8_bootstrap.py:35: ValueError</failure></testcase></testsuite></testsuites>
