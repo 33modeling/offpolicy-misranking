@@ -142,6 +142,11 @@ def _collect(base, cohort, now):
     queue = directory / '.multi-node'
     state = read(queue / 'state.json') or {}
     rows = []
+    try:
+        live_policies = {w.get('dispatch_policy') for w in worker_records(queue, now)
+                         if w['age'] <= ALIVE_SECONDS and w.get('dispatch_policy')}
+    except Exception:
+        live_policies = set()
     for path in sorted((queue / 'jobs').glob('*.json')):
         try:
             job = read(path)
@@ -162,6 +167,7 @@ def _collect(base, cohort, now):
             rid = task.get('run_id')
             if rid:
                 manifest = read(directory / 'runs' / rid / 'manifest.json')
+                row['_manifest'] = manifest if isinstance(manifest, dict) else None
                 run_attempts = manifest.get('attempts') if isinstance(manifest, dict) else None
                 if isinstance(run_attempts, list) and run_attempts and isinstance(run_attempts[-1], dict) \
                         and isinstance(run_attempts[-1].get('attempt_id'), str):
@@ -204,6 +210,7 @@ def _collect(base, cohort, now):
                     row['log_age'] = None
                 lines = [x for x in tail(log, 32768) if x.strip()]
                 row['last_line'] = lines[-1].strip()[:160] if lines else None
+                row['_log_lines'] = lines[-120:]
                 row['error'] = row.get('error') or last_error_line(lines) or (str(attempt.get('error'))[:200] if attempt.get('error') else None)
                 failures=(attempt.get('child_failure') or {}).get('failures') or []
                 if failures:
@@ -218,10 +225,124 @@ def _collect(base, cohort, now):
                 row['activity_age'] = row.get('log_age')
             if row['status'] == 'pending':
                 row['ready'] = task_ready(task)
+            if row['status'] == 'failed':
+                row.update(failure_story(row, attempt, job, task, directory, state, live_policies, now))
             rows.append(row)
         except Exception as exc:  # one odd record must not take down the whole screen
             state.setdefault('_unreadable_jobs', []).append(f'{path.name} ({type(exc).__name__}: {exc})'[:200])
     return state, rows
+
+
+TERMINAL_RUN = {'completed_horizon', 'completed_budget'}   # srgc_v8_nodes.TERMINAL
+MAX_ATTEMPTS = 3   # srgc_v8_nodes / srgc_rebuttal.cluster default --max-attempts
+RETRY_DELAY = 60.0
+
+
+def exit_code(value):
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def counted_failures(job):
+    """srgc_v8_nodes.counted_failures: interruptions and node-local launch faults are refunded."""
+    count = 0
+    for attempt in job.get('attempts') or []:
+        if not isinstance(attempt, dict):
+            continue
+        outcome = attempt.get('outcome')
+        if outcome is None and exit_code(attempt.get('exit_code')) not in (None, 0, 75):
+            outcome = 'failed'
+        count += outcome == 'failed'
+    return count
+
+
+def failure_story(row, attempt, job, task, directory, state, live_policies, now):
+    """Why a task is recorded as failed, whether that is a real training error, and what happens next.
+
+    The queue only records 'task exit=N; output verified=False'. The cause is in the rank error records,
+    the task log, the run manifest (work may in fact be complete) or the exit code itself."""
+    rc = exit_code(attempt.get('exit_code'))
+    lines = row.get('_log_lines') or []
+    ranks = [f for f in ((attempt.get('child_failure') or {}).get('failures') or []) if isinstance(f, dict)]
+    if not ranks and attempt.get('id'):
+        # torchrun error files written by a crashing rank (also read by v8_runtime_worker.child_result)
+        for path in sorted((directory / '.multi-node' / 'progress' / str(attempt['id'])).glob('rank-*-error.json'))[:8]:
+            try:
+                record = json.loads(path.read_text())
+                message = (record.get('error') or {}).get('message')
+                if isinstance(message, dict):
+                    message = message.get('message')
+                if message:
+                    ranks.append(dict(rank=record.get('rank', path.stem.split('-')[1]),
+                                      message=str(message).strip().splitlines()[-1][:300]))
+            except (OSError, ValueError, AttributeError, IndexError):
+                continue
+    log_error = last_error_line(lines)
+    python_error = bool(log_error and re.search(r'(Error|Exception|Traceback|out of memory)', log_error)
+                        and not re.search(r'Signal \d+ \(SIGKILL\)', log_error))
+    manifest = row.get('_manifest') or {}
+    total = row.get('total')
+    finished = (task.get('kind') == 'train' and manifest.get('status') in TERMINAL_RUN
+                and isinstance(manifest.get('completed_updates'), int) and isinstance(total, int)
+                and manifest['completed_updates'] >= total)
+    snap, spec = task.get('snapshot_sha256'), task.get('evaluation_spec_hash')
+    if task.get('kind') == 'evaluate' and isinstance(snap, str) and isinstance(spec, str):
+        finished = (directory / 'evaluations' / f"{snap[:16]}__{spec[:12]}.json").is_file()
+    at = f" at update {row['done']}/{total}" if isinstance(row.get('done'), int) and isinstance(total, int) else ''
+    real = True
+    if finished:
+        cause = (f"NOT a training failure: the run is complete ({manifest.get('completed_updates')}/{total} updates)"
+                 if task.get('kind') == 'train' else 'NOT an evaluation failure: its result file is complete') + \
+                (f"; exit {rc} came after the work was done" if rc is not None else '')
+        real = False
+    elif ranks:
+        cause = '; '.join(f"rank {f.get('rank')}: {f.get('message')}" for f in ranks)
+    elif rc in (9, -9, 137) and not python_error:
+        cause = ("NOT a training error: killed from outside (SIGKILL, exit %s) - host out of memory (OOM killer), "
+                 "a manual kill or the node was removed; the training code reported no error" % rc)
+        real = False
+    elif rc in (15, -15, 143) and not python_error:
+        cause = f"NOT a training error: terminated (SIGTERM, exit {rc}) - stopped from outside"
+        real = False
+    elif rc == 124:
+        cause = 'stall watchdog: no training progress for 30 min, the task was stopped (checkpoints kept)'
+    elif rc == 0:
+        cause = 'exited normally but its outputs are incomplete or invalid' + \
+                (f": {attempt['output_validation_error']}" if attempt.get('output_validation_error') else '')
+    elif log_error:
+        cause = re.sub(r'^\[rank\d+\]:\s*', '', log_error)
+        if re.search(r'out of memory', cause, re.I):
+            cause = 'GPU out of memory: ' + cause
+    elif attempt.get('error') and not re.fullmatch(r'task exit=-?\d+; output verified=\w+', str(attempt['error'])):
+        cause = str(attempt['error'])
+    elif rc is None:
+        cause = 'no exit code or error was recorded for this attempt (older record); see its log'
+    else:
+        cause = f"exit {rc} without an error message in its log or rank error files"
+    used = counted_failures(job)
+    policy = attempt.get('controller_policy')
+    recovered = {h.get('controller_policy') for h in job.get('recovery_history') or [] if isinstance(h, dict)}
+    retry_requested = bool(state.get('retry_failed_requested_at'))
+    ended = attempt.get('ended_at') if isinstance(attempt.get('ended_at'), (int, float)) else None
+    if live_policies and policy and policy not in live_policies and not (recovered & live_policies):
+        nxt = 'failed under older code: a node started with the current bundle retries it once automatically'
+    elif retry_requested and used < MAX_ATTEMPTS:
+        wait = (ended + RETRY_DELAY - now) if ended else 0
+        nxt = f"retry {used + 1}/{MAX_ATTEMPTS} " + (f"in {age_text(wait)}" if wait > 0 else 'is ready: the next free node takes it')
+    elif used >= MAX_ATTEMPTS:
+        nxt = f"{used}/{MAX_ATTEMPTS} attempts used: no more automatic retries"
+    else:
+        nxt = 'not retried automatically: after fixing the cause, start one node with --retry-failed'
+    if finished and 'retries' not in nxt and 'retry ' not in nxt:
+        nxt = ('work is already complete; ' + nxt.replace('after fixing the cause, ', '') +
+               ' to have it re-checked (it resumes from its checkpoint, nothing finished is redone)')
+    elif not real and rc in (9, -9, 137) and 'retries' not in nxt and 'retry ' not in nxt:
+        host = row.get('host') or 'that node'
+        nxt = (f"check memory on {host} first (dmesg | grep -i 'killed process'), then start one node with --retry-failed; "
+               'it resumes from its last checkpoint')
+    return dict(failure_cause=cause[:400], failure_next=nxt, failure_real=real, failure_at=at)
 
 
 def task_ready(task):
@@ -574,8 +695,8 @@ def render_srgc(live, base, cohort, now, host):
 # One compact block per cohort: short column names, one symbol per cell, one line per running task
 # and per problem, one line for all nodes; the summary (counts, workers, this node) is at the bottom.
 
-LEGEND_TABLE = "intr = interrupted (reruns automatically) · dead = task on a dead node"
-LEGEND = "✓ done   ▶n running (updates done)   ○ ready   · waiting   ✗ failed   ⏸ interrupted   ? no heartbeat"
+LEGEND_TABLE = "fail = real error · marked = marked failed, no training error · intr = interrupted, reruns · dead = on a dead node"
+LEGEND = "✓ done  ▶n running (n updates)  ○ ready  · waiting  ✗ failed  ! no training error  ⏸ interrupted  ? no heartbeat"
 COHORT_LABEL = {'olmo_math': 'OLMo MATH', 'qwen_mbpp': 'Qwen MBPP'}
 COHORT_SHORT = {'OLMo MATH': 'OLMo', 'Qwen MBPP': 'Qwen'}
 COLOR = False   # set by main() only when stdout is a terminal (never in logs, pipes or tests)
@@ -621,6 +742,8 @@ def symbol(row):
         return f"▶{row['done']}" if row['done'] is not None else '▶'
     if status == 'pending':
         return '○' if row.get('ready') else '·'
+    if status == 'failed' and row.get('failure_real') is False:
+        return '!'
     return {'failed': '✗', 'interrupted': '⏸', 'unconfirmed': '?', 'stopped': '?'}.get(status, '?')
 
 
@@ -725,12 +848,24 @@ def clean_block(base, cohort, now, host, width):
             if isinstance(t, (int, float)) and not isinstance(t, bool):
                 return t
         return 0
-    order = {'failed': 0, 'unconfirmed': 1, 'stopped': 1, 'interrupted': 2}
-    for r in sorted(problems, key=lambda r: (order.get(r['status'], 3), -stamp(r))):
+    def rank(r):
+        if r['status'] == 'failed':
+            return 0 if r.get('failure_real', True) else 1
+        return {'unconfirmed': 2, 'stopped': 2, 'interrupted': 3}.get(r['status'], 4)
+    for r in sorted(problems, key=lambda r: (rank(r), -stamp(r))):
         name = f"s{r['seed']} " + ('eval ' if r.get('kind') == 'evaluate' else '') + short_arm(r['arm']) + \
                (' ext' if r.get('phase') == 'extension' else '')
         if r['status'] == 'failed':
-            text = f"✗ {label} {name} failed{when(r)} (attempt {r['attempt']}): {r.get('error') or 'see its log'}"
+            real = r.get('failure_real', True)
+            where = f" on {r['host']}" if r.get('host') else ''
+            head = (f"{'✗' if real else '!'} {label} {name} {'FAILED' if real else 'marked failed'}{when(r)}{where}"
+                    f"{r.get('failure_at', '')} (attempt {r['attempt']})")
+            attention.append('  ' + head)
+            attention.append('      why:  ' + (r.get('failure_cause') or r.get('error') or 'no error recorded; see its log'))
+            attention.append('      next: ' + (r.get('failure_next') or 'start one node with --retry-failed after fixing'))
+            if r.get('log'):
+                attention.append('      log:  ' + r['log'])
+            continue
         elif r['status'] == 'interrupted':
             text = f"⏸ {label} {name} interrupted{when(r)}: reruns automatically on the next free node"
         else:
@@ -742,11 +877,12 @@ def clean_block(base, cohort, now, host, width):
         attention.append(f"  ! {label}: cannot read {u}")
     workers = worker_records(queue, now)
     live = [w for w in workers if w['status'] != 'stale']
-    counts = {k: 0 for k in ('done', 'running', 'ready', 'waiting', 'attention', 'dead', 'interrupted')}
+    counts = {k: 0 for k in ('done', 'running', 'ready', 'waiting', 'attention', 'dead', 'interrupted', 'marked')}
     for r in rows:
         key = ('done' if r['status'] == 'done' else 'running' if r['status'] == 'running'
                else 'dead' if r['status'] in ('unconfirmed', 'stopped')
                else 'interrupted' if r['status'] == 'interrupted'
+               else 'marked' if r['status'] == 'failed' and r.get('failure_real') is False
                else 'attention' if r['status'] in ATTENTION else 'ready' if r.get('ready') else 'waiting')
         counts[key] += 1
     phase = PHASE_LABEL.get(state.get('phase'), state.get('phase', 'not started'))
@@ -769,7 +905,8 @@ def clean_block(base, cohort, now, host, width):
     nodes = (len(live), sum(1 for w in live if any(r.get('worker') == w['worker'] and r['status'] in ('running', 'unconfirmed') for r in rows)))
     stats = dict(label=label, phase=phase, done=counts['done'], total=total, pct=pct, running=counts['running'],
                  ready=counts['ready'], waiting=counts['waiting'], failed=counts['attention'],
-                 interrupted=counts['interrupted'], dead=counts['dead'], updates=(done_updates, planned))
+                 interrupted=counts['interrupted'], dead=counts['dead'], marked=counts['marked'],
+                 updates=(done_updates, planned))
     return lines, summary, (nodes, wanted), attention, stats
 
 
@@ -1007,15 +1144,15 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
                 job = next((x for x in rows if x['status'] == 'running' and x.get('host') == host), None)
                 if job:
                     mine = f"▶ s{job['seed']} {short_arm(job['arm'])} ({COHORT_SHORT.get(COHORT_LABEL.get(cohort, cohort), cohort)})"
-    out.append(paint(LEGEND, 'dim'))
-    out.append(paint(LEGEND_TABLE, 'dim'))
+    out.append(paint(clip(LEGEND, width), 'dim'))
+    out.append(paint(clip(LEGEND_TABLE, width), 'dim'))
     stamp = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(now))
     head = f"━━ V8 status · {stamp} "
     out.append(paint(head + '━' * max(3, min(width, 100) - len(head)), 'head'))
     out.append(paint('   ' + ', '.join(str(b) for b in bases), 'dim'))
 
     # 1. one aligned row per experiment
-    cols = ('phase', 'progress', 'done', 'running', 'ready', 'waiting', 'failed', 'interrupted', 'on dead node', 'updates')
+    cols = ('phase', 'progress', 'done', 'running', 'ready', 'waiting', 'failed', 'marked', 'interrupted', 'on dead node', 'updates')
     table = []
     for st in stats:
         if not st.get('total'):
@@ -1025,7 +1162,7 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
         done_u, planned = st['updates']
         table.append(dict(name=st['label'], phase=st['phase'], progress=f"{'█' * filled}{'░' * (12 - filled)} {st['pct']:>3}%",
                           done=f"{st['done']}/{st['total']}", running=st['running'], ready=st['ready'], waiting=st['waiting'],
-                          failed=st['failed'], interrupted=st['interrupted'], **{'on dead node': st['dead']},
+                          failed=st['failed'], marked=st.get('marked', 0), interrupted=st['interrupted'], **{'on dead node': st['dead']},
                           updates=f"{done_u:,}/{planned:,}" if planned else '-'))
     used = [c for c in cols if c in ('phase', 'progress', 'done', 'running', 'updates')
             or any(isinstance(r.get(c), int) and r.get(c) for r in table)]
@@ -1035,7 +1172,7 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
     title = {'running': 'run', 'waiting': 'wait', 'failed': 'fail', 'interrupted': 'intr', 'on dead node': 'dead'}
     name_w = max(10, *(len(r['name']) for r in table)) if table else 10
     w = {c: max(len(title.get(c, c)), *(len(cell(r, c)) for r in table)) for c in used}
-    right = {'done', 'running', 'ready', 'waiting', 'failed', 'interrupted', 'on dead node', 'updates'}
+    right = {'done', 'running', 'ready', 'waiting', 'failed', 'marked', 'interrupted', 'on dead node', 'updates'}
     fmt = lambda c, v: f"{v:>{w[c]}}" if c in right else f"{v:<{w[c]}}"
     out.append(paint(' ' + ' ' * name_w + '  ' + '  '.join(fmt(c, title.get(c, c)) for c in used), 'dim'))
     for r in table:
@@ -1043,7 +1180,7 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
         for c in used:
             v = fmt(c, cell(r, c))
             style = ('bad' if c in ('failed', 'on dead node') and v.strip() not in ('-', '') else
-                     'warn' if c == 'interrupted' and v.strip() not in ('-', '') else
+                     'warn' if c in ('interrupted', 'marked') and v.strip() not in ('-', '') else
                      'run' if c == 'running' and v.strip() not in ('-', '') else
                      'ok' if c == 'progress' else 'dim' if v.strip() in ('-', '') else None)
             parts.append(paint(v, style))
@@ -1051,13 +1188,29 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
 
     # 2. problems, newest failures first
     if attention:
+        items = sum(1 for line in attention if not line.startswith('      '))
         out.append('')
-        out.append(paint(f" needs attention ({len(attention)})", 'head'))
-        for line in attention[:10]:
-            mark = line.strip()[:1]
-            out.append(paint(clip(line, width), 'bad' if mark == '✗' else 'warn' if mark in '?⏸!' else None))
-        if len(attention) > 10:
-            out.append(paint(f"   … {len(attention) - 10} more", 'dim'))
+        out.append(paint(f" needs attention ({items})", 'head'))
+        shown_items, style = 0, None
+        for line in attention:
+            if not line.startswith('      '):
+                shown_items += 1
+                if shown_items > 12:
+                    out.append(paint(f"   … {items - 12} more (sh scripts/run_v8_nodes.sh --status lists every task)", 'dim'))
+                    break
+                mark = line.strip()[:1]
+                style = 'bad' if mark == '✗' else 'warn' if mark in '?⏸!' else None
+                out.append(paint(clip(line, width), style))
+            else:
+                import textwrap
+                m = re.match(r'(\w+:)\s+(.*)', line.lstrip())
+                label_part, text = (m.group(1), m.group(2)) if m else ('', line.strip())
+                wrapped = textwrap.wrap(text, max(30, width - 12)) or ['']
+                if len(wrapped) > 3:
+                    wrapped = wrapped[:3]; wrapped[-1] = wrapped[-1][:max(30, width - 13)] + '…'
+                for k, part in enumerate(wrapped):
+                    out.append(paint(f"      {label_part if k == 0 else '':<5} {part}",
+                                     None if label_part in ('why:', 'next:') else 'dim'))
 
     # 3. what every node is doing
     out.append('')

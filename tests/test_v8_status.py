@@ -239,7 +239,8 @@ def test_clean_view_is_compact_with_summary_last(tmp_path):
     header = next(norm(line) for line in bottom.splitlines() if norm(line).startswith("phase progress"))
     assert header == "phase progress done run wait fail updates"
     assert norm(next(line for line in bottom.splitlines() if line.startswith(" Qwen MBPP"))) == "Qwen MBPP not started"
-    assert " needs attention (1)" in bottom and "  ✗ OLMo MATH s6 eval eval-final failed" in bottom
+    assert " needs attention (1)" in bottom and "  ✗ OLMo MATH s6 eval eval-final FAILED" in bottom
+    assert "      why:  CUDA out of memory" in bottom
     assert " nodes (1 host)  1 running  0 DEAD" in bottom
     row = next(line for line in bottom.splitlines() if line.startswith(" ▶ node01"))
     for cell in (" running ", " OLMo ", " s5 On ", " 37/275 ", "answering 3/40, 812 tok (5s ago)"):
@@ -486,6 +487,66 @@ def test_healthy_nodes_never_get_an_x_and_attention_is_at_the_bottom(tmp_path):
     assert "needs attention" not in top and " needs attention (2)" in bottom
     lines = bottom.splitlines()
     i = lines.index(" needs attention (2)")
-    assert lines[i + 1].startswith("  ✗ OLMo MATH s9 SR50 failed ") and "(attempt 1): task exit=1" in lines[i + 1]
-    assert lines[i + 2].startswith("  ⏸ OLMo MATH s8 On interrupted 5 min ago: reruns automatically")
+    assert lines[i + 1].startswith("  ✗ OLMo MATH s9 SR50 FAILED ") and lines[i + 1].endswith("(attempt 1)")
+    assert lines[i + 2].startswith("      why:  ") and lines[i + 3].startswith("      next: ")
+    assert lines[i + 4].startswith("      log:  ")
+    assert lines[i + 5].startswith("  ⏸ OLMo MATH s8 On interrupted 5 min ago: reruns automatically")
     assert stats["failed"] == 1 and stats["interrupted"] == 1
+
+
+
+def test_failed_tasks_say_why_and_whether_it_is_a_real_failure(tmp_path):
+    """'중요한거 왜 failed 이냐니까', '진짜 fail 맞아?', 'fail인거 note나 똑바로 표시해'."""
+    now = time.time()
+    base, q, m = two_cohort_base(tmp_path, now)
+    def fail(key, seed, arm, attempt, log=None, manifest=None, done=None, recovery=None, policy="new-v10"):
+        job = {"state": "failed", "phase": "train", "task": {"kind": "train", "method_id": arm, "training_seed": seed,
+               "run_id": key, "horizon": 275}, "attempts": [dict({"id": key + "a", "worker": f"h-{key}.1",
+               "started_at": now - 9000, "ended_at": now - 7200, "controller_policy": policy}, **attempt)]}
+        if recovery:
+            job["recovery_history"] = recovery
+        write(q / "jobs" / f"{key}.json", job)
+        if log:
+            (q / "logs").mkdir(exist_ok=True); (q / "logs" / f"{key}a.log").write_text(log)
+        if manifest or done is not None:
+            write(base / "olmo_math" / "runs" / key / "manifest.json", dict({"attempts": [{"attempt_id": "x"}]}, **(manifest or {})))
+            (base / "olmo_math" / "runs" / key / "attempts" / "x").mkdir(parents=True)
+            (base / "olmo_math" / "runs" / key / "attempts" / "x" / "updates.jsonl").write_text(json.dumps({"completed_updates": done}) + "\n")
+    generic = {"exit_code": 1, "outcome": "failed", "error": "task exit=1; output verified=False"}
+    fail("kill", 5, "bank_sr_t025", {"exit_code": "9", "outcome": "failed", "error": "task exit=9; output verified=False"},
+         log="Loading weights: 100%\n", done=120)
+    fail("oom", 6, "bank_sr_t050", generic, done=88,
+         log="[rank1]: torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 2.50 GiB.\n"
+             "torch.distributed.elastic.multiprocessing.errors.ChildFailedError: cluster_child.py FAILED\n")
+    fail("fin", 7, "on_monitored", generic, log="NCCL WARN\n", manifest={"status": "completed_horizon", "completed_updates": 275}, done=275)
+    fail("rank", 8, "bank_uniform_t050", dict(generic, child_failure={"failures": [{"rank": 2, "message": "ValueError: bank hash differs"}]}), done=0)
+    fail("stall", 9, "bank_sr_t025", {"exit_code": 124, "outcome": "failed", "error": "task exit=124; output verified=False"}, done=201)
+    fail("old", 4, "bank_sr_t050", generic, log="RuntimeError: old bug\n", done=10, policy="old-v9")
+    fail("rfile", 3, "bank_sr_t025", generic, log="no error text here\n", done=5)
+    write(q / "progress" / "rfilea" / "rank-3-error.json", {"rank": 3, "error": {"message": {"message":
+          "Traceback (most recent call last):\n  ...\nRuntimeError: NCCL communicator was aborted on rank 3"}}})
+    worker_beat(q, "h-new.1", 2, None, now)
+    import hashlib
+    write(q / "workers" / (hashlib.sha256(json.dumps("h-new.1").encode()).hexdigest() + ".json"),
+          {"worker": "h-new.1", "at": now - 2, "task": None, "dispatch_policy": "new-v10"})
+    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
+    bottom = text.split("━━ V8 status · ")[1]
+    def block(head):
+        lines = bottom.splitlines()
+        i = next(k for k, line in enumerate(lines) if line.startswith(head))
+        return "\n".join(lines[i:i + 6])
+    k = block("  ! OLMo MATH s5 SR25 marked failed ")
+    assert "at update 120/275" in k and "NOT a training error: killed from outside (SIGKILL, exit 9)" in k
+    assert "check memory on h-kill first" in k
+    o = block("  ✗ OLMo MATH s6 SR50 FAILED ")
+    assert "why:  GPU out of memory: torch.OutOfMemoryError: CUDA out of memory" in o and "ChildFailedError" not in o.split("next:")[0]
+    f = block("  ! OLMo MATH s7 On marked failed ")
+    assert "NOT a training failure: the run is complete (275/275 updates)" in f and "work is already complete" in f
+    assert "rank 2: ValueError: bank hash differs" in block("  ✗ OLMo MATH s8 U50 FAILED ")
+    assert "stall watchdog: no training progress for 30 min" in block("  ✗ OLMo MATH s9 SR25 FAILED ")
+    assert "failed under older code: a node started with the current bundle retries it once automatically" in block("  ✗ OLMo MATH s4 SR50 FAILED ")
+    assert "rank 3: RuntimeError: NCCL communicator was aborted on rank 3" in block("  ✗ OLMo MATH s3 SR25 FAILED ")
+    stats = status.clean_block(base, "olmo_math", now, "viewer", 200)[4]
+    assert stats["failed"] == 5 and stats["marked"] == 2
+    table = text.split("━━ V8 status")[0]
+    assert "!" in table.split("seed")[1] and "✗" in table.split("seed")[1]
