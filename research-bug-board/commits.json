@@ -13052,6 +13052,36 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "21a522721a1fb5d1a799f2645e09bcc4d4b8a0bc",
+      "at": "2026-11-08T14:54:44+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Record SRGC parity defects behind cohort-wide blocking and opaque preparation",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/21a522721a1fb5d1a799f2645e09bcc4d4b8a0bc",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "8bfe5a966a01921ab1a68a5890b0d4e9c714e307",
+      "at": "2026-11-08T14:56:35+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Keep old live workers from reblocking independent ready tasks",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/8bfe5a966a01921ab1a68a5890b0d4e9c714e307",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "3dd7c2104749f38d6569414388b9a683aaa19e58",
+      "at": "2026-11-08T14:57:49+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Keep rolling-update coordinators available for exact-source resume",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/3dd7c2104749f38d6569414388b9a683aaa19e58",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

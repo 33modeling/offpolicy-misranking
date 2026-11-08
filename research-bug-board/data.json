@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-08T14:54:44+09:00",
+  "recorded_at": "2026-11-08T14:58:03+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "f17ddeee39b2d536f965664937828a9353584232",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/f17ddeee39b2d536f965664937828a9353584232",
-    "all_available_commits": 1234,
+    "source_commit": "3dd7c2104749f38d6569414388b9a683aaa19e58",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/3dd7c2104749f38d6569414388b9a683aaa19e58",
+    "all_available_commits": 1237,
     "fix_commit_records": 125,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
@@ -29,7 +29,7 @@
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hang-fix-20261108:f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:f17ddeee39b2d536f965664937828a9353584232",
+      "refs/heads/master:3dd7c2104749f38d6569414388b9a683aaa19e58",
       "refs/heads/v8-coord-fixes-20261108:fc612ac9edc7d15b129a9649c65d5acc7d8723fb",
       "refs/heads/v8-modes:6821c9c09292662008eb4f933c74bae7490358ed",
       "refs/heads/v8-nodes:3adf26925b2b1c1bf572cf0e68f75b26bbae3ddc",
@@ -49,7 +49,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:173c50063011aa04019f97812ee36f1b6705bff8"
+      "refs/remotes/origin/master:8bfe5a966a01921ab1a68a5890b0d4e9c714e307"
     ]
   },
   "incidents": [
@@ -4290,6 +4290,23 @@
           "type": "remote_verification_pending",
           "status": "remote_verification_pending",
           "text": "173c500 원격exact 확인. 실제 H100 추가 할당·OLMo optimizer update·처리량·노드 손실시간은 측정하지 못했다. 체크포인트/optimizer/RNG/25-update 기록은 보존하고 기존 고정 worker는 재실행 때 새 제어가 적용된다. 공개 현황판 배포는 별도 미실행이다.",
+          "evidence_kind": "limitation"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "추가: 기존5개 worker를 유지하면 새 worker가 이미 join한 뒤에도 옛 worker가 task-exit 전역중단을 다시 쓸 수 있다. 8bfe5a9에서 discovery/tick도 같은 검증된 작업범위 변환을 사용한다. 실패한 job은 자동 재시도하지 않고 구조오류는 그대로 막는다. 관련75검사와18coordinator/6runner 원본 재개14검사 통과. 원시 rolling-legacy.xml·rolling-archive.xml 및 기존 전체248검사 모두 보존.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/3dd7c2104749f38d6569414388b9a683aaa19e58/research/v8-srgc-parity-20261108/record.json",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "remote_verification_pending",
+          "status": "remote_verification_pending",
+          "text": "코드8bfe5a9 원격push 확인. 실제 사용자 H100에서 MBPP5개 외 OLMo가 추가 학습을 시작했는지는 아직 관찰하지 못했으며 성공으로 집계하지 않는다.",
           "evidence_kind": "limitation"
         }
       ]
