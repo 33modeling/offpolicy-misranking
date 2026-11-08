@@ -1,0 +1,1 @@
+{"test": "tiny random Olmo3 CPU software control, not trained model results", "outputs_equal": true, "rng_equal": true, "responses": 8, "new_tokens": 4, "existing_stop_preserved": true}

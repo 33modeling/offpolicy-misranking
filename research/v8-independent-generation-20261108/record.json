@@ -1,0 +1,91 @@
+{
+  "source_commit": "dad57ff13e92f6a1cd55e623640f7e129fa9f254",
+  "earlier_functional_commit": "40cffc5d85b2b94201779aaf6337e7e79896a70d",
+  "user_reports": [
+    "rank0 generation event 무한 대기",
+    "olmo 도 동시에 학습 시작하게 고쳐",
+    "generation이면 알아먹냐고: translation is not the request; explain purpose and actual progress"
+  ],
+  "hypothesis": "Serial Runtime construction and blocking CPU preparation can prevent the other cohort from reaching its ready GPU task. A stage-only generation event cannot establish token progress or an optimizer update.",
+  "changes": [
+    "Start both original Runtime actors asynchronously; retain each exact binding and original numerical source.",
+    "Run CPU-only preparation independently while retaining the exact control lease in manager and actor; claim only verified, ready cohorts under shared lease balancing.",
+    "Run the verified original cluster child through a separately receipted observer entry point; support historical children with and without install_progress.",
+    "Append an always-false generation observer without changing sampling kwargs, response count, existing stopping rules or optimizer.",
+    "A generation call with no returned decode step for1800s attempts stack capture and exits70; preserve prior checkpoints and do not automatically resubmit as a success.",
+    "Describe actual model/task purpose, local GPU question counts, returned answer length versus configured cap, actual per-process policy_update event counts, and time since actual token progress. Do not estimate completion or interpret generation as optimizer progress."
+  ],
+  "experiment": {
+    "model": "Random tiny Olmo3 CPU model for output/RNG equivalence only; production five-seed DAG control fixtures, no H100 model experiment",
+    "data": "Synthetic token IDs, local fake prompt identifiers, unchanged production planning configuration; no new user training data",
+    "transformation": "Only diagnostic/control wrappers; original30trainer files unchanged",
+    "controls": "Published84d5f1c original controls vs independent startup; each cohort blocked until the other executes. Original generate vs observed generate at identical RNG seed and existing stopping criterion.",
+    "seeds_updates": "Tiny model init seed17 and generation seed29;8responses with4returned new tokens; zero optimizer updates. Production DAG scheduling uses seeds5–9 and synthetic25/50dependency markers.",
+    "metrics": {
+      "startup": "Whether the other cohort enters execute before blocked setup can finish",
+      "equivalence": "Byte-equal generated tensors and identical final CPU torch RNG state",
+      "questions": "Counts of actual prompt work on this rank; not a global full-experiment percentage",
+      "optimizer_progress": "Count of actual policy_update records in this child process; not saved-checkpoint completion",
+      "stall": "Bounded exit70 plus checkpoint sentinel retention; includes an unwritable stack path control"
+    }
+  },
+  "measured_code_results": {
+    "startup_old_failed": 4,
+    "startup_corrected_tests_passed": 22,
+    "functional_full_tests_passed": 210,
+    "logs_full_first": {
+      "passed": 209,
+      "failed": 2,
+      "cause": "startup-only fake module lacked describe; fixture fixed, production imports were present"
+    },
+    "bootstrap_rerun": {
+      "passed": 13,
+      "failed": 0
+    },
+    "merged_unique_tests_passed": 211,
+    "merged_unresolved": 0,
+    "merged_validation": "Same production files; merge testcase identity from full-logs.xml with corrected fixture results in bootstrap-rerun.xml, no count summation of overlapping tests",
+    "archive_tests_passed": 14,
+    "original_source_archive": {
+      "coordinators": 16,
+      "runners": 5
+    },
+    "frozen_trainer_files_unchanged": 30,
+    "tiny_CPU": {
+      "outputs_equal": true,
+      "final_rng_equal": true,
+      "responses": 8,
+      "returned_new_tokens": 4,
+      "existing_stopping_rule_preserved": true
+    }
+  },
+  "retained_failures": [
+    "startup-before.xml:4true blocked-start reproductions",
+    "startup-fixture-first.xml:4fixture argument-capture failures, not learner faults",
+    "meaningful-logs-first.xml and full-logs.xml:2missing fake formatter function failures retained"
+  ],
+  "scientific_measurements": {
+    "H100_OLMo_start": "not verified; latest user report still says OLMo not running",
+    "rank0_generation_stall_root_cause": "not identified from remote stack/logs; only stage report received",
+    "throughput": null,
+    "model_accuracy": null,
+    "training_rewards": "untouched; no new measured values",
+    "held_out_rewards": "unmeasured; not substituted with training rewards",
+    "wasted_node_hours": null,
+    "cost": null
+  },
+  "checkpoint_provenance": "Original checkpoints, optimizer/RNG states, intermediate25-update snapshots and rewards are not deleted, reset or relabeled. Failure resumes only from an existing saved state when the worker is explicitly relaunched/retried.",
+  "delivery": "Code master pushed and exact remote dad57ff confirmed. Already-running frozen workers require a relaunch to apply new control and observer code. No actual H100 task was started locally, no web server or paid API call, no public bug-board deployment.",
+  "evidence": [
+    "startup-before.xml",
+    "startup-verified.xml",
+    "startup-fixture-first.xml",
+    "generation-first.xml",
+    "full-210.xml",
+    "meaningful-logs-first.xml",
+    "full-logs.xml",
+    "bootstrap-rerun.xml",
+    "archive.xml",
+    "tiny-olmo-output.txt"
+  ]
+}

@@ -1,0 +1,417 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="4" skipped="0" tests="4" time="24.213" timestamp="2026-11-08T14:22:58.371066+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_dispatch_runtime" name="test_other_cohort_starts_before_blocked_initialization_or_prepare_finishes[qwen_mbpp-initialization]" time="6.011"><failure message="Failed: qwen_mbpp initialization blocked olmo_math from starting">tmp_path = PosixPath('/dev/shm/v8-independent-before-kms/test_other_cohort_starts_befor0')
+blocked = 'qwen_mbpp', stage = 'initialization'
+
+    @pytest.mark.parametrize('stage',['initialization','prepare'])
+    @pytest.mark.parametrize('blocked',['qwen_mbpp','olmo_math'])
+    def test_other_cohort_starts_before_blocked_initialization_or_prepare_finishes(tmp_path,blocked,stage):
+        other='olmo_math' if blocked=='qwen_mbpp' else 'qwen_mbpp'
+        wait=f'''\n  if self.cohort=={blocked!r}:\n   import time\n   while not (self.root.parent/{('started-'+other)!r}).exists():time.sleep(.01)\n'''
+        script=FAKE.replace('__TAG__',repr('original fixture')).replace(
+            " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n",
+            " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n  (self.root.parent/('started-'+self.cohort)).write_text('actual CPU fixture execute entered')\n")
+        if stage=='initialization':script=script.replace(' def verify_node(self):pass',wait+' def verify_node(self):pass')
+        else:script=script.replace(' def plan(self,phase):',wait+' def plan(self,phase):')
+        frozen=tmp_path/'original.py';frozen.write_text(script)
+        entries=[dict(cohort=c,python=sys.executable,script=str(frozen),runner=str(tmp_path)) for c in ('olmo_math','qwen_mbpp')]
+        root=tmp_path/'experiments';planfile=tmp_path/'plan.json'
+        planfile.write_text(json.dumps(dict(root=str(root),entries=entries,errors={},argv=['--gpus','0,1,2,3','--poll-seconds','0.01'])))
+        code='''import sys
+    from pathlib import Path
+    import v8_dispatch as d
+    d.nodes.gpu_inventory=lambda _:None
+    lease_root=Path(sys.argv[2])
+    d.nodes.gpu_lock_root=lambda:lease_root
+    # No nvidia-smi, GPUs or model in this CPU control fixture.
+    d.nodes.subprocess.run=lambda *a,**kw:type('Result',(),dict(returncode=1,stdout='',stderr=''))()
+    sys.argv=['v8_dispatch.py',sys.argv[1]]
+    raise SystemExit(d.main())
+    '''
+        child=subprocess.Popen([sys.executable,'-c',code,str(planfile),str(tmp_path/'gpu-leases')],start_new_session=True,
+            env=dict(os.environ,PYTHONPATH=os.environ.get('V8_INDEPENDENT_TEST_CONTROLS',str(REPO/'scripts')),
+                     V8_ROOT=str(root),V8_ALLOW_ANY_ROOT='1',CUDA_VISIBLE_DEVICES='0,1,2,3'),
+            stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+&gt;           try:out,err=child.communicate(timeout=6)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_srgc_v8_dispatch_runtime.py:172: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/lib/python3.12/subprocess.py:1209: in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/subprocess.py:2116: in _communicate
+    self._check_timeout(endtime, orig_timeout, stdout, stderr)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;Popen: returncode: -9 args: ['/usr/bin/python3', '-c', "import sys\nfrom pa...&gt;
+endtime = 973434.22622751, orig_timeout = 6
+stdout_seq = [b'[v8] dispatch policy=global-live-task-leases-v2 controller=997730240335\n', b'[v8] olmo_math: opening original runt...n3; startup timeout=120s\n', b'[v8] qwen_mbpp: opening original runtime with /usr/bin/python3; startup timeout=120s\n']
+stderr_seq = [], skip_check_and_raise = False
+
+    def _check_timeout(self, endtime, orig_timeout, stdout_seq, stderr_seq,
+                       skip_check_and_raise=False):
+        """Convenience for checking if a timeout has expired."""
+        if endtime is None:
+            return
+        if skip_check_and_raise or _time() &gt; endtime:
+&gt;           raise TimeoutExpired(
+                    self.args, orig_timeout,
+                    output=b''.join(stdout_seq) if stdout_seq else None,
+                    stderr=b''.join(stderr_seq) if stderr_seq else None)
+E           subprocess.TimeoutExpired: Command '['/usr/bin/python3', '-c', "import sys\nfrom pathlib import Path\nimport v8_dispatch as d\nd.nodes.gpu_inventory=lambda _:None\nlease_root=Path(sys.argv[2])\nd.nodes.gpu_lock_root=lambda:lease_root\n# No nvidia-smi, GPUs or model in this CPU control fixture.\nd.nodes.subprocess.run=lambda *a,**kw:type('Result',(),dict(returncode=1,stdout='',stderr=''))()\nsys.argv=['v8_dispatch.py',sys.argv[1]]\nraise SystemExit(d.main())\n", '/dev/shm/v8-independent-before-kms/test_other_cohort_starts_befor0/plan.json', '/dev/shm/v8-independent-before-kms/test_other_cohort_starts_befor0/gpu-leases']' timed out after 6 seconds
+
+/usr/lib/python3.12/subprocess.py:1253: TimeoutExpired
+
+During handling of the above exception, another exception occurred:
+
+tmp_path = PosixPath('/dev/shm/v8-independent-before-kms/test_other_cohort_starts_befor0')
+blocked = 'qwen_mbpp', stage = 'initialization'
+
+    @pytest.mark.parametrize('stage',['initialization','prepare'])
+    @pytest.mark.parametrize('blocked',['qwen_mbpp','olmo_math'])
+    def test_other_cohort_starts_before_blocked_initialization_or_prepare_finishes(tmp_path,blocked,stage):
+        other='olmo_math' if blocked=='qwen_mbpp' else 'qwen_mbpp'
+        wait=f'''\n  if self.cohort=={blocked!r}:\n   import time\n   while not (self.root.parent/{('started-'+other)!r}).exists():time.sleep(.01)\n'''
+        script=FAKE.replace('__TAG__',repr('original fixture')).replace(
+            " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n",
+            " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n  (self.root.parent/('started-'+self.cohort)).write_text('actual CPU fixture execute entered')\n")
+        if stage=='initialization':script=script.replace(' def verify_node(self):pass',wait+' def verify_node(self):pass')
+        else:script=script.replace(' def plan(self,phase):',wait+' def plan(self,phase):')
+        frozen=tmp_path/'original.py';frozen.write_text(script)
+        entries=[dict(cohort=c,python=sys.executable,script=str(frozen),runner=str(tmp_path)) for c in ('olmo_math','qwen_mbpp')]
+        root=tmp_path/'experiments';planfile=tmp_path/'plan.json'
+        planfile.write_text(json.dumps(dict(root=str(root),entries=entries,errors={},argv=['--gpus','0,1,2,3','--poll-seconds','0.01'])))
+        code='''import sys
+    from pathlib import Path
+    import v8_dispatch as d
+    d.nodes.gpu_inventory=lambda _:None
+    lease_root=Path(sys.argv[2])
+    d.nodes.gpu_lock_root=lambda:lease_root
+    # No nvidia-smi, GPUs or model in this CPU control fixture.
+    d.nodes.subprocess.run=lambda *a,**kw:type('Result',(),dict(returncode=1,stdout='',stderr=''))()
+    sys.argv=['v8_dispatch.py',sys.argv[1]]
+    raise SystemExit(d.main())
+    '''
+        child=subprocess.Popen([sys.executable,'-c',code,str(planfile),str(tmp_path/'gpu-leases')],start_new_session=True,
+            env=dict(os.environ,PYTHONPATH=os.environ.get('V8_INDEPENDENT_TEST_CONTROLS',str(REPO/'scripts')),
+                     V8_ROOT=str(root),V8_ALLOW_ANY_ROOT='1',CUDA_VISIBLE_DEVICES='0,1,2,3'),
+            stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+            try:out,err=child.communicate(timeout=6)
+&gt;           except subprocess.TimeoutExpired:pytest.fail(f'{blocked} {stage} blocked {other} from starting')
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: qwen_mbpp initialization blocked olmo_math from starting
+
+tests/test_srgc_v8_dispatch_runtime.py:173: Failed</failure></testcase><testcase classname="tests.test_srgc_v8_dispatch_runtime" name="test_other_cohort_starts_before_blocked_initialization_or_prepare_finishes[qwen_mbpp-prepare]" time="6.011"><failure message="Failed: qwen_mbpp prepare blocked olmo_math from starting">tmp_path = PosixPath('/dev/shm/v8-independent-before-kms/test_other_cohort_starts_befor1')
+blocked = 'qwen_mbpp', stage = 'prepare'
+
+    @pytest.mark.parametrize('stage',['initialization','prepare'])
+    @pytest.mark.parametrize('blocked',['qwen_mbpp','olmo_math'])
+    def test_other_cohort_starts_before_blocked_initialization_or_prepare_finishes(tmp_path,blocked,stage):
+        other='olmo_math' if blocked=='qwen_mbpp' else 'qwen_mbpp'
+        wait=f'''\n  if self.cohort=={blocked!r}:\n   import time\n   while not (self.root.parent/{('started-'+other)!r}).exists():time.sleep(.01)\n'''
+        script=FAKE.replace('__TAG__',repr('original fixture')).replace(
+            " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n",
+            " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n  (self.root.parent/('started-'+self.cohort)).write_text('actual CPU fixture execute entered')\n")
+        if stage=='initialization':script=script.replace(' def verify_node(self):pass',wait+' def verify_node(self):pass')
+        else:script=script.replace(' def plan(self,phase):',wait+' def plan(self,phase):')
+        frozen=tmp_path/'original.py';frozen.write_text(script)
+        entries=[dict(cohort=c,python=sys.executable,script=str(frozen),runner=str(tmp_path)) for c in ('olmo_math','qwen_mbpp')]
+        root=tmp_path/'experiments';planfile=tmp_path/'plan.json'
+        planfile.write_text(json.dumps(dict(root=str(root),entries=entries,errors={},argv=['--gpus','0,1,2,3','--poll-seconds','0.01'])))
+        code='''import sys
+    from pathlib import Path
+    import v8_dispatch as d
+    d.nodes.gpu_inventory=lambda _:None
+    lease_root=Path(sys.argv[2])
+    d.nodes.gpu_lock_root=lambda:lease_root
+    # No nvidia-smi, GPUs or model in this CPU control fixture.
+    d.nodes.subprocess.run=lambda *a,**kw:type('Result',(),dict(returncode=1,stdout='',stderr=''))()
+    sys.argv=['v8_dispatch.py',sys.argv[1]]
+    raise SystemExit(d.main())
+    '''
+        child=subprocess.Popen([sys.executable,'-c',code,str(planfile),str(tmp_path/'gpu-leases')],start_new_session=True,
+            env=dict(os.environ,PYTHONPATH=os.environ.get('V8_INDEPENDENT_TEST_CONTROLS',str(REPO/'scripts')),
+                     V8_ROOT=str(root),V8_ALLOW_ANY_ROOT='1',CUDA_VISIBLE_DEVICES='0,1,2,3'),
+            stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+&gt;           try:out,err=child.communicate(timeout=6)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_srgc_v8_dispatch_runtime.py:172: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/lib/python3.12/subprocess.py:1209: in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/subprocess.py:2116: in _communicate
+    self._check_timeout(endtime, orig_timeout, stdout, stderr)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;Popen: returncode: -9 args: ['/usr/bin/python3', '-c', "import sys\nfrom pa...&gt;
+endtime = 973440.274458813, orig_timeout = 6
+stdout_seq = [b'[v8] dispatch policy=global-live-task-leases-v2 controller=997730240335\n', b'[v8] olmo_math: opening original runt...math: CPU stage prepare started\n', b'[jieun-500TGA-500SGA.1551676] olmo_math: CPU stage finished; phase=train\n', ...]
+stderr_seq = [], skip_check_and_raise = False
+
+    def _check_timeout(self, endtime, orig_timeout, stdout_seq, stderr_seq,
+                       skip_check_and_raise=False):
+        """Convenience for checking if a timeout has expired."""
+        if endtime is None:
+            return
+        if skip_check_and_raise or _time() &gt; endtime:
+&gt;           raise TimeoutExpired(
+                    self.args, orig_timeout,
+                    output=b''.join(stdout_seq) if stdout_seq else None,
+                    stderr=b''.join(stderr_seq) if stderr_seq else None)
+E           subprocess.TimeoutExpired: Command '['/usr/bin/python3', '-c', "import sys\nfrom pathlib import Path\nimport v8_dispatch as d\nd.nodes.gpu_inventory=lambda _:None\nlease_root=Path(sys.argv[2])\nd.nodes.gpu_lock_root=lambda:lease_root\n# No nvidia-smi, GPUs or model in this CPU control fixture.\nd.nodes.subprocess.run=lambda *a,**kw:type('Result',(),dict(returncode=1,stdout='',stderr=''))()\nsys.argv=['v8_dispatch.py',sys.argv[1]]\nraise SystemExit(d.main())\n", '/dev/shm/v8-independent-before-kms/test_other_cohort_starts_befor1/plan.json', '/dev/shm/v8-independent-before-kms/test_other_cohort_starts_befor1/gpu-leases']' timed out after 6 seconds
+
+/usr/lib/python3.12/subprocess.py:1253: TimeoutExpired
+
+During handling of the above exception, another exception occurred:
+
+tmp_path = PosixPath('/dev/shm/v8-independent-before-kms/test_other_cohort_starts_befor1')
+blocked = 'qwen_mbpp', stage = 'prepare'
+
+    @pytest.mark.parametrize('stage',['initialization','prepare'])
+    @pytest.mark.parametrize('blocked',['qwen_mbpp','olmo_math'])
+    def test_other_cohort_starts_before_blocked_initialization_or_prepare_finishes(tmp_path,blocked,stage):
+        other='olmo_math' if blocked=='qwen_mbpp' else 'qwen_mbpp'
+        wait=f'''\n  if self.cohort=={blocked!r}:\n   import time\n   while not (self.root.parent/{('started-'+other)!r}).exists():time.sleep(.01)\n'''
+        script=FAKE.replace('__TAG__',repr('original fixture')).replace(
+            " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n",
+            " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n  (self.root.parent/('started-'+self.cohort)).write_text('actual CPU fixture execute entered')\n")
+        if stage=='initialization':script=script.replace(' def verify_node(self):pass',wait+' def verify_node(self):pass')
+        else:script=script.replace(' def plan(self,phase):',wait+' def plan(self,phase):')
+        frozen=tmp_path/'original.py';frozen.write_text(script)
+        entries=[dict(cohort=c,python=sys.executable,script=str(frozen),runner=str(tmp_path)) for c in ('olmo_math','qwen_mbpp')]
+        root=tmp_path/'experiments';planfile=tmp_path/'plan.json'
+        planfile.write_text(json.dumps(dict(root=str(root),entries=entries,errors={},argv=['--gpus','0,1,2,3','--poll-seconds','0.01'])))
+        code='''import sys
+    from pathlib import Path
+    import v8_dispatch as d
+    d.nodes.gpu_inventory=lambda _:None
+    lease_root=Path(sys.argv[2])
+    d.nodes.gpu_lock_root=lambda:lease_root
+    # No nvidia-smi, GPUs or model in this CPU control fixture.
+    d.nodes.subprocess.run=lambda *a,**kw:type('Result',(),dict(returncode=1,stdout='',stderr=''))()
+    sys.argv=['v8_dispatch.py',sys.argv[1]]
+    raise SystemExit(d.main())
+    '''
+        child=subprocess.Popen([sys.executable,'-c',code,str(planfile),str(tmp_path/'gpu-leases')],start_new_session=True,
+            env=dict(os.environ,PYTHONPATH=os.environ.get('V8_INDEPENDENT_TEST_CONTROLS',str(REPO/'scripts')),
+                     V8_ROOT=str(root),V8_ALLOW_ANY_ROOT='1',CUDA_VISIBLE_DEVICES='0,1,2,3'),
+            stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+            try:out,err=child.communicate(timeout=6)
+&gt;           except subprocess.TimeoutExpired:pytest.fail(f'{blocked} {stage} blocked {other} from starting')
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: qwen_mbpp prepare blocked olmo_math from starting
+
+tests/test_srgc_v8_dispatch_runtime.py:173: Failed</failure></testcase><testcase classname="tests.test_srgc_v8_dispatch_runtime" name="test_other_cohort_starts_before_blocked_initialization_or_prepare_finishes[olmo_math-initialization]" time="6.009"><failure message="Failed: olmo_math initialization blocked qwen_mbpp from starting">tmp_path = PosixPath('/dev/shm/v8-independent-before-kms/test_other_cohort_starts_befor2')
+blocked = 'olmo_math', stage = 'initialization'
+
+    @pytest.mark.parametrize('stage',['initialization','prepare'])
+    @pytest.mark.parametrize('blocked',['qwen_mbpp','olmo_math'])
+    def test_other_cohort_starts_before_blocked_initialization_or_prepare_finishes(tmp_path,blocked,stage):
+        other='olmo_math' if blocked=='qwen_mbpp' else 'qwen_mbpp'
+        wait=f'''\n  if self.cohort=={blocked!r}:\n   import time\n   while not (self.root.parent/{('started-'+other)!r}).exists():time.sleep(.01)\n'''
+        script=FAKE.replace('__TAG__',repr('original fixture')).replace(
+            " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n",
+            " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n  (self.root.parent/('started-'+self.cohort)).write_text('actual CPU fixture execute entered')\n")
+        if stage=='initialization':script=script.replace(' def verify_node(self):pass',wait+' def verify_node(self):pass')
+        else:script=script.replace(' def plan(self,phase):',wait+' def plan(self,phase):')
+        frozen=tmp_path/'original.py';frozen.write_text(script)
+        entries=[dict(cohort=c,python=sys.executable,script=str(frozen),runner=str(tmp_path)) for c in ('olmo_math','qwen_mbpp')]
+        root=tmp_path/'experiments';planfile=tmp_path/'plan.json'
+        planfile.write_text(json.dumps(dict(root=str(root),entries=entries,errors={},argv=['--gpus','0,1,2,3','--poll-seconds','0.01'])))
+        code='''import sys
+    from pathlib import Path
+    import v8_dispatch as d
+    d.nodes.gpu_inventory=lambda _:None
+    lease_root=Path(sys.argv[2])
+    d.nodes.gpu_lock_root=lambda:lease_root
+    # No nvidia-smi, GPUs or model in this CPU control fixture.
+    d.nodes.subprocess.run=lambda *a,**kw:type('Result',(),dict(returncode=1,stdout='',stderr=''))()
+    sys.argv=['v8_dispatch.py',sys.argv[1]]
+    raise SystemExit(d.main())
+    '''
+        child=subprocess.Popen([sys.executable,'-c',code,str(planfile),str(tmp_path/'gpu-leases')],start_new_session=True,
+            env=dict(os.environ,PYTHONPATH=os.environ.get('V8_INDEPENDENT_TEST_CONTROLS',str(REPO/'scripts')),
+                     V8_ROOT=str(root),V8_ALLOW_ANY_ROOT='1',CUDA_VISIBLE_DEVICES='0,1,2,3'),
+            stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+&gt;           try:out,err=child.communicate(timeout=6)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_srgc_v8_dispatch_runtime.py:172: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/lib/python3.12/subprocess.py:1209: in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/subprocess.py:2116: in _communicate
+    self._check_timeout(endtime, orig_timeout, stdout, stderr)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;Popen: returncode: -9 args: ['/usr/bin/python3', '-c', "import sys\nfrom pa...&gt;
+endtime = 973446.314599439, orig_timeout = 6
+stdout_seq = [b'[v8] dispatch policy=global-live-task-leases-v2 controller=997730240335\n', b'[v8] olmo_math: opening original runtime with /usr/bin/python3; startup timeout=120s\n']
+stderr_seq = [], skip_check_and_raise = False
+
+    def _check_timeout(self, endtime, orig_timeout, stdout_seq, stderr_seq,
+                       skip_check_and_raise=False):
+        """Convenience for checking if a timeout has expired."""
+        if endtime is None:
+            return
+        if skip_check_and_raise or _time() &gt; endtime:
+&gt;           raise TimeoutExpired(
+                    self.args, orig_timeout,
+                    output=b''.join(stdout_seq) if stdout_seq else None,
+                    stderr=b''.join(stderr_seq) if stderr_seq else None)
+E           subprocess.TimeoutExpired: Command '['/usr/bin/python3', '-c', "import sys\nfrom pathlib import Path\nimport v8_dispatch as d\nd.nodes.gpu_inventory=lambda _:None\nlease_root=Path(sys.argv[2])\nd.nodes.gpu_lock_root=lambda:lease_root\n# No nvidia-smi, GPUs or model in this CPU control fixture.\nd.nodes.subprocess.run=lambda *a,**kw:type('Result',(),dict(returncode=1,stdout='',stderr=''))()\nsys.argv=['v8_dispatch.py',sys.argv[1]]\nraise SystemExit(d.main())\n", '/dev/shm/v8-independent-before-kms/test_other_cohort_starts_befor2/plan.json', '/dev/shm/v8-independent-before-kms/test_other_cohort_starts_befor2/gpu-leases']' timed out after 6 seconds
+
+/usr/lib/python3.12/subprocess.py:1253: TimeoutExpired
+
+During handling of the above exception, another exception occurred:
+
+tmp_path = PosixPath('/dev/shm/v8-independent-before-kms/test_other_cohort_starts_befor2')
+blocked = 'olmo_math', stage = 'initialization'
+
+    @pytest.mark.parametrize('stage',['initialization','prepare'])
+    @pytest.mark.parametrize('blocked',['qwen_mbpp','olmo_math'])
+    def test_other_cohort_starts_before_blocked_initialization_or_prepare_finishes(tmp_path,blocked,stage):
+        other='olmo_math' if blocked=='qwen_mbpp' else 'qwen_mbpp'
+        wait=f'''\n  if self.cohort=={blocked!r}:\n   import time\n   while not (self.root.parent/{('started-'+other)!r}).exists():time.sleep(.01)\n'''
+        script=FAKE.replace('__TAG__',repr('original fixture')).replace(
+            " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n",
+            " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n  (self.root.parent/('started-'+self.cohort)).write_text('actual CPU fixture execute entered')\n")
+        if stage=='initialization':script=script.replace(' def verify_node(self):pass',wait+' def verify_node(self):pass')
+        else:script=script.replace(' def plan(self,phase):',wait+' def plan(self,phase):')
+        frozen=tmp_path/'original.py';frozen.write_text(script)
+        entries=[dict(cohort=c,python=sys.executable,script=str(frozen),runner=str(tmp_path)) for c in ('olmo_math','qwen_mbpp')]
+        root=tmp_path/'experiments';planfile=tmp_path/'plan.json'
+        planfile.write_text(json.dumps(dict(root=str(root),entries=entries,errors={},argv=['--gpus','0,1,2,3','--poll-seconds','0.01'])))
+        code='''import sys
+    from pathlib import Path
+    import v8_dispatch as d
+    d.nodes.gpu_inventory=lambda _:None
+    lease_root=Path(sys.argv[2])
+    d.nodes.gpu_lock_root=lambda:lease_root
+    # No nvidia-smi, GPUs or model in this CPU control fixture.
+    d.nodes.subprocess.run=lambda *a,**kw:type('Result',(),dict(returncode=1,stdout='',stderr=''))()
+    sys.argv=['v8_dispatch.py',sys.argv[1]]
+    raise SystemExit(d.main())
+    '''
+        child=subprocess.Popen([sys.executable,'-c',code,str(planfile),str(tmp_path/'gpu-leases')],start_new_session=True,
+            env=dict(os.environ,PYTHONPATH=os.environ.get('V8_INDEPENDENT_TEST_CONTROLS',str(REPO/'scripts')),
+                     V8_ROOT=str(root),V8_ALLOW_ANY_ROOT='1',CUDA_VISIBLE_DEVICES='0,1,2,3'),
+            stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+            try:out,err=child.communicate(timeout=6)
+&gt;           except subprocess.TimeoutExpired:pytest.fail(f'{blocked} {stage} blocked {other} from starting')
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: olmo_math initialization blocked qwen_mbpp from starting
+
+tests/test_srgc_v8_dispatch_runtime.py:173: Failed</failure></testcase><testcase classname="tests.test_srgc_v8_dispatch_runtime" name="test_other_cohort_starts_before_blocked_initialization_or_prepare_finishes[olmo_math-prepare]" time="6.008"><failure message="Failed: olmo_math prepare blocked qwen_mbpp from starting">tmp_path = PosixPath('/dev/shm/v8-independent-before-kms/test_other_cohort_starts_befor3')
+blocked = 'olmo_math', stage = 'prepare'
+
+    @pytest.mark.parametrize('stage',['initialization','prepare'])
+    @pytest.mark.parametrize('blocked',['qwen_mbpp','olmo_math'])
+    def test_other_cohort_starts_before_blocked_initialization_or_prepare_finishes(tmp_path,blocked,stage):
+        other='olmo_math' if blocked=='qwen_mbpp' else 'qwen_mbpp'
+        wait=f'''\n  if self.cohort=={blocked!r}:\n   import time\n   while not (self.root.parent/{('started-'+other)!r}).exists():time.sleep(.01)\n'''
+        script=FAKE.replace('__TAG__',repr('original fixture')).replace(
+            " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n",
+            " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n  (self.root.parent/('started-'+self.cohort)).write_text('actual CPU fixture execute entered')\n")
+        if stage=='initialization':script=script.replace(' def verify_node(self):pass',wait+' def verify_node(self):pass')
+        else:script=script.replace(' def plan(self,phase):',wait+' def plan(self,phase):')
+        frozen=tmp_path/'original.py';frozen.write_text(script)
+        entries=[dict(cohort=c,python=sys.executable,script=str(frozen),runner=str(tmp_path)) for c in ('olmo_math','qwen_mbpp')]
+        root=tmp_path/'experiments';planfile=tmp_path/'plan.json'
+        planfile.write_text(json.dumps(dict(root=str(root),entries=entries,errors={},argv=['--gpus','0,1,2,3','--poll-seconds','0.01'])))
+        code='''import sys
+    from pathlib import Path
+    import v8_dispatch as d
+    d.nodes.gpu_inventory=lambda _:None
+    lease_root=Path(sys.argv[2])
+    d.nodes.gpu_lock_root=lambda:lease_root
+    # No nvidia-smi, GPUs or model in this CPU control fixture.
+    d.nodes.subprocess.run=lambda *a,**kw:type('Result',(),dict(returncode=1,stdout='',stderr=''))()
+    sys.argv=['v8_dispatch.py',sys.argv[1]]
+    raise SystemExit(d.main())
+    '''
+        child=subprocess.Popen([sys.executable,'-c',code,str(planfile),str(tmp_path/'gpu-leases')],start_new_session=True,
+            env=dict(os.environ,PYTHONPATH=os.environ.get('V8_INDEPENDENT_TEST_CONTROLS',str(REPO/'scripts')),
+                     V8_ROOT=str(root),V8_ALLOW_ANY_ROOT='1',CUDA_VISIBLE_DEVICES='0,1,2,3'),
+            stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+&gt;           try:out,err=child.communicate(timeout=6)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_srgc_v8_dispatch_runtime.py:172: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/lib/python3.12/subprocess.py:1209: in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/subprocess.py:2116: in _communicate
+    self._check_timeout(endtime, orig_timeout, stdout, stderr)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;Popen: returncode: -9 args: ['/usr/bin/python3', '-c', "import sys\nfrom pa...&gt;
+endtime = 973452.353391944, orig_timeout = 6
+stdout_seq = [b'[v8] dispatch policy=global-live-task-leases-v2 controller=997730240335\n', b'[v8] olmo_math: opening original runt...logs=/dev/shm/v8-independent-before-kms/test_other_cohort_starts_befor3/experiments/olmo_math/.multi-node/logs\n', ...]
+stderr_seq = [], skip_check_and_raise = False
+
+    def _check_timeout(self, endtime, orig_timeout, stdout_seq, stderr_seq,
+                       skip_check_and_raise=False):
+        """Convenience for checking if a timeout has expired."""
+        if endtime is None:
+            return
+        if skip_check_and_raise or _time() &gt; endtime:
+&gt;           raise TimeoutExpired(
+                    self.args, orig_timeout,
+                    output=b''.join(stdout_seq) if stdout_seq else None,
+                    stderr=b''.join(stderr_seq) if stderr_seq else None)
+E           subprocess.TimeoutExpired: Command '['/usr/bin/python3', '-c', "import sys\nfrom pathlib import Path\nimport v8_dispatch as d\nd.nodes.gpu_inventory=lambda _:None\nlease_root=Path(sys.argv[2])\nd.nodes.gpu_lock_root=lambda:lease_root\n# No nvidia-smi, GPUs or model in this CPU control fixture.\nd.nodes.subprocess.run=lambda *a,**kw:type('Result',(),dict(returncode=1,stdout='',stderr=''))()\nsys.argv=['v8_dispatch.py',sys.argv[1]]\nraise SystemExit(d.main())\n", '/dev/shm/v8-independent-before-kms/test_other_cohort_starts_befor3/plan.json', '/dev/shm/v8-independent-before-kms/test_other_cohort_starts_befor3/gpu-leases']' timed out after 6 seconds
+
+/usr/lib/python3.12/subprocess.py:1253: TimeoutExpired
+
+During handling of the above exception, another exception occurred:
+
+tmp_path = PosixPath('/dev/shm/v8-independent-before-kms/test_other_cohort_starts_befor3')
+blocked = 'olmo_math', stage = 'prepare'
+
+    @pytest.mark.parametrize('stage',['initialization','prepare'])
+    @pytest.mark.parametrize('blocked',['qwen_mbpp','olmo_math'])
+    def test_other_cohort_starts_before_blocked_initialization_or_prepare_finishes(tmp_path,blocked,stage):
+        other='olmo_math' if blocked=='qwen_mbpp' else 'qwen_mbpp'
+        wait=f'''\n  if self.cohort=={blocked!r}:\n   import time\n   while not (self.root.parent/{('started-'+other)!r}).exists():time.sleep(.01)\n'''
+        script=FAKE.replace('__TAG__',repr('original fixture')).replace(
+            " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n",
+            " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n  (self.root.parent/('started-'+self.cohort)).write_text('actual CPU fixture execute entered')\n")
+        if stage=='initialization':script=script.replace(' def verify_node(self):pass',wait+' def verify_node(self):pass')
+        else:script=script.replace(' def plan(self,phase):',wait+' def plan(self,phase):')
+        frozen=tmp_path/'original.py';frozen.write_text(script)
+        entries=[dict(cohort=c,python=sys.executable,script=str(frozen),runner=str(tmp_path)) for c in ('olmo_math','qwen_mbpp')]
+        root=tmp_path/'experiments';planfile=tmp_path/'plan.json'
+        planfile.write_text(json.dumps(dict(root=str(root),entries=entries,errors={},argv=['--gpus','0,1,2,3','--poll-seconds','0.01'])))
+        code='''import sys
+    from pathlib import Path
+    import v8_dispatch as d
+    d.nodes.gpu_inventory=lambda _:None
+    lease_root=Path(sys.argv[2])
+    d.nodes.gpu_lock_root=lambda:lease_root
+    # No nvidia-smi, GPUs or model in this CPU control fixture.
+    d.nodes.subprocess.run=lambda *a,**kw:type('Result',(),dict(returncode=1,stdout='',stderr=''))()
+    sys.argv=['v8_dispatch.py',sys.argv[1]]
+    raise SystemExit(d.main())
+    '''
+        child=subprocess.Popen([sys.executable,'-c',code,str(planfile),str(tmp_path/'gpu-leases')],start_new_session=True,
+            env=dict(os.environ,PYTHONPATH=os.environ.get('V8_INDEPENDENT_TEST_CONTROLS',str(REPO/'scripts')),
+                     V8_ROOT=str(root),V8_ALLOW_ANY_ROOT='1',CUDA_VISIBLE_DEVICES='0,1,2,3'),
+            stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+            try:out,err=child.communicate(timeout=6)
+&gt;           except subprocess.TimeoutExpired:pytest.fail(f'{blocked} {stage} blocked {other} from starting')
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: olmo_math prepare blocked qwen_mbpp from starting
+
+tests/test_srgc_v8_dispatch_runtime.py:173: Failed</failure></testcase></testsuite></testsuites>

@@ -1,0 +1,197 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="4" skipped="0" tests="9" time="24.885" timestamp="2026-11-08T14:21:11.434754+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_dispatch_runtime" name="test_large_messages_and_transferred_lease_stay_valid_after_sender_closes" time="0.020" /><testcase classname="tests.test_srgc_v8_dispatch_runtime" name="test_existing_cohort_bindings_and_checkpoints_survive_new_dispatcher[False]" time="12.100" /><testcase classname="tests.test_srgc_v8_dispatch_runtime" name="test_existing_cohort_bindings_and_checkpoints_survive_new_dispatcher[True]" time="12.053" /><testcase classname="tests.test_srgc_v8_dispatch_runtime" name="test_actor_uses_real_frozen_runtime_identity_without_loading_models[olmo_math]" time="0.154" /><testcase classname="tests.test_srgc_v8_dispatch_runtime" name="test_actor_uses_real_frozen_runtime_identity_without_loading_models[qwen_mbpp]" time="0.114" /><testcase classname="tests.test_srgc_v8_dispatch_runtime" name="test_other_cohort_starts_before_blocked_initialization_or_prepare_finishes[qwen_mbpp-initialization]" time="0.088"><failure message="AssertionError: [v8] dispatch policy=independent-cohort-startup-live-leases-v3 controller=4d7997407d85&#10;  Traceback (most recent call last):&#10;    File &quot;&lt;string&gt;&quot;, line 9, in &lt;module&gt;&#10;    File &quot;/home/kms/dev/offpolicy-misranking/scripts/v8_dispatch.py&quot;, line 155, in main&#10;      result=nodes.main(args)&#10;             ^^^^^^^^^^^^^^^^&#10;    File &quot;/home/kms/dev/offpolicy-misranking/scripts/srgc_v8_nodes.py&quot;, line 976, in main&#10;      lock_root=gpu_lock_root()&#10;                ^^^^^^^^^^^^^^^&#10;    File &quot;&lt;string&gt;&quot;, line 5, in &lt;lambda&gt;&#10;  IndexError: list index out of range&#10;  &#10;assert 1 == 0&#10; +  where 1 = &lt;Popen: returncode: 1 args: ['/usr/bin/python3', '-c', &quot;import sys\nfrom pat...&gt;.returncode">tmp_path = PosixPath('/dev/shm/v8-independent-gated-kms/test_other_cohort_starts_befor0')
+blocked = 'qwen_mbpp', stage = 'initialization'
+
+    @pytest.mark.parametrize('stage',['initialization','prepare'])
+    @pytest.mark.parametrize('blocked',['qwen_mbpp','olmo_math'])
+    def test_other_cohort_starts_before_blocked_initialization_or_prepare_finishes(tmp_path,blocked,stage):
+        other='olmo_math' if blocked=='qwen_mbpp' else 'qwen_mbpp'
+        wait=f'''\n  if self.cohort=={blocked!r}:\n   import time\n   while not (self.root.parent/{('started-'+other)!r}).exists():time.sleep(.01)\n'''
+        script=FAKE.replace('__TAG__',repr('original fixture')).replace(
+            " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n",
+            " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n  (self.root.parent/('started-'+self.cohort)).write_text('actual CPU fixture execute entered')\n")
+        if stage=='initialization':script=script.replace(' def verify_node(self):pass',wait+' def verify_node(self):pass')
+        else:script=script.replace(' def plan(self,phase):',wait+' def plan(self,phase):')
+        frozen=tmp_path/'original.py';frozen.write_text(script)
+        entries=[dict(cohort=c,python=sys.executable,script=str(frozen),runner=str(tmp_path)) for c in ('olmo_math','qwen_mbpp')]
+        root=tmp_path/'experiments';planfile=tmp_path/'plan.json'
+        planfile.write_text(json.dumps(dict(root=str(root),entries=entries,errors={},argv=['--gpus','0,1,2,3','--poll-seconds','0.01'])))
+        code='''import sys
+    from pathlib import Path
+    import v8_dispatch as d
+    d.nodes.gpu_inventory=lambda _:None
+    d.nodes.gpu_lock_root=lambda:Path(sys.argv[2])
+    # No nvidia-smi, GPUs or model in this CPU control fixture.
+    d.nodes.subprocess.run=lambda *a,**kw:type('Result',(),dict(returncode=1,stdout='',stderr=''))()
+    sys.argv=['v8_dispatch.py',sys.argv[1]]
+    raise SystemExit(d.main())
+    '''
+        child=subprocess.Popen([sys.executable,'-c',code,str(planfile),str(tmp_path/'gpu-leases')],start_new_session=True,
+            env=dict(os.environ,PYTHONPATH=str(REPO/'scripts'),V8_ROOT=str(root),V8_ALLOW_ANY_ROOT='1',CUDA_VISIBLE_DEVICES='0,1,2,3'),
+            stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+            try:out,err=child.communicate(timeout=6)
+            except subprocess.TimeoutExpired:pytest.fail(f'{blocked} {stage} blocked {other} from starting')
+&gt;           assert child.returncode==0,out+err
+E           AssertionError: [v8] dispatch policy=independent-cohort-startup-live-leases-v3 controller=4d7997407d85
+E             Traceback (most recent call last):
+E               File "&lt;string&gt;", line 9, in &lt;module&gt;
+E               File "/home/kms/dev/offpolicy-misranking/scripts/v8_dispatch.py", line 155, in main
+E                 result=nodes.main(args)
+E                        ^^^^^^^^^^^^^^^^
+E               File "/home/kms/dev/offpolicy-misranking/scripts/srgc_v8_nodes.py", line 976, in main
+E                 lock_root=gpu_lock_root()
+E                           ^^^^^^^^^^^^^^^
+E               File "&lt;string&gt;", line 5, in &lt;lambda&gt;
+E             IndexError: list index out of range
+E             
+E           assert 1 == 0
+E            +  where 1 = &lt;Popen: returncode: 1 args: ['/usr/bin/python3', '-c', "import sys\nfrom pat...&gt;.returncode
+
+tests/test_srgc_v8_dispatch_runtime.py:172: AssertionError</failure></testcase><testcase classname="tests.test_srgc_v8_dispatch_runtime" name="test_other_cohort_starts_before_blocked_initialization_or_prepare_finishes[qwen_mbpp-prepare]" time="0.094"><failure message="AssertionError: [v8] dispatch policy=independent-cohort-startup-live-leases-v3 controller=4d7997407d85&#10;  Traceback (most recent call last):&#10;    File &quot;&lt;string&gt;&quot;, line 9, in &lt;module&gt;&#10;    File &quot;/home/kms/dev/offpolicy-misranking/scripts/v8_dispatch.py&quot;, line 155, in main&#10;      result=nodes.main(args)&#10;             ^^^^^^^^^^^^^^^^&#10;    File &quot;/home/kms/dev/offpolicy-misranking/scripts/srgc_v8_nodes.py&quot;, line 976, in main&#10;      lock_root=gpu_lock_root()&#10;                ^^^^^^^^^^^^^^^&#10;    File &quot;&lt;string&gt;&quot;, line 5, in &lt;lambda&gt;&#10;  IndexError: list index out of range&#10;  &#10;assert 1 == 0&#10; +  where 1 = &lt;Popen: returncode: 1 args: ['/usr/bin/python3', '-c', &quot;import sys\nfrom pat...&gt;.returncode">tmp_path = PosixPath('/dev/shm/v8-independent-gated-kms/test_other_cohort_starts_befor1')
+blocked = 'qwen_mbpp', stage = 'prepare'
+
+    @pytest.mark.parametrize('stage',['initialization','prepare'])
+    @pytest.mark.parametrize('blocked',['qwen_mbpp','olmo_math'])
+    def test_other_cohort_starts_before_blocked_initialization_or_prepare_finishes(tmp_path,blocked,stage):
+        other='olmo_math' if blocked=='qwen_mbpp' else 'qwen_mbpp'
+        wait=f'''\n  if self.cohort=={blocked!r}:\n   import time\n   while not (self.root.parent/{('started-'+other)!r}).exists():time.sleep(.01)\n'''
+        script=FAKE.replace('__TAG__',repr('original fixture')).replace(
+            " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n",
+            " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n  (self.root.parent/('started-'+self.cohort)).write_text('actual CPU fixture execute entered')\n")
+        if stage=='initialization':script=script.replace(' def verify_node(self):pass',wait+' def verify_node(self):pass')
+        else:script=script.replace(' def plan(self,phase):',wait+' def plan(self,phase):')
+        frozen=tmp_path/'original.py';frozen.write_text(script)
+        entries=[dict(cohort=c,python=sys.executable,script=str(frozen),runner=str(tmp_path)) for c in ('olmo_math','qwen_mbpp')]
+        root=tmp_path/'experiments';planfile=tmp_path/'plan.json'
+        planfile.write_text(json.dumps(dict(root=str(root),entries=entries,errors={},argv=['--gpus','0,1,2,3','--poll-seconds','0.01'])))
+        code='''import sys
+    from pathlib import Path
+    import v8_dispatch as d
+    d.nodes.gpu_inventory=lambda _:None
+    d.nodes.gpu_lock_root=lambda:Path(sys.argv[2])
+    # No nvidia-smi, GPUs or model in this CPU control fixture.
+    d.nodes.subprocess.run=lambda *a,**kw:type('Result',(),dict(returncode=1,stdout='',stderr=''))()
+    sys.argv=['v8_dispatch.py',sys.argv[1]]
+    raise SystemExit(d.main())
+    '''
+        child=subprocess.Popen([sys.executable,'-c',code,str(planfile),str(tmp_path/'gpu-leases')],start_new_session=True,
+            env=dict(os.environ,PYTHONPATH=str(REPO/'scripts'),V8_ROOT=str(root),V8_ALLOW_ANY_ROOT='1',CUDA_VISIBLE_DEVICES='0,1,2,3'),
+            stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+            try:out,err=child.communicate(timeout=6)
+            except subprocess.TimeoutExpired:pytest.fail(f'{blocked} {stage} blocked {other} from starting')
+&gt;           assert child.returncode==0,out+err
+E           AssertionError: [v8] dispatch policy=independent-cohort-startup-live-leases-v3 controller=4d7997407d85
+E             Traceback (most recent call last):
+E               File "&lt;string&gt;", line 9, in &lt;module&gt;
+E               File "/home/kms/dev/offpolicy-misranking/scripts/v8_dispatch.py", line 155, in main
+E                 result=nodes.main(args)
+E                        ^^^^^^^^^^^^^^^^
+E               File "/home/kms/dev/offpolicy-misranking/scripts/srgc_v8_nodes.py", line 976, in main
+E                 lock_root=gpu_lock_root()
+E                           ^^^^^^^^^^^^^^^
+E               File "&lt;string&gt;", line 5, in &lt;lambda&gt;
+E             IndexError: list index out of range
+E             
+E           assert 1 == 0
+E            +  where 1 = &lt;Popen: returncode: 1 args: ['/usr/bin/python3', '-c', "import sys\nfrom pat...&gt;.returncode
+
+tests/test_srgc_v8_dispatch_runtime.py:172: AssertionError</failure></testcase><testcase classname="tests.test_srgc_v8_dispatch_runtime" name="test_other_cohort_starts_before_blocked_initialization_or_prepare_finishes[olmo_math-initialization]" time="0.096"><failure message="AssertionError: [v8] dispatch policy=independent-cohort-startup-live-leases-v3 controller=4d7997407d85&#10;  Traceback (most recent call last):&#10;    File &quot;&lt;string&gt;&quot;, line 9, in &lt;module&gt;&#10;    File &quot;/home/kms/dev/offpolicy-misranking/scripts/v8_dispatch.py&quot;, line 155, in main&#10;      result=nodes.main(args)&#10;             ^^^^^^^^^^^^^^^^&#10;    File &quot;/home/kms/dev/offpolicy-misranking/scripts/srgc_v8_nodes.py&quot;, line 976, in main&#10;      lock_root=gpu_lock_root()&#10;                ^^^^^^^^^^^^^^^&#10;    File &quot;&lt;string&gt;&quot;, line 5, in &lt;lambda&gt;&#10;  IndexError: list index out of range&#10;  &#10;assert 1 == 0&#10; +  where 1 = &lt;Popen: returncode: 1 args: ['/usr/bin/python3', '-c', &quot;import sys\nfrom pat...&gt;.returncode">tmp_path = PosixPath('/dev/shm/v8-independent-gated-kms/test_other_cohort_starts_befor2')
+blocked = 'olmo_math', stage = 'initialization'
+
+    @pytest.mark.parametrize('stage',['initialization','prepare'])
+    @pytest.mark.parametrize('blocked',['qwen_mbpp','olmo_math'])
+    def test_other_cohort_starts_before_blocked_initialization_or_prepare_finishes(tmp_path,blocked,stage):
+        other='olmo_math' if blocked=='qwen_mbpp' else 'qwen_mbpp'
+        wait=f'''\n  if self.cohort=={blocked!r}:\n   import time\n   while not (self.root.parent/{('started-'+other)!r}).exists():time.sleep(.01)\n'''
+        script=FAKE.replace('__TAG__',repr('original fixture')).replace(
+            " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n",
+            " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n  (self.root.parent/('started-'+self.cohort)).write_text('actual CPU fixture execute entered')\n")
+        if stage=='initialization':script=script.replace(' def verify_node(self):pass',wait+' def verify_node(self):pass')
+        else:script=script.replace(' def plan(self,phase):',wait+' def plan(self,phase):')
+        frozen=tmp_path/'original.py';frozen.write_text(script)
+        entries=[dict(cohort=c,python=sys.executable,script=str(frozen),runner=str(tmp_path)) for c in ('olmo_math','qwen_mbpp')]
+        root=tmp_path/'experiments';planfile=tmp_path/'plan.json'
+        planfile.write_text(json.dumps(dict(root=str(root),entries=entries,errors={},argv=['--gpus','0,1,2,3','--poll-seconds','0.01'])))
+        code='''import sys
+    from pathlib import Path
+    import v8_dispatch as d
+    d.nodes.gpu_inventory=lambda _:None
+    d.nodes.gpu_lock_root=lambda:Path(sys.argv[2])
+    # No nvidia-smi, GPUs or model in this CPU control fixture.
+    d.nodes.subprocess.run=lambda *a,**kw:type('Result',(),dict(returncode=1,stdout='',stderr=''))()
+    sys.argv=['v8_dispatch.py',sys.argv[1]]
+    raise SystemExit(d.main())
+    '''
+        child=subprocess.Popen([sys.executable,'-c',code,str(planfile),str(tmp_path/'gpu-leases')],start_new_session=True,
+            env=dict(os.environ,PYTHONPATH=str(REPO/'scripts'),V8_ROOT=str(root),V8_ALLOW_ANY_ROOT='1',CUDA_VISIBLE_DEVICES='0,1,2,3'),
+            stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+            try:out,err=child.communicate(timeout=6)
+            except subprocess.TimeoutExpired:pytest.fail(f'{blocked} {stage} blocked {other} from starting')
+&gt;           assert child.returncode==0,out+err
+E           AssertionError: [v8] dispatch policy=independent-cohort-startup-live-leases-v3 controller=4d7997407d85
+E             Traceback (most recent call last):
+E               File "&lt;string&gt;", line 9, in &lt;module&gt;
+E               File "/home/kms/dev/offpolicy-misranking/scripts/v8_dispatch.py", line 155, in main
+E                 result=nodes.main(args)
+E                        ^^^^^^^^^^^^^^^^
+E               File "/home/kms/dev/offpolicy-misranking/scripts/srgc_v8_nodes.py", line 976, in main
+E                 lock_root=gpu_lock_root()
+E                           ^^^^^^^^^^^^^^^
+E               File "&lt;string&gt;", line 5, in &lt;lambda&gt;
+E             IndexError: list index out of range
+E             
+E           assert 1 == 0
+E            +  where 1 = &lt;Popen: returncode: 1 args: ['/usr/bin/python3', '-c', "import sys\nfrom pat...&gt;.returncode
+
+tests/test_srgc_v8_dispatch_runtime.py:172: AssertionError</failure></testcase><testcase classname="tests.test_srgc_v8_dispatch_runtime" name="test_other_cohort_starts_before_blocked_initialization_or_prepare_finishes[olmo_math-prepare]" time="0.095"><failure message="AssertionError: [v8] dispatch policy=independent-cohort-startup-live-leases-v3 controller=4d7997407d85&#10;  Traceback (most recent call last):&#10;    File &quot;&lt;string&gt;&quot;, line 9, in &lt;module&gt;&#10;    File &quot;/home/kms/dev/offpolicy-misranking/scripts/v8_dispatch.py&quot;, line 155, in main&#10;      result=nodes.main(args)&#10;             ^^^^^^^^^^^^^^^^&#10;    File &quot;/home/kms/dev/offpolicy-misranking/scripts/srgc_v8_nodes.py&quot;, line 976, in main&#10;      lock_root=gpu_lock_root()&#10;                ^^^^^^^^^^^^^^^&#10;    File &quot;&lt;string&gt;&quot;, line 5, in &lt;lambda&gt;&#10;  IndexError: list index out of range&#10;  &#10;assert 1 == 0&#10; +  where 1 = &lt;Popen: returncode: 1 args: ['/usr/bin/python3', '-c', &quot;import sys\nfrom pat...&gt;.returncode">tmp_path = PosixPath('/dev/shm/v8-independent-gated-kms/test_other_cohort_starts_befor3')
+blocked = 'olmo_math', stage = 'prepare'
+
+    @pytest.mark.parametrize('stage',['initialization','prepare'])
+    @pytest.mark.parametrize('blocked',['qwen_mbpp','olmo_math'])
+    def test_other_cohort_starts_before_blocked_initialization_or_prepare_finishes(tmp_path,blocked,stage):
+        other='olmo_math' if blocked=='qwen_mbpp' else 'qwen_mbpp'
+        wait=f'''\n  if self.cohort=={blocked!r}:\n   import time\n   while not (self.root.parent/{('started-'+other)!r}).exists():time.sleep(.01)\n'''
+        script=FAKE.replace('__TAG__',repr('original fixture')).replace(
+            " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n",
+            " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n  (self.root.parent/('started-'+self.cohort)).write_text('actual CPU fixture execute entered')\n")
+        if stage=='initialization':script=script.replace(' def verify_node(self):pass',wait+' def verify_node(self):pass')
+        else:script=script.replace(' def plan(self,phase):',wait+' def plan(self,phase):')
+        frozen=tmp_path/'original.py';frozen.write_text(script)
+        entries=[dict(cohort=c,python=sys.executable,script=str(frozen),runner=str(tmp_path)) for c in ('olmo_math','qwen_mbpp')]
+        root=tmp_path/'experiments';planfile=tmp_path/'plan.json'
+        planfile.write_text(json.dumps(dict(root=str(root),entries=entries,errors={},argv=['--gpus','0,1,2,3','--poll-seconds','0.01'])))
+        code='''import sys
+    from pathlib import Path
+    import v8_dispatch as d
+    d.nodes.gpu_inventory=lambda _:None
+    d.nodes.gpu_lock_root=lambda:Path(sys.argv[2])
+    # No nvidia-smi, GPUs or model in this CPU control fixture.
+    d.nodes.subprocess.run=lambda *a,**kw:type('Result',(),dict(returncode=1,stdout='',stderr=''))()
+    sys.argv=['v8_dispatch.py',sys.argv[1]]
+    raise SystemExit(d.main())
+    '''
+        child=subprocess.Popen([sys.executable,'-c',code,str(planfile),str(tmp_path/'gpu-leases')],start_new_session=True,
+            env=dict(os.environ,PYTHONPATH=str(REPO/'scripts'),V8_ROOT=str(root),V8_ALLOW_ANY_ROOT='1',CUDA_VISIBLE_DEVICES='0,1,2,3'),
+            stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+            try:out,err=child.communicate(timeout=6)
+            except subprocess.TimeoutExpired:pytest.fail(f'{blocked} {stage} blocked {other} from starting')
+&gt;           assert child.returncode==0,out+err
+E           AssertionError: [v8] dispatch policy=independent-cohort-startup-live-leases-v3 controller=4d7997407d85
+E             Traceback (most recent call last):
+E               File "&lt;string&gt;", line 9, in &lt;module&gt;
+E               File "/home/kms/dev/offpolicy-misranking/scripts/v8_dispatch.py", line 155, in main
+E                 result=nodes.main(args)
+E                        ^^^^^^^^^^^^^^^^
+E               File "/home/kms/dev/offpolicy-misranking/scripts/srgc_v8_nodes.py", line 976, in main
+E                 lock_root=gpu_lock_root()
+E                           ^^^^^^^^^^^^^^^
+E               File "&lt;string&gt;", line 5, in &lt;lambda&gt;
+E             IndexError: list index out of range
+E             
+E           assert 1 == 0
+E            +  where 1 = &lt;Popen: returncode: 1 args: ['/usr/bin/python3', '-c', "import sys\nfrom pat...&gt;.returncode
+
+tests/test_srgc_v8_dispatch_runtime.py:172: AssertionError</failure></testcase></testsuite></testsuites>
