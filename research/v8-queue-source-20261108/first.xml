@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="3" skipped="0" tests="23" time="2.348" timestamp="2026-11-08T12:07:59.888135+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_queue_runtime" name="test_all_shipped_coordinator_runner_combinations_match_without_queue_changes" time="0.665" /><testcase classname="tests.test_srgc_v8_queue_runtime" name="test_unknown_source_never_relabels_or_moves_queue" time="0.035" /><testcase classname="tests.test_srgc_v8_queue_runtime" name="test_corrupted_cached_sources_are_rejected" time="0.025" /><testcase classname="tests.test_srgc_v8_queue_runtime" name="test_different_cohort_pins_remain_separate_without_rebinding" time="0.037" /><testcase classname="tests.test_srgc_v8_queue_runtime" name="test_unstarted_default_keeps_both_cohorts_and_does_not_create_queue" time="0.003" /><testcase classname="tests.test_srgc_v8_queue_runtime" name="test_real_historical_runtime_binding_reopens_with_exact_original_code[cbd68a4-olmo_math]" time="0.268" /><testcase classname="tests.test_srgc_v8_queue_runtime" name="test_real_historical_runtime_binding_reopens_with_exact_original_code[cbd68a4-qwen_mbpp]" time="0.258" /><testcase classname="tests.test_srgc_v8_queue_runtime" name="test_real_historical_runtime_binding_reopens_with_exact_original_code[f1bb211-olmo_math]" time="0.248" /><testcase classname="tests.test_srgc_v8_queue_runtime" name="test_real_historical_runtime_binding_reopens_with_exact_original_code[f1bb211-qwen_mbpp]" time="0.263" /><testcase classname="tests.test_srgc_v8_queue_runtime" name="test_real_historical_runtime_binding_reopens_with_exact_original_code[7d89fb9-olmo_math]" time="0.026"><failure message="StopIteration">tmp_path = PosixPath('/dev/shm/v8-queue-source-tests-kms/test_real_historical_runtime_b4')
+source_cache = (PosixPath('/dev/shm/v8-queue-source-tests-kms/test_real_historical_runtime_b4/v8-queue-source-1001/2f8d5444a989b8d24f...5296d744b3fcbe52038ca7b1c08bd', ...}, 'source_commit': '32365b355b939686799bb0429059ad1f2377049e'}], 'schema': 1, ...})
+cohort = 'olmo_math', revision = '7d89fb9'
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7636be862720&gt;
+
+    @pytest.mark.parametrize('cohort',['olmo_math','qwen_mbpp'])
+    @pytest.mark.parametrize('revision',['cbd68a4','f1bb211','7d89fb9'])
+    def test_real_historical_runtime_binding_reopens_with_exact_original_code(tmp_path,source_cache,cohort,revision,monkeypatch):
+        cache,catalog=source_cache
+        source=subprocess.check_output(['git','show',revision+':scripts/srgc_v8_nodes.py'],cwd=REPO)
+        digest=hashlib.sha256(source).hexdigest()
+        coordinator=next(x for x in catalog['coordinators'] if x['sha256']==digest)
+        with zipfile.ZipFile(ARCHIVE) as archive:
+&gt;           runner=next(x for x in catalog['runners'] if x['source_commit'].startswith(revision))
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           StopIteration
+
+tests/test_srgc_v8_queue_runtime.py:99: StopIteration</failure></testcase><testcase classname="tests.test_srgc_v8_queue_runtime" name="test_real_historical_runtime_binding_reopens_with_exact_original_code[7d89fb9-qwen_mbpp]" time="0.026"><failure message="StopIteration">tmp_path = PosixPath('/dev/shm/v8-queue-source-tests-kms/test_real_historical_runtime_b5')
+source_cache = (PosixPath('/dev/shm/v8-queue-source-tests-kms/test_real_historical_runtime_b5/v8-queue-source-1001/2f8d5444a989b8d24f...5296d744b3fcbe52038ca7b1c08bd', ...}, 'source_commit': '32365b355b939686799bb0429059ad1f2377049e'}], 'schema': 1, ...})
+cohort = 'qwen_mbpp', revision = '7d89fb9'
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7636be841460&gt;
+
+    @pytest.mark.parametrize('cohort',['olmo_math','qwen_mbpp'])
+    @pytest.mark.parametrize('revision',['cbd68a4','f1bb211','7d89fb9'])
+    def test_real_historical_runtime_binding_reopens_with_exact_original_code(tmp_path,source_cache,cohort,revision,monkeypatch):
+        cache,catalog=source_cache
+        source=subprocess.check_output(['git','show',revision+':scripts/srgc_v8_nodes.py'],cwd=REPO)
+        digest=hashlib.sha256(source).hexdigest()
+        coordinator=next(x for x in catalog['coordinators'] if x['sha256']==digest)
+        with zipfile.ZipFile(ARCHIVE) as archive:
+&gt;           runner=next(x for x in catalog['runners'] if x['source_commit'].startswith(revision))
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           StopIteration
+
+tests/test_srgc_v8_queue_runtime.py:99: StopIteration</failure></testcase><testcase classname="tests.test_srgc_v8_bootstrap" name="test_existing_default_environment_and_offline_bundle_need_no_exports" time="0.001" /><testcase classname="tests.test_srgc_v8_bootstrap" name="test_existing_paths_and_model_environment_overrides_are_preserved" time="0.001" /><testcase classname="tests.test_srgc_v8_bootstrap" name="test_source_receipt_finds_original_frozen_checkout_before_tools" time="0.001" /><testcase classname="tests.test_srgc_v8_bootstrap" name="test_bundle_inside_existing_code_tree_reuses_its_ancestor" time="0.001" /><testcase classname="tests.test_srgc_v8_bootstrap" name="test_explicit_missing_python_is_not_silently_replaced" time="0.001" /><testcase classname="tests.test_srgc_v8_bootstrap" name="test_corrupt_source_receipt_does_not_start_a_different_experiment" time="0.001" /><testcase classname="tests.test_srgc_v8_bootstrap" name="test_no_argument_shell_reuses_existing_environment_from_unrelated_directory" time="0.161" /><testcase classname="tests.test_srgc_v8_bootstrap" name="test_actual_code_checkout_contains_and_loads_its_runtime_without_a_paper_checkout" time="0.045" /><testcase classname="tests.test_srgc_v8_bootstrap" name="test_empty_exported_paths_mean_unset_like_the_shell_launchers" time="0.002" /><testcase classname="tests.test_srgc_v8_bootstrap" name="test_missing_cohort_interpreter_is_reported_at_startup" time="0.001" /><testcase classname="tests.test_srgc_v8_bootstrap" name="test_missing_venv_falls_back_with_a_visible_warning" time="0.001" /><testcase classname="tests.test_srgc_v8_bootstrap" name="test_shell_launcher_survives_cdpath_and_a_node_without_python3" time="0.167"><failure message="AssertionError: Traceback (most recent call last):&#10;    File &quot;/dev/shm/v8-queue-source-tests-kms/test_shell_launcher_survives_c0/bundle/export-code/scripts/v8_bootstrap.py&quot;, line 10, in &lt;module&gt;&#10;      from .v8_queue_runtime import selections&#10;  ImportError: attempted relative import with no known parent package&#10;  &#10;  During handling of the above exception, another exception occurred:&#10;  &#10;  Traceback (most recent call last):&#10;    File &quot;/dev/shm/v8-queue-source-tests-kms/test_shell_launcher_survives_c0/bundle/export-code/scripts/v8_bootstrap.py&quot;, line 12, in &lt;module&gt;&#10;      from v8_queue_runtime import selections&#10;  ModuleNotFoundError: No module named 'v8_queue_runtime'&#10;  &#10;assert 1 == 0&#10; +  where 1 = CompletedProcess(args=['/bin/sh', '/dev/shm/v8-queue-source-tests-kms/test_shell_launcher_survives_c0/bundle/export-co...in &lt;module&gt;\n    from v8_queue_runtime import selections\nModuleNotFoundError: No module named \'v8_queue_runtime\'\n').returncode">tmp_path = PosixPath('/dev/shm/v8-queue-source-tests-kms/test_shell_launcher_survives_c0')
+
+    def test_shell_launcher_survives_cdpath_and_a_node_without_python3(tmp_path):
+        work,trainer,bundle,tools,env=layout(tmp_path)
+        scripts=tools/'scripts';scripts.mkdir()
+        source=Path(__file__).resolve().parents[1]/'scripts'
+        for name in ['run_v8_nodes.sh','v8_bootstrap.py','v8_supervisor.py','v8_processes.py','v8_probe.py']:
+            shutil.copyfile(source/name,scripts/name)
+        file(scripts/'srgc_v8_nodes.py',"import json,os,sys;print(json.dumps({'python':sys.executable}))")
+        bindir=tmp_path/'bin';bindir.mkdir()
+        for tool in ('dirname','sh','env','ps'):
+            found=shutil.which(tool)
+            if found:(bindir/tool).symlink_to(found)
+        env.update(CDPATH=str(tmp_path),PATH=str(bindir))  # no python3 on PATH; CDPATH would print the dir
+        result=subprocess.run(['/bin/sh',str(tools/'scripts/run_v8_nodes.sh')],cwd=tools,env=env,text=True,capture_output=True,timeout=10)
+&gt;       assert result.returncode==0,result.stderr
+E       AssertionError: Traceback (most recent call last):
+E           File "/dev/shm/v8-queue-source-tests-kms/test_shell_launcher_survives_c0/bundle/export-code/scripts/v8_bootstrap.py", line 10, in &lt;module&gt;
+E             from .v8_queue_runtime import selections
+E         ImportError: attempted relative import with no known parent package
+E         
+E         During handling of the above exception, another exception occurred:
+E         
+E         Traceback (most recent call last):
+E           File "/dev/shm/v8-queue-source-tests-kms/test_shell_launcher_survives_c0/bundle/export-code/scripts/v8_bootstrap.py", line 12, in &lt;module&gt;
+E             from v8_queue_runtime import selections
+E         ModuleNotFoundError: No module named 'v8_queue_runtime'
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/bin/sh', '/dev/shm/v8-queue-source-tests-kms/test_shell_launcher_survives_c0/bundle/export-co...in &lt;module&gt;\n    from v8_queue_runtime import selections\nModuleNotFoundError: No module named \'v8_queue_runtime\'\n').returncode
+
+tests/test_srgc_v8_bootstrap.py:139: AssertionError</failure></testcase></testsuite></testsuites>

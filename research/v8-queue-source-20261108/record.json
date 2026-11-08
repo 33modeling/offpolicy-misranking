@@ -1,0 +1,26 @@
+{
+  "kind": "V8 queue source/environment identity recovery; software-only result",
+  "user_report": "v8 queue error identity differs from this queue after the previous compatibility bundle",
+  "confirmed_delivery_bug": "Previous delivery assumed cbd68a4 as the active queue numerical source without reading its saved binding. Matching that one version did not cover other already delivered versions or inherited Python selection. The real remote differing fields have not been received.",
+  "fix": "Read each original binding. Select coordinator and runner independently by exact recorded file hashes from nine archived coordinators/five archived runner trees. Select existing Python by full recorded version/package map. Keep original queue/lock/checkpoint/reward files untouched; no hash relabel, ignore flag, package install or network fetch.",
+  "controls": [
+    "All45known coordinator/runner pairings select exact matching bytes without modifying queue files or control inode",
+    "cbd68a4/f1bb211/7d89fb9 actual Runtime bindings reopen with original Pool for both OLMo MATH and Qwen MBPP",
+    "No-argument bootstrap selects original code; cohort after option values remains valid",
+    "Unknown/corrupted source is rejected with no queue edits",
+    "Original Python package versions are matched and incompatible environments are rejected",
+    "Existing bootstrap/stop/probe behavior retained"
+  ],
+  "scientific_results": {
+    "new_GPU_jobs": 0,
+    "new_training_results": 0,
+    "actual_H100_retry": "unverified; new bundle must be run on user node",
+    "frozen_original_trainer_files_unchanged": 30
+  },
+  "failure_retention": "First37-case development run: two fixture ancestry lookups assumed coordinator and runner changed in the same commit; one old fixture omitted the new helper. These three fixture failures are retained in first.xml; product numerical source/queue files were not rewritten.",
+  "limits": "Different source pins across cohorts use separate original workers sequentially within each GPU group. Unknown historical source or unavailable Python remains a precise hard error. Actual Loading weights runtime cause remains open.",
+  "archive_builder": "scripts/build_v8_runtime_archive.py uses local Git objects only; v8/queue-runtimes.zip is carried offline.",
+  "source_fix_commit": "aaa3786",
+  "command": "sh scripts/run_v8_nodes.sh",
+  "verification": "37targeted cases passed after integrating latestec96cf9; includes45historical coordinator/runner combinations and six real original Runtime/Pool acceptance checks. No GPU training was run."
+}
