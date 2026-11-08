@@ -13492,6 +13492,36 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "612312f955ddd7cefe220e90a85696139108c8a5",
+      "at": "2026-11-08T17:32:09+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Bug board: V8 status screen fixes V8-094..098",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/612312f955ddd7cefe220e90a85696139108c8a5",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "d9ad4421873afe77f487bf13bd1e36b8bdc33d32",
+      "at": "2026-11-08T17:35:45+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Release saved-backend dense tensors and show loaded checkpoint progress",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/d9ad4421873afe77f487bf13bd1e36b8bdc33d32",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "dce70b30de4d75e0df0b41ac340731f6fec3d67a",
+      "at": "2026-11-08T17:37:48+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve actual dense-reference and checkpoint-status reproductions with source archive",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/dce70b30de4d75e0df0b41ac340731f6fec3d67a",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

@@ -1,13 +1,13 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-08T17:32:02+09:00",
+  "recorded_at": "2026-11-08T17:38:33+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "9ddc003b613459a8c0df462513743dd2400212d7",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/9ddc003b613459a8c0df462513743dd2400212d7",
-    "all_available_commits": 1278,
-    "fix_commit_records": 135,
+    "source_commit": "dce70b30de4d75e0df0b41ac340731f6fec3d67a",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/dce70b30de4d75e0df0b41ac340731f6fec3d67a",
+    "all_available_commits": 1281,
+    "fix_commit_records": 136,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
     "first_commit_at": "2026-08-07T05:56:48+09:00",
@@ -25,7 +25,7 @@
       "refs/heads/audit/p1-integrity:5dfda89ec3be2cc4d60f8f0371eeaf00790f6644",
       "refs/heads/bugboard:aa2c212cd3393b5fe99098ab4458e2e3c37111cf",
       "refs/heads/bugboard-audit:61a7b68fc2c31bb5b09772852abc860f5ec168e2",
-      "refs/heads/bugboard-status2:9ddc003b613459a8c0df462513743dd2400212d7",
+      "refs/heads/bugboard-status2:612312f955ddd7cefe220e90a85696139108c8a5",
       "refs/heads/bugboard2:b7432d1cbb1f6cdd2cd044f23cd8ffaf25a57560",
       "refs/heads/bugboard3:b101cd9069dcc6ce920f42a1242174b83b9e6010",
       "refs/heads/docs/mbpp-budget-incident-20260919:fa1c6897b2b26ef002dd165c94f58702b1f9e1ed",
@@ -35,7 +35,7 @@
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hang-fix-20261108:f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:9ddc003b613459a8c0df462513743dd2400212d7",
+      "refs/heads/master:dce70b30de4d75e0df0b41ac340731f6fec3d67a",
       "refs/heads/v8-coord-fixes-20261108:377c256e55f80c64b484d82ef812064ed9e7c8a3",
       "refs/heads/v8-modes:6821c9c09292662008eb4f933c74bae7490358ed",
       "refs/heads/v8-nodes:3adf26925b2b1c1bf572cf0e68f75b26bbae3ddc",
@@ -63,7 +63,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:9ddc003b613459a8c0df462513743dd2400212d7"
+      "refs/remotes/origin/master:dce70b30de4d75e0df0b41ac340731f6fec3d67a"
     ]
   },
   "incidents": [
@@ -4011,6 +4011,15 @@
           "status": "remote_verification_pending",
           "text": "추가 보고: torch.distributed.elastic.multiprocessing.errors.ChildFailedError / 고쳐. 선행 traceback·Root Cause·모델/노드 식별은 아직 미수신이다. V8-090에서 원문 오류 보존과 요약 표시를 보강했고 V8-067 정상중단/실패 판정을 추가 검증했으나 실제 OLMo 실패 원인을 해결했다고 닫지 않는다.",
           "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "user / Codex",
+          "type": "reported_and_audited",
+          "status": "remote_verification_pending",
+          "text": "사용자가 OLMo-MATH 정지와 전체 노드 idle을 다시 보고했다. 준비된 독립 작업/실패 격리 및 새로운 worker의 이전 실패 복구는 CPU 시험을 통과했으나 실제 노드 queue/dispatch policy/학습 재개는 아직 미확인이다. 완료나 정상 대기로 닫지 않는다.",
+          "evidence_kind": "user_report_and_cpu_reproduction",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/d9ad4421873afe77f487bf13bd1e36b8bdc33d32"
         }
       ]
     },
@@ -6540,6 +6549,33 @@
           "status": "remote_verification_pending",
           "text": "CUDA cache 동작은 CPU fake hook과 주입 오류로 검증했으며 실제80GB H100 메모리 감소·용량 적합·학습 진도는 미측정이다. 실제 OOM allocation/traceback이 필요하다. source/증거는 exact push 확인.",
           "evidence_kind": "limitation"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "user / Codex",
+          "type": "reported_and_audited",
+          "status": "remote_verification_pending",
+          "text": "사용자가 V9 이후에도 CUDA OOM이 그대로이며 OLMo 정지/전체 idle이라고 보고했다. 옛 scoring frame의 accumulated/gradient/value/sequences가 다음 rollout까지 살아 있어 empty_cache만으로는 해제되지 않는 추가 결함을 실제 archived backend CPU 재현으로 확인했다. V9가 실제 OOM을 해결했다는 주장은 하지 않는다.",
+          "evidence_kind": "user_report_and_cpu_reproduction",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/d9ad4421873afe77f487bf13bd1e36b8bdc33d32"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "remote_verification_pending",
+          "text": "d9ad442: 원본 backend 전체 SHA를 확인한 경우에만 수명 수정과 CPU optimizer snapshot을 in-memory overlay로 적용한다. 실제 원본 scorer projected값/RNG 동일, 기존 Protected class·subclass snapshot 보존,4rank 배분·순서·gather1회와 zero-advantage 검사 통과. V10 새 worker는 이전 버전 실패를 보존하며 한 번 재배정한다.302 CPU회귀와후속34검사/65archive검사 통과. 실제 H100 메모리 절감·step진행은 미측정이다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/d9ad4421873afe77f487bf13bd1e36b8bdc33d32",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "evidence_published",
+          "status": "remote_verification_pending",
+          "text": "재현원문·수정전실패·302CPU회귀·34후속·65archive시험·측정한계를GitHub에보존했다. 실제H100정상화/전체노드활성은아직확인하지못했다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/dce70b30de4d75e0df0b41ac340731f6fec3d67a/research/v8-live-dense-memory-20261108/record.json",
+          "evidence_kind": "code_test"
         }
       ]
     },
@@ -6779,6 +6815,52 @@
           "status": "code_fixed",
           "text": "표에는 running → starting → idle → DEAD 만 상태 순서(같은 상태는 호스트 순)로 보이고 gone·finished 는 윗줄에 개수만('N gone not shown; --all-nodes'). --all-nodes 로 전부 보기, run_v8_nodes.sh 가 --all-nodes·--classic·--simple 전달. 회귀 시험: gone 줄 없음·순서·--all-nodes.",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/9ddc003",
+          "evidence_kind": "code_test"
+        }
+      ]
+    },
+    {
+      "id": "V8-099",
+      "title": "로드한 prefix25를 표시하지 않고 새 update가 없으면0/275로 보이는 V8 현황판",
+      "area": "V8 체크포인트 재개 상태 표시",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "introduction_commit": "21b58c03963e32a327ade081419acb508d0fcf5a",
+      "cause": "collect는 새 attempts/*/updates.jsonl만 읽고 실제 checkpoint load 후 runner가 쓴 manifest attempts.start_update를 무시했다. 새 node table은 done=None을0/total로 렌더링했다.",
+      "impact": "기존 prefix25를 재사용하는 작업이0/275로 보여 처음부터 학습하는 것으로 오인하게 했다. 이 표시는 실제 checkpoint 미사용의 증거가 아니며, 해당 실제 원격 작업의 로드는 별도 확인이 필요하다.",
+      "attribution": "collect 시작값 누락과 node table fallback 코드. 코드 작성 도구는 commit 근거 없이 단정하지 않는다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "로드 확인 start_update 반영 및 미확인 ? 표시",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/d9ad4421873afe77f487bf13bd1e36b8bdc33d32"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "user",
+          "type": "reported",
+          "status": "open",
+          "text": "기존거 안쓰는거네 olmo math 말이야0/275 /25/275부터 시작해야지",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "prefix-before4실패/1통과를 보존했다. 실제 load후기록 start0/25/100과 새update37우선 검사, parent계획만 있을때 ?표시 검사 및 status/메모리34시험 통과. 표시만25로 조작하거나 trainerstep을 변경하지 않았다. 실제H100 해당run의load는 미확인이다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/d9ad4421873afe77f487bf13bd1e36b8bdc33d32"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "evidence_published",
+          "status": "remote_verification_pending",
+          "text": "재현원문·수정전실패·302CPU회귀·34후속·65archive시험·측정한계를GitHub에보존했다. 실제H100정상화/전체노드활성은아직확인하지못했다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/dce70b30de4d75e0df0b41ac340731f6fec3d67a/research/v8-live-dense-memory-20261108/record.json",
           "evidence_kind": "code_test"
         }
       ]
