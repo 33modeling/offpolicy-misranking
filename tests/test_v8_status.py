@@ -188,7 +188,10 @@ def test_default_screen_is_the_run_srgc_status_renderer(tmp_path, monkeypatch):
     write(q / "progress" / "att1" / "rank-0.json", {"stage": "generation", "updated": now - 5})
     write(q / "progress" / "att1" / "rank-1.json", {"stage": "generation", "updated": now - 9})
     text = status.render([base], now=now, host="node01", style="srgc")
-    assert text.startswith("SRGC V8 olmo_math · ") and " · phase train\n" in text
+    assert "SRGC V8 olmo_math · " in text and " · phase train\n" in text
+    olmo = text.split("SRGC V8 qwen_mbpp")[0]
+    assert olmo.index("seed  ") < olmo.index("running now:") < olmo.index("SRGC V8 olmo_math · ") < olmo.index("done 1 · running 1")  # summary at the bottom
+    assert olmo.rstrip().splitlines()[-1].startswith("workers: ")
     assert "done 1 · running 1 · waiting 1 · needs attention 1" in text
     assert "running 37/275" in text
     assert "running now:" in text and "step 38/275 in progress · 37/275 done · generation (5s ago) · gpus 2 busy (last 5-9s) · node node01" in text
@@ -204,3 +207,12 @@ def test_falls_back_to_simple_view_without_original_checkout(tmp_path, monkeypat
     text = status.render([base], now=now, gpus=[("0", 97, 61000)], host="node01", style="srgc")
     assert text.startswith("(original run_srgc.sh status renderer not found")
     assert "V8 olmo_math · " in text
+
+
+
+def test_simple_view_also_puts_summary_at_the_bottom(tmp_path):
+    now = time.time()
+    base = fixture(tmp_path, now)
+    text = status.render([base], now=now, gpus=[("0", 97, 61000)], host="node01", cohorts=("olmo_math",))
+    assert text.index("seed  ") < text.index("V8 olmo_math · ") < text.index("done 1 · running 1")
+    assert text.rstrip().splitlines()[-1].startswith("done 1 · running 1")

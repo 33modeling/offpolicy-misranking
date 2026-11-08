@@ -382,7 +382,7 @@ def render_cohort(base, cohort, now, gpus, host):
         if r.get('host') == host and idle and (r.get('activity_age') or 0) > 1800:
             lines.append(f"WARNING {r['task']}: no log or progress record for {age_text(r['activity_age'])} and this node's GPUs are idle "
                          f"(stack dumps: {Path(base) / cohort / '.multi-node' / 'stacks'})")
-    return '\n'.join(lines) + '\n'
+    return summary_at_bottom('\n'.join(lines))
 
 
 # ---- Same screen as `sh scripts/run_srgc.sh <dataset> status` -------------------------------------
@@ -479,6 +479,29 @@ def srgc_report(base, cohort, now, host):
                 output_root=str(Path(base) / cohort), tasks=tasks, workers=workers, warnings=[], errors=errors), rows
 
 
+def summary_at_bottom(text, extra=()):
+    """Details first, summary last (header, root, this node, gpu, counts, workers) so the summary is
+    what stays visible at the bottom of the terminal."""
+    lines = text.rstrip('\n').split('\n')
+    try:
+        first_blank = lines.index('')
+    except ValueError:
+        return '\n'.join([*lines, *extra]) + '\n'
+    head = lines[:first_blank]                       # header, root, this node, gpu memory
+    rest = lines[first_blank + 1:]
+    counts = []
+    while rest and rest[0] and not rest[0].startswith('seed'):
+        counts.append(rest[0])                       # 'done 1 · running 1 · ...' / 'no tasks' (+ ERROR lines)
+        rest = rest[1:]
+    while rest and rest[0] == '':
+        rest = rest[1:]
+    details = [line for line in rest]
+    while details and details[-1] == '':
+        details.pop()
+    body = [*details, ''] if details else []
+    return '\n'.join([*body, *head, *counts, *extra]) + '\n'
+
+
 def render_srgc(live, base, cohort, now, host):
     if not (Path(base) / cohort / '.multi-node').exists():
         return f"SRGC V8 {cohort} · {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(now))}\n{Path(base) / cohort}\nno queue yet (not started)\n"
@@ -486,7 +509,7 @@ def render_srgc(live, base, cohort, now, host):
     head, _, rest = live.render(report).partition('\n')
     text = f"{head} · phase {report['phase']}\n{rest}"
     demand = node_lines(worker_records(Path(base) / cohort / '.multi-node', now), rows)[-1:]
-    return text + '\n'.join(demand) + '\n'
+    return summary_at_bottom(text, demand)
 
 
 def render(bases, now=None, gpus=None, host=None, cohorts=COHORTS, style='simple'):
