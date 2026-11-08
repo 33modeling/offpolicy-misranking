@@ -1,6 +1,7 @@
 """Read-only Korean status view for V8 queues (scripts/v8_status.py)."""
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -32,6 +33,8 @@ def fixture(tmp_path, now):
     write(q / "jobs" / "c.json", {"state": "failed", "task": {"kind": "evaluate", "stage": "eval-final", "training_seed": 6},
                                    "attempts": [{"id": "att2", "error": "CUDA out of memory"}]})
     write(q / "jobs" / "d.json", {"state": "pending", "task": {"kind": "train"}, "attempts": []})
+    key = hashlib.sha256(json.dumps("node01.gpu0123").encode()).hexdigest()  # srgc_v8_nodes worker heartbeat
+    write(q / "workers" / (key + ".json"), {"worker": "node01.gpu0123", "at": now - 5})
     log = q / "logs" / "att1.log"
     log.parent.mkdir(parents=True, exist_ok=True)
     log.write_text("Loading weights: 100%\nPROGRESS 12:00:00 stage=generation records=40\n")
@@ -75,3 +78,14 @@ def test_missing_nvidia_smi_is_reported(tmp_path):
 
 def test_age_text():
     assert status.age_text(5) == "5s" and status.age_text(600) == "10 min" and status.age_text(None) == "?"
+
+
+def test_running_job_whose_worker_stopped_is_not_shown_as_running(tmp_path):
+    """Regression: after Ctrl-C/kill the job file still says running; the view must not report live work."""
+    now = time.time()
+    base = fixture(tmp_path, now)
+    key = hashlib.sha256(json.dumps("node01.gpu0123").encode()).hexdigest()
+    write(base / "olmo_math" / ".multi-node" / "workers" / (key + ".json"), {"worker": "node01.gpu0123", "at": now - 900})
+    text = status.render([base], now=now, gpus=[], host="node01")
+    assert "running now:" not in text
+    assert "worker node01.gpu0123 not seen for" in text and "next worker resumes it" in text

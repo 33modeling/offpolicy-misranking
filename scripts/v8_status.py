@@ -9,6 +9,8 @@ No locks, signals, Torch imports or queue writes.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -21,7 +23,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from v8_probe import active_roots, last_row, read, root, tail  # noqa: E402
 
 COHORTS = ('olmo_math', 'qwen_mbpp')
-ATTENTION = {'failed', 'interrupted'}
+ATTENTION = {'failed', 'interrupted', 'stopped'}
+STALE_SECONDS = 180  # workers heartbeat every 10 s while a child runs (srgc_v8_nodes.Runtime.process)
+
+
+def worker_seen(queue, worker, now):
+    """Seconds since the worker's heartbeat file (workers/<sha256(canonical id)>.json) was written, or None."""
+    key = hashlib.sha256(json.dumps(worker, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    beat = read(Path(queue) / 'workers' / (key + '.json'))
+    return now - beat['at'] if beat and isinstance(beat.get('at'), (int, float)) else None
 
 
 def age_text(seconds):
@@ -79,6 +89,13 @@ def collect(base, cohort, now):
             result = read(directory / 'runs' / rid / 'evaluation.json') or read(directory / 'runs' / rid / 'eval.json')
             if result and isinstance(result.get('reward_fraction'), (int, float)):
                 row['reward_percent'] = 100 * result['reward_fraction']
+        if row['status'] == 'running' and attempt.get('worker'):
+            seen = worker_seen(queue, attempt['worker'], now)
+            if seen is None or seen > STALE_SECONDS:
+                # The job file still says running, but its worker stopped (Ctrl-C, killed, node lost).
+                row['status'] = 'stopped'
+                row['error'] = (f"worker {attempt['worker']} not seen for {age_text(seen)}" if seen is not None
+                                else f"worker {attempt['worker']} has no heartbeat") + '; the next worker resumes it'
         if attempt.get('id'):
             log = queue / 'logs' / (str(attempt['id']) + '.log')
             row['log'] = str(log)
@@ -88,7 +105,7 @@ def collect(base, cohort, now):
                 row['log_age'] = None
             lines = [x for x in tail(log, 32768) if x.strip()]
             row['last_line'] = lines[-1].strip()[:160] if lines else None
-            row['error'] = last_error_line(lines) or (str(attempt.get('error'))[:200] if attempt.get('error') else None)
+            row['error'] = row.get('error') or last_error_line(lines) or (str(attempt.get('error'))[:200] if attempt.get('error') else None)
         rows.append(row)
     return state, rows
 
