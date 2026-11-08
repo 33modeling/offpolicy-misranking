@@ -187,5 +187,19 @@
       "public_publication_pending": true
     },
     "incoming_changes": "Integrated21b071d/bebbd08status layout/heartbeat changes and a085f26missing-state recovery; preserved their history and corrected the stale-heartbeat inference with a retained failing test."
+  },
+  "closing_receipt": {
+    "source_incidents_after_peer_merge": 83,
+    "additional_peer_incidents": [
+      "V8-031 missing-state recovery",
+      "V8-032 externally assembled bundle omitted newly imported helper; git-pull delivery includes the tracked helper"
+    ],
+    "latest_status_control_suite": "57 passed after preserving new node view and readiness display",
+    "previous_integration_suite": "173 passed; four saved-engine tests add explicit frozen-snapshot continuation controls for OLMo/Qwen",
+    "upstream": "104 passed /1optional dependency skip /12subtests passed",
+    "retention": "6 passed; canonical append-only exporter check passed",
+    "public_board": "Safe publisher refused before upload because the current production backend is not in its verified bundle ledger. Read-only HTTP200 probes observed51public incidents vs83canonical source records. Public publication is pending; no deployment success claimed.",
+    "unchanged_science": "All30baseline trainerfile hashes unchanged. No real H100/model training or measured model reward was produced by this audit.",
+    "application": "git pull only; no extraction required. New supervisor/control behavior applies on a subsequent worker launch; no unsolicited stop/restart performed."
   }
 }

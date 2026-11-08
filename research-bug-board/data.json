@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-08T12:54:43+09:00",
+  "recorded_at": "2026-11-08T12:55:52+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "aa2c212cd3393b5fe99098ab4458e2e3c37111cf",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/aa2c212cd3393b5fe99098ab4458e2e3c37111cf",
-    "all_available_commits": 1208,
+    "source_commit": "0a3417c941c96ce2e87976b2c8ff33477bd36952",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/0a3417c941c96ce2e87976b2c8ff33477bd36952",
+    "all_available_commits": 1209,
     "fix_commit_records": 120,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
@@ -27,12 +27,13 @@
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hang-fix-20261108:f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:221b624650e1293d8004d5d150d47c2ffb227c88",
+      "refs/heads/master:0a3417c941c96ce2e87976b2c8ff33477bd36952",
       "refs/heads/v8-nodes:3adf26925b2b1c1bf572cf0e68f75b26bbae3ddc",
       "refs/heads/v8-statefix:a085f266bf68849d1e24b0b96048680e77ef6563",
       "refs/heads/v8-status:a3675bbd4b6f678b3ef8fbacde56aaf072d0aafa",
       "refs/heads/v8-status2:21b071d2f2478b1f72a2c237368395cc2ebd179a",
       "refs/heads/v8-status3:bebbd08eef8377eb1fe9723c087031c0e5612ed8",
+      "refs/heads/v8-statusword:aa2c212cd3393b5fe99098ab4458e2e3c37111cf",
       "refs/remotes/origin/audit/codecheck-20260820:5dd447990296042e334679c85e7672477cd7c5d3",
       "refs/remotes/origin/audit/p1-integrity:5dfda89ec3be2cc4d60f8f0371eeaf00790f6644",
       "refs/remotes/origin/docs/mbpp-budget-incident-20260919:fa1c6897b2b26ef002dd165c94f58702b1f9e1ed",
@@ -3085,6 +3086,14 @@
           "text": "Loading weights 뒤 무출력의 가장 유력한 원인은 첫 update(선택 갱신 + SR-GC 확인)가 출력 없이 OLMo 15–30분·Qwen 2–3시간 걸리는 구간이었다. f6b1b53: child PROGRESS/PHASE/준비 줄, worker 60초 상태 줄(경과·마지막 출력 후 시간·GPU 사용률·마지막 줄), 원 SRGC child 환경과 once-per-worker NCCL admission, child 출력 로그 파일 직결(stdin 닫음), rank별 stack dump. 3adf269·21b071d: sh scripts/v8_status.sh (run_srgc.sh status 와 같은 모양, nodes·worker 수요 줄). 실제 H100 재현·해결 확인은 아직 없어 open 유지.",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/f6b1b53",
           "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "measurement_scope_clarification",
+          "status": "open",
+          "text": "이전 이벤트의 첫 update 소요시간15~30분/2~3시간은 이번 사용자 H100에서 측정한 값이 아니다. 콘솔 무출력·heartbeat 지연만으로 정상 학습이나 중단을 확정하지 않는다. 제어 경로 결함8개를 CPU에서 재현·수정했으나 실제 Loading weights 정지 원인과 해결 여부는 여전히 미확인이다.",
+          "evidence_kind": "measurement_limit"
         }
       ]
     },

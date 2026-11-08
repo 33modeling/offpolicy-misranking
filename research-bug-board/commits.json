@@ -12792,6 +12792,16 @@
       "attribution": [],
       "is_fix": true,
       "gemma": false
+    },
+    {
+      "hash": "0a3417c941c96ce2e87976b2c8ff33477bd36952",
+      "at": "2026-11-08T12:54:43+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve current status node view alongside audited V8 controls",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/0a3417c941c96ce2e87976b2c8ff33477bd36952",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

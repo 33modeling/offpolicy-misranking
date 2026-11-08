@@ -3039,6 +3039,14 @@
         "text": "Loading weights 뒤 무출력의 가장 유력한 원인은 첫 update(선택 갱신 + SR-GC 확인)가 출력 없이 OLMo 15–30분·Qwen 2–3시간 걸리는 구간이었다. f6b1b53: child PROGRESS/PHASE/준비 줄, worker 60초 상태 줄(경과·마지막 출력 후 시간·GPU 사용률·마지막 줄), 원 SRGC child 환경과 once-per-worker NCCL admission, child 출력 로그 파일 직결(stdin 닫음), rank별 stack dump. 3adf269·21b071d: sh scripts/v8_status.sh (run_srgc.sh status 와 같은 모양, nodes·worker 수요 줄). 실제 H100 재현·해결 확인은 아직 없어 open 유지.",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/f6b1b53",
         "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "measurement_scope_clarification",
+        "status": "open",
+        "text": "이전 이벤트의 첫 update 소요시간15~30분/2~3시간은 이번 사용자 H100에서 측정한 값이 아니다. 콘솔 무출력·heartbeat 지연만으로 정상 학습이나 중단을 확정하지 않는다. 제어 경로 결함8개를 CPU에서 재현·수정했으나 실제 Loading weights 정지 원인과 해결 여부는 여전히 미확인이다.",
+        "evidence_kind": "measurement_limit"
       }
     ]
   },
