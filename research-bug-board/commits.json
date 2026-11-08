@@ -13272,6 +13272,46 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "40e2ffe3e1748e7ef8e6065ea23d5392b186cfde",
+      "at": "2026-11-08T15:49:29+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Record mandatory-retry regression and preserve original coordination audit commits",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/40e2ffe3e1748e7ef8e6065ea23d5392b186cfde",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "d8aa1ed1b99e16dbfb099d49a8f29c4b4add82ac",
+      "at": "2026-11-08T15:53:47+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status rebuilt on the original run_srgc.sh status screen",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/d8aa1ed1b99e16dbfb099d49a8f29c4b4add82ac",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "23b549a9a34d56cc2fb3e35e90845ceac239e076",
+      "at": "2026-11-08T15:25:18+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Fix v8 coordination audit findings COORD-01..10 (node-local faults, bounded control, clean stop)",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/23b549a9a34d56cc2fb3e35e90845ceac239e076",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "377c256e55f80c64b484d82ef812064ed9e7c8a3",
+      "at": "2026-11-08T16:00:36+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Archive the coordinator replaced by the coordination fixes for exact-source resume",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/377c256e55f80c64b484d82ef812064ed9e7c8a3",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

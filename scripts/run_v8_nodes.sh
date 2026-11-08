@@ -22,20 +22,26 @@ fi
 # Same words as scripts/run_srgc.sh: [olmo_math|qwen_mbpp|all|math|mbpp] [run|status|stop].
 # Words used to be taken as a cohort name ("status" -> configs/cohorts/status.json not found).
 usage() {
-    echo "usage: sh scripts/run_v8_nodes.sh [olmo_math|qwen_mbpp|all] [run|status|stop] [--watch] [--new-queue] [--status]" >&2
+    echo "usage: sh scripts/run_v8_nodes.sh [olmo_math|qwen_mbpp|all] [run|status|stop] [--watch [SECONDS]] [--new-queue] [--status] [--retry-failed]" >&2
     echo "  sh scripts/run_v8_nodes.sh              worker for this node, both cohorts (same command on every node)" >&2
     echo "  sh scripts/run_v8_nodes.sh status       status table like run_srgc.sh status (--watch to refresh)" >&2
     echo "  sh scripts/run_v8_nodes.sh stop         stop this node's V8 worker (checkpoints and queue kept)" >&2
     echo "  math = olmo_math, mbpp = qwen_mbpp" >&2
 }
-COHORT=; MODE=; WATCH=; VALUE_NEXT=
+COHORT=; MODE=; WATCH=; VALUE_NEXT=; WATCH_NEXT=
 n=$#
 for arg in "$@"; do
     if [ -n "$VALUE_NEXT" ]; then VALUE_NEXT=; set -- "$@" "$arg"; continue; fi
+    if [ -n "$WATCH_NEXT" ]; then
+        WATCH_NEXT=
+        # `--watch 30` (seconds) as in scripts/v8_status.sh; any other word is parsed normally below.
+        case "$arg" in ''|*[!0-9.]*|.|*.*.*) ;; *) WATCH="--watch $arg"; continue ;; esac
+    fi
     case "$arg" in
         -h|--help) usage; exit 0 ;;
-        --gpus|--root|--python|--poll-seconds|--runner-root) VALUE_NEXT=1; set -- "$@" "$arg" ;;
-        --watch) WATCH=--watch ;;
+        --gpus|--root|--python|--poll-seconds|--runner-root|--max-attempts|--retry-delay) VALUE_NEXT=1; set -- "$@" "$arg" ;;
+        --watch) WATCH=--watch; WATCH_NEXT=1 ;;
+        --watch=*) WATCH="--watch ${arg#--watch=}" ;;
         -*) set -- "$@" "$arg" ;;
         olmo_math|math) [ -z "$COHORT" ] && COHORT=olmo_math || { usage; exit 2; } ;;
         qwen_mbpp|mbpp) [ -z "$COHORT" ] && COHORT=qwen_mbpp || { usage; exit 2; } ;;
@@ -52,7 +58,11 @@ case "${MODE:-run}" in
     status)
         if [ -n "$COHORT" ] && [ "$COHORT" != all ]; then exec "$PY" "$HERE/v8_status.py" --cohort "$COHORT" $WATCH; fi
         exec "$PY" "$HERE/v8_status.py" $WATCH ;;
-    stop) exec sh "$HERE/v8_stop.sh" ;;
+    stop)
+        if [ -n "$COHORT" ] || [ "$#" -gt 0 ]; then
+            echo "V8 stop: stops every V8 process of this node (all cohorts, checkpoints and queue kept); the words/options '${COHORT:+$COHORT }$*' are not used by stop." >&2
+        fi
+        exec sh "$HERE/v8_stop.sh" ;;
 esac
 # run: options (in their original order, values and spaces intact), then the cohort (none = both).
 if [ -n "$COHORT" ] && [ "$COHORT" != all ]; then set -- "$@" "$COHORT"; fi

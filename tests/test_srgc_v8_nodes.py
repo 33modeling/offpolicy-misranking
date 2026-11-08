@@ -126,7 +126,13 @@ def test_failed_task_or_success_without_output_never_becomes_complete(tmp_path,m
     queue,runtime,rc=launch_workers(tmp_path,**{mode:'branch0'})
     assert all(value!=0 for value in rc)
     state=nodes.read(queue/'state.json')
-    assert state['failure'] and state['phase']=='train'
+    # A task failure is a task record (original SRGC worker rules); only when it blocks all remaining work is
+    # the queue stopped, and the phase never advances past it.
+    assert 'task(s) failed' in state['failure']['detail'] and state['phase']=='train'
+    failed=[nodes.read(p) for p in queue.glob('jobs/*.json') if nodes.read(p)['state']=='failed']
+    assert [job['task']['run_id'] for job in failed]==['branch0']
+    assert failed[0]['attempts'][-1]['outcome']=='failed' and len(failed[0]['attempts'])==1
+    assert all(nodes.read(p)['state']=='done' for p in queue.glob('jobs/*.json') if nodes.read(p)['task']['run_id']!='branch0')
     assert not (runtime/'freeze').exists()
     assert not list(runtime.glob('start-eval*'))
 
@@ -134,11 +140,30 @@ def test_failed_task_or_success_without_output_never_becomes_complete(tmp_path,m
 def test_failed_task_retry_preserves_failure_and_attempt_history(tmp_path):
     queue,runtime,rc=launch_workers(tmp_path,fail='branch0')
     pool=nodes.Pool(queue,FakeRuntime(runtime).binding)
-    assert nodes.worker_loop(pool,FakeRuntime(runtime),'retry',threading.Event(),poll=.002,retry=True)==0
+    # Without --retry-failed the failed task blocks the phase: the worker stops instead of rerunning it.
+    assert nodes.worker_loop(pool,FakeRuntime(runtime),'plain',threading.Event(),poll=.002,retry_delay=0)==1
+    # --retry-failed waits --retry-delay after the failure (original SRGC rule), then retries it once.
+    assert nodes.worker_loop(pool,FakeRuntime(runtime),'retry',threading.Event(),poll=.002,retry=True,retry_delay=0)==0
     state=nodes.read(queue/'state.json')
-    assert state['phase']=='complete' and len(state['failure_history'])==1
+    assert state['phase']=='complete' and state['failure'] is None
     failed=next(nodes.read(p) for p in queue.glob('jobs/*.json') if nodes.read(p)['task']['run_id']=='branch0')
     assert [a['exit_code'] for a in failed['attempts']]==[9,0]
+    assert [a['outcome'] for a in failed['attempts']]==['failed','done']
+
+
+def test_failed_task_is_retried_only_within_max_attempts_and_after_delay(tmp_path):
+    class AlwaysFails(FakeRuntime):
+        def execute(self,t,*args):
+            nodes.atomic(self.file('start-'+t['run_id']+'-'+args[-1]['id']),dict(at=time.time()))
+            return 9 if t['run_id']=='branch0' else super().execute(t,*args)
+    queue=tmp_path/'queue';runtime=AlwaysFails(tmp_path/'runtime');pool=nodes.Pool(queue,runtime.binding)
+    assert nodes.worker_loop(pool,runtime,'n',threading.Event(),poll=.002,retry=True,retry_delay=0,max_attempts=2)==1
+    job=next(nodes.read(p) for p in queue.glob('jobs/*.json') if nodes.read(p)['task']['run_id']=='branch0')
+    assert [a['outcome'] for a in job['attempts']]==['failed','failed']
+    assert 'retried at most 2 times' in nodes.read(queue/'state.json')['failure']['detail']
+    # A long --retry-delay keeps a retryable failure waiting instead of relaunching it immediately.
+    later=nodes.Pool(queue,runtime.binding,retry_failed=True,max_attempts=3,retry_delay=3600)
+    assert later.retry_later(job) and not later.retryable(job)
 
 
 def test_conflicting_node_versions_refused_once_training_started(tmp_path):
@@ -394,7 +419,8 @@ def test_cli_rejects_overlapping_gpu_group_without_starting_a_model(tmp_path,coh
     held=nodes.Lock(path);assert held.acquire()
     nosmi=tmp_path/'bin'/'nvidia-smi';nosmi.parent.mkdir();nosmi.write_text('#!/bin/sh\nexit 9\n');nosmi.chmod(0o755)
     env=dict(os.environ,V8_ALLOW_ANY_ROOT='1',V8_CODE_ROOT=str(Path(nodes.__file__).resolve().parents[1]),
-             CUDA_VISIBLE_DEVICES='',V8_GPU_LOCK_ROOT=str(tmp_path/'gpu-node-locks'),PATH=f'{nosmi.parent}:/usr/bin:/bin')
+             CUDA_VISIBLE_DEVICES='',V8_GPU_LOCK_ROOT=str(tmp_path/'gpu-node-locks'),PATH=f'{nosmi.parent}:/usr/bin:/bin',
+             V8_CPU_FIXTURE_NO_GPU='1')
     try:
         result=subprocess.run([sys.executable,nodes.__file__,cohort,'--runner-root',runner,
                                '--root',str(tmp_path/'input'),'--python',sys.executable,'--gpus',','.join(ids)],
@@ -483,7 +509,8 @@ def test_blocked_cohort_does_not_leave_worker_idle_while_other_has_work(tmp_path
 def test_failed_cohort_retains_failure_while_healthy_cohort_finishes(tmp_path):
     run_mixed_fake(tmp_path,'n',threading.Event(),failed=True)
     assert nodes.read(tmp_path/'n-exit.json')['exit_code']==1
-    assert nodes.read(tmp_path/'a/queue/state.json')['failure']
+    jobs=[nodes.read(p) for p in (tmp_path/'a/queue').glob('jobs/*.json')]
+    assert [j['task']['run_id'] for j in jobs if j['state']=='failed']==['branch0']
     assert nodes.read(tmp_path/'a/queue/state.json')['phase']!='complete'
     assert nodes.read(tmp_path/'b/queue/state.json')['phase']=='complete'
 
@@ -793,7 +820,7 @@ def test_plain_start_with_another_bundle_still_refuses_with_plain_instructions(t
     root=started_queue(tmp_path)
     with pytest.raises(nodes.BindingMismatch) as error:
         nodes.Pool(root,{'cohort':'olmo_math','code':'v1.0.4'}).initialize()
-    assert 'run `sh scripts/run_v8_nodes.sh --new-queue` once on one node' in str(error.value)
+    assert 'run `sh scripts/run_v8_nodes.sh olmo_math --new-queue` once on one node' in str(error.value)
     assert nodes.read(root/'binding.json')['code']=='v1.0.3'
 
 

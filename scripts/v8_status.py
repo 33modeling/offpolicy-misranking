@@ -125,7 +125,7 @@ def collect(base, cohort, now):
                    arm=str(task.get('method_id') or task.get('stage') or task.get('kind') or '-'),
                    seed=task.get('training_seed', '-'), status=job.get('state', 'pending'),
                    total=task.get('horizon') or task.get('endpoint') or task.get('total_updates'),
-                   attempt=len(attempts), host=str(attempt.get('worker') or '').rsplit('.', 1)[0] or None, worker=attempt.get('worker'), done=None)
+                   attempt=len(attempts), run_id=task.get('run_id'), kind=task.get('kind'), phase=job.get('phase'), host=str(attempt.get('worker') or '').rsplit('.', 1)[0] or None, worker=attempt.get('worker'), done=None)
         rid = task.get('run_id')
         if rid:
             manifest = read(directory / 'runs' / rid / 'manifest.json')
@@ -159,6 +159,7 @@ def collect(base, cohort, now):
         if row['status'] in ('running', 'unconfirmed') and attempt.get('id'):
             events = progress_events(base, queue, attempt.get('id'), row.get('host'), now)
             row['progress'], progress_age = progress_text(events)
+            row['_events'] = events
             ages = [a for a in (row.get('log_age'), progress_age) if a is not None]
             row['activity_age'] = min(ages) if ages else None
         else:
@@ -269,6 +270,25 @@ def cell(row):
     return status.replace('_', ' ')
 
 
+def column(row):
+    """Grid column: a budget extension keeps its branch's method_id and every evaluation has no method_id,
+    so they get their own columns instead of overwriting the training cell."""
+    if row.get('phase') == 'evaluation' or row['arm'] == 'evaluate':
+        return 'eval'
+    return row['arm'] + ' ext' if row.get('phase') == 'extension' else row['arm']
+
+
+def grid_cell(rows):
+    """One task: its state. Several tasks in one cell: counts per state, problems first."""
+    if len(rows) == 1:
+        return cell(rows[0])
+    counts = {}
+    for row in rows:
+        counts[cell(row).split(' ')[0]] = counts.get(cell(row).split(' ')[0], 0) + 1
+    order = sorted(counts, key=lambda name: (name in ('done', 'running', 'ready', 'waiting'), name))
+    return ','.join(f'{counts[name]} {name}' for name in order)
+
+
 def running_detail(row):
     parts = []
     if row['done'] is not None:
@@ -341,9 +361,14 @@ def render_cohort(base, cohort, now, gpus, host):
     if rows:
         arms, seeds = [], []
         for row in rows:
-            arms += [row['arm']] if row['arm'] not in arms else []
+            row['column'] = column(row)
+            arms += [row['column']] if row['column'] not in arms else []
             seeds += [row['seed']] if row['seed'] not in seeds else []
-        table = {(r['seed'], r['arm']): cell(r) for r in rows}
+        arms.sort(key=lambda name: (name == 'eval', name.endswith(' ext')))  # training, extensions, evaluations
+        groups = {}
+        for row in rows:
+            groups.setdefault((row['seed'], row['column']), []).append(row)
+        table = {key: grid_cell(group) for key, group in groups.items()}
         widths = {arm: max(len(arm), *(len(table.get((seed, arm), '-')) for seed in seeds)) for arm in arms}
         lines.append('seed  ' + '  '.join(f'{arm:<{widths[arm]}}' for arm in arms))
         for seed in seeds:
@@ -360,29 +385,169 @@ def render_cohort(base, cohort, now, gpus, host):
         if r.get('host') == host and idle and (r.get('activity_age') or 0) > 1800:
             lines.append(f"WARNING {r['task']}: no log or progress record for {age_text(r['activity_age'])} and this node's GPUs are idle "
                          f"(stack dumps: {Path(base) / cohort / '.multi-node' / 'stacks'})")
-    return '\n'.join(lines) + '\n'
+    return summary_at_bottom('\n'.join(lines))
 
 
-def render(bases, now=None, gpus=None, host=None, cohorts=COHORTS):
+# ---- Same screen as `sh scripts/run_srgc.sh <dataset> status` -------------------------------------
+# The original renderer (scripts/srgc_live_status.py render) is reused unchanged; this file only turns
+# the V8 queue into the report rows that renderer reads. If it cannot be imported (no original
+# checkout next to the bundle), the simplified V8 view below is printed instead.
+
+SRGC_STATUS = {'done': 'complete', 'running': 'running', 'failed': 'failed', 'interrupted': 'interrupted',
+               'unconfirmed': 'recoverable', 'stopped': 'recoverable'}
+
+
+def code_roots():
+    here = Path(__file__).resolve().parent
+    seen = []
+    for candidate in [os.environ.get('V8_CODE_ROOT'), here.parent, *here.parents]:
+        if candidate and (Path(candidate) / 'srgc_rebuttal' / 'plan.py').is_file() and Path(candidate) not in seen:
+            seen.append(Path(candidate))
+    return seen
+
+
+def original_renderer():
+    """srgc_live_status.render with the GPU-time section disabled (V8 costs are in the V8 ledger)."""
+    import importlib
+    import types
+    for root in code_roots():
+        for path in (str(root), str(root / 'scripts'), str(Path(__file__).resolve().parent)):
+            if path not in sys.path:
+                sys.path.append(path)
+        try:
+            if 'scripts' not in sys.modules:
+                package = types.ModuleType('scripts')
+                package.__path__ = [str(root / 'scripts')]
+                sys.modules['scripts'] = package
+            times = types.ModuleType('scripts.srgc_time_status')
+            times.render = lambda report, **_: []
+            sys.modules['scripts.srgc_time_status'] = times
+            live = importlib.import_module('srgc_live_status')
+            return live
+        except Exception:  # noqa: BLE001 - fall back to the simplified view
+            continue
+    return None
+
+
+def srgc_report(base, cohort, now, host):
+    state, rows = collect(base, cohort, now)
+    queue = Path(base) / cohort / '.multi-node'
+    tasks = []
+    trained = {r.get('run_id'): r['arm'] for r in rows if r.get('kind') == 'train' and r.get('phase') != 'extension'}
+    for r in rows:
+        status = SRGC_STATUS.get(r['status']) or ('ready' if r.get('ready') else 'waiting_for_parent')
+        # One column per distinct job kind so evaluations and budget extensions never hide each other.
+        arm = r['arm']
+        if r.get('kind') == 'evaluate':
+            arm = 'eval ' + str(trained.get(r.get('run_id')) or r.get('run_id') or arm)
+        elif r.get('phase') == 'extension':
+            arm = arm + ' ext'
+        task = dict(task=r['task'], arm=arm, seed=r['seed'], status=status, total_steps=r['total'],
+                    completed_steps=r['done'], last_observed_step=r['done'], host=r.get('host'),
+                    log=r.get('log') or '', attempt=r.get('attempt'))
+        if r.get('reward_percent') is not None:
+            task['reward_percent'] = r['reward_percent']
+        if status in ('running', 'recoverable'):
+            if r['done'] is not None and r['total'] and r['done'] < r['total']:
+                task['current_step'] = r['done'] + 1
+            events = r.get('_events') or []
+            if events:
+                rank, stage, details, age = min(events, key=lambda e: e[3])
+                task['phase_stage'] = stage
+                task['progress_age_seconds'] = age
+                task['progress'] = [{'updated': now - e[3], 'stage': e[1]} for e in events]
+        tasks.append(task)
+    # Column order like the original screen: training arms (On first), then extensions, then evaluations.
+    def order(task):
+        arm = str(task['arm'])
+        group = 2 if arm.startswith('eval ') else 1 if arm.endswith(' ext') else 0
+        base_arm = arm[5:] if group == 2 else arm[:-4] if group == 1 else arm
+        return (group, 0 if base_arm.startswith('on') else 1, base_arm, str(task['seed']))
+    tasks.sort(key=order)
+    workers = []
+    for w in worker_records(queue, now):
+        job = next((r for r in rows if r['status'] in ('running', 'unconfirmed') and r.get('worker') == w['worker']), None)
+        status = 'heartbeat_stale' if w['status'] == 'stale' else 'running' if job or w['status'] == 'running' else 'idle'
+        workers.append(dict(host=w['host'], status=status, heartbeat_age_seconds=w['age'],
+                            task=job['task'] if job else (None if str(w.get('task') or '').startswith('child:') else w.get('task'))))
+    errors = []
+    problems = access_problems(queue)
+    if state.get('_unreadable_jobs'):
+        problems.append(f"{len(state['_unreadable_jobs'])} job record(s) unreadable or corrupt: " + ', '.join(state['_unreadable_jobs'][:5]))
+    if problems:
+        errors.append('some queue records could not be read (counts incomplete): ' + '; '.join(problems[:4]))
+    if state.get('failure'):
+        errors.append('queue: ' + str(state['failure'])[:300])
+    return dict(dataset=f"V8 {cohort}", phase=state.get('phase', 'not started'), generated=now,
+                output_root=str(Path(base) / cohort), tasks=tasks, workers=workers, warnings=[], errors=errors), rows
+
+
+def summary_at_bottom(text, extra=()):
+    """Details first, summary last (header, root, this node, gpu, counts, workers) so the summary is
+    what stays visible at the bottom of the terminal."""
+    lines = text.rstrip('\n').split('\n')
+    try:
+        first_blank = lines.index('')
+    except ValueError:
+        return '\n'.join([*lines, *extra]) + '\n'
+    head = lines[:first_blank]                       # header, root, this node, gpu memory
+    rest = lines[first_blank + 1:]
+    counts = []
+    while rest and rest[0] and not rest[0].startswith('seed'):
+        counts.append(rest[0])                       # 'done 1 · running 1 · ...' / 'no tasks' (+ ERROR lines)
+        rest = rest[1:]
+    while rest and rest[0] == '':
+        rest = rest[1:]
+    details = [line for line in rest if not line.startswith('workers: ')]
+    extra = [*[line for line in rest if line.startswith('workers: ')], *extra]
+    while details and details[-1] == '':
+        details.pop()
+    body = [*details, ''] if details else []
+    return '\n'.join([*body, *head, *counts, *extra]) + '\n'
+
+
+def render_srgc(live, base, cohort, now, host):
+    if not (Path(base) / cohort / '.multi-node').exists():
+        return f"SRGC V8 {cohort} · {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(now))}\n{Path(base) / cohort}\nno queue yet (not started)\n"
+    report, rows = srgc_report(base, cohort, now, host)
+    head, _, rest = live.render(report).partition('\n')
+    text = f"{head} · phase {report['phase']}\n{rest}"
+    demand = node_lines(worker_records(Path(base) / cohort / '.multi-node', now), rows)[-1:]
+    return summary_at_bottom(text, demand)
+
+
+def render(bases, now=None, gpus=None, host=None, cohorts=COHORTS, style='simple'):
     now = time.time() if now is None else now
-    gpus = gpu_rows() if gpus is None else gpus
     host = host or socket.gethostname()
-    return '\n'.join(render_cohort(base, cohort, now, gpus, host) for base in bases for cohort in cohorts)
+    live = original_renderer() if style == 'srgc' else None
+    if live is not None:
+        return '\n'.join(render_srgc(live, base, cohort, now, host) for base in bases for cohort in cohorts)
+    gpus = gpu_rows() if gpus is None else gpus
+    note = ('(original run_srgc.sh status renderer not found next to this bundle; simplified V8 view)\n'
+            if style == 'srgc' else '')
+    return note + '\n'.join(render_cohort(base, cohort, now, gpus, host) for base in bases for cohort in cohorts)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--cohort', action='append', choices=COHORTS, help='show only this cohort (repeatable)')
+    def cohort_name(value):
+        # run_v8_nodes.sh accepts every configured cohort (configs/cohorts/<name>.json), not only the default two.
+        if not re.fullmatch(r'[A-Za-z0-9_-]+', value):
+            raise argparse.ArgumentTypeError('cohort must be a simple configured identifier')
+        return value
+    parser.add_argument('--cohort', action='append', type=cohort_name, help='show only this cohort (repeatable)')
+    parser.add_argument('--simple', action='store_true', help='simplified V8 view instead of the run_srgc.sh status screen')
     parser.add_argument('--watch', nargs='?', const=60.0, type=float, default=None, metavar='SECONDS',
                         help='refresh every SECONDS (default 60) until Ctrl-C')
     args = parser.parse_args(argv)
-    bases = active_roots() or [root(os.environ)]
+    # An explicit V8_ROOT wins; otherwise the roots of this node's running V8 processes, else the default.
+    bases = [Path(os.environ['V8_ROOT'])] if os.environ.get('V8_ROOT') else (active_roots() or [root(os.environ)])
     if args.watch is None:
-        sys.stdout.write(render(bases, cohorts=tuple(args.cohort or COHORTS)))
+        sys.stdout.write(render(bases, cohorts=tuple(args.cohort or COHORTS), style='simple' if args.simple else 'srgc'))
         return 0
     try:
         while True:
-            sys.stdout.write('\033[H\033[2J' + render(bases, cohorts=tuple(args.cohort or COHORTS)) + f"\n(refresh every {int(args.watch)}s · Ctrl-C to stop)\n")
+            sys.stdout.write('\033[H\033[2J' + render(bases, cohorts=tuple(args.cohort or COHORTS), style='simple' if args.simple else 'srgc') + f"\n(refresh every {int(args.watch)}s · Ctrl-C to stop)\n")
             sys.stdout.flush()
             time.sleep(max(5.0, args.watch))
     except KeyboardInterrupt:
