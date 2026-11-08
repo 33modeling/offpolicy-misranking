@@ -7557,5 +7557,79 @@
         "evidence_kind": "code_test_and_limitation"
       }
     ]
+  },
+  {
+    "id": "V8-113",
+    "title": "V8 status 가 전체 몇 칸을 채워야 하는지 보여 주지 않고, 진행 중 분모가 계속 늘어남",
+    "area": "V8 실행·재개·상태 감사",
+    "severity": "medium",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "",
+    "cause": "요약의 작업 수·진행 %·updates 가 이미 만들어진 작업 기록만 셌다. 예산 연장·평가 작업은 그 단계가 계획될 때, 학습 분기 작업은 부모 체크포인트가 저장될 때 생기므로 실행 중에는 분모가 계속 늘었다(예: 4/30 → 나중에 160 이상).",
+    "impact": "사용자 요청 'status에 전부 몇칸을 채워야 하는지 표기해'. 진행률이 실제보다 높게 보이고 숫자가 맞지 않는 것처럼 보였다.",
+    "attribution": "Claude 의 상태 화면 결함. 같은 날 수정. 이미 게시된 커밋 행을 바꾸지 않으려고 introduction_commit 은 비움.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "수정 커밋 f69c672",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/f69c672"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "사용자",
+        "type": "reported",
+        "status": "open",
+        "text": "사용자 요청 'status에 전부 몇칸을 채워야 하는지 표기해'. 진행률이 실제보다 높게 보이고 숫자가 맞지 않는 것처럼 보였다.",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "train·ext·eval 을 끝난 수/계획된 전체 수로 표시. plans/<phase>.json 이 봉인되면 그 단계 작업 수(정확), 그 전에는 설정으로 계산한 범위(seed 마다 On 1 + 격자 지점마다 SR 분기 1 + Uniform 최대 1, On 아닌 run 마다 연장 1, run 마다 최종 평가 최소 1 → v8 OLMo/Qwen 55-60 + 50-55 + ≥55). 'cells to fill' 합계 줄, 진행 %·막대·updates 도 계획 기준. 다른 설정으로 만든 큐는 '?'. 회귀 시험: 봉인 전 범위·봉인 뒤 정확한 수. 이 PC 큐 5,474개를 원본 작업 파일과 대조·세 화면 렌더 오류 0. v1.0.23·v1.0.24 묶음.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/f69c672",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "V8-114",
+    "title": "V8 status 실험별 표가 아직 생기지 않은 분기(SR75~SR250)·seed 줄을 아예 그리지 않음",
+    "area": "V8 실행·재개·상태 감사",
+    "severity": "medium",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "",
+    "cause": "표의 칸을 이미 만들어진 작업에서만 만들었다. 분기 작업은 부모 체크포인트가 저장돼야 생기므로 실행 초반에는 On·SR25·SR50 정도만 보이고 SR75~SR250, 아직 작업 없는 seed 줄, ext·eval 칸이 빠졌다.",
+    "impact": "사용자 보고 'SR25 부터 결국 250 까지 있는거 아니야', '왜 아예 표시를 안하냐고'.",
+    "attribution": "Claude 의 상태 화면 결함. 같은 날 수정. 이미 게시된 커밋 행을 바꾸지 않으려고 introduction_commit 은 비움.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "수정 커밋 e902db8",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/e902db8"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "사용자",
+        "type": "reported",
+        "status": "open",
+        "text": "사용자 보고 'SR25 부터 결국 250 까지 있는거 아니야', '왜 아예 표시를 안하냐고'.",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "train 계획이 봉인되기 전에는 설정의 seed 전부와 On · SR25 … SR250 · U(seed 별 전환 시점 Uniform 한 칸) · ext · eval 을 처음부터 그리고, 작업이 아직 없는 칸은 '·'(아직 안 생김), 표 밑에 U 전환 시점. 봉인 뒤에는 그 큐의 작업이 전체 칸. 회귀 시험: 봉인 전 전체 격자·봉인 뒤 작업 기준. 이 PC 큐 5,474개를 원본 작업 파일과 대조·세 화면 렌더 오류 0. v1.0.23·v1.0.24 묶음.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/e902db8",
+        "evidence_kind": "code_test"
+      }
+    ]
   }
 ]

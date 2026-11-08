@@ -13762,6 +13762,16 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "bbbec270b0a819326c4018201a16c5746358b2ac",
+      "at": "2026-11-08T22:57:44+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Record idle retry defects and retain pending H100 verification",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/bbbec270b0a819326c4018201a16c5746358b2ac",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

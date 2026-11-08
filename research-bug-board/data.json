@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-08T22:57:44+09:00",
+  "recorded_at": "2026-11-08T23:04:14+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "5212fd4518dcfefe01b1ed9f346b1557fdf61ceb",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/5212fd4518dcfefe01b1ed9f346b1557fdf61ceb",
-    "all_available_commits": 1305,
+    "source_commit": "bbbec270b0a819326c4018201a16c5746358b2ac",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/bbbec270b0a819326c4018201a16c5746358b2ac",
+    "all_available_commits": 1306,
     "fix_commit_records": 142,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
@@ -31,6 +31,7 @@
       "refs/heads/bugboard-status5:ef03f0a52aac9d4516866737e07a2c2e4c01d631",
       "refs/heads/bugboard-status6:f69dd649ac9ab483e43883c9a484d277b7f897a6",
       "refs/heads/bugboard-status7:ef0cac0c64c2a4e97324634e523472b107c77bec",
+      "refs/heads/bugboard-status8:bbbec270b0a819326c4018201a16c5746358b2ac",
       "refs/heads/bugboard2:b7432d1cbb1f6cdd2cd044f23cd8ffaf25a57560",
       "refs/heads/bugboard3:b101cd9069dcc6ce920f42a1242174b83b9e6010",
       "refs/heads/docs/mbpp-budget-incident-20260919:fa1c6897b2b26ef002dd165c94f58702b1f9e1ed",
@@ -40,7 +41,7 @@
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hang-fix-20261108:f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:5212fd4518dcfefe01b1ed9f346b1557fdf61ceb",
+      "refs/heads/master:bbbec270b0a819326c4018201a16c5746358b2ac",
       "refs/heads/v8-coord-fixes-20261108:377c256e55f80c64b484d82ef812064ed9e7c8a3",
       "refs/heads/v8-modes:6821c9c09292662008eb4f933c74bae7490358ed",
       "refs/heads/v8-nodes:3adf26925b2b1c1bf572cf0e68f75b26bbae3ddc",
@@ -76,7 +77,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:5212fd4518dcfefe01b1ed9f346b1557fdf61ceb"
+      "refs/remotes/origin/master:bbbec270b0a819326c4018201a16c5746358b2ac"
     ]
   },
   "incidents": [
@@ -7636,6 +7637,80 @@
           "text": "수정 전 재현 실패, 전체335·최종117·병합48·archive65 CPU 검사와 검사 순서·한계를 원격에 보존했다. 실제 H100의 idle 원인 일치·SR25 재개·OOM 해결은 아직 확인하지 못했다.",
           "url": "https://github.com/33modeling/offpolicy-misranking/blob/5212fd4518dcfefe01b1ed9f346b1557fdf61ceb/research/v8-idle-retry-debug-20261108/record.json",
           "evidence_kind": "code_test_and_limitation"
+        }
+      ]
+    },
+    {
+      "id": "V8-113",
+      "title": "V8 status 가 전체 몇 칸을 채워야 하는지 보여 주지 않고, 진행 중 분모가 계속 늘어남",
+      "area": "V8 실행·재개·상태 감사",
+      "severity": "medium",
+      "first_reported": "2026-11-08",
+      "introduction_commit": "",
+      "cause": "요약의 작업 수·진행 %·updates 가 이미 만들어진 작업 기록만 셌다. 예산 연장·평가 작업은 그 단계가 계획될 때, 학습 분기 작업은 부모 체크포인트가 저장될 때 생기므로 실행 중에는 분모가 계속 늘었다(예: 4/30 → 나중에 160 이상).",
+      "impact": "사용자 요청 'status에 전부 몇칸을 채워야 하는지 표기해'. 진행률이 실제보다 높게 보이고 숫자가 맞지 않는 것처럼 보였다.",
+      "attribution": "Claude 의 상태 화면 결함. 같은 날 수정. 이미 게시된 커밋 행을 바꾸지 않으려고 introduction_commit 은 비움.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "수정 커밋 f69c672",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/f69c672"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "사용자",
+          "type": "reported",
+          "status": "open",
+          "text": "사용자 요청 'status에 전부 몇칸을 채워야 하는지 표기해'. 진행률이 실제보다 높게 보이고 숫자가 맞지 않는 것처럼 보였다.",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "train·ext·eval 을 끝난 수/계획된 전체 수로 표시. plans/<phase>.json 이 봉인되면 그 단계 작업 수(정확), 그 전에는 설정으로 계산한 범위(seed 마다 On 1 + 격자 지점마다 SR 분기 1 + Uniform 최대 1, On 아닌 run 마다 연장 1, run 마다 최종 평가 최소 1 → v8 OLMo/Qwen 55-60 + 50-55 + ≥55). 'cells to fill' 합계 줄, 진행 %·막대·updates 도 계획 기준. 다른 설정으로 만든 큐는 '?'. 회귀 시험: 봉인 전 범위·봉인 뒤 정확한 수. 이 PC 큐 5,474개를 원본 작업 파일과 대조·세 화면 렌더 오류 0. v1.0.23·v1.0.24 묶음.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/f69c672",
+          "evidence_kind": "code_test"
+        }
+      ]
+    },
+    {
+      "id": "V8-114",
+      "title": "V8 status 실험별 표가 아직 생기지 않은 분기(SR75~SR250)·seed 줄을 아예 그리지 않음",
+      "area": "V8 실행·재개·상태 감사",
+      "severity": "medium",
+      "first_reported": "2026-11-08",
+      "introduction_commit": "",
+      "cause": "표의 칸을 이미 만들어진 작업에서만 만들었다. 분기 작업은 부모 체크포인트가 저장돼야 생기므로 실행 초반에는 On·SR25·SR50 정도만 보이고 SR75~SR250, 아직 작업 없는 seed 줄, ext·eval 칸이 빠졌다.",
+      "impact": "사용자 보고 'SR25 부터 결국 250 까지 있는거 아니야', '왜 아예 표시를 안하냐고'.",
+      "attribution": "Claude 의 상태 화면 결함. 같은 날 수정. 이미 게시된 커밋 행을 바꾸지 않으려고 introduction_commit 은 비움.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "수정 커밋 e902db8",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/e902db8"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "사용자",
+          "type": "reported",
+          "status": "open",
+          "text": "사용자 보고 'SR25 부터 결국 250 까지 있는거 아니야', '왜 아예 표시를 안하냐고'.",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "train 계획이 봉인되기 전에는 설정의 seed 전부와 On · SR25 … SR250 · U(seed 별 전환 시점 Uniform 한 칸) · ext · eval 을 처음부터 그리고, 작업이 아직 없는 칸은 '·'(아직 안 생김), 표 밑에 U 전환 시점. 봉인 뒤에는 그 큐의 작업이 전체 칸. 회귀 시험: 봉인 전 전체 격자·봉인 뒤 작업 기준. 이 PC 큐 5,474개를 원본 작업 파일과 대조·세 화면 렌더 오류 0. v1.0.23·v1.0.24 묶음.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/e902db8",
+          "evidence_kind": "code_test"
         }
       ]
     }
