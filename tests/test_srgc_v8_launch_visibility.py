@@ -204,18 +204,20 @@ STABLE = dict(schema=1, cohort="olmo_math", root="/r", config_sha256="c", traine
               python_version="3.10", packages={})
 
 
-def test_rebind_allowed_when_no_update_completed(tmp_path, capsys):
+def test_started_queue_preserves_binding_and_control_inode_before_first_update(tmp_path):
     root = _queue(tmp_path, dict(STABLE, coordinator_sha256="old", runner_sha256={"a": "1"}))
     (root / "state.json").write_text('{"phase": "train", "failure": null, "actions": [], "failure_history": []}')
     attempt = tmp_path / "olmo_math" / "runs" / "trajectory-5" / "attempts" / "x"
     attempt.mkdir(parents=True)
     (attempt / "updates.jsonl").write_text("")
-    nodes.Pool(root, dict(STABLE, coordinator_sha256="new", runner_sha256={"a": "2"})).initialize()
-    assert nodes.read(root / "binding.json")["coordinator_sha256"] == "new"
-    kept = list(root.parent.glob(".multi-node.superseded-*"))
-    assert len(kept) == 1 and nodes.read(kept[0] / "binding.json")["coordinator_sha256"] == "old"
-    assert nodes.read(kept[0] / "state.json")["phase"] == "train"
-    assert "kept it as" in capsys.readouterr().out
+    new=nodes.Pool(root, dict(STABLE, coordinator_sha256="new", runner_sha256={"a": "2"}))
+    with new.control():
+        control_inode=(root/'control.lock').stat().st_ino
+        with pytest.raises(ValueError, match="identity differs"):new.initialize()
+        assert (root/'control.lock').stat().st_ino==control_inode
+        assert nodes.read(root/'binding.json')['coordinator_sha256']=='old'
+        assert nodes.read(root/'state.json')['phase']=='train'
+        assert not list(root.parent.glob('.multi-node.superseded-*'))
 
 
 def test_rebind_refused_after_a_completed_update(tmp_path):

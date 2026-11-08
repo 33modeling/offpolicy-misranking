@@ -26,5 +26,20 @@
   "command": "sh scripts/v8_stop.sh",
   "new_start": "sh scripts/run_v8_nodes.sh",
   "verification_scope_correction": "Original18tests and unchanged-coordinator/child assertion describe919a2b2 only. Integrated source881c9a6 also contains Claude launch/admission/verifier changes f6b1b53/f1bb211; their actual H100 effectiveness is not verified here.",
-  "integration_followup": "Supervisor reads the active launch-tagged rank SRGC_PROGRESS_DIR, including new per-attempt overrides; foreign launch records excluded.31targeted CPU tests passed after integration. Frozen30trainerfiles remain baseline-identical."
+  "integration_followup": "Supervisor reads the active launch-tagged rank SRGC_PROGRESS_DIR, including new per-attempt overrides; foreign launch records excluded.31targeted CPU tests passed after integration. Frozen30trainerfiles remain baseline-identical.",
+  "queue_migration_review": {
+    "introduced": "f1bb211",
+    "confirmed": "Replacing .multi-node also replaces the control.lock path inode; no active task lease does not establish absence of idle old workers. Stable trainer/config alone does not establish child behavior identity.",
+    "reproduced": "migration-before.xml: strengthened started-queue invariant fails on f1bb211; original binding moved despite held lock.",
+    "fix": "Refuse runtime rebind after tasks exist; retain original queue/control inode. Failed prepare-only recovery with no jobs/input identity remains supported.",
+    "verified": "20 source-runtime/launch checks pass. Existing records/failures retained.",
+    "scope": "Code regression, not evidence of the actual H100 loading cause."
+  },
+  "additional_checks": {
+    "targeted_stop_probe_bootstrap_launch": "31 passed",
+    "runtime_source_history_first_pass": "79 passed /8 skipped /1 failed: fixed160ms CPU overlap timing was too short under filesystem load; raw failure retained",
+    "queue_after_event_gate": "34 passed /7 optional runtime fixtures skipped",
+    "actual_v8_CPU_integration": "8 passed with V8_NODES_TEST_RUNTIME set; covers both-cohort scheduling, saved prefix branching, final budget endpoints; no GPU jobs"
+  },
+  "pending": "Actual H100 Loading weights stall is still unverified; no user-node logs have been received."
 }

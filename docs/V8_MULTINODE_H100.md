@@ -172,5 +172,8 @@ Ctrl-C는 즉시 정리를 요청한다. 자식 출력 pipe의 EOF를 기다리�
 종료 supervisor 자체는 wrapper·진단·종료 경로만 바꾸며 기존 큐의 identity를 바꾸지 않는다.
 현재 master에는 별도의 child 실행 환경·NCCL 사전 검사·verifier fallback 수정도 포함된다.
 따라서 전체 묶음의 child/coordinator가 이전 묶음과 동일하다고 취급하지 않는다.
-업데이트를 하나라도 기록한 큐는 runtime identity가 다르면 자동 변경을 거부한다.
+이미 작업이 생성된 큐는 첫 업데이트 전이어도 runtime identity가 다르면 자동 변경을 거부한다.
+로그가 비었거나 작업 lease가 없어도 다른 노드의 idle worker가 없다는 증거가 아니므로,
+기존 큐와 control.lock을 옮기거나 바꾸지 않는다. 현재 실행에는 동일한 수치 코드의
+호환 묶음으로 supervisor·종료·진단 경로만 추가할 수 있다.
 모델 로딩에서 실제로 멈췄는지에 대한 원격 원인은 로그/노드 관측 전에는 미확인이다.

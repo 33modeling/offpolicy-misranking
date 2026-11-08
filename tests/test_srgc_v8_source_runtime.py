@@ -54,17 +54,14 @@ def test_failed_setup_can_retry_corrected_source_without_erasing_failure(tmp_pat
     assert state['phase']=='prepare' and state['failure'] is None
     assert len(state['failure_history'])==1
     assert list((tmp_path/'setup-history').glob('*.json'))
-    # Once any task exists the existing queue binding is never rewritten. With newer launcher code and no
-    # completed update the old queue is kept intact (superseded) and a fresh queue starts (11-08 stall fix).
+    # Once any task exists, absence of an update is not permission to replace a live queue.
     nodes.atomic(tmp_path/'jobs/test.json',{'state':'pending'})
     before=nodes.read(tmp_path/'binding.json')
     newer=nodes.Pool(tmp_path,dict(updated,coordinator_sha256='another'))
     with newer.control():
-        newer.initialize()
-    kept=list(tmp_path.parent.glob(tmp_path.name+'.superseded-*'))
-    assert len(kept)==1 and nodes.read(kept[0]/'binding.json')==before
-    assert nodes.read(kept[0]/'jobs/test.json')=={'state':'pending'}
-    assert nodes.read(tmp_path/'binding.json')['coordinator_sha256']=='another'
+        with pytest.raises(ValueError,match='identity differs'):newer.initialize()
+    assert nodes.read(tmp_path/'binding.json')==before
+    assert nodes.read(tmp_path/'jobs/test.json')=={'state':'pending'}
     # A queue that already completed an update stays frozen.
     run=tmp_path.parent/'runs'/'r'/'attempts'/'a';run.mkdir(parents=True);(run/'updates.jsonl').write_text('{}\n')
     nodes.atomic(tmp_path/'jobs/test.json',{'state':'pending'})

@@ -103,15 +103,6 @@ class Pool:
             yield lock if lock.acquire() else None
         finally:lock.close()
 
-    def held_leases(self):
-        """Jobs whose lease another live worker still holds."""
-        held=[]
-        for path in sorted((self.root/'leases').glob('*.lock')):
-            lease=Lock(path)
-            if lease.acquire():lease.close()
-            else:held.append(path.stem)
-        return held
-
     def initialize(self,retry=False):
         path=self.root/'binding.json'
         if path.exists():
@@ -128,17 +119,10 @@ class Pool:
                     state['failure_history'].append(state['failure']);state['failure']=None
                     state['actions'].append(dict(action='retry_failed_setup_with_verified_source',at=time.time()))
                     atomic(path,self.binding);atomic(state_path,state)
-                elif (old.get('trainer_sha256') and old.get('config_sha256')
-                        and all(old.get(k)==self.binding.get(k) for k in stable)
-                        and not completed_training(self.root.parent) and not self.held_leases()):
-                    # Same science (trainer/config/python/packages) but newer launcher code, and no task has
-                    # finished a single update (e.g. the 11-08 'Loading weights: 100%' stall). The old queue is
-                    # never rewritten: it is kept as .multi-node.superseded-<time> and a fresh queue starts.
-                    kept=self.root.with_name(self.root.name+'.superseded-'+time.strftime('%Y%m%dT%H%M%S'))
-                    os.replace(self.root,kept);self.root.mkdir(parents=True)
-                    atomic(path,self.binding)
-                    print(f'[v8] earlier queue had no completed update; kept it as {kept.name} and started a new queue with this code',flush=True)
                 else:
+                    # An idle old worker may still use this queue even with no held job lease or
+                    # completed update. Moving control.lock would also split its locking domain.
+                    # Keep the original binding and inode; supervisor/stop/probe remain usable.
                     raise ValueError('Worker/runner/config/trainer identity differs from this queue; use the same pinned code on all nodes.')
         else:atomic(path,self.binding)
         state_path=self.root/'state.json'
@@ -354,17 +338,6 @@ print(json.dumps({'python_version':sys.version,'packages':packages}))
 def cohort_python(cohort,fallback):
     profile={'olmo_math':'PAIR_PYTHON','qwen_mbpp':'SWITCH_PYTHON'}.get(cohort,'')
     return os.environ.get('V8_PYTHON_'+cohort.upper()) or os.environ.get(profile) or fallback
-
-
-def completed_training(cohort_root):
-    """True once any v8 run has durably recorded a completed update (then the queue code is frozen)."""
-    runs=Path(cohort_root)/'runs'
-    if not runs.is_dir():return False
-    for log in runs.rglob('updates.jsonl'):
-        try:
-            if log.stat().st_size>0:return True
-        except OSError:return True
-    return False
 
 
 def gpu_utilisation(gpus):
