@@ -2,7 +2,8 @@
 # V8 switching experiments on the H100 cluster. One command, resumable and idempotent:
 #   sh v8/experiments/run_h100.sh <cohort> <stage> [--seeds 5,6]
 # Run the same command on every free 4xH100 node; tasks are leased per run (no duplicates),
-# completed tasks are skipped, interrupted ones resume from their last saved update.
+# completed tasks are skipped, interrupted ones resume from their last saved update (latest.pt is
+# written after every update; a stop abandons the update in progress).
 # Logs stream to this terminal unchanged and are also kept under $V8_ROOT/<cohort>/logs/.
 #
 # cohorts: olmo_math (primary) | qwen_mbpp (replication) | olmo_mbpp | qwen_math
@@ -45,8 +46,16 @@ if [ -z "$V8_CODE_ROOT" ]; then
     exit 2
 fi
 case "$COHORT" in *mbpp) EXPLICIT=${SWITCH_PYTHON:-} ;; *) EXPLICIT=${PAIR_PYTHON:-} ;; esac
+# Qwen cohorts: the Qwen seed runs' interpreter wins, as in scripts/run_srgc_qwen35.sh.
+case "$COHORT" in qwen_*) EXPLICIT=${QWEN_PYTHON:-$EXPLICIT} ;; esac
 PY=${V8_PYTHON:-${EXPLICIT:-${VENV_DIR:-$WORK/.venv-cu126}/bin/python}}
-command -v "$PY" >/dev/null 2>&1 || PY=python3
+if ! command -v "$PY" >/dev/null 2>&1; then
+    if [ -n "${V8_PYTHON:-}$EXPLICIT" ]; then
+        echo "[v8] configured Python is not executable: $PY (set V8_PYTHON/QWEN_PYTHON/PAIR_PYTHON/SWITCH_PYTHON to an existing interpreter; no replacement is used)" >&2
+        exit 2
+    fi
+    PY=python3
+fi
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
 export HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
@@ -72,14 +81,23 @@ gpu_stage() {  # $1 matrix stage, $2 role, $3 optional comma-separated methods (
         tasks=$(cpu pending --cohort "$COHORT" --stage "$1" --role "$2") || exit $?
         for task in $tasks; do
             echo "[v8] $(date -Is) $(hostname) stage=$1 task=$task" | tee -a "$LOG"
-            # Foreground: Ctrl-C reaches torchrun, which stops every rank at a safe update boundary (exit 75).
+            # Foreground: Ctrl-C reaches every rank, which abandons the update in progress and exits 75
+            # (resume from latest.pt). torchrun turns any nonzero worker exit into 1, so the child's
+            # busy/interrupted report comes through the exit file, not the exit code.
+            rm -f "$RCFILE.exit"
             ( set +e
-              CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES-0,1,2,3} "$PY" -m torch.distributed.run --standalone \
+              V8_EXIT_FILE="$RCFILE.exit" CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES-0,1,2,3} \
+                  "$PY" -m torch.distributed.run --standalone \
                   --nproc_per_node="${V8_NPROC:-4}" --max_restarts=0 "$HERE/cluster_child.py" \
                   --cohort "$COHORT" --matrix "$matrix" --task "$task"
               echo $? > "$RCFILE" ) 2>&1 | tee -a "$LOG"
             rc=$(cat "$RCFILE" 2>/dev/null || echo 1)
             rm -f "$RCFILE"
+            if [ "$rc" -ne 0 ] && [ -f "$RCFILE.exit" ]; then
+                reported=$(sed -n 's/.*"exit_code":\([0-9][0-9]*\).*/\1/p' "$RCFILE.exit" | head -n 1)
+                [ "$reported" = 75 ] && rc=75
+            fi
+            rm -f "$RCFILE.exit"
             case "$rc" in
                 0) progressed=1 ;;
                 75) echo "[v8] busy or interrupted: $task (another node, or a stop request)" | tee -a "$LOG" ;;
