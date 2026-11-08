@@ -6524,5 +6524,195 @@
         "evidence_kind": "limitation"
       }
     ]
+  },
+  {
+    "id": "V8-094",
+    "title": "V8 status 요약이 화면 위쪽에 있어 긴 표에 밀려 보이지 않음",
+    "area": "V8 실행·재개·상태 감사",
+    "severity": "low",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "",
+    "cause": "실험마다 머리줄·개수·workers 줄을 표보다 먼저 찍었다. seed×arm 표와 running 목록이 길면 터미널에서 요약이 위로 밀려 사라졌다.",
+    "impact": "사용자 보고 'status 위에 요약 보여주… 밑에 해야지'. 진행 개수와 worker 수를 보려면 화면을 위로 올려야 했다.",
+    "attribution": "Claude 가 만든 상태 화면의 결함. 사용자 보고로 발견, 같은 날 수정. 이미 게시된 커밋 행을 바꾸지 않으려고 introduction_commit 은 비움.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "수정 커밋 29e22f8",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/29e22f8"
+      },
+      {
+        "kind": "source",
+        "label": "수정 커밋 94a76aa",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/94a76aa"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "사용자",
+        "type": "reported",
+        "status": "open",
+        "text": "사용자 보고 'status 위에 요약 보여주… 밑에 해야지'. 진행 개수와 worker 수를 보려면 화면을 위로 올려야 했다.",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "요약(머리줄·this node·gpu·개수·workers)을 실험 블록 맨 아래로 옮김. 원래 화면과 간단 화면 모두. 회귀 시험: 표 → running → 요약 순서와 마지막 줄 workers 확인.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/94a76aa",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "V8-095",
+    "title": "V8 status 화면이 길고 칸 이름이 길어 OLMo·MBPP가 각각 몇 개, 얼마나 진행됐는지 한눈에 안 보임",
+    "area": "V8 실행·재개·상태 감사",
+    "severity": "medium",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "",
+    "cause": "run_srgc.sh 원래 렌더러를 그대로 써서 칸 이름이 bank_uniform_t050 ext, eval bank_sr_t025 처럼 길고 칸마다 단어가 들어갔다. 전체 진행률·update 진행이 없었다.",
+    "impact": "사용자 보고 'status 좀 보기 좋게 정리하라고… olmo 몇개 mbpp 몇개 얼마나 진행됬는지'. 터미널 폭을 넘어 줄이 깨지고 진행 정도를 셈해야 했다.",
+    "attribution": "Claude 가 만든 상태 화면의 결함. 사용자 보고로 발견, 같은 날 수정. 이미 게시된 커밋 행을 바꾸지 않으려고 introduction_commit 은 비움.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "수정 커밋 2f6994f",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/2f6994f"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "사용자",
+        "type": "reported",
+        "status": "open",
+        "text": "사용자 보고 'status 좀 보기 좋게 정리하라고… olmo 몇개 mbpp 몇개 얼마나 진행됬는지'. 터미널 폭을 넘어 줄이 깨지고 진행 정도를 셈해야 했다.",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "기본 화면을 정리 화면으로 바꿈: 짧은 칸(On·SR25·U50·ext·eval)과 기호 하나, 맨 아래 실험별 한 줄(단계·막대·끝난 작업/전체(%)·running·ready·waiting·failed·update 끝남/전체). --classic 은 예전 모양. 회귀 시험: 칸 이름·요약 줄 문자열·폭 제한.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/2f6994f",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "V8-096",
+    "title": "V8 status 에서 죽은 노드를 구분할 수 없고, 죽은 노드에 걸린 작업이 failed 로 셈해짐",
+    "area": "V8 실행·재개·상태 감사",
+    "severity": "high",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "",
+    "cause": "노드 정보가 실험별 'nodes' 한 줄로 합쳐졌고 heartbeat 끊긴 worker 는 'N without heartbeat' 개수로만 나왔다. heartbeat 없는 노드에 걸린 작업(unconfirmed)도 요약의 failed 에 들어갔다.",
+    "impact": "사용자 보고 '뭐가 죽은 노드이고 뭐가 뭔지 안보이잖아'. 어느 노드를 다시 띄워야 하는지, 작업이 실제로 실패했는지 알 수 없었다.",
+    "attribution": "Claude 가 만든 상태 화면의 결함. 사용자 보고로 발견, 같은 날 수정. 이미 게시된 커밋 행을 바꾸지 않으려고 introduction_commit 은 비움.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "수정 커밋 1e47050",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/1e47050"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "사용자",
+        "type": "reported",
+        "status": "open",
+        "text": "사용자 보고 '뭐가 죽은 노드이고 뭐가 뭔지 안보이잖아'. 어느 노드를 다시 띄워야 하는지, 작업이 실제로 실패했는지 알 수 없었다.",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "요약 아래 노드 표(running/idle/DEAD/gone/finished). DEAD 는 작업 lease 를 읽기 전용으로 확인해 '다른 노드가 이어받음' 또는 '잠금 잡힘: 그 노드에서 죽이고 재실행'을 표시. 죽은 노드 작업은 'on dead node N' 으로 따로 셈. 회귀 시험: 잠금 풀림·잡힘·gone·finished, probe 가 lease 파일을 만들지 않음.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/1e47050",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "V8-097",
+    "title": "V8 status 노드 표가 노드별로 무엇을 하는지 보여 주지 않고 gpus 칸에 pid 를 찍음",
+    "area": "V8 실행·재개·상태 감사",
+    "severity": "medium",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "",
+    "cause": "1e47050 의 노드 표는 worker id 를 '<host>.<GPU묶음>' 으로 가정했지만 실제 worker id 는 '<host>.<pid>' 다(srgc_v8_nodes.main). 그래서 gpus 칸에 pid 가 나왔다. 실험·작업·update·돈 시간·현재 단계 칸도 없었다.",
+    "impact": "사용자 보고 '어느 노드가 뭐 하는지 그게 중요하다고'. 노드마다 어떤 실험의 어떤 작업을 어디까지 하는지 보이지 않았다.",
+    "attribution": "Claude 가 만든 상태 화면의 결함. 사용자 보고로 발견, 같은 날 수정. 이미 게시된 커밋 행을 바꾸지 않으려고 introduction_commit 은 비움.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "수정 커밋 21b58c0",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/21b58c0"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "사용자",
+        "type": "reported",
+        "status": "open",
+        "text": "사용자 보고 '어느 노드가 뭐 하는지 그게 중요하다고'. 노드마다 어떤 실험의 어떤 작업을 어디까지 하는지 보이지 않았다.",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "worker 마다 한 줄: host·gpus(이 노드는 프로세스, 다른 노드는 admission 기록, 8장 노드 worker 둘이면 '0-3 or 4-7')·state·실험·작업·updates n/N·돈 시간·heartbeat·지금 단계. 회귀 시험: 실제 형식 id(host.pid)로 8개 worker 표 검사.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/21b58c0",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "V8-098",
+    "title": "V8 status 노드 표에 재시작마다 남는 옛 worker(gone) 줄이 쌓여 살아 있는 노드를 가림",
+    "area": "V8 실행·재개·상태 감사",
+    "severity": "medium",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "",
+    "cause": "worker heartbeat 파일은 worker 마다(host.pid) 남고 지워지지 않는다. 노드를 다시 시작할 때마다 옛 pid 기록이 gone 줄로 늘어났다.",
+    "impact": "사용자 보고 'gone이 존나 많아 정렬해', 'gone 얼마까지 보여줄거야 도대체 보기 싫어'.",
+    "attribution": "Claude 가 만든 상태 화면의 결함. 사용자 보고로 발견, 같은 날 수정. 이미 게시된 커밋 행을 바꾸지 않으려고 introduction_commit 은 비움.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "수정 커밋 9ddc003",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/9ddc003"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "사용자",
+        "type": "reported",
+        "status": "open",
+        "text": "사용자 보고 'gone이 존나 많아 정렬해', 'gone 얼마까지 보여줄거야 도대체 보기 싫어'.",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "표에는 running → starting → idle → DEAD 만 상태 순서(같은 상태는 호스트 순)로 보이고 gone·finished 는 윗줄에 개수만('N gone not shown; --all-nodes'). --all-nodes 로 전부 보기, run_v8_nodes.sh 가 --all-nodes·--classic·--simple 전달. 회귀 시험: gone 줄 없음·순서·--all-nodes.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/9ddc003",
+        "evidence_kind": "code_test"
+      }
+    ]
   }
 ]

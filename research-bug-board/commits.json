@@ -13462,6 +13462,36 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "4c4fd34640b4c98bc483b44821971b9778c4ca6d",
+      "at": "2026-11-08T17:03:18+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Record gold/OOM runtime repairs and leave the unidentified CUDA error open",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/4c4fd34640b4c98bc483b44821971b9778c4ca6d",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "21b58c03963e32a327ade081419acb508d0fcf5a",
+      "at": "2026-11-08T17:16:07+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: node table shows what every node is doing",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/21b58c03963e32a327ade081419acb508d0fcf5a",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "9ddc003b613459a8c0df462513743dd2400212d7",
+      "at": "2026-11-08T17:20:36+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: hide gone/finished workers, sort node rows by state",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/9ddc003b613459a8c0df462513743dd2400212d7",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }
