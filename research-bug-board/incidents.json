@@ -2852,6 +2852,24 @@
         "status": "code_fixed",
         "text": "기존 실행 스크립트의 작업 폴더·venv 규칙과 저장된 원본 locator를 bootstrap으로 연결했다. 원래 trainer와87개 검사에서 입력 신원 보존·잘못된 Python/깨진 receipt 거부·인자 없는 시작·아무 cwd의 오프라인 묶음 사용을 확인했다. package 설치/데이터 이전/원격 접속은 없다. 실제 H100 시작 검증은 수행하지 않았다.",
         "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "user",
+        "type": "reported_runtime_missing",
+        "status": "open",
+        "evidence_kind": "user_report",
+        "text": "사용자가 실제 시작 오류를 전달했다: V8 startup: V8 runtime not found beside the launcher. 초기 bootstrap 수정은 실행 모듈이 별도 위치에 있다는 배포 의존성을 제거하지 못했다."
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "runtime_delivery_fix_verified",
+        "status": "code_fixed",
+        "evidence_kind": "code_test",
+        "code_commit": "419072869dc1c9b280c4d3c47e5430b4e97e9d25",
+        "text": "이전 실행기에서 같은 오류를 재현했다. 고정 원본3d0c083의 runtime/config/test를 코드 저장소 v8/experiments에 포함하고 자체 경로를 우선 찾게 수정했다. provenance audit용 역사 CSV6개도 원본 바이트 그대로 포함했다. 현 코드 구성의88검사 통과, upstream102개 중101통과·1skip. 새 archive를 별도 폴더에 풀어 실제 switching.cli inspect-repo import를 검증했다. 실제 H100 학습 성공으로 보고하지 않는다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/419072869dc1c9b280c4d3c47e5430b4e97e9d25/research/v8-runtime-delivery-20261108"
       }
     ]
   }

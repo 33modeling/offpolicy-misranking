@@ -12362,6 +12362,26 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "7a80c65532249d288b0c931c6658a9e9ead1a5f4",
+      "at": "2026-11-08T10:55:14+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Record no-argument startup and verified offline bundle",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/7a80c65532249d288b0c931c6658a9e9ead1a5f4",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "419072869dc1c9b280c4d3c47e5430b4e97e9d25",
+      "at": "2026-11-08T11:06:09+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Ship the V8 runtime with the code checkout for standalone startup",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/419072869dc1c9b280c4d3c47e5430b4e97e9d25",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

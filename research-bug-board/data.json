@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-08T10:55:14+09:00",
+  "recorded_at": "2026-11-08T11:07:25+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "bc8728753e5799c6a4305d23676eb5e15983cb06",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/bc8728753e5799c6a4305d23676eb5e15983cb06",
-    "all_available_commits": 1165,
+    "source_commit": "419072869dc1c9b280c4d3c47e5430b4e97e9d25",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/419072869dc1c9b280c4d3c47e5430b4e97e9d25",
+    "all_available_commits": 1167,
     "fix_commit_records": 117,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
@@ -23,7 +23,7 @@
       "refs/heads/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:bc8728753e5799c6a4305d23676eb5e15983cb06",
+      "refs/heads/master:419072869dc1c9b280c4d3c47e5430b4e97e9d25",
       "refs/remotes/origin/audit/codecheck-20260820:5dd447990296042e334679c85e7672477cd7c5d3",
       "refs/remotes/origin/audit/p1-integrity:5dfda89ec3be2cc4d60f8f0371eeaf00790f6644",
       "refs/remotes/origin/docs/mbpp-budget-incident-20260919:fa1c6897b2b26ef002dd165c94f58702b1f9e1ed",
@@ -32,7 +32,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:bc8728753e5799c6a4305d23676eb5e15983cb06"
+      "refs/remotes/origin/master:419072869dc1c9b280c4d3c47e5430b4e97e9d25"
     ]
   },
   "incidents": [
@@ -2889,6 +2889,24 @@
           "status": "code_fixed",
           "text": "기존 실행 스크립트의 작업 폴더·venv 규칙과 저장된 원본 locator를 bootstrap으로 연결했다. 원래 trainer와87개 검사에서 입력 신원 보존·잘못된 Python/깨진 receipt 거부·인자 없는 시작·아무 cwd의 오프라인 묶음 사용을 확인했다. package 설치/데이터 이전/원격 접속은 없다. 실제 H100 시작 검증은 수행하지 않았다.",
           "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "user",
+          "type": "reported_runtime_missing",
+          "status": "open",
+          "evidence_kind": "user_report",
+          "text": "사용자가 실제 시작 오류를 전달했다: V8 startup: V8 runtime not found beside the launcher. 초기 bootstrap 수정은 실행 모듈이 별도 위치에 있다는 배포 의존성을 제거하지 못했다."
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "runtime_delivery_fix_verified",
+          "status": "code_fixed",
+          "evidence_kind": "code_test",
+          "code_commit": "419072869dc1c9b280c4d3c47e5430b4e97e9d25",
+          "text": "이전 실행기에서 같은 오류를 재현했다. 고정 원본3d0c083의 runtime/config/test를 코드 저장소 v8/experiments에 포함하고 자체 경로를 우선 찾게 수정했다. provenance audit용 역사 CSV6개도 원본 바이트 그대로 포함했다. 현 코드 구성의88검사 통과, upstream102개 중101통과·1skip. 새 archive를 별도 폴더에 풀어 실제 switching.cli inspect-repo import를 검증했다. 실제 H100 학습 성공으로 보고하지 않는다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/tree/419072869dc1c9b280c4d3c47e5430b4e97e9d25/research/v8-runtime-delivery-20261108"
         }
       ]
     }

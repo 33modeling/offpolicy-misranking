@@ -6,7 +6,9 @@
     "baseline": "7a80c65532249d288b0c931c6658a9e9ead1a5f4",
     "imported_runtime_commit": "3d0c08336950d2697dc66cbe3570a230e449f33b",
     "all_imported_source_unmodified": "v8/experiments/UPSTREAM.txt SHA256 records",
-    "frozen_trainer_files_unchanged": 30
+    "frozen_trainer_files_unchanged": 30,
+    "implementation_commit": "419072869dc1c9b280c4d3c47e5430b4e97e9d25",
+    "remote_exact_at_publication": "419072869dc1c9b280c4d3c47e5430b4e97e9d25"
   },
   "fix": "Imported unchanged runtime/configs/tests into v8/experiments and six historical reference CSVs needed by its audit. Bootstrap selects own checkout runtime first and checks all required entry modules. No manuscript repository or trainer/checkpoint changes.",
   "tests": {

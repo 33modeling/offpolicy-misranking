@@ -1,0 +1,9 @@
+{
+  "code_commit": "419072869dc1c9b280c4d3c47e5430b4e97e9d25",
+  "archive": "/home/kms/Downloads/rlvr-v8-runtime-fix-4190728.tar.gz",
+  "archive_sha256": "7031076d85768cc65bdede1774adaa431185add359753aac4b8e119429ea9c80",
+  "files": 64,
+  "all_file_hashes_verified": true,
+  "packaged_runtime_import": "actual switching.cli inspect-repo passed from fresh archive with existing OM_CODE_ROOT, no V8 path settings",
+  "new_GPU_jobs": 0
+}
