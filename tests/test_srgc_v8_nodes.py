@@ -295,8 +295,8 @@ def test_cpu_barrier_interruption_preserves_resumable_phase(tmp_path):
 def test_stop_between_claim_and_launch_does_not_start_gpu_child(tmp_path):
     stop=threading.Event();runtime=FakeRuntime(tmp_path/'r')
     class StoppingPool(nodes.Pool):
-        def tick(self,*args):
-            result=super().tick(*args)
+        def claim_offered(self,*args):
+            result=super().claim_offered(*args)
             if result[0]=='claimed':stop.set()
             return result
     pool=StoppingPool(tmp_path/'q',runtime.binding)
@@ -845,7 +845,7 @@ def test_worker_loop_relocks_the_fresh_queue_before_ticking(tmp_path):
         def verify_node(self):pass
         def barrier(self,*args):pass
     pool=nodes.Pool(root,Rt.binding,new_queue=True);seen=[]
-    def tick(*args):
+    def tick(*args,**kwargs):
         probe=nodes.Lock(root/'control.lock');free=probe.acquire();probe.close()
         seen.append(not free)
         state=nodes.read(root/'state.json');state['phase']='complete';nodes.atomic(root/'state.json',state)

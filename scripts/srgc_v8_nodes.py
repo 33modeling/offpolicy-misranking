@@ -29,7 +29,7 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'independent-cohort-task-failures-v4'
+DISPATCH_POLICY = 'independent-cohort-task-scans-v5'
 TERMINAL = {'completed_horizon', 'completed_budget'}
 PHASES = ('train', 'extension', 'evaluation')
 
@@ -267,7 +267,7 @@ class Pool:
         atomic(path,dict(task=task,phase=phase,state='pending',attempts=[]))
         return key
 
-    def tick(self,runtime,worker,stop,claim=True):
+    def tick(self,runtime,worker,stop,claim=True,*,offer=False):
         """Called with control lock held. Returns (state, claimed lease/task)."""
         if not (self.root/'binding.json').exists():
             raise BindingMismatch(f"{self.binding.get('cohort')}: this queue folder ({self.root}) was moved or removed "
@@ -344,9 +344,28 @@ class Pool:
         # Fill trajectories first, then checkpoint-ready branches. Ties rotate
         # toward tasks with fewer launch attempts so a busy task cannot starve others.
         pending.sort(key=lambda item:(item[1]['task'].get('method_id')!='on_monitored',len(item[1]['attempts']),item[0].stem))
+        if pending and offer:
+            return 'ready',dict(phase=phase,jobs=[dict(key=p.stem,task=semantic_task(j['task'])) for p,j in pending])
         if pending and not claim:return 'gpu_busy',None
-        for path,job in pending:
+
+        return self.claim_offered(dict(phase=phase,jobs=[dict(key=p.stem,task=semantic_task(j['task']))
+                                                       for p,j in pending]),worker,stop)
+
+    def claim_offered(self,offer,worker,stop):
+        """Revalidate an inspected offer under control.lock; no Runtime RPC/model/ledger scans.
+
+        Multi-cohort callers also hold the dispatch lock, solely for lease counts and this claim.
+        Native execution locks and all scientific inputs are still checked by the original child.
+        """
+        if read(self.root/'binding.json')!=self.binding:raise BindingMismatch('Queue identity changed before claim')
+        state=self.queue_state()
+        if state.get('failure') or state['phase']!=offer['phase']:return 'stale',None
+        for item in offer['jobs']:
             if stop.is_set():return 'stopped',None
+            path=self.root/'jobs'/(item['key']+'.json');job=read(path)
+            if job['phase']!=offer['phase'] or semantic_task(job['task'])!=item['task']:
+                raise ValueError('Inspected task definition changed before claim: '+item['key'])
+            if job['state'] in ('failed','done'):continue
             lease=Lock(self.root/'leases'/(path.stem+'.lock'))
             if not lease.acquire():continue
             attempt=dict(id=uuid.uuid4().hex,worker=worker,started_at=time.time(),pid=os.getpid())
@@ -416,10 +435,32 @@ def worker_loop(pool,runtime,worker,stop,*,poll=3,device_fds=(),retry=False):
     return worker_loop_many([(pool,runtime)],worker,stop,poll=poll,device_fds=device_fds,retry=retry)
 
 
+class TaskScan:
+    """One original actor's metadata scan, holding only its own cohort control lease."""
+    def __init__(self,pool,runtime,worker,stop,fd,*,verify=False,retry=False):
+        held=os.dup(fd);self.finished=threading.Event();self.result=None;self.error=None
+        self.started=self.reported=time.monotonic();self.kind='node verification' if verify else 'task inspection'
+        def scan():
+            try:
+                if verify:
+                    runtime.verify_node();pool.initialize(retry=retry,worker=worker);self.result=('verified',None)
+                else:self.result=pool.tick(runtime,worker,stop,claim=False,offer=True)
+            except BaseException as exc:
+                self.error=exc
+                if isinstance(exc,(KeyboardInterrupt,SystemExit)):stop.set()
+                if not verify and not stop.is_set() and not isinstance(exc,BindingMismatch):
+                    try:pool.fail(f'{type(exc).__name__}: {exc}')
+                    except Exception as record_error:self.error=record_error
+            finally:os.close(held);self.finished.set()
+        self.thread=threading.Thread(target=scan,name='v8-scan-'+pool.binding.get('cohort','unknown'),daemon=True)
+        try:self.thread.start()
+        except BaseException:os.close(held);raise
+
+
 def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_gate=None):
     """Original actors prepare independently; serialize lease-count comparison and task claim."""
     if not pairs:raise ValueError('At least one cohort is required')
-    initialized=set();terminal={};last_report=0;reasons={};busy_report=0;setup_report=0
+    initialized=set();terminal={};offers={};scans={};last_report=0;reasons={};busy_report=0;setup_report=0
     cursor=int(digest(worker)[:8],16)%len(pairs)
     roots=[p.root.parent.parent if p.root.name=='.multi-node' else p.root.parent for p,_ in pairs]
     dispatch_lock=Path(os.path.commonpath([str(p.resolve()) for p in roots]))/'.v8-dispatch.lock'
@@ -457,6 +498,27 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
         for index in [(cursor+i)%len(pairs) for i in range(len(pairs))]:
             if index in terminal:continue
             pool,runtime=pairs[index];action='waiting'
+            if index in scans:
+                scan=scans[index]
+                if not scan.finished.is_set():
+                    now=time.monotonic()
+                    if now-scan.reported>=30:
+                        print(f'[{worker}] {cohort(pool)}: {scan.kind} pending {now-scan.started:.0f}s; '
+                              'no cross-cohort dispatch lock held',flush=True);scan.reported=now
+                    continue
+                del scans[index]
+                if isinstance(scan.error,QueueReset):progressed=True;continue
+                if scan.error is not None:
+                    give_up(index,pool,scan.kind,scan.error);progressed=True;continue
+                action,offer=scan.result
+                if action=='verified':initialized.add(index);progressed=True
+                if action=='ready':offers[index]=offer
+                if action in ('advance','ready'):progressed=True
+                if action in ('failed','complete'):
+                    terminal[index]=action
+                    if action=='failed':reasons[cohort(pool)]=canonical(pool.queue_state().get('failure'))
+                continue
+            if index in offers:continue
             if hasattr(runtime,'startup_ready') and not runtime.startup_ready():
                 runtime.heartbeat('runtime_initialization');continue
             if getattr(runtime,'pending_barrier',None) is not None:
@@ -476,6 +538,9 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                 if control is not None:
                     if index not in initialized:
                         # A mismatched joining node must not poison healthy workers: no pool.fail here.
+                        if getattr(runtime,'independent_startup',False):
+                            scans[index]=TaskScan(pool,runtime,worker,stop,control.fd,verify=True,retry=retry)
+                            continue
                         try:runtime.verify_node();pool.initialize(retry=retry,worker=worker)
                         except QueueReset:
                             progressed=True;continue  # re-lock control.lock of the fresh directory first
@@ -493,6 +558,13 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                             pool.initialize();state=pool.queue_state()
                         action='failed' if state.get('failure') else state['phase']
                         if action in PHASES:action='waiting'
+                        if state['phase'] in PHASES and not state.get('failure'):
+                            if getattr(runtime,'independent_startup',False):
+                                scans[index]=TaskScan(pool,runtime,worker,stop,control.fd)
+                            else:
+                                action,offer=pool.tick(runtime,worker,stop,claim=False,offer=True)
+                                if action=='ready':offers[index]=offer
+                            # Original actor scans never hold the cross-cohort dispatch lock.
                         if action in ('prepare','freeze','finalize'):
                             print(f'[{worker}] {cohort(pool)}: CPU stage {action} started',flush=True)
                             if getattr(runtime,'independent_startup',False):
@@ -539,18 +611,20 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                     # Kernel-held task leases, not heartbeat age or stale running labels, are
                     # authoritative. Claim while this same shared lock remains held.
                     live={i:len(pool.held_leases()) for i,(pool,_) in enumerate(pairs)
-                          if i in initialized and i not in terminal}
+                          if i in initialized and i not in terminal and i in offers}
                     order=sorted(live,key=lambda i:(live[i],(i-cursor)%len(pairs)))
                     for candidate in order:
                         pool,runtime=pairs[candidate]
                         state=read(pool.root/'state.json')
-                        if state.get('phase') not in PHASES or state.get('failure'):continue
+                        if state.get('phase') not in PHASES or state.get('failure'):
+                            offers.pop(candidate,None);continue
                         with pool.control() as control:
                             if control is None:
                                 # Metadata contention is not evidence that the less busy cohort
                                 # has no work. Retry instead of sending everyone to the other model.
                                 break
-                            try:action,claimed=pool.tick(runtime,worker,stop,True)
+                            try:
+                                action,claimed=pool.claim_offered(offers.pop(candidate),worker,stop)
                             except BindingMismatch as exc:
                                 give_up(candidate,pool,'queue identity',exc);progressed=True;continue
                             except Exception as exc:

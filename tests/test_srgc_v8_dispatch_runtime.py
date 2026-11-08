@@ -139,7 +139,7 @@ def test_actor_uses_real_frozen_runtime_identity_without_loading_models(tmp_path
         else:os.environ['V8_CODE_ROOT']=previous
 
 
-@pytest.mark.parametrize('stage',['initialization','prepare'])
+@pytest.mark.parametrize('stage',['initialization','prepare','verify_node','plan','native_busy','done','ready'])
 @pytest.mark.parametrize('blocked',['qwen_mbpp','olmo_math'])
 def test_other_cohort_starts_before_blocked_initialization_or_prepare_finishes(tmp_path,blocked,stage):
     other='olmo_math' if blocked=='qwen_mbpp' else 'qwen_mbpp'
@@ -148,6 +148,10 @@ def test_other_cohort_starts_before_blocked_initialization_or_prepare_finishes(t
         " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n",
         " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n  (self.root.parent/('started-'+self.cohort)).write_text('actual CPU fixture execute entered')\n")
     if stage=='initialization':script=script.replace(' def verify_node(self):pass',wait+' def verify_node(self):pass')
+    elif stage=='verify_node':script=script.replace(' def verify_node(self):pass',' def verify_node(self):'+wait)
+    elif stage=='plan':script=script.replace(' def plan(self,phase):',' def plan(self,phase):'+wait)
+    elif stage in ('native_busy','done','ready'):
+        script=script.replace(f' def {stage}(self,task):',f' def {stage}(self,task):'+wait+'  ')
     else:script=script.replace(' def plan(self,phase):',wait+' def plan(self,phase):')
     frozen=tmp_path/'original.py';frozen.write_text(script)
     entries=[dict(cohort=c,python=sys.executable,script=str(frozen),runner=str(tmp_path)) for c in ('olmo_math','qwen_mbpp')]
@@ -159,12 +163,19 @@ import v8_dispatch as d
 d.nodes.gpu_inventory=lambda _:None
 lease_root=Path(sys.argv[2])
 d.nodes.gpu_lock_root=lambda:lease_root
+original_loop=d.nodes.worker_loop_many
+blocked=sys.argv[3]
+def blocked_first(pairs,worker,stop,**kwargs):
+ target=next(i for i,(pool,_) in enumerate(pairs) if pool.binding['cohort']==blocked)
+ while int(d.nodes.digest(worker)[:8],16)%len(pairs)!=target:worker+='x'
+ return original_loop(pairs,worker,stop,**kwargs)
+d.nodes.worker_loop_many=blocked_first
 # No nvidia-smi, GPUs or model in this CPU control fixture.
 d.nodes.subprocess.run=lambda *a,**kw:type('Result',(),dict(returncode=1,stdout='',stderr=''))()
 sys.argv=['v8_dispatch.py',sys.argv[1]]
 raise SystemExit(d.main())
 '''
-    child=subprocess.Popen([sys.executable,'-c',code,str(planfile),str(tmp_path/'gpu-leases')],start_new_session=True,
+    child=subprocess.Popen([sys.executable,'-c',code,str(planfile),str(tmp_path/'gpu-leases'),blocked],start_new_session=True,
         env=dict(os.environ,PYTHONPATH=os.environ.get('V8_INDEPENDENT_TEST_CONTROLS',str(REPO/'scripts')),
                  V8_ROOT=str(root),V8_ALLOW_ANY_ROOT='1',CUDA_VISIBLE_DEVICES='0,1,2,3'),
         stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
