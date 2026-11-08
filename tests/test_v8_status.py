@@ -43,28 +43,28 @@ def fixture(tmp_path, now):
     return base
 
 
-def test_snapshot_shows_counts_running_task_and_failure(tmp_path):
+def test_snapshot_matches_run_srgc_status_layout(tmp_path):
     now = time.time()
     base = fixture(tmp_path, now)
-    text = status.render([base], now=now, gpus=[("0", 97, 61000), ("1", 95, 60000)])
-    assert "olmo_math  단계: 학습" in text
-    assert "완료 1 · 진행 1 · 대기 1 · 실패 1 · 중단 0" in text
-    assert "bank-trajectory on_monitored seed 5" in text and "node01" in text
-    assert "update 37/275" in text and "출력 40초 전" in text and "30분째" in text
-    assert "PROGRESS 12:00:00 stage=generation" in text
-    assert "실패  eval-final seed 6: CUDA out of memory" in text
-    assert "qwen_mbpp  단계: 시작 전" in text and "이 경로에 큐가 아직 없어요" in text
-    assert "이 노드 GPU: 0: 97% 59G | 1: 95% 58G" in text
-    assert "멈춤 의심" not in text
+    text = status.render([base], now=now, gpus=[("0", 97, 61000), ("1", 95, 60000)], host="node01")
+    assert "V8 olmo_math · " in text and " · phase train" in text
+    assert "this node (node01): running traj-5 · 37/275 done · log 40s ago" in text
+    assert "gpu memory used: 0:61000MiB 1:60000MiB · util 0:97% 1:95%" in text
+    assert "done 1 · running 1 · waiting 1 · needs attention 1" in text
+    assert "seed  " in text and "on_monitored" in text and "running 37/275" in text
+    assert "running now:" in text and "37/275 done · log 40s ago · node node01 · last: PROGRESS 12:00:00" in text
+    assert "needs attention:" in text and "failed · last error: CUDA out of memory · 1 attempt" in text
+    assert "V8 qwen_mbpp · " in text and "no tasks" in text
+    assert "WARNING" not in text
 
 
-def test_stall_hint_only_when_silent_and_gpus_idle(tmp_path):
+def test_stall_warning_only_when_silent_and_gpus_idle(tmp_path):
     now = time.time()
     base = fixture(tmp_path, now)
     log = base / "olmo_math/.multi-node/logs/att1.log"
     os.utime(log, (now - 3600, now - 3600))
-    assert "멈춤 의심" in status.render([base], now=now, gpus=[("0", 0, 500)])
-    assert "멈춤 의심" not in status.render([base], now=now, gpus=[("0", 98, 60000)])
+    assert "WARNING traj-5: no log output for 60 min" in status.render([base], now=now, gpus=[("0", 0, 500)], host="node01")
+    assert "WARNING" not in status.render([base], now=now, gpus=[("0", 98, 60000)], host="node01")
 
 
 def test_missing_nvidia_smi_is_reported(tmp_path):
@@ -73,5 +73,5 @@ def test_missing_nvidia_smi_is_reported(tmp_path):
     assert status.gpu_rows(run=missing) is None
 
 
-def test_ago_formatting():
-    assert status.ago(5) == "5초" and status.ago(600) == "10분" and status.ago(7300) == "2시간 1분" and status.ago(None) == "?"
+def test_age_text():
+    assert status.age_text(5) == "5s" and status.age_text(600) == "10 min" and status.age_text(None) == "?"
