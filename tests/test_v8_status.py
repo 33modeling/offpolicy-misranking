@@ -90,3 +90,25 @@ def test_stale_heartbeat_is_not_shown_as_confirmed_running(tmp_path):
     assert "running now:" not in text
     assert "worker node01.gpu0123 heartbeat age" in text and "process liveness unverified" in text
     assert "task activity unconfirmed" in text and "next worker resumes it" not in text
+
+
+def test_nodes_section_counts_workers_and_available_work(tmp_path):
+    now = time.time()
+    base = fixture(tmp_path, now)
+    q = base / "olmo_math" / ".multi-node"
+    parent = tmp_path / "parent.pt"
+    parent.write_bytes(b"x")
+    write(q / "jobs" / "e.json", {"state": "pending", "task": {"kind": "train", "method_id": "sr_from_50", "training_seed": 5,
+                                                               "parent": {"path": str(parent)}}, "attempts": []})
+    write(q / "jobs" / "f.json", {"state": "pending", "task": {"kind": "train", "method_id": "sr_from_100", "training_seed": 5,
+                                                               "parent": {"path": str(tmp_path / "not-yet.pt")}}, "attempts": []})
+    key = hashlib.sha256(json.dumps("node02.gpu0123").encode()).hexdigest()
+    write(q / "workers" / (key + ".json"), {"worker": "node02.gpu0123", "at": now - 3, "task": None})
+    key = hashlib.sha256(json.dumps("node03.gpu0123").encode()).hexdigest()
+    write(q / "workers" / (key + ".json"), {"worker": "node03.gpu0123", "at": now - 4000, "task": None})
+    text = status.render([base], now=now, gpus=[("0", 97, 61000)], host="node01")
+    assert "nodes:" in text and "node02.gpu0123" in text and "idle (nothing claimable)" in text
+    assert "(1 node record without a heartbeat in the last 3 min not shown; not proof the process stopped)" in text
+    assert "ready 1" in text and "waiting" in text
+    assert "workers: 2 active" in text
+    assert "work available now for 2 workers (1 running + 1 ready to start)" in text

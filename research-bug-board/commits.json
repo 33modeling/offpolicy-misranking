@@ -12734,6 +12734,16 @@
       "gemma": false
     },
     {
+      "hash": "c759869ad1389df5944856269c46d461d4807b35",
+      "at": "2026-11-08T12:47:49+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Explain each V8 audit defect in Korean without rewriting its history",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/c759869ad1389df5944856269c46d461d4807b35",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
       "hash": "a085f266bf68849d1e24b0b96048680e77ef6563",
       "at": "2026-11-08T12:47:06+09:00",
       "author": "33modeling",
@@ -12741,6 +12751,46 @@
       "url": "https://github.com/33modeling/offpolicy-misranking/commit/a085f266bf68849d1e24b0b96048680e77ef6563",
       "attribution": [],
       "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "c75b20734cf1d8464fb57a61c6290b4e73645e5f",
+      "at": "2026-11-08T12:48:57+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Integrate missing-state handling before final V8 audit verification",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/c75b20734cf1d8464fb57a61c6290b4e73645e5f",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "221b624650e1293d8004d5d150d47c2ffb227c88",
+      "at": "2026-11-08T12:51:51+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Verify frozen engine continuation and final V8 audit integration",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/221b624650e1293d8004d5d150d47c2ffb227c88",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "3adf26925b2b1c1bf572cf0e68f75b26bbae3ddc",
+      "at": "2026-11-08T12:50:35+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: nodes section and worker demand, like run_srgc.sh status",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/3adf26925b2b1c1bf572cf0e68f75b26bbae3ddc",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "aa2c212cd3393b5fe99098ab4458e2e3c37111cf",
+      "at": "2026-11-08T12:52:20+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Bug board: record V8-031 (missing state.json stops the run), V8-032 (v1.0.5 bundle missed v8_control_output.py) and V8-020 mitigation",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/aa2c212cd3393b5fe99098ab4458e2e3c37111cf",
+      "attribution": [],
+      "is_fix": true,
       "gemma": false
     }
   ]
