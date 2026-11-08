@@ -13284,6 +13284,16 @@
       "gemma": false
     },
     {
+      "hash": "df103eee28cab66d8db9e8617a402197d9f8d009",
+      "at": "2026-11-08T16:31:06+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Retain original torchrun rank failures and distinguish resumable child exits",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/df103eee28cab66d8db9e8617a402197d9f8d009",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
       "hash": "d8aa1ed1b99e16dbfb099d49a8f29c4b4add82ac",
       "at": "2026-11-08T15:53:47+09:00",
       "author": "33modeling",
@@ -13309,6 +13319,86 @@
       "author": "33modeling",
       "title": "[Skip CI] [skip review] Archive the coordinator replaced by the coordination fixes for exact-source resume",
       "url": "https://github.com/33modeling/offpolicy-misranking/commit/377c256e55f80c64b484d82ef812064ed9e7c8a3",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "61a7b68fc2c31bb5b09772852abc860f5ec168e2",
+      "at": "2026-11-08T16:07:36+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Bug board: full v8 source audit — 40 findings (SCI-01..18, RT-01..12, COORD-01..10) and 3 status-screen fixes recorded",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/61a7b68fc2c31bb5b09772852abc860f5ec168e2",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "29e22f87903384c54352aecca7d88d9ef3e6bf19",
+      "at": "2026-11-08T16:13:37+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: summary at the bottom",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/29e22f87903384c54352aecca7d88d9ef3e6bf19",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "94a76aa9483e323066159197d040bb6b0d5b257e",
+      "at": "2026-11-08T16:14:28+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: workers line also at the bottom in the simplified view",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/94a76aa9483e323066159197d040bb6b0d5b257e",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "e10b0778513f6e3c0fd4b02412b0333a91cd3b11",
+      "at": "2026-11-08T16:31:34+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Combine coordination safeguards with recorded torchrun rank failures",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/e10b0778513f6e3c0fd4b02412b0333a91cd3b11",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "3b21b44945fd0853681565f48a88a6dd173561b5",
+      "at": "2026-11-08T16:35:43+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Keep fatal rank faults ahead of busy markers and elastic summary errors",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/3b21b44945fd0853681565f48a88a6dd173561b5",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "2f6994f544c150e58e2e3d7f43e6e67c16ae442e",
+      "at": "2026-11-08T16:34:39+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: clean compact view (default)",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/2f6994f544c150e58e2e3d7f43e6e67c16ae442e",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "ca3d300349577349826907cc86666b777b2231ea",
+      "at": "2026-11-08T16:35:56+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve compact status changes with original rank-error reporting",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/ca3d300349577349826907cc86666b777b2231ea",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "050525fc5663c1b6bb8192b891b784fd0e3173df",
+      "at": "2026-11-08T16:37:55+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve actual CPU torchrun failures, original rank traces and exact queue sources",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/050525fc5663c1b6bb8192b891b784fd0e3173df",
       "attribution": [],
       "is_fix": false,
       "gemma": false

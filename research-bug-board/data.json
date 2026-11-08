@@ -1,13 +1,13 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-08T16:07:36+09:00",
+  "recorded_at": "2026-11-08T16:38:27+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "377c256e55f80c64b484d82ef812064ed9e7c8a3",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/377c256e55f80c64b484d82ef812064ed9e7c8a3",
-    "all_available_commits": 1260,
-    "fix_commit_records": 132,
+    "source_commit": "050525fc5663c1b6bb8192b891b784fd0e3173df",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/050525fc5663c1b6bb8192b891b784fd0e3173df",
+    "all_available_commits": 1269,
+    "fix_commit_records": 133,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
     "first_commit_at": "2026-08-07T05:56:48+09:00",
@@ -24,7 +24,7 @@
       "refs/heads/audit/codecheck-20260820:5dd447990296042e334679c85e7672477cd7c5d3",
       "refs/heads/audit/p1-integrity:5dfda89ec3be2cc4d60f8f0371eeaf00790f6644",
       "refs/heads/bugboard:aa2c212cd3393b5fe99098ab4458e2e3c37111cf",
-      "refs/heads/bugboard-audit:377c256e55f80c64b484d82ef812064ed9e7c8a3",
+      "refs/heads/bugboard-audit:61a7b68fc2c31bb5b09772852abc860f5ec168e2",
       "refs/heads/bugboard2:b7432d1cbb1f6cdd2cd044f23cd8ffaf25a57560",
       "refs/heads/bugboard3:b101cd9069dcc6ce920f42a1242174b83b9e6010",
       "refs/heads/docs/mbpp-budget-incident-20260919:fa1c6897b2b26ef002dd165c94f58702b1f9e1ed",
@@ -34,7 +34,7 @@
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hang-fix-20261108:f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:40e2ffe3e1748e7ef8e6065ea23d5392b186cfde",
+      "refs/heads/master:050525fc5663c1b6bb8192b891b784fd0e3173df",
       "refs/heads/v8-coord-fixes-20261108:377c256e55f80c64b484d82ef812064ed9e7c8a3",
       "refs/heads/v8-modes:6821c9c09292662008eb4f933c74bae7490358ed",
       "refs/heads/v8-nodes:3adf26925b2b1c1bf572cf0e68f75b26bbae3ddc",
@@ -43,6 +43,8 @@
       "refs/heads/v8-science-fixes-20261108:f13cd3d1392440d58e96e4f77b4147ad0aa62205",
       "refs/heads/v8-statefix:a085f266bf68849d1e24b0b96048680e77ef6563",
       "refs/heads/v8-status:a3675bbd4b6f678b3ef8fbacde56aaf072d0aafa",
+      "refs/heads/v8-status-bottom:94a76aa9483e323066159197d040bb6b0d5b257e",
+      "refs/heads/v8-status-clean:2f6994f544c150e58e2e3d7f43e6e67c16ae442e",
       "refs/heads/v8-status-lease:f418288156a4633f243691417f1e453be9bf8c0c",
       "refs/heads/v8-status-progress:7fa90b7f51fc50939a8cc53b9c115abe22bda381",
       "refs/heads/v8-status-srgc:d8aa1ed1b99e16dbfb099d49a8f29c4b4add82ac",
@@ -57,7 +59,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:377c256e55f80c64b484d82ef812064ed9e7c8a3"
+      "refs/remotes/origin/master:050525fc5663c1b6bb8192b891b784fd0e3173df"
     ]
   },
   "incidents": [
@@ -3997,6 +3999,14 @@
           "status": "remote_verification_pending",
           "text": "추가 사용자 보고: --retry-failed 를 무조건 넣으라고? / 그냥 새노드 받아서 할거니까 정신차리고 고쳐놔 / olmo 할당이 안된다고. 새 노드 기본 실행이 구 실패 상태 때문에 OLMo를 건너뛰는 V8-046을 CPU 재현·수정했다. 원격 H100 로그가 없어 실제 할당 성공으로 합산하지 않는다.",
           "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "user",
+          "type": "remote_failure_report",
+          "status": "remote_verification_pending",
+          "text": "추가 보고: torch.distributed.elastic.multiprocessing.errors.ChildFailedError / 고쳐. 선행 traceback·Root Cause·모델/노드 식별은 아직 미수신이다. V8-090에서 원문 오류 보존과 요약 표시를 보강했고 V8-067 정상중단/실패 판정을 추가 검증했으나 실제 OLMo 실패 원인을 해결했다고 닫지 않는다.",
+          "evidence_kind": "user_report"
         }
       ]
     },
@@ -5452,6 +5462,15 @@
           "text": "수정: busy/interrupted 를 종료 코드가 아니라 rank0 가 쓰는 결과 파일(예: attempt 별 result.json)이나 RESULT 줄로 전달하고, run_h100.sh/supervisor 는 그것과 done() 검증으로 판정한다. 안전 정지가 필요하면 torchrun 에는 신호를 보내지 말고 worker 에만 보내거나(혹은 stop 파일을 update 경계에서 broadcast) 별도 grace 를 둔다. 안 하면 주석·README 의 'safe boundary/exit 75' 문구를 고친다. / 회귀 시험: 실제 torchrun(gloo)으로 busy child 를 띄워 run_h100.sh gpu_stage 가 다음 task 로 넘어가는지, supervisor finish() 가 interrupted 로 기록하는지 확인. SIGTERM 정지 후 manifest 상태와 latest.pt update 를 검사.",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/19a0161",
           "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_extended",
+          "status": "remote_verification_pending",
+          "text": "사용자 ChildFailedError 보고 후 실제 CPU torchrun2rank로 busy75→parent1 오인을 다시 재현했다. 동시 COORD 기본 exit marker 수정도 보존 통합했다. 추가로 원래 rank 예외·치명 signal은 busy marker보다 우선하며, invocation마다 새 marker를 사용한다. 정상 중단을 실패로 보거나 실제 예외를 성공/정상중단으로 바꾸지 않는 검사를 통과했다. 실제 사용자 H100 원인/학습 시작은 여전히 미확인이다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/3b21b44945fd0853681565f48a88a6dd173561b5",
+          "evidence_kind": "code_test"
         }
       ]
     },
@@ -6337,6 +6356,69 @@
           "text": "사용자 요청 '기존거랑 비슷하게', 'status 다시 만들어'. 원래 렌더러를 그대로 쓰도록 다시 만듦.",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/d8aa1ed",
           "evidence_kind": "code_test"
+        }
+      ]
+    },
+    {
+      "id": "V8-090",
+      "title": "ChildFailedError 뒤 원래 rank 오류 미보존·요약 오류 우선 표시·동시 busy marker의 실제 오류 은폐",
+      "area": "V8 torchrun rank traceback·종료 판정·원문 status",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "introduction_commit": "",
+      "cause": "선택된 원본 child를 부르는 v8_task_entry에 PyTorch elastic record가 없어 error_file이 N/A이고 원문 rank traceback이 별도 보존되지 않았다. status는 로그 뒤의 일반 ChildFailedError를 먼저 골랐다. 기본 exit75 marker 변환만 하면 동시 rank 예외나 SIGKILL을 busy/interrupted로 오인할 수 있었다.",
+      "impact": "사용자는 ChildFailedError만 제시했다. CPU 실제 torchrun 재현에서 busy75도 parent1/ChildFailedError가 되고 실제 ValueError/SystemExit의 구조화된 원문이 없었다. 실제 사용자 H100의 선행 원인·모델·rank·시간은 아직 알 수 없어 이 결함과 동일한 현장 원인으로 단정하지 않는다.",
+      "attribution": "Codex child entry/lifecycle/status 설계 누락. 동시 COORD 감사23b549a의 기본 exit75/node-local-fault 수정은 보존 통합했다. 오류 우선순위·fresh marker·원문 traceback/SystemExit 보존·기존 로그 선택은 이 후속 보강이다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "원래 rank traceback 및 fatal signal 판정·상태 표시",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/3b21b44945fd0853681565f48a88a6dd173561b5"
+        },
+        {
+          "kind": "code_test",
+          "label": "실제 CPU torchrun 재현·모든 실패와 회귀 검사·한계",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/050525fc5663c1b6bb8192b891b784fd0e3173df/research/v8-child-errors-20261108/record.json"
+        },
+        {
+          "kind": "code_test",
+          "label": "실제 busy/ValueError/SystemExit/SIGKILL·외부 marker 및 status 검사",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/3b21b44945fd0853681565f48a88a6dd173561b5/tests/test_srgc_v8_child_errors.py"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "user",
+          "type": "reported",
+          "status": "open",
+          "text": "torch.distributed.elastic.multiprocessing.errors.ChildFailedError / 고쳐",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "reproduced",
+          "status": "open",
+          "text": "before.xml4실패: 실제 CPU torchrun2rank의 busy75가 parent1/ChildFailedError로 반환됐다. ValueError, failed SystemExit, rank0busy+rank1ValueError의 원래 elastic error file/attempt summary가 보존되지 않았다. 원시 traceback과 실패를 삭제하지 않았다.",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "공식 PyTorch record로 원본 child를 실행하고 non-resumable SystemExit도 기록한다. 원문을 invocation token과 함께 rank-N-error.json/child-failure.json·원래 attempt에 보존하고 RANK FAILURE 및 status에 표시한다. fresh current-task marker로만75를 복원하며 실제 rank 예외·치명signal을 우선한다. SIGKILL에는 존재하지 않는 Python traceback을 만들지 않는다. 전체275검사 중273통과/2fixture실패 보존 후 경로 가정·copied dependency를 바로잡아 error/coordination/status42통과, compact merge28·archive/entry24통과. 중복 검사수를 합산하지 않는다. 원래 trainer30 SHA 동일, archive24coordinator/7runner. 실제 H100 학습 측정이 아니다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/3b21b44945fd0853681565f48a88a6dd173561b5",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "remote_verification_pending",
+          "status": "remote_verification_pending",
+          "text": "수정 소스와 원시 CPU 증거·보존 런타임 묶음을 master에 push하고 exact remote 확인. 앞쪽 H100 traceback/Root Cause 요청은 아직 응답 전이다. 실제 OLMo 시작/업데이트/성공 또는 원래 GPU 실패 원인 해결은 미검증으로 유지한다. 공개 현황판 배포는 이 소스 장부 push와 별개다.",
+          "evidence_kind": "limitation"
         }
       ]
     }
