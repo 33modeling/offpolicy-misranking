@@ -149,6 +149,7 @@ def main():
                         original_runtime_binding=actor.binding,numerical_source_changed=False,
                         conditional_runtime_repairs=dict(strict_math_verifier='recorded-seed-fallback',
                             rollout_memory='cache-release-and-one-identical-retry',
+                            legacy_dense_memory='hash-pinned-per-prompt-release-and-host-optimizer-snapshot',
                             per_rank_receipt='progress/<attempt>/runtime-repair-rank-N.json'))
             if actor.overrides:record['control_overrides']=actor.overrides
             receipt=Path(root)/'.v8-dispatch-policies'/(cohort+'-'+nodes.digest(record)+'.json')

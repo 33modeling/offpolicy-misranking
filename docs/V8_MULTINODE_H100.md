@@ -133,7 +133,7 @@ worker는60초마다 현황을 출력한다. 자식 출력은 터미널과 각 c
 정책 버전이 나온다. 표 형식 `status`는 `dispatch current <hash>`(현재 checkout과
 같음), `dispatch different <hash>`(다름), `dispatch unverified`(기록 없음)를 구분한다.
 정책 파일이 디스크에 있다는 것만으로 실행 중인 worker에 적용됐다고 판단하지 않는다.
-현재 배정 정책은 `source-recovery-verifier-rollout-guards-v9`다. 작업 검사는 해당 cohort의
+현재 배정 정책은 `source-recovery-dense-memory-guards-v10`이다. 작업 검사는 해당 cohort의
 control lease만 잡고 별도로 수행한다. 검사 결과가 준비되면 공유 잠금 안에서 현재
 binding·phase·실패 상태·작업 정의·작업 lease를 다시 확인한 뒤 claim한다.
 검사와 claim 사이에 다른 노드가 가져간 작업이나 실패한 작업은 가져오지 않는다.
@@ -167,6 +167,28 @@ optimizer update 전체를 다시 호출하지 않는다. 계속되는 OOM과 �
 실패로 남긴다. CUDA 오류의 원문·마지막 작업 기록·확인 가능한 allocator 통계는
 `cuda-failure-rank-N.json`에 보존한다. 이 처리가 실제 H100 메모리 용량이나 아직 원문이
 없는 `RegisterCUDA … SymIntArrayRef` 오류의 해결을 보장하지는 않는다.
+
+V9 캐시 정리만으로는 살아 있는 GPU 텐서를 회수하지 못했다. V10은 SHA256이
+`c73ee5e6…`인 보존 backend에서만 두 수명 수정을 적용한다. 문제별 scoring을 마친 뒤
+`accumulated`·마지막 `gradient`·`value`·`sequences` 참조를 해제하고, optimizer snapshot은
+GPU에서 deepcopy하지 않고 CPU로 직접 복사한다. 보존 파일은 수정하지 않으며 적용한
+scorer overlay SHA와 원본 backend SHA를 위 rank receipt의 `dense_memory`에 남긴다.
+연산 순서·rank별 문제 배분·한 번의 gather·기존 timing wrapper를 유지한다. 응답 수나
+길이·배치·attention을 바꾸지 않는다. CPU 재현과 수치/RNG 일치는 실제 H100 정상화의
+증거가 아니며, 실제 오류 위치와 재개 update는 별도로 확인해야 한다.
+
+`answering 8/9`는 가장 최근 기록을 보낸 GPU가 이번 호출에서 맡은 9문제 중 8번째
+문제의 답변을 생성 중이라는 뜻이다. 8개 update 완료나 전체 실험의 8/9 완료가 아니다.
+문제마다 답변 생성 뒤 보상 계산과 필요한 gradient 계산을 수행하고, 해당 작업의
+문제를 다 처리한 뒤 다음 단계로 간다. 다른 노드는 독립적인 준비된 작업을 실행한다.
+부모 체크포인트가 아직 없거나 부모가 실패한 분기는 기다리므로, 준비된 작업보다
+노드가 많으면 idle이 생길 수 있다. 실패로 인한 대기와 정상 진행을 구분해야 한다.
+
+기본 두 cohort는 기존 OLMo-3 7B/MATH(primary)와 Qwen3.5 9B/MBPP(replication)를
+이어받는다. 비교는 각 cohort 안의 학습 방법 사이에서 수행한다. 모델과 데이터가
+동시에 다르므로 이 둘의 점수 차이만으로 모델 효과나 데이터 효과를 분리할 수 없다.
+OLMo/MBPP·Qwen/MATH 설정도 있지만 기본 자동 배정은 이 교차 조합을 실행하지 않는다.
+
 자식이 점유 중이거나 중단되어 종료75를 기록하면 torchrun의 종료1을 작업 실패로
 오인하지 않는다. 실제 rank 예외·치명적 signal이 함께 있으면 실패 기록을 우선한다.
 `ChildFailedError` 앞의 원래 traceback은 PyTorch 오류 기록기로 보존한다. 원래 입력

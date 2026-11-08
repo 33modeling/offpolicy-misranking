@@ -138,8 +138,15 @@ def collect(base, cohort, now):
         if rid:
             manifest = read(directory / 'runs' / rid / 'manifest.json')
             if manifest and manifest.get('attempts'):
-                last = last_row(directory / 'runs' / rid / 'attempts' / manifest['attempts'][-1]['attempt_id'] / 'updates.jsonl')
+                run_attempt = manifest['attempts'][-1]
+                last = last_row(directory / 'runs' / rid / 'attempts' / run_attempt['attempt_id'] / 'updates.jsonl')
                 row['done'] = last.get('completed_updates') if last else None
+                # Written only after the runner has loaded and validated the
+                # actual parent/latest checkpoint, before the first new update.
+                # A planned parent.completed_update alone proves no load.
+                start = run_attempt.get('start_update') if task.get('kind') == 'train' else None
+                if type(start) is int and start >= 0:
+                    row['done'] = max(start,row['done']) if type(row['done']) is int else start
             result = read(directory / 'runs' / rid / 'evaluation.json') or read(directory / 'runs' / rid / 'eval.json')
             if result and isinstance(result.get('reward_fraction'), (int, float)):
                 row['reward_percent'] = 100 * result['reward_fraction']
@@ -811,7 +818,7 @@ def node_table(bases, cohorts, now, this_host=None):
                 task = f"s{r['seed']} " + ('eval ' if r.get('kind') == 'evaluate' else '') + short_arm(r['arm']) + \
                        (' ext' if r.get('phase') == 'extension' else '')
                 updates = f"{r['done']}/{r['total']}" if r['done'] is not None and r['total'] else \
-                          ('0/' + str(r['total']) if r['total'] and r.get('kind') != 'evaluate' else '-')
+                          ('?/' + str(r['total']) if r['total'] and r.get('kind') != 'evaluate' else '-')
                 took = span(now - r['started']) if isinstance(r.get('started'), (int, float)) else '-'
             if state == 'running':
                 doing = short_progress(r, now) or (f"log written {age_text(r['activity_age'])} ago"

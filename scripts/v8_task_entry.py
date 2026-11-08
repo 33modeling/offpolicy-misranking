@@ -1,20 +1,81 @@
 """Run the exact original v8 child with a separately receipted decode observer."""
 import hashlib
+import copy
 import functools
 import gc
 import importlib.util
+import inspect
 import json
 import os
 from pathlib import Path
 import sys
 import time
+import textwrap
 
 from v8_generation_probe import install
+
+
+LEGACY_DENSE_BACKEND_SHA256='c73ee5e60288791bedbc790147fc88903ba6f3429d48b2ab626774b334f4f3fc'
+
+
+def cpu_snapshot(value):
+    """Copy directly to host; deepcopy of a CUDA optimizer duplicates it on GPU."""
+    import torch
+    if isinstance(value,torch.Tensor):return value.detach().to('cpu',copy=True)
+    if isinstance(value,dict):return {k:cpu_snapshot(v) for k,v in value.items()}
+    if isinstance(value,list):return [cpu_snapshot(v) for v in value]
+    if isinstance(value,tuple):return tuple(cpu_snapshot(v) for v in value)
+    return copy.deepcopy(value)
+
+
+def repair_dense_memory(backend):
+    """Apply only the two audited lifetime edits to the exact saved TorchBackend.
+
+    Keep its own reward functions, timing decorator, RNG, rank sharding and single
+    gather. Inherited Protected/Qwen overrides still call this same base method.
+    Original files and source bindings remain immutable; receipt the overlay.
+    """
+    for cls in type(backend).__mro__:
+        if '_v8_dense_memory_receipt' in cls.__dict__:return cls._v8_dense_memory_receipt
+        method=cls.__dict__.get('score_gradients')
+        if not callable(method):continue
+        original=inspect.unwrap(method)
+        filename=getattr(original,'__globals__',{}).get('__file__')
+        if not filename or not Path(filename).is_file():continue
+        digest=hashlib.sha256(Path(filename).read_bytes()).hexdigest()
+        if digest!=LEGACY_DENSE_BACKEND_SHA256:continue
+        source=textwrap.dedent(inspect.getsource(original))
+        edits=(('            accumulated = [None] * len(params)\n',
+                '            accumulated = [None] * len(params)\n            value = None\n'),
+               ('            result[prompt_id] = projected\n',
+                '            del accumulated, gradient, value, sequences\n            result[prompt_id] = projected\n'))
+        for before,after in edits:
+            if source.count(before)!=1:raise RuntimeError('Saved dense scorer differs from audited memory repair')
+            source=source.replace(before,after,1)
+        namespace={}
+        # The function keeps the original live module globals (including progress
+        # instrumentation); exec locals avoid replacing unrelated module symbols.
+        exec(compile(source,'<v8-dense-memory-overlay>','exec'),original.__globals__,namespace)
+        cls.score_gradients=namespace['score_gradients']
+        def state_dict(self):
+            return dict(trainable={n:cpu_snapshot(p) for n,p in self.train_parameters},
+                        optimizer=cpu_snapshot(self.optimizer.state_dict()),
+                        projection_dim=self.projection_dim,projection_seed=self.projection_seed,
+                        score_names=[n for n,_ in self.score_parameters])
+        cls.state_dict=state_dict
+        receipt=dict(original_backend_sha256=digest,scorer_overlay_sha256=hashlib.sha256(source.encode()).hexdigest(),
+                     changes=['release-per-prompt-dense-tensors','copy-optimizer-directly-to-host'],
+                     extra_collectives=0)
+        cls._v8_dense_memory_receipt=receipt
+        return receipt
+    return None
 
 
 def repair_context(ctx):
     """Apply the seed runs' documented verifier/cache protections after saved-source selection."""
     backend=ctx.backend;changes={};verifier=getattr(backend,'verifier',None)
+    dense_memory=repair_dense_memory(backend)
+    if dense_memory:changes['dense_memory']=dense_memory
     if (getattr(verifier,'__name__',None)=='math_reward'
             and getattr(verifier,'__module__',None) in ('srgc_rebuttal.run_experiment','srgc_rebuttal.verifiers')):
         records=getattr(backend,'records',{})
