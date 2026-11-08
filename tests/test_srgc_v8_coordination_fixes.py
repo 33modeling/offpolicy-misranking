@@ -334,7 +334,7 @@ def test_launcher_words_watch_seconds_other_cohorts_and_stop_note(tmp_path):
     bindir=tmp_path/'bin';bindir.mkdir()  # no nvidia-smi: status must not query GPUs here
     out=subprocess.run([sys.executable,str(SCRIPTS/'v8_status.py'),'--cohort','qwen_math'],capture_output=True,text=True,
                        env=dict(PATH=str(bindir),V8_ROOT=str(tmp_path/'v8'),HOME=str(tmp_path),PYTHONDONTWRITEBYTECODE='1'),timeout=30)
-    assert out.returncode==0 and 'V8 qwen_math' in out.stdout,out.stderr
+    assert out.returncode==0 and 'V8 status · ' in out.stdout and 'qwen_math  not started' in out.stdout,out.stderr
 
 
 def test_supervisor_waits_for_a_safe_update_boundary_before_sigkill(tmp_path):
