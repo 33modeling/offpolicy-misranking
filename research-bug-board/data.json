@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-09T00:05:33+09:00",
+  "recorded_at": "2026-11-09T08:46:37+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "b7c40be9a5b6888cf220ea1d4e6702a72f9d0da4",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/b7c40be9a5b6888cf220ea1d4e6702a72f9d0da4",
-    "all_available_commits": 1308,
+    "source_commit": "a8662b9db68f0a921b7af89e15ab1eaef5046f1b",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/a8662b9db68f0a921b7af89e15ab1eaef5046f1b",
+    "all_available_commits": 1310,
     "fix_commit_records": 143,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
@@ -41,7 +41,7 @@
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hang-fix-20261108:f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:b7c40be9a5b6888cf220ea1d4e6702a72f9d0da4",
+      "refs/heads/master:a8662b9db68f0a921b7af89e15ab1eaef5046f1b",
       "refs/heads/v8-coord-fixes-20261108:377c256e55f80c64b484d82ef812064ed9e7c8a3",
       "refs/heads/v8-modes:6821c9c09292662008eb4f933c74bae7490358ed",
       "refs/heads/v8-nodes:3adf26925b2b1c1bf572cf0e68f75b26bbae3ddc",
@@ -52,6 +52,7 @@
       "refs/heads/v8-status:a3675bbd4b6f678b3ef8fbacde56aaf072d0aafa",
       "refs/heads/v8-status-bottom:94a76aa9483e323066159197d040bb6b0d5b257e",
       "refs/heads/v8-status-clean:2f6994f544c150e58e2e3d7f43e6e67c16ae442e",
+      "refs/heads/v8-status-cohorts:bd90294e624e3d036bf73602794594c3f307826f",
       "refs/heads/v8-status-counts:212a09963ac6d926b9fb20d95c6f19d28d5c87f7",
       "refs/heads/v8-status-grid:e902db8a5e5a317c9aa5c26fdd9294f3a1f50c03",
       "refs/heads/v8-status-layout:616a1e3a5ba03620144c98f7370165e0107c4a63",
@@ -77,7 +78,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:b7c40be9a5b6888cf220ea1d4e6702a72f9d0da4"
+      "refs/remotes/origin/master:a8662b9db68f0a921b7af89e15ab1eaef5046f1b"
     ]
   },
   "incidents": [
@@ -7801,6 +7802,60 @@
           "status": "remote_verification_pending",
           "text": "실제 H100의 노드 퇴거·중단·재개는 미검증이다. 기존 살아 있는/빈 worker 또는 새로 합류한 할당 노드가 작업을 인수한다. 클라우드 VM 자동 할당 기능이 아니며 기존 OLMo SR25 CUDA OOM 해결을 뜻하지 않는다. 재현 근거와 합성 CPU 체크포인트는 research/v8-node-disconnect-20261108에 보존한다.",
           "evidence_kind": "limitation"
+        }
+      ]
+    },
+    {
+      "id": "V8-117",
+      "title": "OLMo MBPP 설정이 기본 V8 실행·상태 집계에 포함되지 않음",
+      "area": "V8 rebuttal 실행 범위 / 유휴 worker 배정",
+      "severity": "high",
+      "first_reported": "2026-11-09",
+      "introduction_commit": "",
+      "cause": "이전 기본 cohort 목록은 olmo_math·qwen_mbpp 두 개였다. olmo_mbpp 설정과 개별 실행 경로가 있어도 기본 source selection·dispatcher·상태 화면에 들어가지 않았다.",
+      "impact": "사용자가 기본 명령으로 OLMo MBPP도 학습·평가·결과를 얻으라고 추가 지시했다. 준비된 MBPP 작업을 기본 worker가 자동으로 가져갈 수 없었다. 실제 H100 idle 원인의 일치는 확인하지 못했다.",
+      "attribution": "기본 범위 누락 확인과 이번 추가 구현은 Codex가 수행했다. 이전 범위와 이번 사용자 요청을 구분하고 실제 H100 실행 성공으로 단정하지 않는다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "OLMo MBPP 기본 배정·완료 분석 연결",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/a8662b9db68f0a921b7af89e15ab1eaef5046f1b"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-09",
+          "actor": "user",
+          "type": "reported",
+          "status": "open",
+          "text": "olmo mbpp 도 같은 명령어에서 똑같이 학습해서 결과 나오게 만들어놔 / 노는 노드 없게 / 지금 당장",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "기본 명령에 세 조합을 포함하고 실제 선택에 성공한 cohort만 dispatcher에 전달한다. 이전 큐 binding/Python/체크포인트는 보존한다. CPU 원래 V8 runner의 세 조합122작업이 완료됐고 OLMo MBPP의 실제 collect/analyze 경로도 결과 파일을 생성했다. 합성 CPU 결과이며 실제 MBPP 정확도가 아니다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/a8662b9db68f0a921b7af89e15ab1eaef5046f1b",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "remote_verification_pending",
+          "status": "remote_verification_pending",
+          "text": "H100은 다른 컴퓨터이며 연결되어 있지 않다. 원격 SR125 대기 원인·유휴 노드 해소·실제 OLMo MBPP 학습 진행은 미확인이다. 코드와 CPU 검증 기록은 research/v8-olmo-mbpp-20261109에 보존하며 실제 준비된 작업과 빈 worker가 있어야 배정할 수 있다.",
+          "evidence_kind": "limitation"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "raw_evidence_published",
+          "status": "remote_verification_pending",
+          "text": "전체359 CPU 회귀0실패/0skip. 원본31개 coordinator·7개 runner·445파일 호환 묶음과 전체 payload SHA를 검증했다. 세 조합122작업 완료와 OLMo MBPP collect/analyze 성공, 원본30 trainer 해시 보존, 합성 checkpoint/optimizer/RNG/학습 보상·분리 평가 원문을 보존했다. 실제 H100 상태는 확인하지 못했다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/a8662b9db68f0a921b7af89e15ab1eaef5046f1b",
+          "evidence_kind": "code_test_and_limitation"
         }
       ]
     }

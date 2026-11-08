@@ -13792,6 +13792,26 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "bd90294e624e3d036bf73602794594c3f307826f",
+      "at": "2026-11-09T00:06:07+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Record node interruption defects and preserve queue recovery evidence",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/bd90294e624e3d036bf73602794594c3f307826f",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "a8662b9db68f0a921b7af89e15ab1eaef5046f1b",
+      "at": "2026-11-09T08:43:52+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Add OLMo MBPP to shared V8 training and final results",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/a8662b9db68f0a921b7af89e15ab1eaef5046f1b",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }
