@@ -100,7 +100,9 @@
         "requires the code repo and CPU torch/transformers/peft"
       ]
     },
-    "mixed_cohort_RAM_retry": "Real V8 ToyBackend3workers/2cohorts, all stage/budget endpoint checks pass on RAM temp. This checks software scheduling, not persistent filesystem durability or H100 performance."
+    "mixed_cohort_RAM_retry": "Real V8 ToyBackend3workers/2cohorts, all stage/budget endpoint checks pass on RAM temp. This checks software scheduling, not persistent filesystem durability or H100 performance.",
+    "history_export_integration": "Previously skipped optional case re-run with V8_HISTORY_TEST_RUNTIME on RAM temp:1passed. Actual CPU V8 interruption at60/resume100, verified checkpoint50/75/100, training records separate from heldout, missing intermediate heldout explicitly unmeasured; exporter source hashes unchanged.",
+    "aggregate_root_cases": "119distinct CPU cases passed across final suite + unchanged mixed-cohort RAM retry + enabled history integration. Disk timeout and initial optional skip retained in original report; no production durability/actual H100 claim."
   },
   "test_termination_observation": "When bounded cleanup was requested for the two local blocked test runs, they had already exited. No processes were signalled; local-test-io-interruption.json records an empty target set."
 }

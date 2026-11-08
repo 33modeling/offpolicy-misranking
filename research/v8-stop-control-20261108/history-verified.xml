@@ -1,0 +1,1 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="0" skipped="0" tests="1" time="0.388" timestamp="2026-11-08T11:59:48.365799+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_history" name="test_v8_runtime_interrupt_resume_and_offline_evaluation" time="0.343" /></testsuite></testsuites>
