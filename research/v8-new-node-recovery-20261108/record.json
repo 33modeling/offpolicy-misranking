@@ -1,0 +1,68 @@
+{
+  "source_commit": "1a3358ba6c4e0e3e484141acad5a1ba7db4e2e09",
+  "user_instructions": [
+    "--retry-failed 를 무조건 넣으라고?",
+    "그냥 새노드 받아서 할거니까 정신차리고 고쳐놔",
+    "olmo 할당이 안된다고"
+  ],
+  "hypothesis": "A fresh verified worker retained every older failed OLMo job and the aggregate task-failure stop, so default launch had no eligible OLMo tasks after the prior controller fix.",
+  "attribution": "Codex recovery design required a manual retry option after fixing the launch code; repeatedly supplying it as the default command did not meet the user requirement. The prior manual-only policy is superseded by the explicit fresh-node instruction.",
+  "fix": "Plain joins verify the original node/input binding first, then reopen older-controller failed tasks once per recovery policy. Retain original attempts, checkpoints and RNG/rewards; append recovery_history with controller SHA/policy/worker/previous attempt. Clear only a recognized aggregate task-failure stop with recoverable work. Do not override input/setup failures or held leases. Current-policy failures remain failed; another node or status-only source edit cannot create an automatic retry loop. Explicit retry remains an advanced manual override.",
+  "experiment": {
+    "data": "CPU queue/actor fixtures; real production MATH/MBPP metadata DAG seeds5-9;12 fresh CPU worker processes with five held Qwen task leases and all ten initial OLMo jobs failed on the prior controller.",
+    "controls": "No retry/new-queue flag on new worker or actor-dispatch argv. Force old OLMo task failures, preserve original binding/checkpoint bytes and failed attempts. Current-controller failures, unknown input error, failed verification, active lease, partially written recovery, current-policy source-only edits are negative controls.",
+    "seeds_updates": "Seeds5-9 in metadata fixtures; no H100 model, measured reward or optimizer updates.",
+    "metrics": "Before: plain new node exits1 without executing any OLMo fixture task. After: enters fixture execute and retains checkpoint/binding;12-node test claims12 distinct tasks including at least5 prior failed OLMo tasks, one recovery-history record per original OLMo job. These are CPU software claims, not H100 throughput or scientific results."
+  },
+  "checkpoint_provenance": "Original checkpoint/optimizer/RNG/reward sentinels, source binding bytes and failed exit1 attempts retained. Thirty srgc_rebuttal baseline file SHA256 values unchanged. No result is reset/relabelled; old source snapshots remain archived.",
+  "archive": {
+    "coordinators": 21,
+    "runners": 7,
+    "files": 435
+  },
+  "limitations": "Actual remote H100 OLMo status/log/stack still unavailable. No claim of real OLMo startup, saved update or measured throughput. No new GPU allocation, paid API/model call, service/listener or public board deployment.",
+  "evidence": {
+    "actual-actor.xml": {
+      "tests": 56,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "archive.xml": {
+      "tests": 14,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "before.xml": {
+      "tests": 1,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0
+    },
+    "core.xml": {
+      "tests": 92,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "final-recovery.xml": {
+      "tests": 31,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "first-fixed.xml": {
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "regression.xml": {
+      "tests": 28,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  }
+}

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="0.066" timestamp="2026-11-08T15:44:25.294810+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_new_node_recovery" name="test_plain_new_node_reclaims_old_failed_olmo_without_retry_flag_or_checkpoint_reset" time="0.003"><failure message="AssertionError: assert 1 == 75&#10; +  where 1 = &lt;function worker_loop at 0x71af67ed4a40&gt;(&lt;scripts.srgc_v8_nodes.Pool object at 0x71af67fd3fe0&gt;, &lt;test_srgc_v8_task_failure_isolation.Runtime object at 0x71af67fd3fb0&gt;, 'fresh-node', &lt;threading.Event at 0x71af67fd3f20: unset&gt;, poll=0.001)&#10; +    where &lt;function worker_loop at 0x71af67ed4a40&gt; = nodes.worker_loop">tmp_path = PosixPath('/dev/shm/v8-recover-before-20261108/test_plain_new_node_reclaims_o0')
+
+    def test_plain_new_node_reclaims_old_failed_olmo_without_retry_flag_or_checkpoint_reset(tmp_path):
+        pool,runtime,stop=failed_queue(tmp_path,'old-controller')
+        binding=(pool.root/'binding.json').read_bytes()
+        saved=tmp_path/'olmo_math/runs/original/step-000025.pt';saved.parent.mkdir(parents=True)
+        saved.write_bytes(b'original checkpoint optimizer RNG intermediate training rewards')
+        expected=hashlib.sha256(saved.read_bytes()).hexdigest();started=[]
+        def execute(task,matrix,fd,signal,device_fds,attempt):
+            started.append(task['run_id']);runtime.completed.add(task['run_id']);stop.set();return 0
+        runtime.execute=execute
+&gt;       assert nodes.worker_loop(pool,runtime,'fresh-node',stop,poll=.001)==75
+E       AssertionError: assert 1 == 75
+E        +  where 1 = &lt;function worker_loop at 0x71af67ed4a40&gt;(&lt;scripts.srgc_v8_nodes.Pool object at 0x71af67fd3fe0&gt;, &lt;test_srgc_v8_task_failure_isolation.Runtime object at 0x71af67fd3fb0&gt;, 'fresh-node', &lt;threading.Event at 0x71af67fd3f20: unset&gt;, poll=0.001)
+E        +    where &lt;function worker_loop at 0x71af67ed4a40&gt; = nodes.worker_loop
+
+tests/test_srgc_v8_new_node_recovery.py:30: AssertionError</failure></testcase></testsuite></testsuites>
