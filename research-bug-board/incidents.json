@@ -3755,6 +3755,65 @@
         "text": "run_v8_nodes.sh: 'status'(및 'olmo_math status', --watch)는 scripts/v8_status.py 현황표를 보여 주고, 모르는 첫 단어는 사용법을 출력(종료 코드 2). 시험 167 통과. 배포 묶음 rlvr-v8-h100-v1.0.8.",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/3a80d1c",
         "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "user",
+        "type": "reported",
+        "status": "code_fixed",
+        "text": "씨발 대충 하고 다했다고 하지말고 수정을 완벽히해. 버그 현황판에 박제해",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "재점검: 3a80d1c 는 'status' 한 단어만 막았다. 6821c9c 에서 run_srgc.sh 와 같은 단어 전부([olmo_math|qwen_mbpp|all|math|mbpp] [run|status|stop] [--watch])를 받고, --gpus 4,5,6,7·--root(공백 경로) 같은 옵션 값을 순서 그대로 넘기며, 충돌·모르는 단어는 사용법(종료 2)으로 처리. 검증: v1.0.9 묶음에서 실제 큐 폴더 742개(과거 coordinator 11개 판이 만든 큐 포함)와 손상 변형 11종 × 상태 입구 3개(v8_status.py, srgc_v8_nodes.py --status, run_v8_nodes.sh status) 실패 0, 명령 단어 12가지 조합 확인, 시험 173 통과.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/6821c9c",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "V8-034",
+    "title": "읽을 수 없거나 쓰다 끊긴 큐 기록이 있으면 현황이 '시작 전·작업 없음'으로 보임",
+    "area": "V8 실행·재개·상태 감사",
+    "severity": "high",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "",
+    "cause": "v8_probe.read()·v8_status 는 읽기 실패를 None 으로 삼켜, 다른 계정 권한·mode 000·반쯤 쓴 JSON 이면 해당 기록이 조용히 빠졌다. srgc_v8_nodes --status 는 state.json 권한 오류에서 'Permission denied' 로 멈췄다.",
+    "impact": "작업이 돌고 있어도 '시작 전/작업 없음'으로 보여 잘못된 판단(재시작·새 큐)을 부를 수 있었다. 사용자 보고 전 Claude 의 재점검에서 발견.",
+    "attribution": "상태 보기(v8_status: Claude, v8_probe·Pool.status: Codex)의 공통 결함. 게시된 커밋 행을 바꾸지 않으려고 introduction_commit 은 비움.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "수정 코드",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/0719ee9"
+      },
+      {
+        "kind": "code_test",
+        "label": "회귀 시험 test_unreadable_or_corrupt_records_are_reported_not_hidden·test_pool_status_reports_unreadable_records_instead_of_crashing",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/0719ee9/tests/test_v8_status.py"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "reproduced",
+        "status": "open",
+        "text": "jobs·logs·leases·runs 를 mode 000 으로 둔 큐에서 현황표가 'phase not started / no tasks', --status 는 state.json 읽기에서 Permission denied 로 종료.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "두 상태 보기 모두 읽지 못한 파일 이름을 'ERROR some queue records could not be read …(counts incomplete)' / unreadable 목록으로 표시하고 나머지는 계속 센다. 시험 173 통과, v1.0.9 묶음 하네스 실패 0.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/0719ee9",
+        "evidence_kind": "code_test"
       }
     ]
   }

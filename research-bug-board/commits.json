@@ -12822,6 +12822,36 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "b7432d1cbb1f6cdd2cd044f23cd8ffaf25a57560",
+      "at": "2026-11-08T12:56:57+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Bug board: V8-033 status word read as a cohort (status.json), correction on V8-031",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/b7432d1cbb1f6cdd2cd044f23cd8ffaf25a57560",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "6821c9c09292662008eb4f933c74bae7490358ed",
+      "at": "2026-11-08T13:03:46+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 launcher: accept every run_srgc.sh word and keep option values intact",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/6821c9c09292662008eb4f933c74bae7490358ed",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "0719ee96d5a109e131c2626943d474a6b2e7a0b7",
+      "at": "2026-11-08T13:09:22+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: unreadable or partially written queue records are reported, never shown as an empty queue",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/0719ee96d5a109e131c2626943d474a6b2e7a0b7",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }
