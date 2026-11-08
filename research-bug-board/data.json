@@ -1,13 +1,13 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-08T20:50:14+09:00",
+  "recorded_at": "2026-11-08T22:01:48+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "8a1e2b0d5d60a9ff92946730fbea53f62367dd52",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/8a1e2b0d5d60a9ff92946730fbea53f62367dd52",
-    "all_available_commits": 1297,
-    "fix_commit_records": 139,
+    "source_commit": "212a09963ac6d926b9fb20d95c6f19d28d5c87f7",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/212a09963ac6d926b9fb20d95c6f19d28d5c87f7",
+    "all_available_commits": 1299,
+    "fix_commit_records": 140,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
     "first_commit_at": "2026-08-07T05:56:48+09:00",
@@ -29,7 +29,8 @@
       "refs/heads/bugboard-status3:d8d4b024a693301ed78d924375b68fdd81d7dd35",
       "refs/heads/bugboard-status4:c188006868a335ed7d46599445f0eb151a2a677a",
       "refs/heads/bugboard-status5:ef03f0a52aac9d4516866737e07a2c2e4c01d631",
-      "refs/heads/bugboard-status6:8a1e2b0d5d60a9ff92946730fbea53f62367dd52",
+      "refs/heads/bugboard-status6:f69dd649ac9ab483e43883c9a484d277b7f897a6",
+      "refs/heads/bugboard-status7:212a09963ac6d926b9fb20d95c6f19d28d5c87f7",
       "refs/heads/bugboard2:b7432d1cbb1f6cdd2cd044f23cd8ffaf25a57560",
       "refs/heads/bugboard3:b101cd9069dcc6ce920f42a1242174b83b9e6010",
       "refs/heads/docs/mbpp-budget-incident-20260919:fa1c6897b2b26ef002dd165c94f58702b1f9e1ed",
@@ -50,6 +51,7 @@
       "refs/heads/v8-status:a3675bbd4b6f678b3ef8fbacde56aaf072d0aafa",
       "refs/heads/v8-status-bottom:94a76aa9483e323066159197d040bb6b0d5b257e",
       "refs/heads/v8-status-clean:2f6994f544c150e58e2e3d7f43e6e67c16ae442e",
+      "refs/heads/v8-status-counts:212a09963ac6d926b9fb20d95c6f19d28d5c87f7",
       "refs/heads/v8-status-layout:616a1e3a5ba03620144c98f7370165e0107c4a63",
       "refs/heads/v8-status-lease:f418288156a4633f243691417f1e453be9bf8c0c",
       "refs/heads/v8-status-live:a870f596b03848fadfe79764978b08006316c9e2",
@@ -72,7 +74,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:8a1e2b0d5d60a9ff92946730fbea53f62367dd52"
+      "refs/remotes/origin/master:212a09963ac6d926b9fb20d95c6f19d28d5c87f7"
     ]
   },
   "incidents": [
@@ -7405,6 +7407,43 @@
           "status": "code_fixed",
           "text": "실패 작업마다 why(rank 오류 → 로그 예외 → 종료 코드 의미, GPU 메모리 부족 표시)·next(기본 자동 재시도 n/3·남은 대기·시도 소진 시 --max-attempts)·log 경로. 학습 완료(manifest)나 exit 9/137·SIGTERM 이고 Python 오류 없음은 '!' marked failed(진짜 오류 아님)로 따로 셈. 회귀 시험 3개(실패 6종·rank 파일·재시도 규칙), 이 PC 큐 8,721개 세 화면 26,163번 오류 0. v1.0.21 묶음.",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/8a1e2b0",
+          "evidence_kind": "code_test"
+        }
+      ]
+    },
+    {
+      "id": "V8-109",
+      "title": "V8 status 요약 숫자가 맞지 않음: updates 를 3배 넘게 부풀리고, worker 없는 running·모르는 상태를 엉뚱한 칸에 셈",
+      "area": "V8 실행·재개·상태 감사",
+      "severity": "medium",
+      "first_reported": "2026-11-08",
+      "introduction_commit": "",
+      "cause": "updates 합계가 학습·예산 연장 작업을 모두 update 0 부터 셌다. 분기와 연장은 부모가 저장한 update(task.parent.completed_update)부터 이어 가므로 공유 구간이 작업마다 다시 더해졌다. worker 가 기록되지 않은 running 작업은 run 에, 알 수 없는 작업 상태는 wait 에 조용히 들어갔다.",
+      "impact": "사용자 보고 'status 집계가 뭔가 이상해 숫자가 안맞아'. 실제 계획 모양 시험 큐에서 425 update 가 1,425 로 보였고, run 수가 노드 표의 running 수와 달랐다.",
+      "attribution": "Claude 의 상태 화면 결함. 같은 날 수정. 이미 게시된 커밋 행을 바꾸지 않으려고 introduction_commit 은 비움.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "수정 커밋 212a099",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/212a099"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "사용자",
+          "type": "reported",
+          "status": "open",
+          "text": "'status 집계가 뭔가 이상해 숫자가 안맞아'",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "작업마다 (끝 update − 시작 update), done 을 train·eval 로 나눔(합 = 전체), worker 없는 running 은 stuck(이유), 모르는 상태는 other. 이 PC 큐 13,341개를 원본 작업 파일과 대조: 칸 합 = 전체, done·running·failed·train·eval 일치, 문제 줄 수 = 문제 작업 수, stuck = DEAD 행 + worker 없는 작업. v1.0.22.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/212a099",
           "evidence_kind": "code_test"
         }
       ]

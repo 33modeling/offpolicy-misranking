@@ -7331,5 +7331,42 @@
         "evidence_kind": "code_test"
       }
     ]
+  },
+  {
+    "id": "V8-109",
+    "title": "V8 status 요약 숫자가 맞지 않음: updates 를 3배 넘게 부풀리고, worker 없는 running·모르는 상태를 엉뚱한 칸에 셈",
+    "area": "V8 실행·재개·상태 감사",
+    "severity": "medium",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "",
+    "cause": "updates 합계가 학습·예산 연장 작업을 모두 update 0 부터 셌다. 분기와 연장은 부모가 저장한 update(task.parent.completed_update)부터 이어 가므로 공유 구간이 작업마다 다시 더해졌다. worker 가 기록되지 않은 running 작업은 run 에, 알 수 없는 작업 상태는 wait 에 조용히 들어갔다.",
+    "impact": "사용자 보고 'status 집계가 뭔가 이상해 숫자가 안맞아'. 실제 계획 모양 시험 큐에서 425 update 가 1,425 로 보였고, run 수가 노드 표의 running 수와 달랐다.",
+    "attribution": "Claude 의 상태 화면 결함. 같은 날 수정. 이미 게시된 커밋 행을 바꾸지 않으려고 introduction_commit 은 비움.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "수정 커밋 212a099",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/212a099"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "사용자",
+        "type": "reported",
+        "status": "open",
+        "text": "'status 집계가 뭔가 이상해 숫자가 안맞아'",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "작업마다 (끝 update − 시작 update), done 을 train·eval 로 나눔(합 = 전체), worker 없는 running 은 stuck(이유), 모르는 상태는 other. 이 PC 큐 13,341개를 원본 작업 파일과 대조: 칸 합 = 전체, done·running·failed·train·eval 일치, 문제 줄 수 = 문제 작업 수, stuck = DEAD 행 + worker 없는 작업. v1.0.22.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/212a099",
+        "evidence_kind": "code_test"
+      }
+    ]
   }
 ]

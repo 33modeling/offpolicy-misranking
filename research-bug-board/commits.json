@@ -13682,6 +13682,26 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "f69dd649ac9ab483e43883c9a484d277b7f897a6",
+      "at": "2026-11-08T20:50:15+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Bug board: status showed no failure cause and counted killed/finished tasks as failures (fixed 4792ad0, 8a1e2b0)",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/f69dd649ac9ab483e43883c9a484d277b7f897a6",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "212a09963ac6d926b9fb20d95c6f19d28d5c87f7",
+      "at": "2026-11-08T22:01:01+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: summary numbers add up; updates count each job once",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/212a09963ac6d926b9fb20d95c6f19d28d5c87f7",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }
