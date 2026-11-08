@@ -133,7 +133,7 @@ def collect(base, cohort, now):
                    arm=str(task.get('method_id') or task.get('stage') or task.get('kind') or '-'),
                    seed=task.get('training_seed', '-'), status=job.get('state', 'pending'),
                    total=task.get('horizon') or task.get('endpoint') or task.get('total_updates'),
-                   attempt=len(attempts), run_id=task.get('run_id'), kind=task.get('kind'), phase=job.get('phase'), host=str(attempt.get('worker') or '').rsplit('.', 1)[0] or None, worker=attempt.get('worker'), done=None)
+                   attempt=len(attempts), started=attempt.get('started_at'), run_id=task.get('run_id'), kind=task.get('kind'), phase=job.get('phase'), host=str(attempt.get('worker') or '').rsplit('.', 1)[0] or None, worker=attempt.get('worker'), done=None)
         rid = task.get('run_id')
         if rid:
             manifest = read(directory / 'runs' / rid / 'manifest.json')
@@ -632,15 +632,6 @@ def clean_block(base, cohort, now, host, width):
             lines.append(f'{seed!s:>4}  ' + '  '.join(f'{table[(seed, c)]:<{widths[c]}}' for c in cols))
     else:
         lines.append('  (no tasks yet)')
-    running = [r for r in rows if r['status'] == 'running']
-    if running:
-        lines.append('running')
-        for r in sorted(running, key=lambda r: (str(r['seed']), r['arm'])):
-            name = ('eval ' + short_arm(trained.get(r.get('run_id'), r['arm']))) if r.get('kind') == 'evaluate' else \
-                   short_arm(r['arm']) + (' ext' if r.get('phase') == 'extension' else '')
-            upd = f"{r['done']}/{r['total']}" if r['done'] is not None and r['total'] else 'starting'
-            prog = short_progress(r, now) or (f"log {age_text(r['activity_age'])} ago" if r.get('activity_age') is not None else '')
-            lines.append(clip(f"  ▶ s{r['seed']} {name:<10} {upd:<9} {prog:<40} {r.get('host') or ''}", width))
     problems = [r for r in rows if r['status'] in ATTENTION]
     unreadable = access_problems(queue)
     if state.get('_unreadable_jobs'):
@@ -703,63 +694,150 @@ def lease_held(queue, key):
         os.close(fd)
 
 
-def node_table(bases, cohorts, now):
-    """One row per worker (host + GPU group) over both cohorts.
+def span(seconds):
+    seconds = max(0, int(seconds))
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    return f"{seconds // 3600}h{(seconds % 3600) // 60:02d}m"
 
-    running  heartbeat fresh, has a task           idle  heartbeat fresh, no task
-    DEAD     no heartbeat, a task is still marked running on it (that task is stuck until the node restarts)
-    gone     no heartbeat, nothing was running on it (stopped or crashed; nothing waits for it)
-    finished no heartbeat after its queue completed (normal exit)"""
-    nodes = {}
+
+def gpu_text(group):
+    """'0,1,2,3' -> '0-3' (contiguous), otherwise unchanged."""
+    try:
+        ids = [int(x) for x in str(group).split(',')]
+    except ValueError:
+        return str(group)
+    if len(ids) > 1 and ids == list(range(ids[0], ids[0] + len(ids))):
+        return f"{ids[0]}-{ids[-1]}"
+    return str(group)
+
+
+def gpu_groups(queues):
+    """host -> GPU groups that passed admission ('.multi-node/admission/<host>-<g0>-<g1>-...-<uuid8>')."""
+    groups = {}
+    for queue in queues:
+        try:
+            names = [p.name for p in (Path(queue) / 'admission').iterdir()]
+        except OSError:
+            continue
+        for name in names:
+            m = re.fullmatch(r'(.+?)((?:-\d+)+)-[0-9a-f]{8}', name)
+            if m:
+                groups.setdefault(m.group(1), set()).add(m.group(2)[1:].replace('-', ','))
+    return groups
+
+
+def local_gpus(pid):
+    """GPU list of a worker on this host, from its command line (--gpus) or environment."""
+    try:
+        argv = Path(f'/proc/{pid}/cmdline').read_bytes().split(b'\0')
+    except OSError:
+        return None
+    args = [a.decode(errors='replace') for a in argv]
+    for i, arg in enumerate(args):
+        if arg == '--gpus' and i + 1 < len(args):
+            return args[i + 1]
+        if arg.startswith('--gpus='):
+            return arg.split('=', 1)[1]
+    try:
+        env = Path(f'/proc/{pid}/environ').read_bytes().split(b'\0')
+    except OSError:
+        return '0,1,2,3'
+    for item in env:
+        if item.startswith(b'CUDA_VISIBLE_DEVICES='):
+            return item.split(b'=', 1)[1].decode(errors='replace') or '0,1,2,3'
+    return '0,1,2,3'
+
+
+def natural(text):
+    return [int(t) if t.isdigit() else t for t in re.split(r'(\d+)', str(text))]
+
+
+def node_table(bases, cohorts, now, this_host=None):
+    """One row per worker process (worker id = '<host>.<pid>'), over both cohorts, in host order.
+
+    running  heartbeat fresh, a task is assigned to it      starting  fresh, loading the runtime / checking the node
+    idle     fresh, no task                                 DEAD      no heartbeat >3 min while a task is assigned
+    gone     no heartbeat, nothing assigned                 finished  no heartbeat after its queue completed"""
+    this_host = this_host or socket.gethostname()
+    nodes, queues = {}, []
+    def entry(worker, host):
+        return nodes.setdefault(worker, dict(worker=worker, host=host, age=None, beat=None, jobs=[], complete=True, held=[]))
     for base in bases:
         for cohort in cohorts:
             queue = Path(base) / cohort / '.multi-node'
             if not queue.exists():
                 continue
+            queues.append(queue)
             state, rows = collect(base, cohort, now)
             complete = state.get('phase') == 'complete'
             for w in worker_records(queue, now):
-                e = nodes.setdefault(w['worker'], dict(worker=w['worker'], host=w['host'], age=w['age'],
-                                                       doing=[], complete=True))
-                e['age'] = min(e['age'], w['age'])
+                e = entry(w['worker'], w['host'])
+                if e['age'] is None or w['age'] < e['age']:
+                    e['age'], e['beat'] = w['age'], w['task']
                 e['complete'] = e['complete'] and complete
-                for r in rows:
-                    if r['status'] in ('running', 'unconfirmed') and r.get('worker') == w['worker']:
-                        name = ('eval ' if r.get('kind') == 'evaluate' else '') + short_arm(r['arm']) + \
-                               (' ext' if r.get('phase') == 'extension' else '')
-                        upd = f" {r['done']}/{r['total']}" if r['done'] is not None and r['total'] else ''
-                        e['doing'].append(f"s{r['seed']} {name}{upd} ({COHORT_LABEL.get(cohort, cohort)})")
-                        if w['age'] > STALE_SECONDS:
-                            e.setdefault('held', []).append(lease_held(queue, r.get('key')))
-    order = {'DEAD': 0, 'running': 1, 'idle': 2, 'gone': 3, 'finished': 4}
-    rows = []
-    idle_alive = sum(1 for e in nodes.values() if e['age'] <= STALE_SECONDS and not e['doing'])
-    for e in nodes.values():
-        alive = e['age'] <= STALE_SECONDS
+            for r in rows:
+                if r['status'] in ('running', 'unconfirmed') and r.get('worker'):
+                    e = entry(r['worker'], r.get('host') or str(r['worker']).rsplit('.', 1)[0])
+                    e['complete'] = e['complete'] and complete
+                    e['jobs'].append((cohort, r))
+                    if e['age'] is None or e['age'] > STALE_SECONDS:
+                        e['held'].append(lease_held(queue, r.get('key')))
+    groups = gpu_groups(queues)
+    idle_alive = sum(1 for e in nodes.values() if e['age'] is not None and e['age'] <= STALE_SECONDS and not e['jobs'])
+    out = []
+    for e in sorted(nodes.values(), key=lambda e: (natural(e['host']), natural(e['worker']))):
+        alive = e['age'] is not None and e['age'] <= STALE_SECONDS
+        pid = e['worker'][len(e['host']) + 1:] if e['worker'].startswith(e['host'] + '.') else ''
+        gpus = None
+        if e['host'] == this_host and pid.isdigit():
+            gpus = local_gpus(pid)
+        if gpus:
+            gpus = gpu_text(gpus)
+        else:
+            known = sorted(gpu_text(g) for g in groups.get(e['host'], ()))
+            gpus = known[0] if len(known) == 1 else ' or '.join(known) if known else '?'
         if alive:
-            state = 'running' if e['doing'] else 'idle'
+            state = 'running' if e['jobs'] else 'starting' if e['beat'] == 'runtime_initialization' else 'idle'
         else:
-            state = 'DEAD' if e['doing'] else 'finished' if e['complete'] else 'gone'
-        if state == 'DEAD':
-            held = e.get('held', [])
-            task = ', '.join(e['doing'])
-            if any(h is True for h in held):
-                doing = f"{task} — lock still held (hung, or crashed node's lock not released): kill it there, rerun"
-            elif held and all(h is False for h in held):
-                doing = f"{task} — task is free" + (", an idle node takes it over" if idle_alive
-                                                     else ", no idle node: start one (same command)")
+            state = 'DEAD' if e['jobs'] else 'finished' if e['complete'] else 'gone'
+        local_alive = (e['host'] == this_host and pid.isdigit() and Path(f'/proc/{pid}').exists())
+        cells = []
+        for cohort, r in e['jobs'] or [(None, None)]:
+            if r is None:
+                experiment = task = updates = took = '-'
             else:
-                doing = f"{task} — lock state unknown: restart that node (same command)"
-        elif state == 'gone':
-            doing = 'stopped or crashed while idle, nothing waits for it'
-        elif state == 'finished':
-            doing = 'queue complete'
-        else:
-            doing = ', '.join(e['doing']) or 'waiting for work'
-        beat = f"{age_text(e['age'])} ago"
-        group = e['worker'][len(e['host']) + 1:] if e['worker'].startswith(e['host'] + '.') else ''
-        rows.append((order[state], e['worker'], e['host'], group, state, doing, beat))
-    return [r[2:] for r in sorted(rows)]
+                experiment = COHORT_LABEL.get(cohort, cohort)
+                task = f"s{r['seed']} " + ('eval ' if r.get('kind') == 'evaluate' else '') + short_arm(r['arm']) + \
+                       (' ext' if r.get('phase') == 'extension' else '')
+                updates = f"{r['done']}/{r['total']}" if r['done'] is not None and r['total'] else \
+                          ('0/' + str(r['total']) if r['total'] and r.get('kind') != 'evaluate' else '-')
+                took = span(now - r['started']) if isinstance(r.get('started'), (int, float)) else '-'
+            if state == 'running':
+                doing = short_progress(r, now) or (f"log written {age_text(r['activity_age'])} ago"
+                                                   if r.get('activity_age') is not None else 'started, no output yet')
+            elif state == 'starting':
+                doing = 'loading runtime / checking node'
+            elif state == 'idle':
+                doing = 'waiting for work'
+            elif state == 'DEAD':
+                if local_alive:
+                    doing = f'process {pid} still alive here but silent: hung? kill {pid}, rerun same command'
+                elif any(h is True for h in e['held']):
+                    doing = "lock still held (hung, or crashed node's lock not released): kill it there, rerun"
+                elif e['held'] and all(h is False for h in e['held']):
+                    doing = 'task is free, ' + ('an idle node takes it over' if idle_alive else 'no idle node: start one')
+                else:
+                    doing = 'lock state unknown: restart that node (same command)'
+            elif state == 'gone':
+                doing = 'stopped or crashed while idle, nothing waits for it'
+            else:
+                doing = 'queue complete'
+            beat = f"{age_text(e['age'])} ago" if e['age'] is not None else 'never'
+            cells.append(dict(host=e['host'], pid=pid, gpus=gpus, state=state, experiment=experiment, task=task,
+                              updates=updates, took=took, doing=doing, beat=beat))
+        out.extend(cells)
+    return out
 
 def render_clean(bases, now=None, gpus=None, host=None, cohorts=COHORTS, width=None):
     import shutil
@@ -788,24 +866,32 @@ def render_clean(bases, now=None, gpus=None, host=None, cohorts=COHORTS, width=N
     out.append('─' * min(width, 100))
     out.append(f"V8 status · {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(now))} · {', '.join(str(b) for b in bases)}")
     out += summaries
-    more = max(0, wanted - active)
-    out.append(f"workers    {active} active ({running_nodes} running, {active - running_nodes} idle) · work for {wanted} now"
-               + (f" → {more} more 4-GPU node{'s' if more != 1 else ''} could help" if more else ''))
     gpu_text = ' '.join(f'{i}:{u}%' for i, u, _ in gpus) if gpus else 'unknown'
     out.append(f"this node  {host}: {mine or 'no V8 task here'} · GPU {gpu_text}")
-    table = node_table(bases, cohorts, now)
+    table = node_table(bases, cohorts, now, host)
     if table:
-        n = {k: sum(r[2] == k for r in table) for k in ('running', 'idle', 'DEAD', 'gone', 'finished')}
-        out.append(f"nodes      {len(table)} total · " + ' · '.join(f"{n[k]} {k}" for k in ('running', 'idle', 'DEAD', 'gone', 'finished') if n[k] or k in ('running', 'DEAD')))
-        hw = max(4, *(len(r[0]) for r in table)); gw = max(4, *(len(r[1]) for r in table))
-        out.append(f"           {'host':<{hw}}  {'gpus':<{gw}}  {'state':<8}  {'heartbeat':<11}  doing")
-        for host_name, group, state, doing, beat in table:
-            mark = '✗' if state == 'DEAD' else '▶' if state == 'running' else ' '
-            out.append(f"         {mark} {host_name:<{hw}}  {group or '-':<{gw}}  {state:<8}  {beat:<11}  {doing}")
-        out.append(f"           not alive = no heartbeat for over {STALE_SECONDS // 60} min · DEAD = not alive with a task assigned · "
-                   "gone = not alive, no task · finished = queue complete")
+        order = ('running', 'starting', 'idle', 'DEAD', 'gone', 'finished')
+        per = {k: sorted({(r['host'], r['pid']) for r in table if r['state'] == k}) for k in order}
+        procs = len({(r['host'], r['pid']) for r in table})
+        hosts = len({r['host'] for r in table})
+        alive = len(per['running']) + len(per['starting']) + len(per['idle'])
+        more = max(0, wanted - alive)
+        out.append(f"nodes      {hosts} host{'s' if hosts != 1 else ''}, {procs} worker{'s' if procs != 1 else ''} · "
+                   + ' · '.join(f"{len(per[k])} {k}" for k in order if per[k] or k in ('running', 'DEAD'))
+                   + (f"   DEAD: {', '.join(h for h, _ in per['DEAD'])}" if per['DEAD'] else ''))
+        out.append(f"           tasks that can run now: {wanted} · alive workers: {alive}"
+                   + (f" → {more} more 4-GPU node{'s' if more != 1 else ''} would help" if more else ''))
+        cols = (('host', 'host'), ('gpus', 'gpus'), ('state', 'state'), ('experiment', 'experiment'), ('task', 'task'),
+                ('updates', 'updates'), ('took', 'running for'), ('beat', 'heartbeat'))
+        w = {k: max(len(title), *(len(str(r[k])) for r in table)) for k, title in cols}
+        out.append('   ' + '  '.join(f"{title:<{w[k]}}" for k, title in cols) + '  now')
+        for r in table:
+            mark = '✗' if r['state'] == 'DEAD' else '▶' if r['state'] == 'running' else ' '
+            out.append(f" {mark} " + '  '.join(f"{str(r[k]):<{w[k]}}" for k, _ in cols) + f"  {r['doing']}")
+        out.append("   DEAD = no heartbeat for over 3 min while a task is assigned · gone = no heartbeat, no task · "
+                   "finished = queue complete")
     else:
-        out.append("nodes      no worker has started yet")
+        out.append("nodes      no worker has started yet" + (f" · tasks that can run now: {wanted}" if wanted else ''))
     return '\n'.join(clip(line, width) for line in out) + '\n'
 
 
