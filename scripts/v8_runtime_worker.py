@@ -22,14 +22,18 @@ def activate_trainer(environment):
         path=str(directory)
         if path in sys.path:sys.path.remove(path)
         sys.path.insert(0,path)
+    return code
 
 
 def run_srgc_child(runtime,command,log,fds,stop,*,extra=None,label=None,interval=5):
     """Use the existing SRGC lifecycle/progress watchdog; supervisor already spools its console."""
-    activate_trainer(runtime.environment)
+    code=activate_trainer(runtime.environment)
     from srgc_rebuttal.cluster import run_child
     from srgc_rebuttal.progress import signature
     environment=dict(runtime.environment,CUDA_VISIBLE_DEVICES=','.join(runtime.gpus),**(extra or {}))
+    if code:
+        paths=[str(code),str(code/'src'),*environment.get('PYTHONPATH','').split(os.pathsep)]
+        environment['PYTHONPATH']=os.pathsep.join(dict.fromkeys(path for path in paths if path))
     directory=Path(environment['SRGC_PROGRESS_DIR']);directory.mkdir(parents=True,exist_ok=True)
     stall=float(environment.get('V8_TASK_STALL_SECONDS','1800'))
     if not math.isfinite(stall) or stall<=0:raise ValueError('V8_TASK_STALL_SECONDS must be finite and positive')

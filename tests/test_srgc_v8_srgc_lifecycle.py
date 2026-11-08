@@ -56,7 +56,7 @@ def test_frozen_actor_outside_checkout_can_import_original_srgc_without_pythonpa
 from pathlib import Path
 from v8_runtime_worker import run_srgc_child
 r=types.SimpleNamespace(cohort='olmo_math',gpus=[],heartbeat=lambda _:None,environment=dict(os.environ))
-assert run_srgc_child(r,[sys.executable,'-c','print("original SRGC child reached")'],
+assert run_srgc_child(r,[sys.executable,'-c','from srgc_rebuttal.progress import signature;print("original SRGC child reached")'],
  Path(sys.argv[1]),[],threading.Event(),interval=.01)==0
 ''')
     env=dict(os.environ,V8_CODE_ROOT=str(REPO),SRGC_PROGRESS_DIR=str(tmp_path/'progress'))
