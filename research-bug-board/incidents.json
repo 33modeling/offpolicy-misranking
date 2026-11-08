@@ -4306,5 +4306,63 @@
         "evidence_kind": "limitation"
       }
     ]
+  },
+  {
+    "id": "V8-044",
+    "title": "캐시 actor가 원본 srgc_rebuttal import 경로를 활성화하지 않아 ModuleNotFoundError",
+    "area": "V8 캐시 실행기·원본 SRGC 패키지 경로",
+    "severity": "critical",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "b9cddf8",
+    "cause": "Codex가 run_srgc_child에서 srgc_rebuttal.cluster/progress를 import하도록 바꾸면서, 저장소 밖 private control cache에서 시작하는 부모 actor의 sys.path에 선택된 V8_CODE_ROOT를 넣지 않았다. Runtime child environment의 PYTHONPATH는 부모 sys.path를 바꾸지 않는다. checkout 내부에서 실행한 이전 검사들이 이 누락을 가렸다.",
+    "impact": "사용자 보고 no module named srgc_rebutal. 실제 fresh-cache 외부cwd/PYTHONPATH없는 CPU 재현에서 from srgc_rebuttal.cluster import run_child가 No module named srgc_rebuttal로 실패했다. 이 경로의 SRGC 자식은 시작되지 못했다. 실제 원격 다른 오류·학습 진행은 별도 미검증이다.",
+    "attribution": "Codex b9cddf8의 경로 활성화 누락 및 실제 캐시 진입조건을 빠뜨린 테스트 범위. 패키지 설치 문제가 아니며 frozen numerical package30파일은 그대로다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "원본 경로 활성화 및 자식 전달 수정",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/235ded015e9ba281ea62e4f29d1d2f792c0dc7e2"
+      },
+      {
+        "kind": "code_test",
+        "label": "실제 실패·외부cwd 재현·수정 검사·원본 보존",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/2e35f3418324cb2fd9d374c368770773e40b6542/research/v8-trainer-import-20261108/record.json"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "user",
+        "type": "reported",
+        "status": "open",
+        "text": "no module named srgc_rebutal / 제대로 하는게 없네 빨리 고쳐",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "reproduced",
+        "status": "open",
+        "text": "새 private-cache/control에 actor/RPC만 복사하고 저장소 밖cwd·PYTHONPATH제거·기존V8_CODE_ROOT만 설정해 동일 ModuleNotFoundError를 재현했다. before.xml1실패를 보존한다.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "f4cccb8/235ded0: bootstrap이 원본root/src를 상속 PYTHONPATH에 넣고 actor는 원본Runtime/SRGC import 전에 해당root를 활성화한다. run_srgc_child 자식도 같은root/src를 받는다. 기존 경로는 보존하며 원본 경로 인자·패키지 설치·신원 우회를 요구하지 않는다. 수정52검사, 동시19a0161 RT변경 병합 후52검사, 부모+자식패키지 실제 import25검사,18coordinator/7runner재개14검사 통과. 기존checkpoint/optimizer/RNG/reward/attempt 기록 보존.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/235ded015e9ba281ea62e4f29d1d2f792c0dc7e2",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "remote_verification_pending",
+        "status": "remote_verification_pending",
+        "text": "코드235ded0 원격exact 확인. 이미 실패로 기록된 작업은 명시적 --retry-failed로 재배정할 수 있다. 실제 H100 OLMo의 학습 시작/완료는 아직 관찰하지 못했고 자동 성공으로 집계하지 않는다. 공개 현황판 배포는 별도 미실행이다.",
+        "evidence_kind": "limitation"
+      }
+    ]
   }
 ]
