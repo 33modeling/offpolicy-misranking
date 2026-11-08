@@ -1,0 +1,44 @@
+[
+  {
+    "source_commit": "419072869dc1c9b280c4d3c47e5430b4e97e9d25",
+    "child_sha256": "955c147e36d6554443bcdb83513f8e10e0354275ddff6f60764c365a8d727718",
+    "verifier_fallback": false,
+    "protected_rollouts": false
+  },
+  {
+    "source_commit": "cbd68a4a6c1c45cd21475182a211abfff78eea8d",
+    "child_sha256": "132a349a29941389a2d4278ed25113a258aec630e9646b72938bf27a5c8ac0ae",
+    "verifier_fallback": false,
+    "protected_rollouts": false
+  },
+  {
+    "source_commit": "f6b1b53090634feded721981d0b9f73b85870b32",
+    "child_sha256": "7827a71923e1a293eec34655115654944b3b3d0fe5111f08a38e35d3d4407b1f",
+    "verifier_fallback": true,
+    "protected_rollouts": false
+  },
+  {
+    "source_commit": "f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
+    "child_sha256": "12f97da3c9f06f0429d062ae36449a6e5b2b874eaf3a1b4081451eceab45a5bd",
+    "verifier_fallback": true,
+    "protected_rollouts": false
+  },
+  {
+    "source_commit": "32365b355b939686799bb0429059ad1f2377049e",
+    "child_sha256": "12f97da3c9f06f0429d062ae36449a6e5b2b874eaf3a1b4081451eceab45a5bd",
+    "verifier_fallback": true,
+    "protected_rollouts": false
+  },
+  {
+    "source_commit": "f13cd3d1392440d58e96e4f77b4147ad0aa62205",
+    "child_sha256": "12f97da3c9f06f0429d062ae36449a6e5b2b874eaf3a1b4081451eceab45a5bd",
+    "verifier_fallback": true,
+    "protected_rollouts": false
+  },
+  {
+    "source_commit": "19a0161b14877e204aae01f8513c551e60b52d44",
+    "child_sha256": "e4971eb71964638a3c8f43856093d15754899af745917d2cc81da275af172a95",
+    "verifier_fallback": true,
+    "protected_rollouts": true
+  }
+]

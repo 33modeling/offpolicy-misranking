@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="2" time="2.536" timestamp="2026-11-08T16:50:43.455483+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_legacy_training_guards" name="test_old_context_uses_existing_seed_fallback_for_strict_gold_failure" time="0.907"><failure message="AssertionError: Traceback (most recent call last):&#10;    File &quot;/home/kms/dev/offpolicy-misranking/scripts/v8_task_entry.py&quot;, line 50, in &lt;module&gt;&#10;      if __name__=='__main__':raise SystemExit(recorded_main())&#10;                                               ^^^^^^^^^^^^^^^&#10;    File &quot;/home/kms/dev/offpolicy-misranking/scripts/v8_task_entry.py&quot;, line 31, in recorded_main&#10;      try:return record(main)()&#10;                 ^^^^^^^^^^^^^^&#10;    File &quot;/home/kms/dev/continual-pair-opd/.venv/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py&quot;, line 380, in wrapper&#10;      return f(*args, **kwargs)&#10;             ^^^^^^^^^^^^^^^^^^&#10;    File &quot;/home/kms/dev/offpolicy-misranking/scripts/v8_task_entry.py&quot;, line 21, in main&#10;      return module.main()&#10;             ^^^^^^^^^^^^^&#10;    File &quot;/dev/shm/v8-gold-oom-before-real-20261108/test_old_context_uses_existing0/cluster_child.py&quot;, line 12, in main&#10;      correct=backend.verifier(record,'Answer: (C)');wrong=backend.verifier(record,'Answer: (D)')&#10;              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/home/kms/dev/offpolicy-misranking/srgc_rebuttal/run_experiment.py&quot;, line 27, in math_reward&#10;      raise ValueError(&quot;gold answer could not be parsed; fix input before training&quot;)&#10;  ValueError: gold answer could not be parsed; fix input before training&#10;  &#10;assert 1 == 0&#10; +  where 1 = CompletedProcess(args=['/home/kms/dev/continual-pair-opd/.venv/bin/python', '/home/kms/dev/offpolicy-misranking/script... not be parsed; fix input before training&quot;)\nValueError: gold answer could not be parsed; fix input before training\n').returncode">tmp_path = PosixPath('/dev/shm/v8-gold-oom-before-real-20261108/test_old_context_uses_existing0')
+
+    def test_old_context_uses_existing_seed_fallback_for_strict_gold_failure(tmp_path):
+        body=r''' mv=types.ModuleType('math_verify');mv.parse=lambda *a,**kw:[];mv.verify=lambda *a,**kw:True
+     mv.ExprExtractionConfig=mv.LatexExtractionConfig=lambda:None;sys.modules['math_verify']=mv
+     from srgc_rebuttal.run_experiment import math_reward
+     record={'answer':r'$\boxed{\text{(C)}}$'}
+     backend=types.SimpleNamespace(model=types.SimpleNamespace(generate=lambda **kw:None),verifier=math_reward,records={'q':record})
+     ctx=Context(srgc=None,engine_class=None,backend=backend,data={},config=None,out_root=Path(sys.argv[1]).parent/'olmo_math')
+     correct=backend.verifier(record,'Answer: (C)');wrong=backend.verifier(record,'Answer: (D)')
+     Path(sys.argv[1]).write_text(json.dumps({'correct':correct,'wrong':wrong,'identity':ctx.verifier_identity}))
+    '''
+        result,path=entry(tmp_path,body)
+&gt;       assert result.returncode==0,result.stdout+result.stderr
+E       AssertionError: Traceback (most recent call last):
+E           File "/home/kms/dev/offpolicy-misranking/scripts/v8_task_entry.py", line 50, in &lt;module&gt;
+E             if __name__=='__main__':raise SystemExit(recorded_main())
+E                                                      ^^^^^^^^^^^^^^^
+E           File "/home/kms/dev/offpolicy-misranking/scripts/v8_task_entry.py", line 31, in recorded_main
+E             try:return record(main)()
+E                        ^^^^^^^^^^^^^^
+E           File "/home/kms/dev/continual-pair-opd/.venv/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 380, in wrapper
+E             return f(*args, **kwargs)
+E                    ^^^^^^^^^^^^^^^^^^
+E           File "/home/kms/dev/offpolicy-misranking/scripts/v8_task_entry.py", line 21, in main
+E             return module.main()
+E                    ^^^^^^^^^^^^^
+E           File "/dev/shm/v8-gold-oom-before-real-20261108/test_old_context_uses_existing0/cluster_child.py", line 12, in main
+E             correct=backend.verifier(record,'Answer: (C)');wrong=backend.verifier(record,'Answer: (D)')
+E                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/home/kms/dev/offpolicy-misranking/srgc_rebuttal/run_experiment.py", line 27, in math_reward
+E             raise ValueError("gold answer could not be parsed; fix input before training")
+E         ValueError: gold answer could not be parsed; fix input before training
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/home/kms/dev/continual-pair-opd/.venv/bin/python', '/home/kms/dev/offpolicy-misranking/script... not be parsed; fix input before training")\nValueError: gold answer could not be parsed; fix input before training\n').returncode
+
+tests/test_srgc_v8_legacy_training_guards.py:41: AssertionError</failure></testcase><testcase classname="tests.test_srgc_v8_legacy_training_guards" name="test_old_scoring_oom_releases_exception_frame_and_retries_same_call_once" time="1.576"><failure message="AssertionError: Traceback (most recent call last):&#10;    File &quot;/home/kms/dev/offpolicy-misranking/scripts/v8_task_entry.py&quot;, line 50, in &lt;module&gt;&#10;      if __name__=='__main__':raise SystemExit(recorded_main())&#10;                                               ^^^^^^^^^^^^^^^&#10;    File &quot;/home/kms/dev/offpolicy-misranking/scripts/v8_task_entry.py&quot;, line 31, in recorded_main&#10;      try:return record(main)()&#10;                 ^^^^^^^^^^^^^^&#10;    File &quot;/home/kms/dev/continual-pair-opd/.venv/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py&quot;, line 380, in wrapper&#10;      return f(*args, **kwargs)&#10;             ^^^^^^^^^^^^^^^^^^&#10;    File &quot;/home/kms/dev/offpolicy-misranking/scripts/v8_task_entry.py&quot;, line 21, in main&#10;      return module.main()&#10;             ^^^^^^^^^^^^^&#10;    File &quot;/dev/shm/v8-gold-oom-before-real-20261108/test_old_scoring_oom_releases_0/cluster_child.py&quot;, line 21, in main&#10;      result=backend.score_gradients(['q'],responses=8,group_size=4,seed=17)&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/home/kms/dev/offpolicy-misranking/scripts/v8_generation_probe.py&quot;, line 113, in method&#10;      try:return original_method(*args,**kwargs)&#10;                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/dev/shm/v8-gold-oom-before-real-20261108/test_old_scoring_oom_releases_0/cluster_child.py&quot;, line 18, in score_gradients&#10;      def score_gradients(self,ids,**kwargs):return self._rollout(ids[0],kwargs['responses'],kwargs['seed'])&#10;                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/dev/shm/v8-gold-oom-before-real-20261108/test_old_scoring_oom_releases_0/cluster_child.py&quot;, line 15, in _rollout&#10;      tensor=Holder();self.failed=weakref.ref(tensor);raise torch.OutOfMemoryError('injected CUDA OOM')&#10;                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;  torch.OutOfMemoryError: injected CUDA OOM&#10;  &#10;assert 1 == 0&#10; +  where 1 = CompletedProcess(args=['/home/kms/dev/continual-pair-opd/.venv/bin/python', '/home/kms/dev/offpolicy-misranking/script...                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\ntorch.OutOfMemoryError: injected CUDA OOM\n').returncode">tmp_path = PosixPath('/dev/shm/v8-gold-oom-before-real-20261108/test_old_scoring_oom_releases_0')
+
+    def test_old_scoring_oom_releases_exception_frame_and_retries_same_call_once(tmp_path):
+        pytest.importorskip('torch')
+        body=r''' import torch,weakref
+     releases=[];torch.cuda.empty_cache=lambda:releases.append('released')
+     class Holder:pass
+     class Backend:
+      device=types.SimpleNamespace(type='cuda');model=types.SimpleNamespace(generate=lambda **kw:None)
+      def __init__(self):self.calls=[];self.failed=None
+      def _rollout(self,prompt,responses,seed):
+       self.calls.append([prompt,responses,seed])
+       if len(self.calls)==1:
+        tensor=Holder();self.failed=weakref.ref(tensor);raise torch.OutOfMemoryError('injected CUDA OOM')
+       assert self.failed() is None,'OOM traceback still owns failed tensors'
+       return [1,2],[1.,0.],1
+      def score_gradients(self,ids,**kwargs):return self._rollout(ids[0],kwargs['responses'],kwargs['seed'])
+     backend=Backend()
+     ctx=Context(srgc=None,engine_class=None,backend=backend,data={},config=None,out_root=Path(sys.argv[1]).parent/'olmo_math')
+     result=backend.score_gradients(['q'],responses=8,group_size=4,seed=17)
+     assert backend.calls==[['q',8,17],['q',8,17]] and releases
+     Path(sys.argv[1]).write_text(json.dumps({'calls':backend.calls,'result':result}))
+    '''
+        result,path=entry(tmp_path,body)
+&gt;       assert result.returncode==0,result.stdout+result.stderr
+E       AssertionError: Traceback (most recent call last):
+E           File "/home/kms/dev/offpolicy-misranking/scripts/v8_task_entry.py", line 50, in &lt;module&gt;
+E             if __name__=='__main__':raise SystemExit(recorded_main())
+E                                                      ^^^^^^^^^^^^^^^
+E           File "/home/kms/dev/offpolicy-misranking/scripts/v8_task_entry.py", line 31, in recorded_main
+E             try:return record(main)()
+E                        ^^^^^^^^^^^^^^
+E           File "/home/kms/dev/continual-pair-opd/.venv/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 380, in wrapper
+E             return f(*args, **kwargs)
+E                    ^^^^^^^^^^^^^^^^^^
+E           File "/home/kms/dev/offpolicy-misranking/scripts/v8_task_entry.py", line 21, in main
+E             return module.main()
+E                    ^^^^^^^^^^^^^
+E           File "/dev/shm/v8-gold-oom-before-real-20261108/test_old_scoring_oom_releases_0/cluster_child.py", line 21, in main
+E             result=backend.score_gradients(['q'],responses=8,group_size=4,seed=17)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/home/kms/dev/offpolicy-misranking/scripts/v8_generation_probe.py", line 113, in method
+E             try:return original_method(*args,**kwargs)
+E                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/dev/shm/v8-gold-oom-before-real-20261108/test_old_scoring_oom_releases_0/cluster_child.py", line 18, in score_gradients
+E             def score_gradients(self,ids,**kwargs):return self._rollout(ids[0],kwargs['responses'],kwargs['seed'])
+E                                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/dev/shm/v8-gold-oom-before-real-20261108/test_old_scoring_oom_releases_0/cluster_child.py", line 15, in _rollout
+E             tensor=Holder();self.failed=weakref.ref(tensor);raise torch.OutOfMemoryError('injected CUDA OOM')
+E                                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E         torch.OutOfMemoryError: injected CUDA OOM
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/home/kms/dev/continual-pair-opd/.venv/bin/python', '/home/kms/dev/offpolicy-misranking/script...                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\ntorch.OutOfMemoryError: injected CUDA OOM\n').returncode
+
+tests/test_srgc_v8_legacy_training_guards.py:68: AssertionError</failure></testcase></testsuite></testsuites>

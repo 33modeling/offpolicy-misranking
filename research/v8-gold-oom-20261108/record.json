@@ -1,0 +1,89 @@
+{
+  "source_commit": "153a4d87bcf86c0555d33bea6dfea5ca1c4c15ce",
+  "merged_published_source": "ec296ac3a6bf818b76df78cdb8de88fb9b24a4fe",
+  "user_reports": [
+    "valueerror gold answer could not be parsed",
+    "torch.outofmemoryerror",
+    "runtimeError /pytorch/build/aten/src/Aten/RegisterCUDA SymIntArrayRef",
+    "이렇게 3개야"
+  ],
+  "hypothesis": "Exact-source resume selected older child scripts that call strict math_reward and lack the original seed-run rollout cache/OOM protections. New control/observer fixes did not repair those backend functions. The third CUDA report contains a C++ function signature rather than a complete cause and remains unclassified.",
+  "source_audit": "archived-child-audit.json:7 numerical runner variants;2 have no verifier-fallback installer and6 have no protected rollout class. The first two invoke strict math_reward through the constructed backend. No original source hash is overwritten to hide this.",
+  "repair": {
+    "verifier": "After saved-source selection and original Context creation, rebind only the package strict math_reward to the unchanged original seed fallback. Parsable gold retains math-verify; unparsable gold uses documented normalized Answer-line exact match. Reject empty gold and leave custom/MBPP verifier untouched. Record actual reward-runtime change, helper SHA and verifier identity.",
+    "memory": "For older backends, release CUDA cache after each rollout and retry one OutOfMemoryError outside its exception scope after freeing unreachable tensors/cache. Repeat the exact same prompt/responses/seed without another optimizer update. Existing protected backends get the same rollout guard during train. Persistent OOM and unrelated RuntimeError still fail.",
+    "provenance": "Freeze/hash the original fallback helper with all other selected control files. Use numerical_source_changed:false plus conditional-runtime-repair declaration, and per-rank runtime-repair records explicitly report reward_runtime_changed. Do not claim an unchanged effective reward runtime.",
+    "cuda_diagnostics": "Preserve the original exception/notes, last recorded rank operation and allocator counters when available. No invented GPU free memory or Python traceback; no new CUDA kernel is launched after failure for diagnosis."
+  },
+  "tested": {
+    "data": "Real strict math_reward with controlled empty parse result; unchanged pinned math-verify0.9.0 wheel bundle tests; injected CPU OutOfMemoryError and weakref failure-frame check; fake GPU cache-release hook (not actual CUDA allocation); original-entry/frozen Runtime/production DAG/history/control/observer tests.",
+    "controls": "Correct and wrong fallback answers, empty/custom verifier preservation, identical retry arguments, only2 OOM calls, only1 unrelated RuntimeError call, one optimizer update under an existing guard, immutable selected helper after git-pull-like edit, retained CUDA error context.",
+    "seeds_updates": "Rollout fixture seed17,8 requested responses; no real H100 model inference or optimizer update. Other suite seeds/updates are CPU toy/metadata controls, not scientific results.",
+    "metrics": "Exception class, return values/call counts, failed-frame collection, source/helper/binding/checkpoint preservation and explicit protocol receipt. Not a measured learning reward, fixed held-out reward, throughput or H100 memory saving."
+  },
+  "failures": "before.xml: initial test harness omitted trainer PYTHONPATH,2 import failures retained. Corrected harness before-runtime.xml then reproduces exactly the strict gold ValueError and injected torch.OutOfMemoryError. Do not attribute the initial fixture error to production.",
+  "evidence": {
+    "guards.xml": {
+      "tests": 34,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1
+    },
+    "all.xml": {
+      "tests": 295,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "pinned-math-verifier.xml": {
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "archive.xml": {
+      "tests": 14,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "premerge.xml": {
+      "tests": 34,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "first-fixed.xml": {
+      "tests": 36,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "before-runtime.xml": {
+      "tests": 2,
+      "failures": 2,
+      "errors": 0,
+      "skipped": 0
+    },
+    "before.xml": {
+      "tests": 2,
+      "failures": 2,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "retained_local_inputs": {
+    "records": 800,
+    "empty_gold": 0,
+    "sha256": "503edf7c2ffb07a4993d1e2045f054c0074667f15c4ade41e2879c85281cdf66",
+    "bytes_equal_to_HEAD": true
+  },
+  "fallback_helper_sha256": "b2402b7d932f4063dbe9dc624c091d76e009fc426366cf6b744b4812a1ffd672",
+  "checkpoint_provenance": "Original trainer30 baseline hashes unchanged. Inputs, optimizer/RNG/checkpoints, prior training/evaluation rewards and failures retained; no batch/response/token cap or model attention kernel changed. Failed attempts remain identifiable; partial data/held-out measurements are never invented.",
+  "archive": {
+    "coordinators": 25,
+    "runners": 7,
+    "files": 439
+  },
+  "limitations": "The reported actual H100 OOM phase/allocation and full third RuntimeError/traceback have not been provided. Cache cleanup/one same-draw retry does not guarantee fitting a genuine capacity overflow or fix an unrelated CUDA kernel fault. Real H100 OLMo startup/update still unverified; third report remains open. CPU tests are not scientific results. No paid model/API call, GPU allocation request or web/development service. Pinned math verifier was extracted offline from existing verified wheels."
+}
