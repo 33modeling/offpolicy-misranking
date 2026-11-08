@@ -79,7 +79,7 @@ def collect(base, cohort, now):
                    arm=str(task.get('method_id') or task.get('stage') or task.get('kind') or '-'),
                    seed=task.get('training_seed', '-'), status=job.get('state', 'pending'),
                    total=task.get('horizon') or task.get('endpoint') or task.get('total_updates'),
-                   attempt=len(attempts), host=str(attempt.get('worker') or '').rsplit('.', 1)[0] or None, done=None)
+                   attempt=len(attempts), host=str(attempt.get('worker') or '').rsplit('.', 1)[0] or None, worker=attempt.get('worker'), done=None)
         rid = task.get('run_id')
         if rid:
             manifest = read(directory / 'runs' / rid / 'manifest.json')
@@ -107,8 +107,73 @@ def collect(base, cohort, now):
             lines = [x for x in tail(log, 32768) if x.strip()]
             row['last_line'] = lines[-1].strip()[:160] if lines else None
             row['error'] = row.get('error') or last_error_line(lines) or (str(attempt.get('error'))[:200] if attempt.get('error') else None)
+        if row['status'] == 'pending':
+            row['ready'] = task_ready(task)
         rows.append(row)
     return state, rows
+
+
+def task_ready(task):
+    """Same rule as srgc_v8_nodes.Runtime.ready: evaluation needs its snapshot, training its saved parent."""
+    try:
+        if task.get('kind') == 'evaluate':
+            return Path(task['snapshot_path']).is_file()
+        parent = task.get('parent') or {}
+        return bool(parent.get('path')) and Path(parent['path']).is_file()
+    except (KeyError, TypeError, OSError):
+        return False
+
+
+def worker_records(queue, now):
+    """Heartbeat files written by srgc_v8_nodes workers (workers/<digest>.json: worker, pid, at, task)."""
+    records = []
+    for path in sorted(Path(queue).glob('workers/*.json')):
+        beat = read(path)
+        if not beat or not isinstance(beat.get('at'), (int, float)):
+            continue
+        worker = str(beat.get('worker') or path.stem)
+        age = now - beat['at']
+        task = beat.get('task')
+        if age > STALE_SECONDS:
+            status = 'stale'
+        elif task:
+            status = 'running'
+        else:
+            status = 'idle'
+        records.append(dict(worker=worker, host=worker.rsplit('.', 1)[0], status=status, task=task, age=age))
+    return records
+
+
+def node_lines(workers, rows):
+    active = [w for w in workers if w['status'] != 'stale']
+    hidden = len(workers) - len(active)
+    lines = []
+    if active or hidden:
+        lines += ['', 'nodes:']
+        for w in sorted(active, key=lambda w: w['worker']):
+            job = next((r for r in rows if r['status'] in ('running', 'unconfirmed') and r.get('worker') == w['worker']), None)
+            if job is not None:
+                w['status'] = 'running'
+                what = f"running {job['task']}" + (f" · {job['done']}/{job['total']} done" if job['done'] is not None and job['total'] else '')
+            elif w['status'] == 'running':
+                what = 'running' if str(w['task']).startswith('child:') else f"running {w['task']}"
+            else:
+                what = 'idle (nothing claimable)'
+            lines.append(f"  {w['worker']:<24} {what} · heartbeat {age_text(w['age'])} ago")
+        if hidden:
+            lines.append(f"  ({hidden} node record{'s' if hidden != 1 else ''} without a heartbeat in the last "
+                         f"{STALE_SECONDS // 60} min not shown; not proof the process stopped)")
+    running_workers = sum(w['status'] == 'running' for w in active)
+    idle_workers = sum(w['status'] == 'idle' for w in active)
+    ready = sum(1 for r in rows if r['status'] == 'pending' and r.get('ready'))
+    running_tasks = sum(r['status'] == 'running' for r in rows)
+    wanted = running_tasks + ready
+    lines.append(f"workers: {len(active)} active ({running_workers} running · {idle_workers} idle) · "
+                 f"work available now for {wanted} worker{'s' if wanted != 1 else ''} "
+                 f"({running_tasks} running + {ready} ready to start)"
+                 + (f" → {max(0, wanted - len(active))} more 4-GPU worker{'s' if wanted - len(active) != 1 else ''} could be added"
+                    if wanted > len(active) else ''))
+    return lines
 
 
 def cell(row):
@@ -119,7 +184,7 @@ def cell(row):
     if status == 'running':
         return f"running {row['done']}/{total}" if row['done'] is not None and total else 'running'
     if status == 'pending':
-        return 'waiting'
+        return 'ready' if row.get('ready') else 'waiting'
     return status.replace('_', ' ')
 
 
@@ -175,10 +240,10 @@ def render_cohort(base, cohort, now, gpus, host):
     lines = [f"V8 {cohort} · {generated} · phase {phase}", str(Path(base) / cohort), *this_node_lines(rows, gpus, host), '']
     if state.get('failure'):
         lines.append(f"ERROR queue: {str(state['failure'])[:300]}")
-    counts = {'done': 0, 'running': 0, 'waiting': 0, 'attention': 0}
+    counts = {'done': 0, 'running': 0, 'waiting': 0, 'attention': 0, 'ready': 0}
     for row in rows:
         key = ('done' if row['status'] == 'done' else 'running' if row['status'] == 'running'
-               else 'attention' if row['status'] in ATTENTION else 'waiting')
+               else 'attention' if row['status'] in ATTENTION else 'ready' if row.get('ready') else 'waiting')
         counts[key] += 1
     summary = ' · '.join(f'{name} {count}' for name, count in counts.items() if count)
     lines += [summary.replace('attention', 'needs attention') or 'no tasks', '']
@@ -198,6 +263,7 @@ def render_cohort(base, cohort, now, gpus, host):
     attention = [r for r in rows if r['status'] in ATTENTION]
     if attention:
         lines += ['', 'needs attention:'] + [f"  {r['task']:<16} {attention_detail(r)}" for r in attention]
+    lines += node_lines(worker_records(Path(base) / cohort / '.multi-node', now), rows)
     idle = gpus is not None and not any(u >= 10 for _, u, _ in gpus)
     for r in running:
         if r.get('host') == host and idle and (r.get('log_age') or 0) > 1800:
