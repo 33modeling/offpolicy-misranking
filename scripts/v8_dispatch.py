@@ -20,6 +20,7 @@ class RuntimeProxy:
         self.cohort=entry['cohort'];self.python=entry['python'];self.runner=Path(entry['runner'])
         self.root=Path(plan['root'])/self.cohort;self.error=None;self.process=None
         self.independent_startup=asynchronous;self.initialized=False;self.pending_barrier=None;self.on_ready=None
+        self.stop_event=None;self.overrides=[];self.corrected_plans=()
         self.binding=dict(schema=1,cohort=self.cohort,root=str(self.root))
         self.channel,child=socket.socketpair()
         try:
@@ -45,6 +46,7 @@ class RuntimeProxy:
         if not reply.get('ok'):raise ValueError(reply.get('error','actor initialization failed'))
         # Pool keeps this same dictionary, created before the asynchronous reply.
         self.binding.clear();self.binding.update(reply['binding']);self.initialized=True
+        self.overrides=list(reply.get('overrides',[]));self.corrected_plans=tuple(reply.get('corrected_plans',()))
         if self.on_ready:self.on_ready(self)
 
     def startup_ready(self):
@@ -60,16 +62,25 @@ class RuntimeProxy:
             if self.channel.fileno()!=-1:self.channel.settimeout(None)
 
     def call(self,method,*args,fds=(),stop=None):
-        if self.error:raise ValueError(self.error)
-        send(self.channel,dict(method=method,args=args),fds)
-        reply,received=receive(self.channel)
+        if self.error:raise nodes.NodeFailure(f'{self.cohort}: runtime actor unavailable on this node: {self.error}')
+        try:
+            send(self.channel,dict(method=method,args=args),fds)
+            reply,received=receive(self.channel)
+        except (OSError,EOFError,ValueError) as exc:
+            # The local actor process died or its socket broke: a fault of this node, not of the queue.
+            raise nodes.NodeFailure(f'{self.cohort}: runtime actor on this node failed during {method}: '
+                                    f'{type(exc).__name__}: {exc}') from None
         for fd in received:os.close(fd)
-        if reply is None:raise RuntimeError(f'{self.cohort}: runtime actor exited without reply')
+        if reply is None:raise nodes.NodeFailure(f'{self.cohort}: runtime actor on this node exited during {method}')
         if reply.get('interrupted'):
-            if stop is not None:stop.set()
-            else:raise KeyboardInterrupt()
+            # A stop signal reached the actor. Report it through the shared stop event; the reply itself is
+            # complete, so the caller can still record the attempt (no KeyboardInterrupt traceback).
+            for event in (stop,self.stop_event):
+                if event is not None:event.set()
         if not reply.get('ok'):
             if reply.get('type')=='JSONDecodeError':raise json.JSONDecodeError(reply['error'],'',0)
+            if reply.get('type')=='PermissionError':
+                raise nodes.NodeFailure(f'{self.cohort}: this account cannot access queue/run files: {reply.get("error")}')
             raise ValueError(f'{self.cohort}: {reply.get("type")}: {reply.get("error")}')
         return reply.get('result')
 
@@ -93,9 +104,11 @@ class RuntimeProxy:
         action,fd=self.pending_barrier;self.pending_barrier=None
         error=None
         try:
-            reply,received=receive(self.channel)
+            try:reply,received=receive(self.channel)
+            except (OSError,EOFError,ValueError) as exc:
+                raise nodes.NodeFailure(f'runtime actor on this node failed during CPU stage {action}: {exc}') from None
             for received_fd in received:os.close(received_fd)
-            if reply is None:raise RuntimeError('runtime actor exited during CPU stage '+action)
+            if reply is None:raise nodes.NodeFailure('runtime actor on this node exited during CPU stage '+action)
             if reply.get('interrupted'):stop.set()
             if not reply.get('ok'):raise RuntimeError(reply.get('error','CPU stage failed'))
         except Exception as exc:error=exc
@@ -134,6 +147,7 @@ def main():
         def record_policy(actor):
             record=dict(schema=1,policy=nodes.DISPATCH_POLICY,controller_source=controls,
                         original_runtime_binding=actor.binding,numerical_runtime_changed=False)
+            if actor.overrides:record['control_overrides']=actor.overrides
             receipt=Path(root)/'.v8-dispatch-policies'/(cohort+'-'+nodes.digest(record)+'.json')
             if receipt.exists():
                 if nodes.read(receipt)!=record:raise ValueError('dispatch policy receipt changed')
@@ -145,7 +159,7 @@ def main():
     args=[];i=0
     while i<len(plan['argv']):
         token=plan['argv'][i]
-        if token in ('--root','--runner-root','--python','--gpus','--poll-seconds'):
+        if token in ('--root','--runner-root','--python','--gpus','--poll-seconds','--max-attempts','--retry-delay'):
             if token!='--runner-root':args.extend(plan['argv'][i:i+2])
             i+=2;continue
         if token.startswith('-') and not token.startswith('--runner-root='):args.append(token)
@@ -155,6 +169,8 @@ def main():
     try:
         result=nodes.main(args)
         return result or (1 if plan['errors'] else 0)
+    except (OSError,ValueError,RuntimeError) as error:
+        print(f'V8 queue error: {type(error).__name__}: {error}',file=sys.stderr,flush=True);return 1
     finally:
         for actor in actors:actor.close()
         nodes.Runtime=original
