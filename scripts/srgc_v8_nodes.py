@@ -29,7 +29,7 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'global-live-task-leases-v2'
+DISPATCH_POLICY = 'independent-cohort-startup-live-leases-v3'
 TERMINAL = {'completed_horizon', 'completed_budget'}
 PHASES = ('train', 'extension', 'evaluation')
 
@@ -387,7 +387,7 @@ def worker_loop(pool,runtime,worker,stop,*,poll=3,device_fds=(),retry=False):
 
 
 def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_gate=None):
-    """Finish healthy setup first; globally serialize only lease-count comparison and task claim."""
+    """Original actors prepare independently; serialize lease-count comparison and task claim."""
     if not pairs:raise ValueError('At least one cohort is required')
     initialized=set();terminal={};last_report=0;reasons={};busy_report=0;setup_report=0
     cursor=int(digest(worker)[:8],16)%len(pairs)
@@ -410,6 +410,13 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
         else:
             print(f'[{worker}] {cohort(pool)}: no new work is taken for this cohort; the other cohort continues. '
                   f'Logs: {pool.root/"logs"}. After fixing the cause, run the same command with --retry-failed.',flush=True)
+    def advance_barrier(pool,action):
+        if read(pool.root/'binding.json')!=pool.binding:raise BindingMismatch('Queue identity changed during CPU stage')
+        state=pool.queue_state()
+        state['actions'].append(dict(action=action,worker=worker,at=time.time()))
+        state['phase']={'prepare':'train','freeze':'extension','finalize':'complete'}[action]
+        atomic(pool.root/'state.json',state)
+        print(f'[{worker}] {cohort(pool)}: CPU stage finished; phase={state["phase"]}',flush=True)
     while not stop.is_set():
         progressed=False;dispatched=False
         claim_ok,busy=(True,None) if gpu_gate is None else gpu_gate()
@@ -420,6 +427,21 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
         for index in [(cursor+i)%len(pairs) for i in range(len(pairs))]:
             if index in terminal:continue
             pool,runtime=pairs[index];action='waiting'
+            if hasattr(runtime,'startup_ready') and not runtime.startup_ready():
+                runtime.heartbeat('runtime_initialization');continue
+            if getattr(runtime,'pending_barrier',None) is not None:
+                result=runtime.poll_barrier(stop)
+                if result is None:continue
+                stage,held,error=result
+                try:
+                    if stop.is_set():return 75
+                    if error is not None:raise error
+                    advance_barrier(pool,stage);progressed=True
+                except BindingMismatch as exc:give_up(index,pool,'queue identity',exc)
+                except Exception as exc:
+                    pool.fail(f'{type(exc).__name__}: {exc}');give_up(index,pool,'CPU stage',exc)
+                finally:os.close(held)
+                continue
             with pool.control() as control:
                 if control is not None:
                     if index not in initialized:
@@ -441,13 +463,12 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                         if action in PHASES:action='waiting'
                         if action in ('prepare','freeze','finalize'):
                             print(f'[{worker}] {cohort(pool)}: CPU stage {action} started',flush=True)
-                            runtime.barrier(action,control.fd,stop,device_fds)
-                            if stop.is_set():return 75
-                            state=pool.queue_state()
-                            state['actions'].append(dict(action=action,worker=worker,at=time.time()))
-                            state['phase']={'prepare':'train','freeze':'extension','finalize':'complete'}[action]
-                            atomic(pool.root/'state.json',state);action='advance'
-                            print(f'[{worker}] {cohort(pool)}: CPU stage finished; phase={state["phase"]}',flush=True)
+                            if getattr(runtime,'independent_startup',False):
+                                runtime.begin_barrier(action,control.fd,stop,device_fds);action='waiting'
+                            else:
+                                runtime.barrier(action,control.fd,stop,device_fds)
+                                if stop.is_set():return 75
+                                advance_barrier(pool,action);action='advance'
                     except BindingMismatch as exc:
                         # This is now somebody else's queue. Do not write our failure into its state.
                         give_up(index,pool,'queue identity',exc);progressed=True;continue
@@ -465,8 +486,11 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                 terminal[index]=action;progressed=True;continue
             if action=='advance':progressed=True
         pending_setup=[]
-        for index,(pool,_) in enumerate(pairs):
+        for index,(pool,runtime) in enumerate(pairs):
             if index in terminal:continue
+            # Original Runtime actors prepare independently. A blocked Qwen setup must
+            # not keep an otherwise verified OLMo node from claiming ready work.
+            if getattr(runtime,'independent_startup',False):continue
             if index not in initialized:
                 pending_setup.append(cohort(pool)+' (node verification)');continue
             state=read(pool.root/'state.json') if (pool.root/'state.json').exists() else {}

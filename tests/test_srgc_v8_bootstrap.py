@@ -22,6 +22,8 @@ def dispatcher_stub(scripts):
          "os.environ['V8_RUNNER_ROOT']=p['entries'][0]['runner']\nsys.argv=['fixture',*p['argv']]\n"+original)
     file(scripts/'v8_runtime_worker.py','# actor stub is not executed in this startup-only fixture\n')
     file(scripts/'v8_rpc.py','# IPC stub is not executed in this startup-only fixture\n')
+    file(scripts/'v8_task_entry.py','# task entry stub\n')
+    file(scripts/'v8_generation_probe.py','# decode observer stub\n')
 
 
 def layout(tmp_path):

@@ -20,6 +20,21 @@ def main():
         spec=importlib.util.spec_from_file_location('_original_v8_coordinator',entry['script'])
         module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
         runtime=module.Runtime(entry['runner'],plan['root'],cohort,sys.executable,plan['gpus'])
+        # Keep the original child/config/engine untouched. Add diagnostics through an
+        # explicit control entry point whose hash is recorded with the dispatcher policy.
+        if hasattr(runtime,'process'):
+            original_process=runtime.process
+            def process(command,log,fds,stop,**kwargs):
+                command=list(command)
+                if not kwargs.get('cpu'):
+                    index=next((i for i,arg in enumerate(command) if Path(str(arg)).name=='cluster_child.py'),None)
+                    if index is not None:
+                        child=command[index]
+                        command[index:index+1]=[str(Path(__file__).with_name('v8_task_entry.py')),child]
+                        kwargs['extra']=dict(kwargs.get('extra') or {},
+                            V8_ORIGINAL_CHILD_SHA256=runtime.binding['runner_sha256']['cluster_child.py'])
+                return original_process(command,log,fds,stop,**kwargs)
+            runtime.process=process
         def heartbeat(task=None):
             module.atomic(runtime.root/'.multi-node/workers'/(module.digest(plan['worker'])+'.json'),
                           dict(worker=plan['worker'],pid=os.getpid(),at=module.time.time(),task=task,

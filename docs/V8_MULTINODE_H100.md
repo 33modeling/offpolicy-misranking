@@ -7,8 +7,9 @@ sh scripts/run_v8_nodes.sh
 ```
 
 별도 모델명이나 노드별 역할을 지정하지 않는다. 한 worker가 OLMo MATH와 Qwen
-MBPP 양쪽의 준비된 작업을 확인하고, 한 번에4GPU 작업 하나를 실행한다. 정상
-cohort의 초기 준비를 모두 확인한 뒤, 공유 잠금 안에서 실제 점유 중인 작업 lease를
+MBPP 양쪽의 준비된 작업을 확인하고, 한 번에4GPU 작업 하나를 실행한다. 각 cohort의
+원본 Runtime 초기화와 CPU 준비는 독립적으로 진행한다. Qwen의 준비가 끝나지 않아도
+검증·준비가 끝난 OLMo는 시작할 수 있고, 반대 방향도 같다. 공유 잠금 안에서 실제 점유 중인 작업 lease를
 세고 적게 배정된 cohort부터 새 작업을 가져온다. 기존 Qwen 작업10개가 실행 중이면
 추가 worker는 준비된 OLMo 작업을 우선한다. 한쪽이 체크포인트를 기다리거나 완료되면
 다른 쪽의 준비된 작업을 가져온다. 공유 잠금은 배정 판단·작업 claim 동안만 잡으며,
@@ -128,7 +129,7 @@ worker는60초마다 현황을 출력한다. 자식 출력은 터미널과 각 c
 정책 버전이 나온다. 표 형식 `status`는 `dispatch current <hash>`(현재 checkout과
 같음), `dispatch different <hash>`(다름), `dispatch unverified`(기록 없음)를 구분한다.
 정책 파일이 디스크에 있다는 것만으로 실행 중인 worker에 적용됐다고 판단하지 않는다.
-현재 배정 정책은 `global-live-task-leases-v2`다. 유휴 worker는 배정 전에 모든 작업을
+현재 배정 정책은 `independent-cohort-startup-live-leases-v3`다. 유휴 worker는 배정 전에 모든 작업을
 중복 검사하지 않으며, 그 노드의 입력 검증을 통과한 뒤에만 claim할 수 있다.
 원본 Runtime 초기화에는120초 제한을 두고, 한 cohort가 초기화에 응답하지 않으면
 오류를 표시하고 다른 cohort를 계속한다. 학습 실행 시간에는 이 초기화 제한을 적용하지 않는다.
@@ -196,6 +197,18 @@ GPU 작업의 자동 제출은 수행하지 않는다.
 원본 binding은 `$V8_ROOT/.v8-dispatch-policies/`의 별도 불변 기록에 남긴다.
 프로세스 간 통신은 상속받은 로컬 socketpair이며 네트워크 listener를 만들지 않는다.
 현황 확인 명령은 원본 코드 전환 없이 읽기만 수행한다.
+
+새 제어 정책은 원본 `cluster_child.py`의 해시를 검증한 뒤 별도 `v8_task_entry.py`로
+같은 child의 `main()`을 호출한다. 원본 Context가 backend를 만든 뒤 샘플링 인자와
+기존 종료 조건을 보존한 always-false 관찰 조건을 추가한다. 5초마다 실제 증가한
+디코딩 길이·호출 번호·반환된 decode step을 기록한다. `generation_start`는 진입 기록이고
+생성 완료나 optimizer update가 아니다. `generation_finished`도 생성 함수 반환만 뜻한다.
+생성 호출 안에서30분간 디코딩 단계가 늘지 않으면 해당 rank가 스택 기록을 시도하고
+exit70으로 실패한다. 기존 checkpoint는 남기며, 성공으로 처리하거나 자동 재학습하지 않는다.
+이 제한은 전체 학습 시간이나 selection refresh 총시간의 제한이 아니다. 로그 경로가
+깨졌거나 콘솔 쓰기가 막혀도 감시 종료가 그 쓰기를 무한 대기하지 않는다.
+CPU 작은 무작위 OLMo 모델에서 응답8개·기존 종료조건·출력 바이트·난수 상태가
+원래 generate와 같은지 검사했다. 실제 H100 생성 정체의 원인과 해결 여부는 별도 확인이 필요하다.
 
 현재 checkout을 선택한 경우도 실행 전 별도의 불변 사본으로 고정한다. 실행 도중
 `git pull`이 되어도 이 worker가 이후 띄우는 child/config/helper는 바뀌지 않는다.

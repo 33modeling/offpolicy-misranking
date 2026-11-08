@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 import socket
+import signal
+import subprocess
 import sys
 import threading
 
@@ -85,7 +87,7 @@ def test_existing_cohort_bindings_and_checkpoints_survive_new_dispatcher(tmp_pat
         if partial and i==0:continue
         source=tmp_path/(cohort+'.py');source.write_text(FAKE.replace('__TAG__',repr('old-'+cohort)))
         entries.append(dict(cohort=cohort,script=str(source),runner=str(REPO/'v8/experiments'),python=sys.executable if i==0 else str(alias)))
-    plan=dict(root=str(root),gpus=['0','1','2','3'],worker='fixture.1',entries=entries,argv=['--gpus','0,1,2,3'],
+    plan=dict(root=str(root),gpus=['0','1','2','3'],worker='fixture.1',entries=entries,argv=['--gpus','0,1,2,3','--poll-seconds','0.01'],
               errors={'olmo_math':'simulated invalid input'} if partial else {})
     planfile=tmp_path/'plan.json';planfile.write_text(json.dumps(plan))
     for entry in entries:
@@ -135,3 +137,44 @@ def test_actor_uses_real_frozen_runtime_identity_without_loading_models(tmp_path
         actor.close()
         if previous is None:os.environ.pop('V8_CODE_ROOT',None)
         else:os.environ['V8_CODE_ROOT']=previous
+
+
+@pytest.mark.parametrize('stage',['initialization','prepare'])
+@pytest.mark.parametrize('blocked',['qwen_mbpp','olmo_math'])
+def test_other_cohort_starts_before_blocked_initialization_or_prepare_finishes(tmp_path,blocked,stage):
+    other='olmo_math' if blocked=='qwen_mbpp' else 'qwen_mbpp'
+    wait=f'''\n  if self.cohort=={blocked!r}:\n   import time\n   while not (self.root.parent/{('started-'+other)!r}).exists():time.sleep(.01)\n'''
+    script=FAKE.replace('__TAG__',repr('original fixture')).replace(
+        " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n",
+        " def execute(self,task,matrix,fd,stop,device_fds,attempt):\n  (self.root.parent/('started-'+self.cohort)).write_text('actual CPU fixture execute entered')\n")
+    if stage=='initialization':script=script.replace(' def verify_node(self):pass',wait+' def verify_node(self):pass')
+    else:script=script.replace(' def plan(self,phase):',wait+' def plan(self,phase):')
+    frozen=tmp_path/'original.py';frozen.write_text(script)
+    entries=[dict(cohort=c,python=sys.executable,script=str(frozen),runner=str(tmp_path)) for c in ('olmo_math','qwen_mbpp')]
+    root=tmp_path/'experiments';planfile=tmp_path/'plan.json'
+    planfile.write_text(json.dumps(dict(root=str(root),entries=entries,errors={},argv=['--gpus','0,1,2,3','--poll-seconds','0.01'])))
+    code='''import sys
+from pathlib import Path
+import v8_dispatch as d
+d.nodes.gpu_inventory=lambda _:None
+lease_root=Path(sys.argv[2])
+d.nodes.gpu_lock_root=lambda:lease_root
+# No nvidia-smi, GPUs or model in this CPU control fixture.
+d.nodes.subprocess.run=lambda *a,**kw:type('Result',(),dict(returncode=1,stdout='',stderr=''))()
+sys.argv=['v8_dispatch.py',sys.argv[1]]
+raise SystemExit(d.main())
+'''
+    child=subprocess.Popen([sys.executable,'-c',code,str(planfile),str(tmp_path/'gpu-leases')],start_new_session=True,
+        env=dict(os.environ,PYTHONPATH=os.environ.get('V8_INDEPENDENT_TEST_CONTROLS',str(REPO/'scripts')),
+                 V8_ROOT=str(root),V8_ALLOW_ANY_ROOT='1',CUDA_VISIBLE_DEVICES='0,1,2,3'),
+        stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+    try:
+        try:out,err=child.communicate(timeout=6)
+        except subprocess.TimeoutExpired:pytest.fail(f'{blocked} {stage} blocked {other} from starting')
+        assert child.returncode==0,out+err
+        assert all((root/('started-'+c)).exists() for c in ('olmo_math','qwen_mbpp'))
+        assert all(json.loads((root/c/'.multi-node/state.json').read_text())['phase']=='complete' for c in ('olmo_math','qwen_mbpp'))
+    finally:
+        try:os.killpg(child.pid,signal.SIGKILL)
+        except ProcessLookupError:pass
+        child.wait(timeout=3)

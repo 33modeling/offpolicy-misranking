@@ -24,7 +24,9 @@ def work_events(rows,launch,fallback):
         for rank in range(4):
             event=read(directory/f'rank-{rank}.json')
             if isinstance(event,dict) and isinstance(event.get('updated'),(int,float)):
-                parts.append(f'rank{rank}={event.get("stage","?")} event_age={time.time()-event["updated"]:.0f}s')
+                details=''.join(f' {name}={event[name]}' for name in ('generation_call','sequence_tokens','decode_steps') if name in event)
+                if event.get('progress_kind')=='entered_only':details+=' (entered; no decode step recorded yet)'
+                parts.append(f'rank{rank}={event.get("stage","?")}{details} event_age={time.time()-event["updated"]:.0f}s')
     return parts
 
 
