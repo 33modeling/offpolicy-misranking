@@ -13652,6 +13652,36 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "292422b7bbe8833c06f1804c1c0b79c7159073c9",
+      "at": "2026-11-08T20:38:33+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Record persistent SR25 OOM and opt-in recovery failure without claiming H100 resolution",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/292422b7bbe8833c06f1804c1c0b79c7159073c9",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "4792ad07dee6fc0437181cb44748cbe2955a7f4f",
+      "at": "2026-11-08T20:42:36+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: every failed task says why, whether it is a real failure, and what happens next",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/4792ad07dee6fc0437181cb44748cbe2955a7f4f",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "8a1e2b0d5d60a9ff92946730fbea53f62367dd52",
+      "at": "2026-11-08T20:49:20+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: failure 'next' follows the default retry rule (v11)",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/8a1e2b0d5d60a9ff92946730fbea53f62367dd52",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }
