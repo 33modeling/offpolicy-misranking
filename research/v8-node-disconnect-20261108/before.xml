@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="4" skipped="0" tests="7" time="0.467" timestamp="2026-11-08T23:58:35.301162+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_node_disconnect" name="test_terminal_disconnect_does_not_stop_a_healthy_task[False]" time="0.179"><failure message="AssertionError: SIGHUP stopped healthy work instead of surviving the disconnect&#10;assert False&#10; +  where False = is_file()&#10; +    where is_file = (PosixPath('/dev/shm/v8-node-disconnect-before-20261108/test_terminal_disconnect_does_0') / 'finished').is_file">tmp_path = PosixPath('/dev/shm/v8-node-disconnect-before-20261108/test_terminal_disconnect_does_0')
+close_console = False
+
+    @pytest.mark.parametrize('close_console',[False,True])
+    def test_terminal_disconnect_does_not_stop_a_healthy_task(tmp_path,close_console):
+        for name in ('v8_supervisor.py','v8_processes.py','v8_probe.py','v8_control_output.py','v8_progress_text.py'):
+            shutil.copyfile(ROOT/'scripts'/name,tmp_path/name)
+        (tmp_path/'v8_bootstrap.py').write_text('''import time
+    from pathlib import Path
+    print('READY',flush=True)
+    time.sleep(.4)
+    Path(__file__).with_name('finished').write_text('normal completion after disconnect')
+    print('FINISHED',flush=True)
+    ''')
+        env=dict(os.environ,V8_ROOT=str(tmp_path/'runs'),V8_STOP_WAIT_SECONDS='1')
+        process=subprocess.Popen([sys.executable,str(tmp_path/'v8_supervisor.py')],env=env,
+            stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,start_new_session=True)
+        try:
+            assert process.stdout.readline().strip()=='READY'
+            if close_console:process.stdout.close()
+            process.send_signal(signal.SIGHUP)
+            if close_console:process.wait(timeout=5)
+            else:process.communicate(timeout=5)
+&gt;           assert (tmp_path/'finished').is_file(),'SIGHUP stopped healthy work instead of surviving the disconnect'
+E           AssertionError: SIGHUP stopped healthy work instead of surviving the disconnect
+E           assert False
+E            +  where False = is_file()
+E            +    where is_file = (PosixPath('/dev/shm/v8-node-disconnect-before-20261108/test_terminal_disconnect_does_0') / 'finished').is_file
+
+tests/test_srgc_v8_node_disconnect.py:41: AssertionError</failure></testcase><testcase classname="tests.test_srgc_v8_node_disconnect" name="test_terminal_disconnect_does_not_stop_a_healthy_task[True]" time="0.198"><failure message="AssertionError: SIGHUP stopped healthy work instead of surviving the disconnect&#10;assert False&#10; +  where False = is_file()&#10; +    where is_file = (PosixPath('/dev/shm/v8-node-disconnect-before-20261108/test_terminal_disconnect_does_1') / 'finished').is_file">tmp_path = PosixPath('/dev/shm/v8-node-disconnect-before-20261108/test_terminal_disconnect_does_1')
+close_console = True
+
+    @pytest.mark.parametrize('close_console',[False,True])
+    def test_terminal_disconnect_does_not_stop_a_healthy_task(tmp_path,close_console):
+        for name in ('v8_supervisor.py','v8_processes.py','v8_probe.py','v8_control_output.py','v8_progress_text.py'):
+            shutil.copyfile(ROOT/'scripts'/name,tmp_path/name)
+        (tmp_path/'v8_bootstrap.py').write_text('''import time
+    from pathlib import Path
+    print('READY',flush=True)
+    time.sleep(.4)
+    Path(__file__).with_name('finished').write_text('normal completion after disconnect')
+    print('FINISHED',flush=True)
+    ''')
+        env=dict(os.environ,V8_ROOT=str(tmp_path/'runs'),V8_STOP_WAIT_SECONDS='1')
+        process=subprocess.Popen([sys.executable,str(tmp_path/'v8_supervisor.py')],env=env,
+            stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,start_new_session=True)
+        try:
+            assert process.stdout.readline().strip()=='READY'
+            if close_console:process.stdout.close()
+            process.send_signal(signal.SIGHUP)
+            if close_console:process.wait(timeout=5)
+            else:process.communicate(timeout=5)
+&gt;           assert (tmp_path/'finished').is_file(),'SIGHUP stopped healthy work instead of surviving the disconnect'
+E           AssertionError: SIGHUP stopped healthy work instead of surviving the disconnect
+E           assert False
+E            +  where False = is_file()
+E            +    where is_file = (PosixPath('/dev/shm/v8-node-disconnect-before-20261108/test_terminal_disconnect_does_1') / 'finished').is_file
+
+tests/test_srgc_v8_node_disconnect.py:41: AssertionError</failure></testcase><testcase classname="tests.test_srgc_v8_node_disconnect" name="test_signal_only_termination_is_resumable_without_consuming_training_failure_budget" time="0.004"><failure message="AssertionError: assert ('failed' == 'interrupted'&#10;  &#10;  - interrupted&#10;  + failed)">tmp_path = PosixPath('/dev/shm/v8-node-disconnect-before-20261108/test_signal_only_termination_i0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7497532d7470&gt;
+
+    def test_signal_only_termination_is_resumable_without_consuming_training_failure_budget(tmp_path,monkeypatch):
+        pool,runtime,task,key,saved=prepared(tmp_path);pool.retry_delay=60
+        stop=threading.Event();_,claim=pool.tick(runtime,'terminated-node',stop)
+        attempt=claim[-1]
+        nodes.atomic(pool.root/'progress'/attempt['id']/'child-failure.json',
+            dict(attempt_id=attempt['id'],exit_code=1,failures=[dict(rank=1,signal=9,message='SIGKILL')]))
+        monkeypatch.setattr(nodes.time,'time',lambda:100.)
+        try:pool.finish(key,1,runtime,stop)
+        finally:claim[0].close()
+        job=nodes.read(pool.root/'jobs'/(key+'.json'))
+&gt;       assert job['state']=='interrupted' and nodes.counted_failures(job)==0
+E       AssertionError: assert ('failed' == 'interrupted'
+E         
+E         - interrupted
+E         + failed)
+
+tests/test_srgc_v8_node_disconnect.py:57: AssertionError</failure></testcase><testcase classname="tests.test_srgc_v8_node_disconnect" name="test_real_code_faults_are_not_refunded_as_node_disconnects[python-oom]" time="0.002" /><testcase classname="tests.test_srgc_v8_node_disconnect" name="test_real_code_faults_are_not_refunded_as_node_disconnects[segfault]" time="0.002" /><testcase classname="tests.test_srgc_v8_node_disconnect" name="test_real_code_faults_are_not_refunded_as_node_disconnects[kill-with-python-error]" time="0.002" /><testcase classname="tests.test_srgc_v8_node_disconnect" name="test_sigkill_of_actual_worker_is_taken_over_without_erasing_evidence" time="0.008"><failure message="KeyError: 'outcome'">tmp_path = PosixPath('/dev/shm/v8-node-disconnect-before-20261108/test_sigkill_of_actual_worker_0')
+
+    def test_sigkill_of_actual_worker_is_taken_over_without_erasing_evidence(tmp_path):
+        ctx=mp.get_context('fork');ready=ctx.Event();process=ctx.Process(target=orphan_worker,args=(str(tmp_path),ready))
+        process.start()
+        try:
+            assert ready.wait(5)
+            process.kill();process.join(5);assert process.exitcode==-signal.SIGKILL
+            # Same persisted queue; do not recreate/initialize it or replace its checkpoint.
+            pool=nodes.Pool(tmp_path/'olmo_math/.multi-node',dict(cohort='olmo_math'),retry_delay=0)
+            [path]=list((pool.root/'jobs').glob('*.json'));old=nodes.read(path);task=old['task']
+            runtime=object.__new__(nodes.Runtime);runtime.root=tmp_path/'olmo_math'
+            runtime.plan=lambda phase:([task],False)
+            action,claim=pool.tick(runtime,'replacement-node',threading.Event());assert action=='claimed'
+            try:
+                job=nodes.read(path)
+&gt;               assert job['attempts'][0]['outcome']=='node_lost'
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               KeyError: 'outcome'
+
+tests/test_srgc_v8_node_disconnect.py:97: KeyError</failure></testcase></testsuite></testsuites>

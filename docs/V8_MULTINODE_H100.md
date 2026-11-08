@@ -133,7 +133,7 @@ worker는60초마다 현황을 출력한다. 자식 출력은 터미널과 각 c
 정책 버전이 나온다. 표 형식 `status`는 `dispatch current <hash>`(현재 checkout과
 같음), `dispatch different <hash>`(다름), `dispatch unverified`(기록 없음)를 구분한다.
 정책 파일이 디스크에 있다는 것만으로 실행 중인 worker에 적용됐다고 판단하지 않는다.
-현재 배정 정책은 `source-recovery-verified-retry-budget-v12`이다. 작업 검사는 해당 cohort의
+현재 배정 정책은 `source-recovery-node-interruption-v13`이다. 작업 검사는 해당 cohort의
 control lease만 잡고 별도로 수행한다. 검사 결과가 준비되면 공유 잠금 안에서 현재
 binding·phase·실패 상태·작업 정의·작업 lease를 다시 확인한 뒤 claim한다.
 검사와 claim 사이에 다른 노드가 가져간 작업이나 실패한 작업은 가져오지 않는다.
@@ -245,6 +245,23 @@ Ctrl-C/SIGTERM은 자식 실행기에 전달된다. 종료 유예는10초이며 
 저장된 체크포인트에서 같은 명령으로 재개한다. 종료 직전 업데이트의 저장은 보장하지 않는다.
 수정본을 받은 새 노드는 맨 위의 기본 명령을 그대로 실행한다.
 기존 시도·실패를 지우지 않고, 시간 추정만으로 lease를 빼앗지 않는다.
+
+터미널 연결만 끊겨 supervisor에 SIGHUP이 오면 현재 학습은 계속한다. 닫힌 출력 연결은
+학습 자식과 분리하며, 출력은 기존 console 로그에 계속 저장한다. 연결 종료는
+`$V8_ROOT/.node-progress/<host>/<launch>/session-disconnect.jsonl`에 기록한다.
+명시적인 Ctrl-C·SIGTERM·`stop` 명령은 그대로 중단한다. 노드 자체가 강제 종료되면
+공유 볼륨의 실제 task lease와 native 실행 잠금이 풀린 뒤 다른 빈 worker가 자동 인수한다.
+원래 시도에는 lease 상실 관측과 `node_lost`를 남기고 새 시도에 `resumed_from_attempt`를
+연결한다. 실제 종료 시각·종료 코드는 관측하지 못했다면 만들지 않는다.
+
+프로세스의 SIGKILL·SIGTERM·SIGINT·SIGHUP 종료 증거만 있고 원래 Python 오류가 없으면
+학습 오류 한도를 소비하지 않는 중단으로 기록하고 기본60초 뒤 재개한다. SIGKILL이
+노드 퇴거·수동 종료·호스트 메모리 부족 중 무엇 때문인지는 단정하지 않는다.
+기록된 Python/CUDA 오류와 SIGSEGV는 일반 작업 실패로 보존하며 기존3회 한도를 적용한다.
+원래 `latest.pt`의 모델·optimizer·RNG에서 이어가고 retained checkpoint와 학습 보상은
+지우지 않는다. 재실행 전에 살아 있는 자식의 잠금이 남아 있으면 기다린다.
+이는 이미 할당되어 실행 중이거나 새로 참여한 worker가 작업을 이어받는 기능이며,
+클라우드에서 새 물리 노드를 구매하거나 할당하는 기능은 아니다.
 
 큐·시도·로그는 `$V8_ROOT/<cohort>/.multi-node/`, 학습 결과는 각 `runs/`에 남는다.
 각 cohort의 마지막 수집 뒤 기존 history exporter도 실행한다.

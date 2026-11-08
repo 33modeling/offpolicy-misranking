@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="16" time="1.329" timestamp="2026-11-09T00:02:13.642388+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_node_disconnect" name="test_terminal_disconnect_does_not_stop_a_healthy_task[False]" time="0.575" /><testcase classname="tests.test_srgc_v8_node_disconnect" name="test_terminal_disconnect_does_not_stop_a_healthy_task[True]" time="0.606" /><testcase classname="tests.test_srgc_v8_node_disconnect" name="test_signal_only_termination_is_resumable_without_consuming_training_failure_budget" time="0.005" /><testcase classname="tests.test_srgc_v8_node_disconnect" name="test_real_code_faults_are_not_refunded_as_node_disconnects[python-oom]" time="0.005" /><testcase classname="tests.test_srgc_v8_node_disconnect" name="test_real_code_faults_are_not_refunded_as_node_disconnects[segfault]" time="0.004" /><testcase classname="tests.test_srgc_v8_node_disconnect" name="test_real_code_faults_are_not_refunded_as_node_disconnects[kill-with-python-error]" time="0.003" /><testcase classname="tests.test_srgc_v8_node_disconnect" name="test_sigkill_of_actual_worker_is_taken_over_without_erasing_evidence" time="0.010" /><testcase classname="tests.test_srgc_v8_node_disconnect" name="test_direct_signal_exit_keeps_python_fault_priority[False--9]" time="0.001" /><testcase classname="tests.test_srgc_v8_node_disconnect" name="test_direct_signal_exit_keeps_python_fault_priority[False-137]" time="0.000" /><testcase classname="tests.test_srgc_v8_node_disconnect" name="test_direct_signal_exit_keeps_python_fault_priority[False--15]" time="0.000" /><testcase classname="tests.test_srgc_v8_node_disconnect" name="test_direct_signal_exit_keeps_python_fault_priority[False-143]" time="0.000" /><testcase classname="tests.test_srgc_v8_node_disconnect" name="test_direct_signal_exit_keeps_python_fault_priority[True--9]" time="0.001" /><testcase classname="tests.test_srgc_v8_node_disconnect" name="test_direct_signal_exit_keeps_python_fault_priority[True-137]" time="0.001" /><testcase classname="tests.test_srgc_v8_node_disconnect" name="test_direct_signal_exit_keeps_python_fault_priority[True--15]" time="0.001" /><testcase classname="tests.test_srgc_v8_node_disconnect" name="test_direct_signal_exit_keeps_python_fault_priority[True-143]" time="0.000" /><testcase classname="tests.test_srgc_v8_node_disconnect" name="test_killed_original_runner_resumes_its_saved_update_and_matches_uninterrupted" time="0.004"><failure message="ValueError: V8_CODE_ROOT must point to the frozen trainer checkout">tmp_path = PosixPath('/dev/shm/v8-disconnect-runner-20261109/test_killed_original_runner_re0')
+
+    def test_killed_original_runner_resumes_its_saved_update_and_matches_uninterrupted(tmp_path):
+        runner=os.environ.get('V8_NODES_TEST_RUNTIME')
+        if not runner:pytest.skip('V8 runtime source required for original runner checkpoint control')
+        from test_srgc_v8_nodes import ToyRuntime
+&gt;       runtime=ToyRuntime(runner,tmp_path/'resumed')
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_srgc_v8_node_disconnect.py:118: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_srgc_v8_nodes.py:520: in __init__
+    super().__init__(runner,root,cohort,sys.executable,['0','1','2','3'])
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;test_srgc_v8_nodes.ToyRuntime object at 0x706f66541bb0&gt;
+runner = '/home/kms/dev/offpolicy-misranking/v8/experiments'
+root = PosixPath('/dev/shm/v8-disconnect-runner-20261109/test_killed_original_runner_re0/resumed')
+cohort = 'olmo_math'
+python = '/home/kms/dev/continual-pair-opd/.venv/bin/python'
+gpus = ['0', '1', '2', '3']
+
+    def __init__(self,runner,root,cohort,python,gpus):
+        self.runner=Path(runner).resolve();self.root=Path(root).resolve()/cohort
+        self.cohort=cohort;self.python=python;self.gpus=gpus
+        if not (self.runner/'cluster_child.py').is_file():raise ValueError('runner-root must contain cluster_child.py')
+&gt;       if not os.environ.get('V8_CODE_ROOT'):raise ValueError('V8_CODE_ROOT must point to the frozen trainer checkout')
+                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       ValueError: V8_CODE_ROOT must point to the frozen trainer checkout
+
+scripts/srgc_v8_nodes.py:1126: ValueError</failure></testcase></testsuite></testsuites>

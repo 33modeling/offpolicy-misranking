@@ -29,7 +29,7 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'source-recovery-verified-retry-budget-v12'
+DISPATCH_POLICY = 'source-recovery-node-interruption-v13'
 TERMINAL = {'completed_horizon', 'completed_budget'}
 PHASES = ('train', 'extension', 'evaluation')
 CORRECTED_PLANNER = 'current-v8-016'  # evaluation planner replaced for pre-V8-016 coordinators
@@ -150,6 +150,29 @@ def aggregate_task_failure(failure):
             bool(re.match(r'^\d+ task\(s\) failed; no independent ready/running work remains\.',str(failure.get('detail','')))))
 
 
+def forced_termination(attempt,rc,log):
+    """Positive signal evidence only; original Python/CUDA faults retain failure priority."""
+    allowed={1,2,9,15}
+    failures=(attempt.get('child_failure') or {}).get('failures') or []
+    if failures:
+        if not all(isinstance(f,dict) and f.get('signal') in allowed and not f.get('original_error')
+                   and not f.get('traceback') for f in failures):return None
+        signals=sorted({f['signal'] for f in failures})
+    elif type(rc) is int and rc in (-1,-2,-9,-15,129,130,137,143):
+        signals=[-rc if rc<0 else rc-128]
+    else:return None
+    try:
+        with Path(log).open('rb') as handle:
+            handle.seek(max(0,Path(log).stat().st_size-131072))
+            lines=handle.read().decode(errors='replace').splitlines()
+        for line in lines:
+            plain=re.sub(r'^\[rank\d+\]:\s*','',line.strip())
+            if re.match(r'^(?:[\w.]+(?:Error|Exception)|SystemExit):',plain) and 'ChildFailedError' not in plain.split(':',1)[0]:
+                return None
+    except OSError:pass
+    return dict(signals=signals,cause='forced_signal_cause_unconfirmed',evidence='process exit or signal-only rank report')
+
+
 class QueueReset(Exception):
     """--new-queue replaced the queue directory; the caller must re-acquire control.lock in the new one."""
 
@@ -209,6 +232,8 @@ class Pool:
 
     def retryable(self,job,now=None,state=None):
         """Retry task faults below the failure limit and after the shared cooldown."""
+        if job.get('state')=='interrupted' and job.get('resume_not_before'):
+            return (time.time() if now is None else now)>=job['resume_not_before']
         if job.get('state')!='failed':return True
         if not self.retry_requested(state) or retry_budget_failures(job)>=self.max_attempts:return False
         attempts=job.get('attempts',[]);last=attempts[-1] if attempts else {}
@@ -216,6 +241,8 @@ class Pool:
         return (time.time() if now is None else now)>=ended+self.retry_delay
 
     def retry_later(self,job,state=None):
+        if job.get('state')=='interrupted' and job.get('resume_not_before'):
+            return time.time()<job['resume_not_before']
         return job.get('state')=='failed' and self.retry_requested(state) and retry_budget_failures(job)<self.max_attempts
 
     def held_leases(self):
@@ -488,8 +515,9 @@ class Pool:
                 all_done=False
                 if job['state']=='done':raise ValueError('Previously completed output disappeared or became inconsistent: '+path.stem)
                 if native_busy:active=True;continue
-                if job['state']=='failed' and not self.retryable(job,state=state):
-                    failed.append(path.stem);later=later or self.retry_later(job,state);continue
+                if not self.retryable(job,state=state):
+                    if job['state']=='failed':failed.append(path.stem)
+                    later=later or self.retry_later(job,state);continue
                 if not runtime.ready(job['task']):continue
                 pending.append((path,job))
             finally:lease.close()
@@ -543,8 +571,16 @@ class Pool:
             if job.get('retry_epoch'):
                 attempt.update(retry_epoch=dict(job['retry_epoch']),retry_budget_failures_before_start=retry_budget_failures(job))
             if job['state']=='running' and job['attempts']:
-                job['attempts'][-1]['lease_released_without_worker_completion']=time.time()
+                previous=job['attempts'][-1];observed=time.time()
+                previous['lease_released_without_worker_completion']=observed
+                if not previous.get('outcome'):
+                    previous.update(outcome='node_lost',node_loss_observed_at=observed,
+                                    evidence='task lease free when replacement worker acquired it')
+                attempt['resumed_from_attempt']=previous['id']
+            elif job['state']=='interrupted' and job['attempts']:
+                attempt['resumed_from_attempt']=job['attempts'][-1]['id']
             if job['state']=='failed':attempt['retry_of_failed_attempts']=counted_failures(job)
+            job.pop('resume_not_before',None)
             job['attempts'].append(attempt);job['state']='running';atomic(path,job)
             return 'claimed',(lease,path.stem,job['task'],attempt)
         return 'waiting',None
@@ -565,9 +601,14 @@ class Pool:
             try:done=runtime.done(job['task'])
             except NodeFailure as exc:node_error=f'{type(exc).__name__}: {exc}'
             except Exception as exc:attempt['output_validation_error']=str(exc)
+        termination=forced_termination(attempt,rc,self.root/'logs'/(attempt['id']+'.log'))
         if node_error is not None:
             attempt.update(outcome='node_failure',error=node_error);job['state']='interrupted'
         elif rc==0 and done:attempt['outcome']='done';job['state']='done'
+        elif termination is not None:
+            attempt.update(outcome='interrupted',termination=termination,
+                           error='Forced process termination; origin unconfirmed; resume from last saved checkpoint')
+            job.update(state='interrupted',resume_not_before=time.time()+self.retry_delay)
         elif rc==75 or stop.is_set():attempt['outcome']='interrupted';job['state']='interrupted'
         else:
             attempt.update(outcome='failed',error=f'task exit={rc}; output verified={done}'+

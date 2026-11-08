@@ -1,0 +1,79 @@
+{
+  "base_commit": "f766389400d6f831bf6761768c61c495da08d3b5",
+  "user_report": "노드가 강제로 끊기는 경우도 있는데 그런 경우에 그걸 다시 시작하도록 하게 해",
+  "hypotheses": [
+    "Terminal SIGHUP was handled as explicit stop and ended otherwise healthy learning.",
+    "Signal-only killed ranks were counted as algorithm failures and could exhaust automatic retry budget.",
+    "Kernel-lease orphan takeover already worked, but a lost attempt had no explicit outcome or link from the resumed attempt."
+  ],
+  "changes": [
+    "V13 supervisor continues after terminal SIGHUP and closed stdout; explicit SIGINT/SIGTERM/stop still work. Append session-disconnect control note; independent child logs continue.",
+    "Only positive SIGKILL/SIGTERM/SIGINT/SIGHUP evidence without an original Python fault is refunded as interruption, with shared60s cooldown. Preserve raw exit/child failure. SIGSEGV, Python/CUDA OOM and mixed original-error+cleanup kills remain failed under bounded3 retries.",
+    "After actual kernel/native locks release, a replacement claims the same persisted queue, records lost lease observation without inventing an exit code/time, links resumed_from_attempt and retains all checkpoints and prior failures. Heartbeat age never steals work."
+  ],
+  "controls": {
+    "model": "CPU synthetic ToyBackend using original V8 planner/runner/engine; no real OLMo7B/Qwen7B or H100",
+    "data": "deterministic synthetic toy_problem(0), real model/optimizer/RNG snapshot serialization plus real process kill and flock",
+    "seeds": "train5; test preparation also creates original prefix25 for seeds6/7 but only seed5 continuation is compared",
+    "updates": {
+      "prefix": 25,
+      "saved_before_SIGKILL": 26,
+      "first_resumed": 27,
+      "endpoint": 75,
+      "retained": [
+        50,
+        75
+      ]
+    },
+    "comparison": "Interruption/replacement versus same synthetic seed and configuration without interruption; terminal open/closed; real CUDA/Python fault and SIGSEGV protection; explicit stop regression",
+    "metrics": "exact branch_identity model/optimizer/selector/RNG at50/75; identical per-update metrics for26..75; no duplicate/missing training updates; zero refunded training failures for external signal interruption; retry eligibility159/160 for termination100+delay60",
+    "heldout_evaluation": "unmeasured; no evaluation was run in this control; training sample_reward remains explicitly separate",
+    "checkpoint_provenance": "cpu-runner-control.zip retains real synthetic seed5 prefixes, resumed/uninterrupted50/75 snapshots, optimizer/RNG, all training histories and attempt records; 46files, SHA manifest verified",
+    "frozen_trainer": "all30 original srgc_rebuttal Python SHA256 hashes match preexisting baseline /home/kms/reports/rlvr-v8-nodes-20261108/baseline.json"
+  },
+  "source_sha256": {
+    "scripts/srgc_v8_nodes.py": "afcbd313e4fc34f12148e027f1c15a1a318d023cb868eacd841d900c3bce488a",
+    "scripts/v8_supervisor.py": "e961ea528b591575203be1830ecb98118ac3e5ce7f2342b0b10410d1ce35f632",
+    "tests/test_srgc_v8_node_disconnect.py": "ae40e7b842aece04c9f04a6c2e28426033c03c868a049211707c157c70e21812",
+    "docs/V8_MULTINODE_H100.md": "3b3dc24e32f4d58defe3cbe7ccac62b8054fd6837bf051e8f6ae8b95c89f013a"
+  },
+  "evidence": {
+    "all.xml": {
+      "tests": 353,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "before.xml": {
+      "tests": 7,
+      "failures": 4,
+      "errors": 0,
+      "skipped": 0
+    },
+    "checkpoint-fixed.xml": {
+      "tests": 16,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "checkpoint.xml": {
+      "tests": 16,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0
+    },
+    "fixed.xml": {
+      "tests": 17,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "failures": "before.xml:4 failed/3passed before fix (two SIGHUP cases, signal accounting, missing orphan outcome). checkpoint.xml:15pass/1fail due missing V8_CODE_ROOT in new test setup, not a learner failure. Raw failures retained. fixed.xml17pass, checkpoint-fixed.xml16pass and final all.xml353pass0skip.",
+  "artifact": {
+    "file": "cpu-runner-control.zip",
+    "sha256": "2481d94ef671510ce324efe382f0e3f235f75e1bf570c8c04ae5725daef2005a"
+  },
+  "limitations": "No connected H100/shared-volume production queue. Real node eviction, real OLMo SR25 CUDA OOM and actual production step advancement remain unverified. This resumes work on existing alive/idle or newly joined allocated workers; cannot allocate a cloud VM or recover a destroyed shared volume. Running frozen workers need updated controller on restart; healthy learners must not be reset. No training batch/response/token/attention or reward protocol changes.",
+  "github_actions": "Remain disabled; no web service, paid API, credit purchase or GPU allocation performed."
+}

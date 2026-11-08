@@ -1,5 +1,6 @@
 """Bounded V8 Ctrl-C handling without changing trainer/runtime queue identities."""
 import os
+import json
 from pathlib import Path
 import signal
 import socket
@@ -71,12 +72,13 @@ def main():
     launch=uuid.uuid4().hex;env=dict(os.environ,**{TAG:launch})
     progress=root(env)/'.node-progress'/socket.gethostname()/launch
     env['SRGC_PROGRESS_DIR']=str(progress)
-    stopped=threading.Event();force=threading.Event();finished=threading.Event();received=[]
+    stopped=threading.Event();force=threading.Event();finished=threading.Event();disconnected=threading.Event();received=[]
     child=None;relay_thread=None
     def interrupt(sig,*_):
         if stopped.is_set():force.set()
         else:received.append(sig);stopped.set()
-    previous={sig:signal.signal(sig,interrupt) for sig in (signal.SIGINT,signal.SIGTERM,signal.SIGHUP)}
+    previous={sig:signal.signal(sig,interrupt) for sig in (signal.SIGINT,signal.SIGTERM)}
+    previous[signal.SIGHUP]=signal.signal(signal.SIGHUP,lambda *_:disconnected.set())
     def report():
         while not finished.wait(15):
             rows=table();parts=work_events(rows,launch,progress)
@@ -84,7 +86,8 @@ def main():
                 try:parts=before_model_work(rows,launch,root(env),log)
                 except (OSError,ValueError,TypeError,KeyError) as exc:
                     parts=[f'STATUS ERROR: cannot read this launch state: {type(exc).__name__}: {exc}; console log={log}']
-            print('[Training status] '+' | '.join(parts),flush=True)
+            try:print('[Training status] '+' | '.join(parts),flush=True)
+            except (OSError,ValueError):return  # disconnected console must not stop its independent child
     def relay(log):
         with log.open('rb') as reader:
             while True:
@@ -112,6 +115,15 @@ def main():
         relay_thread=threading.Thread(target=relay,args=(log,),daemon=True);relay_thread.start()
         threading.Thread(target=report,daemon=True).start()
         while child.poll() is None:
+            if disconnected.is_set():
+                disconnected.clear()
+                try:
+                    progress.mkdir(parents=True,exist_ok=True)
+                    with (progress/'session-disconnect.jsonl').open('a') as output:
+                        output.write(json.dumps(dict(at=time.time(),signal='SIGHUP',action='continue_current_launch',
+                                                     supervisor_pid=os.getpid(),console_log=str(log)))+'\n')
+                except OSError:pass  # losing a terminal or metadata write cannot cancel the learner
+                emit(f'[v8] terminal disconnected (SIGHUP); this launch continues. Console log: {log}')
             if stopped.wait(.1):
                 grace=stop_grace()
                 emit(f'[v8 stop] stopping this launch: SIGTERM sent; waiting up to {grace:g}s (V8_STOP_WAIT_SECONDS) '
