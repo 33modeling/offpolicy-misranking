@@ -609,6 +609,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
     """Original actors prepare independently; serialize lease-count comparison and task claim."""
     if not pairs:raise ValueError('At least one cohort is required')
     initialized=set();terminal={};offers={};scans={};last_report=0;reasons={};busy_report=0;setup_report=0
+    shared_failures=set();recovery_checked={}
     cursor=int(digest(worker)[:8],16)%len(pairs)
     roots=[p.root.parent.parent if p.root.name=='.multi-node' else p.root.parent for p,_ in pairs]
     dispatch_lock=Path(os.path.commonpath([str(p.resolve()) for p in roots]))/'.v8-dispatch.lock'
@@ -624,6 +625,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
     def cohort(pool):
         return pool.binding.get('cohort','?')
     def give_up(index,pool,kind,exc):
+        shared_failures.discard(index)  # node/source faults need fresh admission, not automatic rejoining
         terminal[index]='failed';reasons[cohort(pool)]=f'{type(exc).__name__}: {exc}'
         print(f'[{worker}] {cohort(pool)}: {kind} failed: {type(exc).__name__}: {exc}',flush=True)
         if isinstance(exc,BindingMismatch):
@@ -647,6 +649,27 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
         print(f'[{worker}] {cohort(pool)}: CPU stage finished; phase={state["phase"]}',flush=True)
     while not stop.is_set():
         progressed=False;dispatched=False
+        # A different verified worker may recover the shared queue while this
+        # worker is waiting on the other cohort. Do not cache that old failure
+        # forever. This never clears a failure or retries a job on its own.
+        for index in tuple(shared_failures):
+            now=time.monotonic()
+            if now-recovery_checked.get(index,-float('inf'))<max(.1,min(poll,5)):continue
+            recovery_checked[index]=now;pool,runtime=pairs[index]
+            try:
+                with pool.control() as control:
+                    if control is None:continue
+                    if read(pool.root/'binding.json')!=pool.binding:
+                        raise BindingMismatch('Queue identity changed while waiting for shared recovery')
+                    state=pool.queue_state()
+                    if state.get('failure'):continue
+                    shared_failures.discard(index);reasons.pop(cohort(pool),None)
+                    if state['phase']=='complete':terminal[index]='complete';continue
+                    terminal.pop(index,None);initialized.discard(index);offers.pop(index,None)
+                    print(f'[{worker}] {cohort(pool)}: shared queue recovered on another node; '
+                          'rechecking original inputs before taking ready work',flush=True)
+                    progressed=True
+            except Exception as exc:give_up(index,pool,'queue recovery check',exc)
         claim_ok,busy=(True,None) if gpu_gate is None else gpu_gate()
         if not claim_ok and time.monotonic()-busy_report>=300:
             print(f'[{worker}] waiting before new GPU work: {busy}',flush=True);busy_report=time.monotonic()
@@ -673,7 +696,9 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                 if action in ('advance','ready'):progressed=True
                 if action in ('failed','complete'):
                     terminal[index]=action
-                    if action=='failed':reasons[cohort(pool)]=canonical(pool.queue_state().get('failure'))
+                    if action=='failed':
+                        shared_failures.add(index)
+                        reasons[cohort(pool)]=canonical(pool.queue_state().get('failure'))
                 continue
             if index in offers:continue
             if hasattr(runtime,'startup_ready') and not runtime.startup_ready():
@@ -766,6 +791,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                 print(f'[{worker}] {cohort(pool)}: queue has a recorded failure: {reasons[cohort(pool)]}. '
                       f'Inspect the recorded error and logs at {pool.root/"logs"}.',flush=True)
             if action in ('complete','failed'):
+                if action=='failed':shared_failures.add(index)
                 terminal[index]=action;progressed=True;continue
             if action=='advance':progressed=True
         pending_setup=[]

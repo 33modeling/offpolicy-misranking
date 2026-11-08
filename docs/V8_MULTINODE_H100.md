@@ -154,6 +154,18 @@ binding·checkpoint를 고치거나 지우지 않는다. 신원·설정·CPU 준
 `--retry-failed`는 같은 수정본에서 다시 실패한 작업까지 수동으로 재시도할 때 쓰는
 고급 옵션이다. 새 노드의 기본 실행 명령에는 붙이지 않는다.
 
+이미 대기 중인 worker도 다른 검증된 노드가 공유 실패를 복구했는지 다시 확인한다.
+기존에는 MATH의 실패를 한 번 본 worker가 그 판단을 영구 보관해, 공유 대기열이
+정상으로 돌아와도 MATH를 배정하지 않았다. 복구를 확인하면 같은 binding인지 확인하고
+원본 입력을 재검증한 뒤 배정에 복귀한다. 이 확인 자체가 실패를 지우거나 작업을
+재시도하지는 않는다. 해당 노드의 원본 코드·입력·권한 오류는 자동 복귀하지 않는다.
+
+기본 다섯 seed는 각각 prefix25에서 On과 SR25를 시작할 수 있으므로 처음에 최대
+10개의 독립 MATH 작업이 있다. 어느 On run이50 checkpoint를 보존하면 해당 seed의
+SR50도 즉시 배정할 수 있다. 모든 seed나 On run의275 완료까지 기다리지 않는다.
+MBPP와 MATH의 실행 개수 차이만으로 모델별 상한을 뜻하지 않는다. 각 대기열의
+완료·실패·점유 및 실제 checkpoint 준비 상태를 확인해야 한다.
+
 GPU 자식의 시작·중단·정체 감시는 기존 `srgc_rebuttal.cluster.run_child()`를 사용한다.
 옛 child가 strict MATH verifier를 선택하면 Context 구성 뒤 기존 seed 실행의
 `srgc_verifier_fallback.py`를 연결한다. 읽히는 gold는 math-verify를 쓰고, 읽히지 않는

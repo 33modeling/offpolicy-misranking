@@ -1,0 +1,57 @@
+"""A queue repaired by another worker must rejoin an already waiting dispatcher."""
+import threading
+
+import pytest
+
+from scripts import srgc_v8_nodes as nodes
+
+
+@pytest.mark.parametrize('recovery',['valid','different-binding','invalid-input'])
+def test_idle_worker_rejoins_math_after_another_node_recovers_its_failure(tmp_path,recovery):
+    stop=threading.Event();started=[];checks=[];recovered=[];pairs=[]
+    for cohort in ('olmo_math','qwen_mbpp'):
+        pool=nodes.Pool(tmp_path/cohort/'.multi-node',dict(cohort=cohort,fixture=True))
+        pool.initialize();state=pool.queue_state();state['phase']='train'
+        if cohort=='olmo_math':state['failure']={'detail':'1 task(s) failed; no independent ready/running work remains.','task':None}
+        nodes.atomic(pool.root/'state.json',state)
+        task=dict(kind='train',run_id=cohort,method_id='on_monitored',training_seed=5,
+                  config_hash=cohort,parent={},horizon=275)
+        pool.register(task,'train')
+        class Runtime:
+            def __init__(self,pool,task):self.pool=pool;self.task=task;self.scans=0
+            def verify_node(self):
+                checks.append(self.task['run_id'])
+                if self.task['run_id']=='olmo_math' and recovered and recovery=='invalid-input':
+                    raise ValueError('frozen input identity differs')
+            def plan(self,phase):
+                self.scans+=1
+                if self.task['run_id']=='qwen_mbpp' and self.scans==3:
+                    other=pairs[0][0];state=other.queue_state()
+                    state['failure_history'].append(state['failure']);state['failure']=None
+                    path=next((other.root/'jobs').glob('*.json'));job=nodes.read(path)
+                    job['state']='pending';nodes.atomic(path,job)
+                    if recovery=='different-binding':nodes.atomic(other.root/'binding.json',{'cohort':'foreign'})
+                    nodes.atomic(other.root/'state.json',state);recovered.append(True)
+                return [self.task],False
+            def ready(self,task):return task['run_id']=='olmo_math'
+            def native_busy(self,task):return False
+            def done(self,task):return False
+            def execute(self,task,*args):started.append(task['run_id']);stop.set();return 75
+        pairs.append((pool,Runtime(pool,task)))
+    # The failure is current-policy and must not be cleared by ordinary node admission.
+    pool=pairs[0][0];path=next((pool.root/'jobs').glob('*.json'));job=nodes.read(path)
+    job['state']='failed';job['attempts']=[dict(id='failed',exit_code=1,controller_policy=nodes.DISPATCH_POLICY)]
+    nodes.atomic(path,job)
+    saved=tmp_path/'checkpoint-25.pt';saved.write_bytes(b'original optimizer RNG rewards')
+    timer=threading.Timer(1.5,stop.set);timer.start()
+    try:
+        nodes.worker_loop_many(pairs,'waiting-node',stop,poll=.002)
+    finally:stop.set();timer.cancel();timer.join()
+    assert recovered,'external recovery fixture did not execute'
+    assert saved.read_bytes()==b'original optimizer RNG rewards'
+    if recovery=='valid':
+        assert started==['olmo_math'],'worker permanently excluded the externally recovered MATH queue'
+        assert checks.count('olmo_math')==2,'recovered cohort must revalidate its inputs before resuming'
+    elif recovery=='invalid-input':
+        assert started==[] and checks.count('olmo_math')==2
+    else:assert started==[]
