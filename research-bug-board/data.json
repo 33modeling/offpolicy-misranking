@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-08T12:55:52+09:00",
+  "recorded_at": "2026-11-08T12:56:56+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "0a3417c941c96ce2e87976b2c8ff33477bd36952",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/0a3417c941c96ce2e87976b2c8ff33477bd36952",
-    "all_available_commits": 1209,
+    "source_commit": "3a80d1cfd07a322441f140079b6611c594863c50",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/3a80d1cfd07a322441f140079b6611c594863c50",
+    "all_available_commits": 1211,
     "fix_commit_records": 120,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
@@ -20,6 +20,7 @@
       "refs/heads/audit/codecheck-20260820:5dd447990296042e334679c85e7672477cd7c5d3",
       "refs/heads/audit/p1-integrity:5dfda89ec3be2cc4d60f8f0371eeaf00790f6644",
       "refs/heads/bugboard:aa2c212cd3393b5fe99098ab4458e2e3c37111cf",
+      "refs/heads/bugboard2:3a80d1cfd07a322441f140079b6611c594863c50",
       "refs/heads/docs/mbpp-budget-incident-20260919:fa1c6897b2b26ef002dd165c94f58702b1f9e1ed",
       "refs/heads/docs/mbpp-verify-20260921:1045bc6b37ee4d9dc2759bc528796dec58a9afad",
       "refs/heads/experiments/srgc-cost-replication:937b9490170b71c2d8931d68d9b934d120cd8da3",
@@ -27,13 +28,13 @@
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hang-fix-20261108:f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:0a3417c941c96ce2e87976b2c8ff33477bd36952",
+      "refs/heads/master:abc8cabe1bc656eb563c2133ee6ddd974bb2dd08",
       "refs/heads/v8-nodes:3adf26925b2b1c1bf572cf0e68f75b26bbae3ddc",
       "refs/heads/v8-statefix:a085f266bf68849d1e24b0b96048680e77ef6563",
       "refs/heads/v8-status:a3675bbd4b6f678b3ef8fbacde56aaf072d0aafa",
       "refs/heads/v8-status2:21b071d2f2478b1f72a2c237368395cc2ebd179a",
       "refs/heads/v8-status3:bebbd08eef8377eb1fe9723c087031c0e5612ed8",
-      "refs/heads/v8-statusword:aa2c212cd3393b5fe99098ab4458e2e3c37111cf",
+      "refs/heads/v8-statusword:3a80d1cfd07a322441f140079b6611c594863c50",
       "refs/remotes/origin/audit/codecheck-20260820:5dd447990296042e334679c85e7672477cd7c5d3",
       "refs/remotes/origin/audit/p1-integrity:5dfda89ec3be2cc4d60f8f0371eeaf00790f6644",
       "refs/remotes/origin/docs/mbpp-budget-incident-20260919:fa1c6897b2b26ef002dd165c94f58702b1f9e1ed",
@@ -42,7 +43,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:aa2c212cd3393b5fe99098ab4458e2e3c37111cf"
+      "refs/remotes/origin/master:3a80d1cfd07a322441f140079b6611c594863c50"
     ]
   },
   "incidents": [
@@ -3698,6 +3699,15 @@
           "text": "queue_state(): state.json 이 없으면 새 prepare 기록을 만들고 안내를 출력(아무것도 지우지 않음, 끝난 작업은 다시 확인). 큐 폴더가 옮겨지거나 지워지면 traceback 대신 'restart this worker' 안내로 멈춤. CPU 시험 165 통과. 배포 묶음 rlvr-v8-h100-v1.0.6.",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/a085f26",
           "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "correction",
+          "status": "code_fixed",
+          "text": "정정: 사용자의 'status.json 파일 없다' 보고의 실제 원인은 state.json 이 아니라 V8-033(status 를 cohort 이름으로 받아 configs/cohorts/status.json 을 찾음)이었다. a085f26 의 state.json 보강은 별도 방어로 유지하되, 이 사건을 사용자 보고의 원인으로 단정한 첫 기록은 잘못이었다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/3a80d1c",
+          "evidence_kind": "code_test"
         }
       ]
     },
@@ -3743,6 +3753,56 @@
           "status": "code_fixed",
           "text": "함께 발견: 12:46 현황판 기록(38bb6b3)이 `git log --all` 로 Claude 작업 트리의 임시 stash 커밋 2개(985e95e 'WIP on v8-status3', 9b48040 'index on v8-status3')를 실제 커밋처럼 commits.json 에 올렸다. stash 를 적용·삭제하자 기록 보존 검사가 'history lost' 로 막혔다. 지우지 않고 refs/archive/board-stash-985e95e·board-stash-index-9b48040 로 보존·push 해 기존 행을 그대로 유지했다. 이 두 행은 코드 변경 이력이 아니다.",
           "evidence_kind": "audit_metadata"
+        }
+      ]
+    },
+    {
+      "id": "V8-033",
+      "title": "run_v8_nodes.sh status 가 status 를 cohort 이름으로 받아 status.json 을 찾다가 멈춤",
+      "area": "V8 실행·재개·상태 감사",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "introduction_commit": "",
+      "cause": "run_srgc.sh <dataset> status 처럼 'status' 단어를 붙이면 srgc_v8_nodes.py 가 그것을 위치 인자 cohort 로 받았고, 런타임이 v8/experiments/configs/cohorts/status.json 을 열다가 FileNotFoundError 로 종료했다. 상태 보기는 --status 옵션만 지원했다.",
+      "impact": "사용자 클러스터에서 상태를 볼 수 없었다('status.json 못찾음', 두 번 보고). 학습·checkpoint 영향은 없다.",
+      "attribution": "c44f6d9 이후 다중 노드 실행기의 인자 설계(Codex)와, 첫 보고를 state.json 으로 잘못 짚은 Claude 의 진단(V8-031) 모두 기록한다. 이미 게시된 커밋 행을 바꾸지 않으려고 introduction_commit 은 비움.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "수정 코드",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/3a80d1c"
+        },
+        {
+          "kind": "code_test",
+          "label": "회귀 시험 tests/test_v8_status_word.py",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/3a80d1c/tests/test_v8_status_word.py"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "user",
+          "type": "reported",
+          "status": "open",
+          "text": "status.json 파일 없다고 실행이 안돼 / 안고쳐짐 status / status.json 못찾는거 수정해",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "reproduced",
+          "status": "open",
+          "text": "switching.spec.resolve('status') → FileNotFoundError: v8/experiments/configs/cohorts/status.json (v1.0.7 묶음에서 재현).",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "run_v8_nodes.sh: 'status'(및 'olmo_math status', --watch)는 scripts/v8_status.py 현황표를 보여 주고, 모르는 첫 단어는 사용법을 출력(종료 코드 2). 시험 167 통과. 배포 묶음 rlvr-v8-h100-v1.0.8.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/3a80d1c",
+          "evidence_kind": "code_test"
         }
       ]
     }

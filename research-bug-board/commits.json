@@ -12802,6 +12802,26 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "abc8cabe1bc656eb563c2133ee6ddd974bb2dd08",
+      "at": "2026-11-08T12:55:52+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Close V8 code audit with preserved incidents and explicit verification limits",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/abc8cabe1bc656eb563c2133ee6ddd974bb2dd08",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "3a80d1cfd07a322441f140079b6611c594863c50",
+      "at": "2026-11-08T12:56:24+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 launcher: 'run_v8_nodes.sh status' shows the status table instead of looking for status.json",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/3a80d1cfd07a322441f140079b6611c594863c50",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

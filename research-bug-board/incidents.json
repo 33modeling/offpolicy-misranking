@@ -3651,6 +3651,15 @@
         "text": "queue_state(): state.json 이 없으면 새 prepare 기록을 만들고 안내를 출력(아무것도 지우지 않음, 끝난 작업은 다시 확인). 큐 폴더가 옮겨지거나 지워지면 traceback 대신 'restart this worker' 안내로 멈춤. CPU 시험 165 통과. 배포 묶음 rlvr-v8-h100-v1.0.6.",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/a085f26",
         "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "correction",
+        "status": "code_fixed",
+        "text": "정정: 사용자의 'status.json 파일 없다' 보고의 실제 원인은 state.json 이 아니라 V8-033(status 를 cohort 이름으로 받아 configs/cohorts/status.json 을 찾음)이었다. a085f26 의 state.json 보강은 별도 방어로 유지하되, 이 사건을 사용자 보고의 원인으로 단정한 첫 기록은 잘못이었다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/3a80d1c",
+        "evidence_kind": "code_test"
       }
     ]
   },
@@ -3696,6 +3705,56 @@
         "status": "code_fixed",
         "text": "함께 발견: 12:46 현황판 기록(38bb6b3)이 `git log --all` 로 Claude 작업 트리의 임시 stash 커밋 2개(985e95e 'WIP on v8-status3', 9b48040 'index on v8-status3')를 실제 커밋처럼 commits.json 에 올렸다. stash 를 적용·삭제하자 기록 보존 검사가 'history lost' 로 막혔다. 지우지 않고 refs/archive/board-stash-985e95e·board-stash-index-9b48040 로 보존·push 해 기존 행을 그대로 유지했다. 이 두 행은 코드 변경 이력이 아니다.",
         "evidence_kind": "audit_metadata"
+      }
+    ]
+  },
+  {
+    "id": "V8-033",
+    "title": "run_v8_nodes.sh status 가 status 를 cohort 이름으로 받아 status.json 을 찾다가 멈춤",
+    "area": "V8 실행·재개·상태 감사",
+    "severity": "high",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "",
+    "cause": "run_srgc.sh <dataset> status 처럼 'status' 단어를 붙이면 srgc_v8_nodes.py 가 그것을 위치 인자 cohort 로 받았고, 런타임이 v8/experiments/configs/cohorts/status.json 을 열다가 FileNotFoundError 로 종료했다. 상태 보기는 --status 옵션만 지원했다.",
+    "impact": "사용자 클러스터에서 상태를 볼 수 없었다('status.json 못찾음', 두 번 보고). 학습·checkpoint 영향은 없다.",
+    "attribution": "c44f6d9 이후 다중 노드 실행기의 인자 설계(Codex)와, 첫 보고를 state.json 으로 잘못 짚은 Claude 의 진단(V8-031) 모두 기록한다. 이미 게시된 커밋 행을 바꾸지 않으려고 introduction_commit 은 비움.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "수정 코드",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/3a80d1c"
+      },
+      {
+        "kind": "code_test",
+        "label": "회귀 시험 tests/test_v8_status_word.py",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/3a80d1c/tests/test_v8_status_word.py"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "user",
+        "type": "reported",
+        "status": "open",
+        "text": "status.json 파일 없다고 실행이 안돼 / 안고쳐짐 status / status.json 못찾는거 수정해",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "reproduced",
+        "status": "open",
+        "text": "switching.spec.resolve('status') → FileNotFoundError: v8/experiments/configs/cohorts/status.json (v1.0.7 묶음에서 재현).",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "run_v8_nodes.sh: 'status'(및 'olmo_math status', --watch)는 scripts/v8_status.py 현황표를 보여 주고, 모르는 첫 단어는 사용법을 출력(종료 코드 2). 시험 167 통과. 배포 묶음 rlvr-v8-h100-v1.0.8.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/3a80d1c",
+        "evidence_kind": "code_test"
       }
     ]
   }
