@@ -3030,6 +3030,15 @@
         "status": "open",
         "text": "후속 코드/현황판 대조에서V8-023~030의8결함을 재현해 수정했다. 원래 실패와 수정 전후 XML을 보존한다. CPU검사는 실제 H100의 Loading weights 원인을 확정하거나 학습 완료를 뜻하지 않는다.",
         "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "mitigation_shipped",
+        "status": "open",
+        "text": "Loading weights 뒤 무출력의 가장 유력한 원인은 첫 update(선택 갱신 + SR-GC 확인)가 출력 없이 OLMo 15–30분·Qwen 2–3시간 걸리는 구간이었다. f6b1b53: child PROGRESS/PHASE/준비 줄, worker 60초 상태 줄(경과·마지막 출력 후 시간·GPU 사용률·마지막 줄), 원 SRGC child 환경과 once-per-worker NCCL admission, child 출력 로그 파일 직결(stdin 닫음), rank별 stack dump. 3adf269·21b071d: sh scripts/v8_status.sh (run_srgc.sh status 와 같은 모양, nodes·worker 수요 줄). 실제 H100 재현·해결 확인은 아직 없어 open 유지.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/f6b1b53",
+        "evidence_kind": "code_test"
       }
     ]
   },
@@ -3527,6 +3536,93 @@
         "status": "code_fixed",
         "text": "앞의 소스커밋 링크 시점에는 후속 검증 폴더가 아직 없었다. 보존 검사가 URL 덮어쓰기를 거부한 이력도 남긴다. 원문을 보존하고 실제 검증 파일이 있는 후속 커밋으로 정정한다: https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
         "url": "https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
+        "evidence_kind": "audit_metadata"
+      }
+    ]
+  },
+  {
+    "id": "V8-031",
+    "title": "큐 폴더에 state.json 이 없으면 실행이 FileNotFoundError 로 멈춤",
+    "area": "V8 실행·재개·상태 감사",
+    "severity": "high",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "",
+    "cause": "Pool.fail()/tick()/CPU barrier 가 state.json 존재를 가정하고 read() 했다. 시작이 중간에 끊긴 큐 폴더(binding.json 만 있음) 등에서 파일이 없으면 traceback 으로 종료했다. 다른 노드가 큐 폴더를 옮긴 경우 binding.json 부재도 같은 방식으로 터졌다.",
+    "impact": "사용자 클러스터에서 'status.json(state.json) 파일 없다'며 실행이 시작되지 않았다(사용자 보고, 정확한 traceback 은 미수령). 학습 결과·checkpoint 손상은 없다.",
+    "attribution": "가정은 c44f6d9(Codex 다중 노드 조정기)부터 있었다(이미 게시된 커밋 행은 바꾸지 않으려고 introduction_commit 은 비워 둠). Claude 가 재현 시험을 만들고 a085f26 에서 수정했다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "수정 코드",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/a085f26"
+      },
+      {
+        "kind": "code_test",
+        "label": "회귀 시험 test_missing_state_json_is_recreated_not_fatal·test_missing_binding_json_stops_worker_with_clear_message",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/a085f26/tests/test_srgc_v8_launch_visibility.py"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "user",
+        "type": "reported",
+        "status": "open",
+        "text": "status.json 파일 없다고 실행이 안돼",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "queue_state(): state.json 이 없으면 새 prepare 기록을 만들고 안내를 출력(아무것도 지우지 않음, 끝난 작업은 다시 확인). 큐 폴더가 옮겨지거나 지워지면 traceback 대신 'restart this worker' 안내로 멈춤. CPU 시험 165 통과. 배포 묶음 rlvr-v8-h100-v1.0.6.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/a085f26",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "V8-032",
+    "title": "배포 묶음 v1.0.5 에 새 import 모듈 v8_control_output.py 누락",
+    "area": "V8 배포 묶음",
+    "severity": "high",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "a085f26",
+    "cause": "Claude 가 v1.0.5 묶음을 v1.0.4 의 고정 파일 목록으로 만들었다. 그 사이 Codex 가 v8_supervisor.py 에 v8_control_output 모듈 import 를 추가해, 목록에 없는 파일이 빠졌다.",
+    "impact": "묶음을 푼 뒤 sh scripts/run_v8_nodes.sh 가 ModuleNotFoundError 로 즉시 종료. 사용자에게 알리기 전 Claude 의 풀어 보기 시험에서 발견해 v1.0.5 는 삭제(미배포)하고 v1.0.6 으로 대체했다.",
+    "attribution": "Claude 의 묶음 생성 절차 결함(고정 목록). 코드 결함은 아니다.",
+    "evidence": [
+      {
+        "kind": "code_test",
+        "label": "수정 후 코드 기준",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/3adf26925b2b1c1bf572cf0e68f75b26bbae3ddc"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "reproduced",
+        "status": "open",
+        "text": "v1.0.5 를 임시 폴더에 풀어 --status 실행 → ModuleNotFoundError: No module named 'v8_control_output'.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "process_fix_verified",
+        "status": "code_fixed",
+        "text": "묶음 파일 목록을 scripts/v8_*·srgc_v8_* 와 그 import 대상 전부(재귀)로 만들도록 바꿈. v1.0.6(sha256 748fd457…)을 풀어 체크섬·전체 py_compile·--status·시작 경로를 확인한 뒤 배포. v1.0.5 파일은 Downloads·dist 에서 삭제.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/3adf26925b2b1c1bf572cf0e68f75b26bbae3ddc",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "audit_metadata",
+        "status": "code_fixed",
+        "text": "함께 발견: 12:46 현황판 기록(38bb6b3)이 `git log --all` 로 Claude 작업 트리의 임시 stash 커밋 2개(985e95e 'WIP on v8-status3', 9b48040 'index on v8-status3')를 실제 커밋처럼 commits.json 에 올렸다. stash 를 적용·삭제하자 기록 보존 검사가 'history lost' 로 막혔다. 지우지 않고 refs/archive/board-stash-985e95e·board-stash-index-9b48040 로 보존·push 해 기존 행을 그대로 유지했다. 이 두 행은 코드 변경 이력이 아니다.",
         "evidence_kind": "audit_metadata"
       }
     ]
