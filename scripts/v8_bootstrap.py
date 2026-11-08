@@ -3,7 +3,13 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
+
+try:
+    from .v8_queue_runtime import selections
+except ImportError:
+    from v8_queue_runtime import selections
 
 
 PATH_VARIABLES=('GROUP_VOLUME','OM_USER','OM_WORK','V8_ROOT','VENV_DIR','V8_CODE_ROOT','OM_CODE_ROOT','V8_RUNNER_ROOT',
@@ -73,10 +79,37 @@ def main(argv=None):
         if not env.get('V8_RUNNER_ROOT') and '--runner-root' not in argv:
             raise ValueError(f'V8 runtime files are missing from this code copy ({tools}/v8/experiments); '
                              'unpack the complete V8 bundle into this checkout.')
-    os.execvpe(env['V8_PYTHON'],[env['V8_PYTHON'],str(tools/'scripts/srgc_v8_nodes.py'),*argv],env)
+    if inspect:
+        os.execvpe(env['V8_PYTHON'],[env['V8_PYTHON'],str(tools/'scripts/srgc_v8_nodes.py'),*argv],env)
+    groups=selections(tools,env,argv)
+    # Different historical queue versions cannot share one Python module namespace. Run each
+    # original worker separately, in sequence on this GPU group; never relabel either binding.
+    failed=0
+    for group in groups:
+        args=[];index=0
+        while index<len(argv):
+            token=argv[index]
+            if token in ('--root','--runner-root','--python','--gpus','--poll-seconds'):
+                if token!='--runner-root':args.extend(argv[index:index+2])
+                index+=2;continue
+            if token.startswith('-') and not token.startswith('--runner-root='):args.append(token)
+            index+=1
+        cohort='all' if len(group['cohorts'])==2 and group['supports_all'] else group['cohorts'][0]
+        python=group['pythons'][group['cohorts'][0]]
+        child_env=dict(env,V8_RUNNER_ROOT=str(group['runner']),V8_PYTHON=python)
+        child_env.update({'V8_PYTHON_'+c.upper():p for c,p in group['pythons'].items()})
+        if group['script']!=tools/'scripts/srgc_v8_nodes.py' or group['runner']!=Path(env['V8_RUNNER_ROOT']):
+            print(f'V8 resume: using exact queue source for {",".join(group["cohorts"])} '
+                  f'(coordinator {group["coordinator_sha256"][:12]}); queue/checkpoints unchanged.',file=sys.stderr,flush=True)
+        command=[python,str(group['script']),*([cohort] if cohort!='all' else []),*args]
+        if len(groups)==1:os.execvpe(python,command,child_env)
+        result=subprocess.run(command,env=child_env)
+        if result.returncode<0 or result.returncode==75:return result.returncode
+        if result.returncode:failed=result.returncode
+    return failed
 
 
 if __name__=='__main__':
-    try:main()
+    try:raise SystemExit(main())
     except (OSError,ValueError) as exc:
         print('V8 startup: '+str(exc),file=sys.stderr);raise SystemExit(2)

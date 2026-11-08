@@ -82,7 +82,7 @@ def test_no_argument_shell_reuses_existing_environment_from_unrelated_directory(
     work,trainer,bundle,tools,env=layout(tmp_path)
     scripts=tools/'scripts';scripts.mkdir()
     source=Path(__file__).resolve().parents[1]/'scripts'
-    for name in ['run_v8_nodes.sh','v8_bootstrap.py','v8_supervisor.py','v8_processes.py','v8_probe.py']:
+    for name in ['run_v8_nodes.sh','v8_bootstrap.py','v8_queue_runtime.py','v8_supervisor.py','v8_processes.py','v8_probe.py']:
         shutil.copyfile(source/name,scripts/name)
     file(scripts/'srgc_v8_nodes.py',"import json,os,sys;print(json.dumps({'args':sys.argv[1:],'root':os.environ['V8_ROOT'],'code':os.environ['V8_CODE_ROOT'],'runner':os.environ['V8_RUNNER_ROOT']}))")
     result=subprocess.run(['sh',str(scripts/'run_v8_nodes.sh')],cwd=tmp_path,env=env,text=True,capture_output=True,timeout=5)
@@ -127,7 +127,7 @@ def test_shell_launcher_survives_cdpath_and_a_node_without_python3(tmp_path):
     work,trainer,bundle,tools,env=layout(tmp_path)
     scripts=tools/'scripts';scripts.mkdir()
     source=Path(__file__).resolve().parents[1]/'scripts'
-    for name in ['run_v8_nodes.sh','v8_bootstrap.py','v8_supervisor.py','v8_processes.py','v8_probe.py']:
+    for name in ['run_v8_nodes.sh','v8_bootstrap.py','v8_queue_runtime.py','v8_supervisor.py','v8_processes.py','v8_probe.py']:
         shutil.copyfile(source/name,scripts/name)
     file(scripts/'srgc_v8_nodes.py',"import json,os,sys;print(json.dumps({'python':sys.executable}))")
     bindir=tmp_path/'bin';bindir.mkdir()
