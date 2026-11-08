@@ -12932,6 +12932,46 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "84d5f1cf3ab5adcf4d636a65126bc52810f3d5de",
+      "at": "2026-11-08T14:02:19+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve unresolved OLMo report and four reproduced dispatch defects",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/84d5f1cf3ab5adcf4d636a65126bc52810f3d5de",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "40cffc5d85b2b94201779aaf6337e7e79896a70d",
+      "at": "2026-11-08T14:28:34+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Start OLMo independently and observe real decode progress with bounded stalls",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/40cffc5d85b2b94201779aaf6337e7e79896a70d",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "dad57ff13e92f6a1cd55e623640f7e129fa9f254",
+      "at": "2026-11-08T14:33:33+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Log actual question progress, answer lengths and optimizer work by purpose",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/dad57ff13e92f6a1cd55e623640f7e129fa9f254",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "e7c9d183099a4957e130432291332e05cae69432",
+      "at": "2026-11-08T14:34:39+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve independent startup, decode equivalence and meaningful progress evidence",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/e7c9d183099a4957e130432291332e05cae69432",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }
