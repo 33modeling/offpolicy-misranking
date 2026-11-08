@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+import errno
 import fcntl
 import hashlib
 import json
@@ -24,7 +25,6 @@ import socket
 import subprocess
 import sys
 import threading
-import tempfile
 import time
 import uuid
 
@@ -66,6 +66,12 @@ class Lock:
         try:fcntl.flock(self.fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:
             os.close(self.fd);self.fd=None;return False
+        except OSError as exc:
+            os.close(self.fd);self.fd=None
+            if exc.errno in (errno.ENOLCK,errno.ENOSYS,errno.EOPNOTSUPP,errno.EINVAL):
+                raise ValueError(f'{self.path.parent}: this filesystem does not provide flock() locks ({exc.strerror}). '
+                                 'V8_ROOT/OM_WORK must be the same shared group volume the SRGC queue already uses.') from None
+            raise
         return True
 
     def close(self):
@@ -79,6 +85,21 @@ class Lock:
         return self
 
     def __exit__(self,*_):self.close()
+
+
+class BindingMismatch(ValueError):
+    pass
+
+
+def binding_changes(old,new):
+    changed=[]
+    for key in sorted(set(old)|set(new)):
+        a,b=old.get(key),new.get(key)
+        if a==b:continue
+        if isinstance(a,dict) and isinstance(b,dict):
+            changed+=[f'{key}:{k}' for k in sorted(set(a)|set(b)) if a.get(k)!=b.get(k)]
+        else:changed.append(key)
+    return changed
 
 
 def semantic_task(task):
@@ -103,7 +124,7 @@ class Pool:
             yield lock if lock.acquire() else None
         finally:lock.close()
 
-    def initialize(self,retry=False):
+    def initialize(self,retry=False,worker=None):
         path=self.root/'binding.json'
         if path.exists():
             if read(path)!=self.binding:
@@ -123,7 +144,10 @@ class Pool:
                     # An idle old worker may still use this queue even with no held job lease or
                     # completed update. Moving control.lock would also split its locking domain.
                     # Keep the original binding and inode; supervisor/stop/probe remain usable.
-                    raise ValueError('Worker/runner/config/trainer identity differs from this queue; use the same pinned code on all nodes.')
+                    raise BindingMismatch(
+                        f"{self.binding.get('cohort')}: Worker/runner/config/trainer identity differs from this queue "
+                        f"(differs: {', '.join(binding_changes(old,self.binding)[:12])}). Use the same bundle version and "
+                        f"Python on every node; the queue's version is recorded in {path}.")
         else:atomic(path,self.binding)
         state_path=self.root/'state.json'
         if not state_path.exists():atomic(state_path,dict(phase='prepare',failure=None,actions=[],failure_history=[]))
@@ -164,8 +188,11 @@ class Pool:
         atomic(path,dict(task=task,phase=phase,state='pending',attempts=[]))
         return key
 
-    def tick(self,runtime,worker,stop):
+    def tick(self,runtime,worker,stop,claim=True):
         """Called with control lock held. Returns (state, claimed lease/task)."""
+        if read(self.root/'binding.json')!=self.binding:
+            raise BindingMismatch(f"{self.binding.get('cohort')}: another node replaced this queue's code/Python record "
+                                  "while this worker was running; restart this worker with the same bundle as the others.")
         state=read(self.root/'state.json')
         if state['failure']:return 'failed',None
         phase=state['phase']
@@ -223,6 +250,7 @@ class Pool:
         # Fill trajectories first, then checkpoint-ready branches. Ties rotate
         # toward tasks with fewer launch attempts so a busy task cannot starve others.
         pending.sort(key=lambda item:(item[1]['task'].get('method_id')!='on_monitored',len(item[1]['attempts']),item[0].stem))
+        if pending and not claim:return 'gpu_busy',None
         for path,job in pending:
             if stop.is_set():return 'stopped',None
             lease=Lock(self.root/'leases'/(path.stem+'.lock'))
@@ -253,7 +281,14 @@ class Pool:
         for path in self.root.glob('jobs/*.json'):
             job=read(path);counts[job['state']]=counts.get(job['state'],0)+1
             lease=Lock(self.root/'leases'/(path.stem+'.lock'))
-            if not lease.acquire():owners.append(dict(task=path.stem,worker=job['attempts'][-1]['worker'] if job['attempts'] else None))
+            if not lease.acquire():
+                last=job['attempts'][-1] if job['attempts'] else {}
+                row=dict(task=path.stem,worker=last.get('worker'),method=job['task'].get('method_id'),
+                         seed=job['task'].get('training_seed'),kind=job['task'].get('kind'))
+                log=self.root/'logs'/(str(last.get('id'))+'.log')
+                if last.get('id') and log.exists():
+                    row.update(log=str(log),log_written_seconds_ago=round(time.time()-log.stat().st_mtime))
+                owners.append(row)
             lease.close()
         return dict(phase=state['phase'],failure=state.get('failure'),known_task_counts=counts,leased_tasks=owners)
 
@@ -262,46 +297,73 @@ def worker_loop(pool,runtime,worker,stop,*,poll=3,device_fds=(),retry=False):
     return worker_loop_many([(pool,runtime)],worker,stop,poll=poll,device_fds=device_fds,retry=retry)
 
 
-def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False):
-    """One GPU group takes the next ready job from any cohort, without fixed shares."""
+def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_gate=None):
+    """One GPU group takes the next ready job from any cohort, without fixed shares.
+
+    A cohort whose setup or task fails is recorded and left alone; the worker keeps
+    serving the other cohort and returns 1 at the end (never a silent success).
+    gpu_gate() -> (ok, message) defers new GPU claims while the GPUs are in use.
+    """
     if not pairs:raise ValueError('At least one cohort is required')
-    initialized=set();terminal={};last_report=0
+    initialized=set();terminal={};last_report=0;reasons={};busy_report=0
     cursor=int(digest(worker)[:8],16)%len(pairs)
     for pool,runtime in pairs:
         def heartbeat(task=None,pool=pool):
             atomic(pool.root/'workers'/(digest(worker)+'.json'),
                    dict(worker=worker,pid=os.getpid(),at=time.time(),task=task))
         runtime.heartbeat=heartbeat
+    def cohort(pool):
+        return pool.binding.get('cohort','?')
+    def give_up(index,pool,kind,exc):
+        terminal[index]='failed';reasons[cohort(pool)]=f'{type(exc).__name__}: {exc}'
+        print(f'[{worker}] {cohort(pool)}: {kind} failed: {type(exc).__name__}: {exc}',flush=True)
+        print(f'[{worker}] {cohort(pool)}: no new work is taken for this cohort; the other cohort continues. '
+              f'Logs: {pool.root/"logs"}. After fixing the cause, run the same command with --retry-failed.',flush=True)
     while not stop.is_set():
         progressed=False;dispatched=False
+        claim_ok,busy=(True,None) if gpu_gate is None else gpu_gate()
+        if not claim_ok and time.monotonic()-busy_report>=300:
+            print(f'[{worker}] waiting before new GPU work: {busy}',flush=True);busy_report=time.monotonic()
         for index in [(cursor+i)%len(pairs) for i in range(len(pairs))]:
             if index in terminal:continue
             pool,runtime=pairs[index];claimed=None;action='waiting'
             with pool.control() as control:
                 if control is not None:
                     if index not in initialized:
-                        # A mismatched joining node must not poison healthy workers.
-                        runtime.verify_node();pool.initialize(retry=retry);initialized.add(index)
+                        # A mismatched joining node must not poison healthy workers: no pool.fail here.
+                        try:runtime.verify_node();pool.initialize(retry=retry,worker=worker)
+                        except Exception as exc:
+                            give_up(index,pool,'node check',exc);progressed=True;continue
+                        initialized.add(index)
                     try:
-                        action,claimed=pool.tick(runtime,worker,stop)
+                        action,claimed=pool.tick(runtime,worker,stop,claim_ok)
                         if action in ('prepare','freeze','finalize'):
+                            print(f'[{worker}] {cohort(pool)}: CPU stage {action} started',flush=True)
                             runtime.barrier(action,control.fd,stop,device_fds)
                             if stop.is_set():return 75
                             state=read(pool.root/'state.json')
                             state['actions'].append(dict(action=action,worker=worker,at=time.time()))
                             state['phase']={'prepare':'train','freeze':'extension','finalize':'complete'}[action]
                             atomic(pool.root/'state.json',state);action='advance'
+                            print(f'[{worker}] {cohort(pool)}: CPU stage finished; phase={state["phase"]}',flush=True)
                     except Exception as exc:
                         if stop.is_set():return 75
                         if (pool.root/'state.json').exists():pool.fail(f'{type(exc).__name__}: {exc}')
-                        raise
+                        give_up(index,pool,'stage',exc);progressed=True;continue
             runtime.heartbeat(claimed[2].get('run_id') if claimed else None)
+            if action=='failed':
+                state=read(pool.root/'state.json')
+                reasons[cohort(pool)]=canonical(state.get('failure'))
+                print(f'[{worker}] {cohort(pool)}: queue has a recorded failure: {reasons[cohort(pool)]}. '
+                      f'Fix it, then run the same command with --retry-failed.',flush=True)
             if action in ('complete','failed'):
                 terminal[index]=action;progressed=True;continue
             if action=='advance':progressed=True
             if not claimed:continue
             lease,key,task,attempt=claimed;cursor=(index+1)%len(pairs)
-            print(f'[{worker}] {pool.binding["cohort"]} {task["kind"]} {task.get("method_id",task.get("task_id"))} seed={task.get("training_seed")}',flush=True)
+            log=pool.root/'logs'/(attempt['id']+'.log')
+            print(f'[{worker}] {time.strftime("%Y-%m-%d %H:%M:%S")} {cohort(pool)} {task["kind"]} '
+                  f'{task.get("method_id",task.get("task_id"))} seed={task.get("training_seed")} log={log}',flush=True)
             try:
                 try:
                     rc=75 if stop.is_set() else runtime.execute(task,pool.root/'tasks'/(key+'.json'),lease.fd,stop,device_fds,attempt)
@@ -313,11 +375,17 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False):
                             pool.finish(key,rc,runtime,stop);break
                     time.sleep(min(poll,.2))
             finally:lease.close()
+            print(f'[{worker}] {time.strftime("%Y-%m-%d %H:%M:%S")} {cohort(pool)} task finished rc={rc} log={log}',flush=True)
             dispatched=True;break
         if time.monotonic()-last_report>=60:
-            print(f'[{worker}] '+canonical({p.binding['cohort']:p.status() for p,_ in pairs}),flush=True)
+            print(f'[{worker}] '+canonical({p.binding.get('cohort','?'):p.status() for p,_ in pairs}),flush=True)
             last_report=time.monotonic()
-        if len(terminal)==len(pairs):return 1 if 'failed' in terminal.values() else 0
+        if len(terminal)==len(pairs):
+            failed=[cohort(pairs[i][0]) for i,v in terminal.items() if v=='failed']
+            for name in failed:print(f'[{worker}] {name}: FAILED: {reasons.get(name,"see its .multi-node/state.json")}',flush=True)
+            done=[cohort(pairs[i][0]) for i,v in terminal.items() if v=='complete']
+            if done:print(f'[{worker}] complete: {", ".join(done)}',flush=True)
+            return 1 if failed else 0
         if not dispatched and not progressed:stop.wait(poll)
     return 75
 
@@ -335,9 +403,17 @@ print(json.dumps({'python_version':sys.version,'packages':packages}))
     return json.loads(result.stdout)
 
 
-def cohort_python(cohort,fallback):
-    profile={'olmo_math':'PAIR_PYTHON','qwen_mbpp':'SWITCH_PYTHON'}.get(cohort,'')
-    return os.environ.get('V8_PYTHON_'+cohort.upper()) or os.environ.get(profile) or fallback
+def cohort_python(cohort,fallback,environment=None):
+    """Same precedence as the original launchers: run_srgc.sh (math PAIR_PYTHON, mbpp SWITCH_PYTHON)
+    and run_srgc_qwen35.sh (QWEN_PYTHON first). The OLMo cohort never inherits a Qwen interpreter."""
+    env=os.environ if environment is None else environment
+    dataset=cohort.rsplit('_',1)[-1]
+    names=['V8_PYTHON_'+cohort.upper()]
+    if cohort.startswith('qwen_'):names.append('QWEN_PYTHON')
+    names.append({'math':'PAIR_PYTHON','mbpp':'SWITCH_PYTHON'}.get(dataset,''))
+    for name in names:
+        if name and env.get(name):return env[name]
+    return fallback
 
 
 def gpu_utilisation(gpus):
@@ -353,6 +429,68 @@ def gpu_utilisation(gpus):
         if len(parts)==3:rows[parts[0]]=f'{parts[1]}%/{parts[2]}MiB'
     picked=[rows.get(str(g)) for g in gpus]
     return ','.join(x for x in picked if x) or 'unknown'
+
+
+BUSY_MIB=4000  # the original SRGC worker's admission threshold (srgc_rebuttal/cluster.gpu_identity)
+
+
+def gpu_inventory(gpus,run=subprocess.run):
+    """Allocated GPUs from nvidia-smi (index, UUID, used/total MiB, name), or None when unavailable."""
+    try:
+        result=run(['nvidia-smi','--id='+','.join(gpus),'--query-gpu=index,uuid,memory.used,memory.total,name',
+                    '--format=csv,noheader,nounits'],capture_output=True,text=True,timeout=30)
+    except (OSError,subprocess.SubprocessError):return None
+    if result.returncode:return None
+    rows=[[c.strip() for c in line.split(',',4)] for line in result.stdout.strip().splitlines() if line.strip()]
+    if len(rows)!=len(gpus) or any(len(r)!=5 for r in rows):return None
+    try:return [dict(index=r[0],uuid=r[1],used_mib=int(float(r[2])),total_mib=int(float(r[3])),name=r[4]) for r in rows]
+    except ValueError:return None
+
+
+def gpu_processes(run=subprocess.run):
+    try:
+        result=run(['nvidia-smi','--query-compute-apps=pid,gpu_uuid,used_memory','--format=csv,noheader,nounits'],
+                   capture_output=True,text=True,timeout=30)
+    except (OSError,subprocess.SubprocessError):return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()] if result.returncode==0 else []
+
+
+def gpu_lock_root(environment=None):
+    """The original SRGC workers' device-lease directory (scripts/run_srgc_rebuttal.py --node-lock-root):
+    <SRGC_STORAGE_ROOT or OM_WORK/srgc-rebuttal>/gpu-node-locks on the group volume."""
+    env=os.environ if environment is None else environment
+    if env.get('V8_GPU_LOCK_ROOT'):return Path(env['V8_GPU_LOCK_ROOT'])
+    group=Path(env.get('GROUP_VOLUME') or '/group-volume')
+    work=Path(env.get('OM_WORK') or group/(env.get('OM_USER') or 'minsoo3.kim')/'offpolicy-misranking')
+    return Path(env.get('SRGC_STORAGE_ROOT') or work/'srgc-rebuttal')/'gpu-node-locks'
+
+
+def gpu_lease_names(gpus,inventory,host=None):
+    """sha256(UUID).lock exactly like srgc_rebuttal.cluster.device_leases, so V8 and the original SRGC
+    workers exclude each other; without nvidia-smi, (host, device id) keys on the same volume."""
+    if inventory:return [(row['uuid'],hashlib.sha256(row['uuid'].encode()).hexdigest()+'.lock') for row in inventory]
+    host=host or socket.gethostname()
+    return [(f'{host}:{gpu}',digest([host,gpu])+'.lock') for gpu in gpus]
+
+
+class GpuGate:
+    """Defer new GPU tasks while an allocated GPU already holds memory (a stale or foreign process)."""
+    def __init__(self,gpus,*,limit=BUSY_MIB,ttl=30,inventory=gpu_inventory,processes=gpu_processes):
+        self.gpus,self.limit,self.ttl=gpus,limit,ttl
+        self.inventory,self.processes=inventory,processes
+        self.checked=-1e9;self.value=(True,None)
+
+    def __call__(self):
+        if time.monotonic()-self.checked<self.ttl:return self.value
+        self.checked=time.monotonic();rows=self.inventory(self.gpus)
+        busy=[r for r in rows or [] if r['used_mib']>self.limit]
+        if not busy:self.value=(True,None)
+        else:
+            detail=', '.join(f"GPU {r['index']} {r['used_mib']} MiB used" for r in busy)
+            apps='; '.join(self.processes()) or 'nvidia-smi lists no compute process'
+            self.value=(False,f'{detail} (> {self.limit} MiB before start; processes pid,gpu,MiB: {apps}). '
+                              'Another job or a leftover process holds these GPUs; V8 starts when they are free.')
+        return self.value
 
 
 class Runtime:
@@ -423,9 +561,9 @@ class Runtime:
 
     def cpu(self,stage,fd,stop,device_fds):
         command=['sh',str(self.runner/'run_h100.sh'),self.cohort,stage]
-        rc=self.process(command,self.root/'.multi-node'/'logs'/f'cpu-{stage}-{uuid.uuid4().hex}.log',
-                        [fd,*device_fds],stop,cpu=True)
-        if rc:raise RuntimeError(f'CPU stage {stage} failed exit={rc}')
+        log=self.root/'.multi-node'/'logs'/f'cpu-{stage}-{uuid.uuid4().hex}.log'
+        rc=self.process(command,log,[fd,*device_fds],stop,cpu=True)
+        if rc and not stop.is_set():raise RuntimeError(f'CPU stage {stage} failed exit={rc}; full output: {log}')
 
     def barrier(self,action,fd,stop,device_fds):
         if action=='prepare':
@@ -646,14 +784,30 @@ def main(argv=None):
     if any(not x.strip() for x in gpus) or len(set(gpus))!=len(gpus):parser.error('GPU IDs must be nonempty and distinct')
     group=Path(os.environ.get('GROUP_VOLUME','/group-volume')).resolve()
     if not os.environ.get('V8_ALLOW_ANY_ROOT') and not Path(args.root).resolve().is_relative_to(group):
-        parser.error('V8_ROOT must be on the shared group volume')
+        parser.error(f'V8_ROOT={args.root} is not on the shared group volume GROUP_VOLUME={group}; all nodes must '
+                     'share one V8_ROOT (default: $OM_WORK/v8)')
     locks=[];stop=threading.Event();previous={}
     try:
-        for gpu in sorted(gpus):
-            device_root=Path(tempfile.gettempdir())/'srgc-v8-gpu-locks'/str(os.getuid())
-            lock=Lock(device_root/(digest([socket.gethostname(),gpu])+'.lock'))
+        inventory=gpu_inventory(gpus)
+        if inventory is None:
+            try:listing=subprocess.run(['nvidia-smi','-L'],capture_output=True,text=True,timeout=30)
+            except (OSError,subprocess.SubprocessError):listing=None
+            if listing is not None and listing.returncode==0:
+                # nvidia-smi works but does not report these four GPUs: a task would fail at rank startup.
+                parser.error(f'this node does not expose the GPUs {",".join(gpus)} (CUDA_VISIBLE_DEVICES); '
+                             'nvidia-smi -L reports:\n'+listing.stdout.strip())
+        if inventory is not None:
+            small=[r for r in inventory if r['total_mib']<75000]
+            if small:parser.error('each task needs four full 80 GB GPUs; got '+', '.join(f"{r['index']}:{r['name']} {r['total_mib']} MiB" for r in small))
+        lock_root=gpu_lock_root()
+        try:lock_root.mkdir(parents=True,exist_ok=True)
+        except OSError as exc:
+            print(f'V8 queue error: cannot create the GPU lease directory {lock_root}: {exc.strerror}',file=sys.stderr);return 1
+        for name,lease_name in sorted(gpu_lease_names(gpus,inventory),key=lambda item:item[1]):
+            lock=Lock(lock_root/lease_name)
             if not lock.acquire():
-                print('Another worker/child already owns an overlapping GPU group on this node',file=sys.stderr);return 75
+                print(f'Another worker/child already owns an overlapping GPU group on this node (GPU {name} is leased '
+                      f'in {lock_root}). Stop that SRGC/V8 worker or run this worker on other GPUs.',file=sys.stderr);return 75
             locks.append(lock)
         for signum in (signal.SIGINT,signal.SIGTERM):
             previous[signum]=signal.signal(signum,lambda *_:stop.set())
@@ -661,8 +815,17 @@ def main(argv=None):
         for cohort in cohorts:
             runtime=Runtime(args.runner_root,args.root,cohort,cohort_python(cohort,args.python),gpus)
             pairs.append((Pool(runtime.root/'.multi-node',runtime.binding),runtime))
-        return worker_loop_many(pairs,socket.gethostname()+'.'+str(os.getpid()),stop,
-                                poll=args.poll_seconds,device_fds=tuple(lock.fd for lock in locks),retry=args.retry_failed)
+        worker=socket.gethostname()+'.'+str(os.getpid())
+        print(f'[{worker}] V8 worker: cohorts={",".join(cohorts)} gpus={",".join(gpus)} '
+              f'uuids={",".join(r["uuid"] for r in inventory) if inventory else "nvidia-smi unavailable"}',flush=True)
+        print(f'[{worker}] V8_ROOT={Path(args.root).resolve()} trainer={os.environ.get("V8_CODE_ROOT")} '
+              f'runner={Path(args.runner_root).resolve()}',flush=True)
+        for pool,runtime in pairs:
+            print(f'[{worker}] {runtime.cohort}: python={runtime.python} ({runtime.binding.get("python_version","?").split()[0]}) '
+                  f'queue={pool.root} logs={pool.root/"logs"}',flush=True)
+        print(f'[{worker}] progress: sh scripts/run_v8_nodes.sh --status   (from any node)',flush=True)
+        return worker_loop_many(pairs,worker,stop,poll=args.poll_seconds,device_fds=tuple(lock.fd for lock in locks),
+                                retry=args.retry_failed,gpu_gate=GpuGate(gpus) if inventory is not None else None)
     finally:
         for signum,handler in previous.items():signal.signal(signum,handler)
         for lock in reversed(locks):lock.close()

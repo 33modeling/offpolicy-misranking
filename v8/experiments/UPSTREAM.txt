@@ -66,3 +66,4 @@ b567e4084fdc3c0063f744296dbde4530797c6cf465011cc4bf24058de2bd6d6  ../../v7/evide
 0ad5e9e20ba0d6f5a1ad63c1b08db43874b83cf10dca197dadc3de74d7da17ee  ../../v7/evidence/2026-11-03/gemma-mbpp-seeds5-9.csv
 
 Local compatibility changes: switching/coderepo.py, switching/cluster.py and cluster_child.py now verify the original saved-runtime and Qwen composite identities. Original upstream hashes above are retained for provenance; current code is tracked by this repository.
+Claude debugging pass 2026-11-08: run_h100.sh audit stage (newline-split paths), harvest.sh (tar exit 1 while workers write) and tests/test_cpu_stages.py; the paper repository copy is synchronized to this tree.

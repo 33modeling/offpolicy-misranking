@@ -6,8 +6,16 @@ import shutil
 import sys
 
 
-def environment(tools,source,*,cwd=None):
-    env=dict(source);tools=Path(tools).resolve();cwd=Path(cwd or Path.cwd())
+PATH_VARIABLES=('GROUP_VOLUME','OM_USER','OM_WORK','V8_ROOT','VENV_DIR','V8_CODE_ROOT','OM_CODE_ROOT','V8_RUNNER_ROOT',
+                'EXPORT_CODE_ROOT','USER_VOLUME','SRGC_STORAGE_ROOT','V8_PYTHON','PAIR_PYTHON','SWITCH_PYTHON','QWEN_PYTHON',
+                'V8_PYTHON_OLMO_MATH','V8_PYTHON_QWEN_MBPP')
+PYTHON_VARIABLES=('V8_PYTHON','PAIR_PYTHON','SWITCH_PYTHON','QWEN_PYTHON','V8_PYTHON_OLMO_MATH','V8_PYTHON_QWEN_MBPP')
+
+
+def environment(tools,source,*,cwd=None,warn=None):
+    # An exported-but-empty path variable means unset, like the shell launchers' ${VAR:-default}.
+    env={k:v for k,v in dict(source).items() if v!='' or k not in PATH_VARIABLES}
+    tools=Path(tools).resolve();cwd=Path(cwd or Path.cwd())
     group=Path(env.get('GROUP_VOLUME','/group-volume'))
     user=env.get('OM_USER','minsoo3.kim')
     work=Path(env.get('OM_WORK',str(group/user/'offpolicy-misranking')))
@@ -15,11 +23,18 @@ def environment(tools,source,*,cwd=None):
     env.setdefault('V8_ROOT',str(work/'v8'))
     env.setdefault('EXPORT_CODE_ROOT',str(tools))
     env.setdefault('PYTHONDONTWRITEBYTECODE','1')
-    explicit=env.get('V8_PYTHON') or env.get('PAIR_PYTHON') or env.get('SWITCH_PYTHON')
-    python=explicit or str(Path(env.get('VENV_DIR',str(work/'.venv-cu126')))/'bin/python')
+    for name in PYTHON_VARIABLES:
+        # An explicitly configured interpreter must exist; it is never silently replaced.
+        if env.get(name) and not shutil.which(env[name]):
+            raise ValueError(f'Existing Python is unavailable: {name}={env[name]}')
+    # Fallback for every cohort = the existing SRGC venv (scripts/run_srgc.sh). Cohort-specific
+    # PAIR_/SWITCH_/QWEN_PYTHON are applied per cohort by srgc_v8_nodes.cohort_python.
+    python=env.get('V8_PYTHON') or str(Path(env.get('VENV_DIR',str(work/'.venv-cu126')))/'bin/python')
     if not shutil.which(python):
-        if explicit:raise ValueError('Existing Python is unavailable: '+python)
-        python=shutil.which('python3') or sys.executable
+        fallback=shutil.which('python3') or sys.executable
+        if warn:warn(f'existing SRGC venv not found at {python}; using {fallback}. Check GROUP_VOLUME/OM_WORK if '
+                     'this node normally uses the group-volume .venv-cu126.')
+        python=fallback
     env.setdefault('V8_PYTHON',python)
     if not env.get('V8_CODE_ROOT'):
         candidates=[]
@@ -48,12 +63,16 @@ def environment(tools,source,*,cwd=None):
 def main(argv=None):
     argv=sys.argv[1:] if argv is None else argv
     tools=Path(__file__).resolve().parents[1]
-    env=environment(tools,os.environ)
+    env=environment(tools,os.environ,warn=lambda m:print('V8 startup warning: '+m,file=sys.stderr,flush=True))
     inspect=any(arg in ('--status','--help','-h') for arg in argv)
     if not inspect:
-        if not env.get('V8_CODE_ROOT'):raise ValueError('Existing trainer checkout was not found in the SRGC environment or source receipts.')
+        if not env.get('V8_CODE_ROOT'):
+            raise ValueError('the original trainer checkout (srgc_rebuttal/srgc.py) was not found next to this launcher '
+                             f'({tools}), in its parent folders, under {env.get("USER_VOLUME","/user-volume")} or in a saved '
+                             'locator. Unpack the V8 bundle inside the existing offpolicy-misranking checkout.')
         if not env.get('V8_RUNNER_ROOT') and '--runner-root' not in argv:
-            raise ValueError('V8 runtime files are missing from this code copy (v8/experiments).')
+            raise ValueError(f'V8 runtime files are missing from this code copy ({tools}/v8/experiments); '
+                             'unpack the complete V8 bundle into this checkout.')
     os.execvpe(env['V8_PYTHON'],[env['V8_PYTHON'],str(tools/'scripts/srgc_v8_nodes.py'),*argv],env)
 
 

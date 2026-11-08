@@ -13,8 +13,14 @@ cd "$V8_ROOT"
 LIST=$(mktemp "${TMPDIR:-$V8_ROOT}/v8-harvest-list.XXXXXX")
 find . -path ./harvest -prune -o -type f \( -name '*.json' -o -name '*.jsonl' -o -name '*.csv' -o -name '*.md' \
      -o -name '*.png' -o -name '*.log' \) ! -path '*/caches/committed/*/rewards.json' -print > "$LIST"
-tar -czf "$OUT" -T "$LIST"
+# Workers keep appending logs and replacing JSON while this runs. GNU tar exits 1 for "file changed
+# as we read it" (the archive is still complete); only exit >= 2 is a real failure.
+set +e
+tar --ignore-failed-read --warning=no-file-changed --warning=no-file-removed -czf "$OUT" -T "$LIST"
+rc=$?
+set -e
 rm -f "$LIST"
+if [ "$rc" -gt 1 ]; then echo "[v8] harvest failed (tar exit $rc): $OUT" >&2; exit "$rc"; fi
 sha256sum "$OUT" > "$OUT.sha256"
 echo "$OUT"
 cat "$OUT.sha256"

@@ -128,6 +128,26 @@ Ctrl-C/SIGTERM은 자식 실행기에 전달된다. 종료 유예는10초이며 
 큐·시도·로그는 `$V8_ROOT/<cohort>/.multi-node/`, 학습 결과는 각 `runs/`에 남는다.
 각 cohort의 마지막 수집 뒤 기존 history exporter도 실행한다.
 
+## 노드 실행기 점검 결과 (11-08 Claude)
+
+- GPU 점유 잠금은 기존 SRGC worker와 같은 `$OM_WORK/srgc-rebuttal/gpu-node-locks/`의
+  GPU UUID 파일(sha256)을 쓴다. 기존 SRGC worker가 같은 GPU를 잡고 있으면 V8 worker는
+  시작하지 않고 그 이유를 출력한다. 이전 `/tmp/srgc-v8-gpu-locks`는 다른 사용자가 만든
+  폴더나 쓰기 금지 `/tmp`에서 `Permission denied`로 멈췄다.
+- 할당된 GPU 중 하나라도 4,000 MiB 넘게 쓰고 있으면 새 GPU 작업을 받지 않고 5분마다
+  해당 GPU와 프로세스 번호를 출력한다. nvidia-smi가 4개 GPU를 보여 주지 않는 노드는
+  큐를 건드리기 전에 거절한다.
+- 한 cohort의 준비 단계나 작업이 실패해도 그 cohort만 멈추고 다른 cohort는 계속한다.
+  끝에 실패한 cohort와 이유를 다시 출력하고 종료 코드 1을 반환한다.
+- 큐 기록과 코드가 다르면 무엇이 다른지와 할 일을 출력한다. 다른 노드가 큐를 새 코드로
+  바꾸면 이전 코드로 돌던 worker는 그 cohort 작업을 더 받지 않는다.
+- cohort별 Python은 기존 실행기와 같은 순서로 고른다. OLMo MATH는 `PAIR_PYTHON`,
+  Qwen MBPP는 `QWEN_PYTHON` 다음 `SWITCH_PYTHON`, 없으면 기존 `.venv-cu126`이다.
+  OLMo가 MBPP/Qwen 인터프리터를 물려받던 문제를 고쳤다.
+- `--status`의 `leased_tasks`에 작업 로그 경로와 `log_written_seconds_ago`(마지막 출력 뒤
+  지난 초)가 나온다. audit 단계는 공백이 들어간 경로도 그대로 넘기고, `harvest.sh`는
+  worker가 로그를 쓰는 중에도 `tar`의 "file changed" 경고로 실패하지 않는다.
+
 ## 검증 범위
 
 기존 단일 cohort 검사와 추가 자동 배정 검사를 함께 실행했다. 실제 v8 CPU

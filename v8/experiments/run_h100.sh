@@ -108,10 +108,13 @@ run_stage() {
         locate) cpu_log locate --cohort "$COHORT" ;;
         audit)
             paths=$(CUDA_VISIBLE_DEVICES="" "$PY" -c "import json,sys; d=json.load(open(sys.argv[1])); r=next(iter(d['seeds'].values())); print(r['folder'].rsplit('/seed-',1)[0]); [print(x['input_bundle']) for x in d['seeds'].values() if x.get('folder')]" "$V8_ROOT/$COHORT/locator.json") || exit $?
-            set -- $paths
+            # One path per line: split on newlines only (paths may contain spaces), no globbing.
+            old_ifs=$IFS; IFS='
+'
+            set -f; set -- $paths; set +f; IFS=$old_ifs
             root=$1; shift
-            args=; for b in "$@"; do args="$args --bundle $b"; done
-            cpu_log audit --run-root "$COHORT=$root" $args --out "$V8_ROOT/audit/$COHORT" ;;
+            n=$#; for b in "$@"; do set -- "$@" --bundle "$b"; done; shift "$n"
+            cpu_log audit --run-root "$COHORT=$root" "$@" --out "$V8_ROOT/audit/$COHORT" ;;
         profile) cpu_log profile --cohort "$COHORT" ;;
         trajectory) gpu_stage bank-trajectory rebuttal_bank ;;
         branches) gpu_stage bank-branches rebuttal_bank ;;

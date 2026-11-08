@@ -46,9 +46,11 @@ def test_existing_default_environment_and_offline_bundle_need_no_exports(tmp_pat
 def test_existing_paths_and_model_environment_overrides_are_preserved(tmp_path):
     work,trainer,bundle,tools,env=layout(tmp_path)
     env.update(V8_ROOT='/existing/v8',V8_CODE_ROOT='/existing/frozen',V8_RUNNER_ROOT='/existing/runner',
-               EXPORT_CODE_ROOT='/existing/export',PAIR_PYTHON=sys.executable,SWITCH_PYTHON='/existing/qwen')
+               EXPORT_CODE_ROOT='/existing/export',PAIR_PYTHON=sys.executable,SWITCH_PYTHON=sys.executable)
     result=environment(tools,env)
     assert all(result[k]==v for k,v in env.items())
+    # the fallback for both cohorts is the existing venv; PAIR/SWITCH stay per-cohort choices
+    assert result['V8_PYTHON']==str(work/'.venv-cu126/bin/python')
 
 
 def test_source_receipt_finds_original_frozen_checkout_before_tools(tmp_path):
@@ -99,3 +101,40 @@ def test_actual_code_checkout_contains_and_loads_its_runtime_without_a_paper_che
                           env=env,text=True,capture_output=True,timeout=10)
     assert result.returncode==0,result.stderr
     assert json.loads(result.stdout)['code_root']==str(tools)
+
+
+# ---- Claude debugging pass 2026-11-08 --------------------------------------------------------
+def test_empty_exported_paths_mean_unset_like_the_shell_launchers(tmp_path):
+    work,trainer,bundle,tools,env=layout(tmp_path)
+    env.update(OM_WORK='',V8_ROOT='',VENV_DIR='')
+    result=environment(tools,env,cwd=tmp_path/'elsewhere')
+    assert result['V8_ROOT']==str(work/'v8')        # before: V8_ROOT='' -> relative path refused later
+    assert result['V8_PYTHON']==str(work/'.venv-cu126/bin/python')
+
+
+def test_missing_cohort_interpreter_is_reported_at_startup(tmp_path):
+    work,trainer,bundle,tools,env=layout(tmp_path);env['SWITCH_PYTHON']='/missing/qwen/python'
+    with pytest.raises(ValueError,match='SWITCH_PYTHON=/missing/qwen/python'):environment(tools,env)
+
+
+def test_missing_venv_falls_back_with_a_visible_warning(tmp_path):
+    work,trainer,bundle,tools,env=layout(tmp_path);(work/'.venv-cu126/bin/python').unlink()
+    messages=[];result=environment(tools,env,warn=messages.append)
+    assert result['V8_PYTHON'] and messages and 'venv not found' in messages[0]
+
+
+def test_shell_launcher_survives_cdpath_and_a_node_without_python3(tmp_path):
+    work,trainer,bundle,tools,env=layout(tmp_path)
+    scripts=tools/'scripts';scripts.mkdir()
+    source=Path(__file__).resolve().parents[1]/'scripts'
+    for name in ['run_v8_nodes.sh','v8_bootstrap.py','v8_supervisor.py','v8_processes.py','v8_probe.py']:
+        shutil.copyfile(source/name,scripts/name)
+    file(scripts/'srgc_v8_nodes.py',"import json,os,sys;print(json.dumps({'python':sys.executable}))")
+    bindir=tmp_path/'bin';bindir.mkdir()
+    for tool in ('dirname','sh','env','ps'):
+        found=shutil.which(tool)
+        if found:(bindir/tool).symlink_to(found)
+    env.update(CDPATH=str(tmp_path),PATH=str(bindir))  # no python3 on PATH; CDPATH would print the dir
+    result=subprocess.run(['/bin/sh',str(tools/'scripts/run_v8_nodes.sh')],cwd=tools,env=env,text=True,capture_output=True,timeout=10)
+    assert result.returncode==0,result.stderr
+    assert json.loads(result.stdout)['python']

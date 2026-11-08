@@ -141,11 +141,27 @@ def test_failed_task_retry_preserves_failure_and_attempt_history(tmp_path):
     assert [a['exit_code'] for a in failed['attempts']]==[9,0]
 
 
-def test_conflicting_node_versions_refused_before_any_job(tmp_path):
+def test_conflicting_node_versions_refused_once_training_started(tmp_path):
     pool=nodes.Pool(tmp_path/'queue',{'version':1});pool.initialize()
+    nodes.atomic(pool.root/'jobs'/'started.json',dict(task=task('a'),phase='train',state='pending',attempts=[]))
     with pytest.raises(ValueError,match='identity differs'):
         nodes.Pool(pool.root,{'version':2}).initialize()
-    assert not list(pool.root.glob('jobs/*.json'))
+    assert nodes.read(pool.root/'binding.json')=={'version':1}
+
+
+def test_corrected_launcher_replaces_a_failed_setup_before_any_training(tmp_path):
+    """Regression: a failed/interrupted prepare with an older bundle must not lock the queue forever."""
+    old=nodes.Pool(tmp_path/'queue',{'version':1});old.initialize();old.fail('locate failed')
+    new=nodes.Pool(old.root,{'version':2});new.initialize()
+    state=nodes.read(old.root/'state.json')
+    assert nodes.read(old.root/'binding.json')=={'version':2}
+    assert state['failure'] is None and state['failure_history'][0]['detail']=='locate failed'
+    assert state['actions'][-1]['action']=='retry_failed_setup_with_verified_source'
+    assert list((old.root/'setup-history').glob('*.json'))
+    # the still-running old worker notices and stops serving this cohort instead of mixing versions
+    with old.control() as control:
+        assert control is not None
+        with pytest.raises(nodes.BindingMismatch,match='replaced'):old.tick(None,'old',threading.Event())
 
 
 def test_scientific_task_conflict_rejected_but_stage_alias_is_shared(tmp_path):
@@ -228,17 +244,17 @@ def test_missing_cpu_command_is_failure_not_infinite_metadata_retry(tmp_path):
     class Bad(FakeRuntime):
         def barrier(self,*args):raise FileNotFoundError('missing python')
     runtime=Bad(tmp_path/'r');pool=nodes.Pool(tmp_path/'q',runtime.binding)
-    with pytest.raises(FileNotFoundError):
-        nodes.worker_loop(pool,runtime,'n',threading.Event(),poll=.001)
+    assert nodes.worker_loop(pool,runtime,'n',threading.Event(),poll=.001)==1
     assert 'missing python' in nodes.read(pool.root/'state.json')['failure']['detail']
 
 
 def test_mismatched_joining_worker_does_not_poison_existing_queue(tmp_path):
     runtime=FakeRuntime(tmp_path/'runtime');pool=nodes.Pool(tmp_path/'q',runtime.binding);pool.initialize()
+    nodes.atomic(pool.root/'workers'/'healthy.json',dict(worker='healthy-node',pid=1,at=time.time(),task=None))
     wrong=nodes.Pool(pool.root,dict(runtime.binding,code='different'))
-    with pytest.raises(ValueError,match='identity differs'):
-        nodes.worker_loop(wrong,runtime,'bad-node',threading.Event(),poll=.001)
+    assert nodes.worker_loop(wrong,runtime,'bad-node',threading.Event(),poll=.001)==1
     assert nodes.read(pool.root/'state.json')['failure'] is None
+    assert nodes.read(pool.root/'binding.json')==runtime.binding
 
 
 def test_repair_missing_dispatch_matrix_after_coordinator_crash(tmp_path):
@@ -370,13 +386,15 @@ while True:time.sleep(.01)
 
 @pytest.mark.parametrize('cohort',['olmo_math','qwen_mbpp','all'])
 def test_cli_rejects_overlapping_gpu_group_without_starting_a_model(tmp_path,cohort):
-    import socket,tempfile
+    import socket
     runner=os.environ.get('V8_NODES_TEST_RUNTIME')
     if not runner:pytest.skip('V8 runtime source required for CLI preflight test')
     ids=[tmp_path.name+'-virtual'+str(i) for i in range(4)]
-    path=Path(tempfile.gettempdir())/'srgc-v8-gpu-locks'/str(os.getuid())/(nodes.digest([socket.gethostname(),ids[2]])+'.lock')
+    path=tmp_path/'gpu-node-locks'/(nodes.digest([socket.gethostname(),ids[2]])+'.lock')
     held=nodes.Lock(path);assert held.acquire()
-    env=dict(os.environ,V8_ALLOW_ANY_ROOT='1',V8_CODE_ROOT='/home/kms/dev/offpolicy-misranking',CUDA_VISIBLE_DEVICES='')
+    nosmi=tmp_path/'bin'/'nvidia-smi';nosmi.parent.mkdir();nosmi.write_text('#!/bin/sh\nexit 9\n');nosmi.chmod(0o755)
+    env=dict(os.environ,V8_ALLOW_ANY_ROOT='1',V8_CODE_ROOT=str(Path(nodes.__file__).resolve().parents[1]),
+             CUDA_VISIBLE_DEVICES='',V8_GPU_LOCK_ROOT=str(tmp_path/'gpu-node-locks'),PATH=f'{nosmi.parent}:/usr/bin:/bin')
     try:
         result=subprocess.run([sys.executable,nodes.__file__,cohort,'--runner-root',runner,
                                '--root',str(tmp_path/'input'),'--python',sys.executable,'--gpus',','.join(ids)],
@@ -659,3 +677,98 @@ def test_current_training_graph_has_55_ready_jobs_after_branch_parents_exist(tmp
     unique={nodes.task_key(t):t for t in tasks}
     assert len(unique)==55
     assert all(nodes.Runtime.ready(None,t) for t in unique.values())
+
+
+# ---- Claude debugging pass 2026-11-08: launcher regressions ---------------------------------
+def test_cohort_python_follows_the_original_launchers(monkeypatch):
+    for name in ('PAIR_PYTHON','SWITCH_PYTHON','QWEN_PYTHON','V8_PYTHON_OLMO_MATH','V8_PYTHON_QWEN_MBPP'):
+        monkeypatch.delenv(name,raising=False)
+    monkeypatch.setenv('SWITCH_PYTHON','/fixture/mbpp/python')
+    # Before: the OLMo MATH cohort fell back to SWITCH_PYTHON (the MBPP/Qwen interpreter).
+    assert nodes.cohort_python('olmo_math','venv')=='venv'
+    monkeypatch.setenv('QWEN_PYTHON','/fixture/qwen/python')
+    assert nodes.cohort_python('qwen_mbpp','venv')=='/fixture/qwen/python'   # run_srgc_qwen35.sh precedence
+    assert nodes.cohort_python('olmo_mbpp','venv')=='/fixture/mbpp/python'
+
+
+def test_gpu_leases_use_the_original_srgc_uuid_names_on_the_group_volume(tmp_path):
+    import hashlib
+    rows=[dict(index=str(i),uuid=f'GPU-{i}',used_mib=0,total_mib=81559,name='NVIDIA H100 80GB HBM3') for i in range(4)]
+    names=[n for _,n in nodes.gpu_lease_names(['0','1','2','3'],rows)]
+    assert names==[hashlib.sha256(f'GPU-{i}'.encode()).hexdigest()+'.lock' for i in range(4)]
+    env=dict(GROUP_VOLUME=str(tmp_path/'gv'),OM_USER='u')
+    assert nodes.gpu_lock_root(env)==tmp_path/'gv/u/offpolicy-misranking/srgc-rebuttal/gpu-node-locks'
+    assert nodes.gpu_lock_root(dict(env,OM_WORK=''))==tmp_path/'gv/u/offpolicy-misranking/srgc-rebuttal/gpu-node-locks'
+    # an original SRGC worker's lease (srgc_rebuttal.runtime.lease = flock on the same file) excludes V8
+    from srgc_rebuttal.runtime import lease
+    path=nodes.gpu_lock_root(env)/names[1]
+    with lease(path):
+        assert not nodes.Lock(path).acquire()
+
+
+def test_inventory_parses_nvidia_smi_and_busy_gpus_defer_claims(tmp_path):
+    class R:
+        def __init__(self,out,rc=0):self.stdout,self.returncode=out,rc
+    out='0, GPU-a, 3, 81559, NVIDIA H100 80GB HBM3\n1, GPU-b, 70000, 81559, NVIDIA H100 80GB HBM3\n'
+    rows=nodes.gpu_inventory(['0','1'],run=lambda *a,**k:R(out))
+    assert [r['used_mib'] for r in rows]==[3,70000]
+    assert nodes.gpu_inventory(['0','1'],run=lambda *a,**k:R('',9)) is None
+    def missing(*a,**k):raise FileNotFoundError('nvidia-smi')
+    assert nodes.gpu_inventory(['0'],run=missing) is None
+    gate=nodes.GpuGate(['0','1'],inventory=lambda g:rows,processes=lambda:['4242, GPU-b, 69000'])
+    ok,why=gate()
+    assert not ok and 'GPU 1 70000 MiB' in why and '4242' in why
+    runtime=FakeRuntime(tmp_path/'runtime');runtime.path.mkdir()
+    pool=nodes.Pool(tmp_path/'q',runtime.binding);pool.initialize()
+    state=nodes.read(pool.root/'state.json');state['phase']='extension';nodes.atomic(pool.root/'state.json',state)
+    runtime.plan=lambda phase:([task('extend')],True)
+    assert pool.tick(runtime,'n',threading.Event(),False)==('gpu_busy',None)
+    assert all(not nodes.read(p)['attempts'] for p in pool.root.glob('jobs/*.json'))
+
+
+def test_one_cohort_setup_failure_does_not_stop_the_other_cohort(tmp_path):
+    class Bad(FakeRuntime):
+        def barrier(self,action,*args):
+            if action=='prepare':raise RuntimeError('CPU stage locate failed exit=1')
+            return super().barrier(action,*args)
+    bad=Bad(tmp_path/'a'/'runtime');good=FakeRuntime(tmp_path/'b'/'runtime')
+    bad.binding=dict(bad.binding,cohort='a');good.binding=dict(good.binding,cohort='b')
+    pairs=[(nodes.Pool(tmp_path/'a'/'queue',bad.binding),bad),(nodes.Pool(tmp_path/'b'/'queue',good.binding),good)]
+    assert nodes.worker_loop_many(pairs,'n',threading.Event(),poll=.002)==1
+    assert nodes.read(tmp_path/'b/queue/state.json')['phase']=='complete'
+    assert 'locate failed' in nodes.read(tmp_path/'a/queue/state.json')['failure']['detail']
+
+
+def test_unsupported_shared_filesystem_lock_explains_the_volume(tmp_path,monkeypatch):
+    import errno
+    def nolock(fd,op):raise OSError(errno.ENOLCK,'No locks available')
+    monkeypatch.setattr(nodes.fcntl,'flock',nolock)
+    with pytest.raises(ValueError,match='does not provide flock'):
+        nodes.Lock(tmp_path/'x.lock').acquire()
+
+
+def test_status_shows_running_task_log_and_its_age(tmp_path):
+    pool=nodes.Pool(tmp_path/'q',{'cohort':'fixture'});pool.initialize()
+    key=pool.register(task('run1'),'train')
+    job=nodes.read(pool.root/'jobs'/(key+'.json'));job['attempts']=[dict(id='att1',worker='w1')];job['state']='running'
+    nodes.atomic(pool.root/'jobs'/(key+'.json'),job)
+    (pool.root/'logs').mkdir();(pool.root/'logs'/'att1.log').write_text('Loading weights: 100%\n')
+    held=nodes.Lock(pool.root/'leases'/(key+'.lock'));assert held.acquire()
+    try:row=pool.status()['leased_tasks'][0]
+    finally:held.close()
+    assert row['worker']=='w1' and row['log'].endswith('att1.log') and row['log_written_seconds_ago']>=0
+
+
+def test_node_without_the_requested_gpus_is_refused_before_any_queue_write(tmp_path):
+    runner=os.environ.get('V8_NODES_TEST_RUNTIME')
+    if not runner:pytest.skip('V8 runtime source required for CLI preflight test')
+    fake=tmp_path/'bin'/'nvidia-smi';fake.parent.mkdir()
+    fake.write_text('#!/bin/sh\ncase " $* " in *" -L "*) echo "GPU 0: NVIDIA H100 (UUID: GPU-a)";echo "GPU 1: NVIDIA H100 (UUID: GPU-b)";exit 0;; esac\n'
+                    'echo "No devices were found" >&2; exit 6\n')
+    fake.chmod(0o755)
+    env=dict(os.environ,V8_ALLOW_ANY_ROOT='1',V8_CODE_ROOT=str(Path(nodes.__file__).resolve().parents[1]),
+             CUDA_VISIBLE_DEVICES='0,1,2,3',V8_GPU_LOCK_ROOT=str(tmp_path/'locks'),PATH=f"{fake.parent}:/usr/bin:/bin")
+    result=subprocess.run([sys.executable,nodes.__file__,'--runner-root',runner,'--root',str(tmp_path/'v8'),
+                           '--python',sys.executable],env=env,text=True,capture_output=True,timeout=30)
+    assert result.returncode==2 and 'does not expose the GPUs 0,1,2,3' in result.stderr
+    assert not (tmp_path/'v8').exists()
