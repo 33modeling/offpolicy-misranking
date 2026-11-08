@@ -11,7 +11,7 @@ import time
 import uuid
 
 from v8_processes import TAG,select,stop,table
-from v8_probe import read,root
+from v8_probe import read,root,snapshot,tail
 from v8_control_output import emit,run_control
 from v8_progress_text import describe
 
@@ -31,6 +31,31 @@ def work_events(rows,launch,fallback):
     return parts
 
 
+def before_model_work(rows,launch,base,console,host=None):
+    """Use the existing queue receipts/logs like SRGC NODE/BLOCKED status, never infer preparation."""
+    host=host or socket.gethostname()
+    owned={str(pid):row for pid,row in rows.items() if row['env'].get(TAG)==launch}
+    bases={Path(row['env']['V8_ROOT']) for row in owned.values() if row['env'].get('V8_ROOT')} or {Path(base)}
+    lines=[]
+    for folder in sorted(bases):
+        for item in snapshot(folder,host):
+            label=item['cohort'];failure=item.get('failure')
+            if failure:
+                detail=failure.get('detail',str(failure)) if isinstance(failure,dict) else str(failure)
+                lines.append(f'BLOCKED {label}: {detail}; queue={folder/label/".multi-node/state.json"}')
+            mine=[job for job in item['local_jobs'] if job.get('worker','').rsplit('.',1)[-1] in owned]
+            for job in mine:
+                lines.append(f'ASSIGNED {label} seed={job.get("seed")} method={job.get("method")}; '
+                             f'no model token/update record for this launch yet; run state={job["run_manifest"]}; log={job["log"]}')
+                if job['last_log_lines']:lines.append('TASK OUTPUT: '+job['last_log_lines'][-1])
+            if not mine and not failure:
+                counts=', '.join(f'{k}={v}' for k,v in sorted(item['recorded_job_counts'].items())) or 'no recorded jobs'
+                lines.append(f'NOT ASSIGNED {label}: queue phase={item["phase"]}; recorded queue jobs: {counts}')
+    recent=[line.strip() for line in tail(console,8192) if line.strip() and 'known_task_counts' not in line]
+    if recent:lines.append('LATEST LAUNCHER OUTPUT: '+recent[-1][:1200])
+    return lines or ['No task/progress evidence is readable for this launch; current execution phase is unknown.']
+
+
 def main():
     args=sys.argv[1:];bootstrap=Path(__file__).with_name('v8_bootstrap.py')
     if any(a in ('--status','--help','-h') for a in args):
@@ -46,8 +71,9 @@ def main():
     previous={sig:signal.signal(sig,interrupt) for sig in (signal.SIGINT,signal.SIGTERM,signal.SIGHUP)}
     def report():
         while not finished.wait(15):
-            parts=work_events(table(),launch,progress)
-            print('[Training status] '+(' | '.join(parts) if parts else 'Preparing this node; no GPU work has been recorded yet'),flush=True)
+            rows=table();parts=work_events(rows,launch,progress)
+            if not parts:parts=before_model_work(rows,launch,root(env),log)
+            print('[Training status] '+' | '.join(parts),flush=True)
     def relay(log):
         with log.open('rb') as reader:
             while True:

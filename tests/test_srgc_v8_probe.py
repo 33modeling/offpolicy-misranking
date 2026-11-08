@@ -56,3 +56,11 @@ def test_loading_without_run_manifest_is_shown_without_claiming_training(tmp_pat
     assert job['run_manifest']=='not_created'
     assert job['last_log_lines']==['Loading weights:100%']
     assert 'reported_update_not_checkpoint_verified' not in job
+
+
+def test_short_hostname_cannot_adopt_a_different_fqdn_worker(tmp_path):
+    queue=tmp_path/'olmo_math/.multi-node'
+    save(queue/'jobs/foreign.json',dict(state='running',task=dict(run_id='foreign'),
+         attempts=[dict(id='f',worker='node.cluster.example.123')]))
+    assert not probe.snapshot(tmp_path,'node')[0]['local_jobs']
+    assert len(probe.snapshot(tmp_path,'node.cluster.example')[0]['local_jobs'])==1

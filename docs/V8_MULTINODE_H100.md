@@ -142,6 +142,14 @@ worker는60초마다 현황을 출력한다. 자식 출력은 터미널과 각 c
 binding·checkpoint를 고치거나 지우지 않는다. 신원·설정·CPU 준비 오류는 이 방식으로
 해제하지 않는다. `--retry-failed`를 명시하면 보존된 failed job만 다시 pending으로 연다.
 
+GPU 자식의 시작·중단·정체 감시는 기존 `srgc_rebuttal.cluster.run_child()`를 사용한다.
+모델 준비 때부터 rank별 작업 파일의 실제 변경을 확인하고1800초 동안 변경이 없으면
+해당 작업을 timeout으로 기록한다. worker heartbeat와 실제 모델 작업은 구분한다.
+아직 rank 작업 기록이 없으면 supervisor는 `ASSIGNED`/`NOT ASSIGNED`/`BLOCKED`로
+배정·큐 실패 상태, 모델·seed·방법, 실제 작업 로그와 마지막 launcher 출력을 보여 준다.
+기록이 없다는 이유만으로 정상 준비 중이라고 표시하지 않는다. 다른 launch의 작업이나
+이름이 비슷한 다른 FQDN 노드의 실행을 이 launch의 GPU 작업으로 사용하지 않는다.
+
 Ctrl-C/SIGTERM은 자식 실행기에 전달된다. 종료 유예는10초이며 강제 종료되면 마지막으로
 저장된 체크포인트에서 같은 명령으로 재개한다. 종료 직전 업데이트의 저장은 보장하지 않는다.
 실제 실패 원인을 고친 뒤에는 같은 명령에 `--retry-failed`를 붙인다.

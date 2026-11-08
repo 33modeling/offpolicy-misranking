@@ -1,6 +1,7 @@
 """Private socketpair actor for one exact historical Runtime/Python; no listener or model changes."""
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import signal
@@ -8,6 +9,28 @@ import socket
 import sys
 import threading
 from v8_rpc import send,receive
+
+
+def run_srgc_child(runtime,command,log,fds,stop,*,extra=None,label=None,interval=5):
+    """Use the existing SRGC lifecycle/progress watchdog; supervisor already spools its console."""
+    from srgc_rebuttal.cluster import run_child
+    from srgc_rebuttal.progress import signature
+    environment=dict(runtime.environment,CUDA_VISIBLE_DEVICES=','.join(runtime.gpus),**(extra or {}))
+    directory=Path(environment['SRGC_PROGRESS_DIR']);directory.mkdir(parents=True,exist_ok=True)
+    stall=float(environment.get('V8_TASK_STALL_SECONDS','1800'))
+    if not math.isfinite(stall) or stall<=0:raise ValueError('V8_TASK_STALL_SECONDS must be finite and positive')
+    print(f'RUN {runtime.cohort}:{label or "task"}; log={log}; '
+          f'SRGC progress watchdog={stall:g}s; no completed optimizer update is implied',flush=True)
+    try:
+        return run_child(command,Path(log),environment,pass_fds=tuple(fds),
+                         heartbeat=lambda pid:runtime.heartbeat('child:'+str(pid)),should_stop=stop.is_set,
+                         interval=interval,progress=lambda:signature(directory),stall_seconds=stall)
+    except TimeoutError as exc:
+        with Path(log).open('a') as handle:handle.write(f'TIMEOUT: {exc}\n')
+        print(f'TIMEOUT {runtime.cohort}:{label or "task"}: {exc}; checkpoints retained',flush=True)
+        return 124
+    except KeyboardInterrupt:
+        stop.set();return 75
 
 
 def main():
@@ -33,6 +56,8 @@ def main():
                         command[index:index+1]=[str(Path(__file__).with_name('v8_task_entry.py')),child]
                         kwargs['extra']=dict(kwargs.get('extra') or {},
                             V8_ORIGINAL_CHILD_SHA256=runtime.binding['runner_sha256']['cluster_child.py'])
+                        kwargs.pop('cpu',None)
+                        return run_srgc_child(runtime,command,log,fds,stop,**kwargs)
                 return original_process(command,log,fds,stop,**kwargs)
             runtime.process=process
         def heartbeat(task=None):

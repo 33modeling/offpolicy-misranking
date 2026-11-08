@@ -45,6 +45,28 @@ def test_supervisor_reads_current_attempt_progress_and_excludes_other_launch(tmp
     assert supervisor.work_events({},'ours',current)==events
 
 
+def test_missing_model_work_shows_assigned_task_or_actual_blocker_not_preparing(tmp_path,monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]/'scripts'))
+    from scripts import v8_supervisor as supervisor
+    queue=tmp_path/'olmo_math/.multi-node';(queue/'jobs').mkdir(parents=True)
+    (queue/'state.json').write_text(json.dumps(dict(phase='train',failure=None)))
+    (queue/'jobs/a.json').write_text(json.dumps(dict(state='running',task=dict(run_id='r',kind='train',
+         method_id='on_monitored',training_seed=5),attempts=[dict(id='a',worker='host.42')])))
+    console=tmp_path/'console.log';console.write_text('NCCL admission running; inspect /actual/preflight.log\n')
+    ours=row(1,'x',root=str(tmp_path),tag='ours')
+    lines=supervisor.before_model_work({42:ours},'ours',tmp_path,console,host='host')
+    text='\n'.join(lines)
+    assert 'ASSIGNED olmo_math seed=5 method=on_monitored' in text
+    assert '/actual/preflight.log' in text and 'Preparing this node' not in text
+    assert 'not_created' in text and 'no model token/update record' in text
+    # Same-node jobs from a different launch must not become evidence of our work.
+    foreign=supervisor.before_model_work({99:row(1,'y',root=str(tmp_path),tag='ours')},'ours',tmp_path,console,host='host')
+    assert not any(line.startswith('ASSIGNED olmo_math') for line in foreign)
+    (queue/'state.json').write_text(json.dumps(dict(phase='prepare',failure=dict(detail='original source missing'))))
+    blocked=supervisor.before_model_work({42:ours},'ours',tmp_path,console,host='host')
+    assert any('BLOCKED olmo_math: original source missing' in line for line in blocked)
+
+
 def test_detached_rank_ignoring_term_is_stopped_but_foreign_launch_survives(tmp_path):
     script=tmp_path/'cluster_child.py'
     script.write_text('import signal,time\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\nprint("READY",flush=True)\nwhile True:time.sleep(.02)\n')

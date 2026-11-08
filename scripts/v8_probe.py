@@ -58,15 +58,18 @@ def snapshot(base,host):
     result=[]
     for cohort in ('olmo_math','qwen_mbpp'):
         directory=Path(base)/cohort;queue=directory/'.multi-node';state=read(queue/'state.json') or {}
-        info=dict(root=str(base),cohort=cohort,phase=state.get('phase','not_started'),failure=state.get('failure'),local_jobs=[])
+        info=dict(root=str(base),cohort=cohort,phase=state.get('phase','not_started'),failure=state.get('failure'),local_jobs=[],recorded_job_counts={})
         for path in sorted((queue/'jobs').glob('*.json')):
             job=read(path)
-            if not job or job.get('state')!='running' or not job.get('attempts'):continue
+            if not isinstance(job,dict):continue
+            status=job.get('state','unknown');info['recorded_job_counts'][status]=info['recorded_job_counts'].get(status,0)+1
+            if job.get('state')!='running' or not job.get('attempts'):continue
             attempt=job['attempts'][-1]
-            if not attempt.get('worker','').startswith(host+'.'):continue
+            if attempt.get('worker','').rsplit('.',1)[0]!=host:continue
             task=job['task'];rid=task.get('run_id');run=directory/'runs'/rid if rid else None
             manifest=read(run/'manifest.json') if run else None
-            item=dict(run_id=rid,kind=task.get('kind'),attempt_started=attempt.get('started_at'),
+            item=dict(run_id=rid,kind=task.get('kind'),method=task.get('method_id'),seed=task.get('training_seed'),
+                      log=str(queue/'logs'/(attempt['id']+'.log')),attempt_started=attempt.get('started_at'),
                       worker=attempt.get('worker'),run_manifest=manifest.get('status') if manifest else 'not_created')
             if manifest and manifest.get('attempts'):
                 current=manifest['attempts'][-1]['attempt_id']
