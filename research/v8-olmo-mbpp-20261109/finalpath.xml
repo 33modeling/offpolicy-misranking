@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="10" time="6.566" timestamp="2026-11-09T08:42:22.695980+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_olmo_mbpp" name="test_partial_startup_selects_only_available_cohorts" time="0.001" /><testcase classname="tests.test_srgc_v8_olmo_mbpp" name="test_dispatch_passes_available_entries_instead_of_defaulting_to_a_missing_cohort" time="0.012" /><testcase classname="tests.test_srgc_v8_olmo_mbpp" name="test_olmo_mbpp_keeps_the_original_mbpp_interpreter" time="0.000" /><testcase classname="tests.test_srgc_v8_olmo_mbpp" name="test_original_olmo_mbpp_runner_finishes_and_production_collect_analyze_emit_results" time="5.120"><failure message="ValueError: V8_ROOT must be inside /group-volume (user volume holds code only): /dev/shm/v8-olmo-mbpp-finalpath-20261109/test_original_olmo_mbpp_runner0">tmp_path = PosixPath('/dev/shm/v8-olmo-mbpp-finalpath-20261109/test_original_olmo_mbpp_runner0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x755fbf824950&gt;
+
+    def test_original_olmo_mbpp_runner_finishes_and_production_collect_analyze_emit_results(tmp_path,monkeypatch):
+        import os
+        runner=os.environ.get('V8_NODES_TEST_RUNTIME')
+        if not runner:pytest.skip('original V8 runner required')
+        monkeypatch.setenv('V8_CODE_ROOT',str(ROOT))
+        from test_srgc_v8_nodes import ToyRuntime
+        runtime=ToyRuntime(runner,tmp_path,'olmo_mbpp')
+        pool=nodes.Pool(runtime.root/'.multi-node',runtime.binding)
+        assert nodes.worker_loop(pool,runtime,'cpu-node',threading.Event(),poll=.001,retry_delay=0)==0
+        from switching import cluster
+        monkeypatch.setattr(cluster.spec,'resolve',lambda *a,**k:runtime.cfg)
+        args=SimpleNamespace(cohort='olmo_mbpp',v8_root=str(tmp_path))
+&gt;       cluster.cmd_collect(args);cluster.cmd_analyze(args)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_srgc_v8_olmo_mbpp.py:59: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+v8/experiments/switching/cluster.py:266: in cmd_collect
+    root = v8_root(args) / args.cohort
+           ^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = namespace(cohort='olmo_mbpp', v8_root='/dev/shm/v8-olmo-mbpp-finalpath-20261109/test_original_olmo_mbpp_runner0')
+
+    def v8_root(args=None):
+        root = Path(getattr(args, "v8_root", None) or os.environ.get("V8_ROOT", DEFAULT_ROOT))
+        group = Path(os.environ.get("GROUP_VOLUME", "/group-volume"))
+        if not os.environ.get("V8_ALLOW_ANY_ROOT") and not root.resolve().is_relative_to(group.resolve()):
+&gt;           raise ValueError(f"V8_ROOT must be inside {group} (user volume holds code only): {root}")
+E           ValueError: V8_ROOT must be inside /group-volume (user volume holds code only): /dev/shm/v8-olmo-mbpp-finalpath-20261109/test_original_olmo_mbpp_runner0
+
+v8/experiments/switching/cluster.py:29: ValueError</failure></testcase><testcase classname="tests.test_srgc_v8_fair_dispatch" name="test_ten_simultaneous_qwen_biased_nodes_and_four_late_nodes_are_balanced" time="0.272" /><testcase classname="tests.test_srgc_v8_fair_dispatch" name="test_new_workers_prefer_olmo_when_ten_legacy_qwen_jobs_hold_leases" time="0.056" /><testcase classname="tests.test_srgc_v8_fair_dispatch" name="test_no_ready_olmo_work_allows_qwen_to_borrow_free_workers" time="0.194" /><testcase classname="tests.test_srgc_v8_production_dag_dispatch" name="test_twenty_initial_jobs_and_ten_new_checkpoint_branches_fill_thirty_nodes" time="0.381" /><testcase classname="tests.test_srgc_v8_production_dag_dispatch" name="test_five_legacy_qwen_jobs_do_not_leave_all_new_nodes_idle_after_a_task_failure" time="0.168" /><testcase classname="tests.test_srgc_v8_production_dag_dispatch" name="test_plain_new_nodes_recover_all_old_failed_olmo_while_five_qwen_jobs_keep_running" time="0.196" /></testsuite></testsuites>

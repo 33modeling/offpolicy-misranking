@@ -173,7 +173,7 @@ def main():
     if len(entries)==1:args.insert(0,next(iter(entries)))
     for cohort,error in plan['errors'].items():print(f'V8 startup: {cohort} blocked: {error}',file=sys.stderr,flush=True)
     try:
-        result=nodes.main(args)
+        result=nodes.main(args,selected_cohorts=tuple(entries))
         return result or (1 if plan['errors'] else 0)
     except (OSError,ValueError,RuntimeError) as error:
         print(f'V8 queue error: {type(error).__name__}: {error}',file=sys.stderr,flush=True);return 1

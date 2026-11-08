@@ -78,13 +78,15 @@ def test_different_cohort_pins_remain_separate_without_rebinding(tmp_path,source
     queue(base,'olmo_math',catalog['coordinators'][-1],runner)
     queue(base,'qwen_mbpp',catalog['coordinators'][-2],runner)
     before=snapshot(base);groups=runtime.selections(REPO,environment(base),[])
-    assert len(groups)==2 and {tuple(g['cohorts']) for g in groups}=={('olmo_math',),('qwen_mbpp',)}
+    assert {c for g in groups for c in g['cohorts']}=={'olmo_math','qwen_mbpp','olmo_mbpp'}
+    assert next(g for g in groups if 'olmo_math' in g['cohorts'])['coordinator_sha256']==catalog['coordinators'][-1]['sha256']
+    assert next(g for g in groups if 'qwen_mbpp' in g['cohorts'])['coordinator_sha256']==catalog['coordinators'][-2]['sha256']
     assert snapshot(base)==before
 
 
-def test_unstarted_default_keeps_both_cohorts_and_does_not_create_queue(tmp_path):
+def test_unstarted_default_keeps_three_cohorts_and_does_not_create_queue(tmp_path):
     base=tmp_path/'absent';groups=runtime.selections(REPO,environment(base),[])
-    assert len(groups)==1 and groups[0]['cohorts']==['olmo_math','qwen_mbpp']
+    assert len(groups)==1 and groups[0]['cohorts']==['olmo_math','qwen_mbpp','olmo_mbpp']
     assert runtime.sha(groups[0]['script'])==runtime.sha(REPO/'scripts/srgc_v8_nodes.py') and not base.exists()
 
 

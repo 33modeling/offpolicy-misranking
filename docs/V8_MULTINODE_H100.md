@@ -6,8 +6,8 @@
 sh scripts/run_v8_nodes.sh
 ```
 
-별도 모델명이나 노드별 역할을 지정하지 않는다. 한 worker가 OLMo MATH와 Qwen
-MBPP 양쪽의 준비된 작업을 확인하고, 한 번에4GPU 작업 하나를 실행한다. 각 cohort의
+별도 모델명이나 노드별 역할을 지정하지 않는다. 기본 명령은 OLMo MATH·Qwen MBPP·
+OLMo MBPP 세 조합의 준비된 작업을 확인하고, 한 번에4GPU 작업 하나를 실행한다. 각 cohort의
 원본 Runtime 초기화·노드 검증·CPU 준비·작업 목록 검사는 독립적으로 진행한다. Qwen의 준비가 끝나지 않아도
 검증·준비가 끝난 OLMo는 시작할 수 있고, 반대 방향도 같다. 공유 잠금 안에서 실제 점유 중인 작업 lease를
 세고 적게 배정된 cohort부터 새 작업을 가져온다. 기존 Qwen 작업10개가 실행 중이면
@@ -15,6 +15,16 @@ MBPP 양쪽의 준비된 작업을 확인하고, 한 번에4GPU 작업 하나를
 다른 쪽의 준비된 작업을 가져온다. 공유 잠금은 배정 판단·작업 claim 동안만 잡으며,
 원본 Runtime의 작업 목록·체크포인트·완료 여부 검사와 모델 로딩·학습·준비 중에는 잡지 않는다. 모델별 고정 노드 할당이나 GPU 분할은
 하지 않는다.
+
+OLMo MBPP도 기존 seed5–9의25-step prefix와 원래 MBPP 입력·학습 환경을 검증한 뒤
+On 궤적·SR 분기·Uniform 비교·예산 연장·최종 평가·수집·분석을 같은 경로로 수행한다.
+기존 두 조합의 큐와 source binding은 그대로 재사용한다. OLMo MBPP의 기본 Python은
+기존 MBPP 실행기와 같은 `SWITCH_PYTHON`이며, 기존 `V8_PYTHON_OLMO_MBPP` 지정이
+있으면 우선한다. 다른 조합의 준비나 실행이 실패해도 정상 조합의 준비된 작업은 배정한다.
+현재 선택에 성공한 조합만 dispatcher에 넘겨, 일부 조합의 환경 오류가 나머지를 막지 않게 한다.
+준비된 작업과 빈 worker가 있으면 계속 배정하며, 모든 작업이 실행 중이거나 부모 checkpoint를
+기다리는 경우에는 새 작업을 만들지 않고 기다린다. 한 조합만 선택할 때는
+`sh scripts/run_v8_nodes.sh olmo_mbpp`를 사용한다.
 
 ## 기존 환경 자동 사용
 
@@ -52,10 +62,12 @@ GitHub 연결이 없는 기존 클러스터에는 소스·최신 실행기·고�
 실제 실행에서는 부모가 진행하는 동안 앞선 분기가 끝나므로 그 수를 노드 필요량으로
 바로 환산할 수 없다.
 
-모든 seed25 prefix가 준비된 첫 시점의 작업은 OLMo10개·Qwen10개, 합계20개다.
+세 조합의 seed25 prefix가 모두 준비된 첫 시점의 작업은 각10개, 합계30개다.
 이후 준비된 작업 수는 부모 checkpoint 생성 속도와 기존 분기의 완료 속도에 따라
 변한다. 실행기는 준비된 작업만 노드에 배정한다.
 
+아래 표는 OLMo MATH와 Qwen MBPP 두 조합만의 예전 추정이며 OLMo MBPP는 포함하지 않는다.
+OLMo MBPP를 포함한 세 조합의 실제 필요 노드 수·처리량은 아직 측정하지 않았다.
 기존 cohort 설정에 기록된 평균GPU시간을 사용하고, 모든 seed가 같은 속도로
 진행하며 준비된 SR분기를 즉시 시작한다고 가정한 **주 학습 구간만의 근사 추정**은
 다음과 같다. 작업 하나는4GPU다.
@@ -96,11 +108,11 @@ binding·실패 기록은 setup-history에 보존한다. 학습이 시작된 큐
 
 ## 체크포인트 재사용과 단계
 
-범위는 기존 seeds5–9의 rebuttal Branch Bank다. OLMo MATH는 주 실험, Qwen
-MBPP는 다른 모델·과제의 재현 실험이다. 두 cohort로 모델 효과만 분리하지 않는다.
+범위는 기존 seeds5–9의 rebuttal Branch Bank다. OLMo MATH는 주 실험, OLMo MBPP는
+같은 모델의 다른 과제, Qwen MBPP는 다른 모델의 비교다. 각 조합의 결과를 따로 기록한다.
 새 seed의 개발·확증 실험과 E8 양방향 전환은 포함하지 않는다.
 
-두 실험 모두 기존 `prefix-ready.json`과 `prefix.pt`를 찾아25-update 공통 상태에서
+세 조합 모두 기존 `prefix-ready.json`과 `prefix.pt`를 찾아25-update 공통 상태에서
 분기한다. checkpoint 해시·step·trainer 구현을 확인하고 모델·optimizer 상태를
 불러온다. 저장된 process RNG가 있으면 복원한다. 같은 v8 작업은 `latest.pt`에서
 재개한다. 다른 방법의 기존275-update 결과를 새 v8 작업 완료로 자동 대체하지 않는다.
@@ -125,7 +137,7 @@ worker는 실패 종료 코드를 반환한다. 환경·입력 사전검사 오�
 sh scripts/run_v8_nodes.sh --status
 ```
 
-양쪽의 `phase`, `known_task_counts`, `leased_tasks`, `failure`가 함께 출력된다.
+세 조합의 `phase`, `known_task_counts`, `leased_tasks`, `failure`가 함께 출력된다.
 worker는60초마다 현황을 출력한다. 자식 출력은 터미널과 각 cohort 로그에 남긴다.
 노드마다 같은 GPU 그룹에서 worker 하나를 실행한다.
 
@@ -221,10 +233,9 @@ SR25 update 재개는 별도 확인이 필요하며 다음 CUDA 오류에는 실
 부모 체크포인트가 아직 없거나 부모가 실패한 분기는 기다리므로, 준비된 작업보다
 노드가 많으면 idle이 생길 수 있다. 실패로 인한 대기와 정상 진행을 구분해야 한다.
 
-기본 두 cohort는 기존 OLMo-3 7B/MATH(primary)와 Qwen3.5 9B/MBPP(replication)를
-이어받는다. 비교는 각 cohort 안의 학습 방법 사이에서 수행한다. 모델과 데이터가
-동시에 다르므로 이 둘의 점수 차이만으로 모델 효과나 데이터 효과를 분리할 수 없다.
-OLMo/MBPP·Qwen/MATH 설정도 있지만 기본 자동 배정은 이 교차 조합을 실행하지 않는다.
+기본 세 cohort는 기존 OLMo-3 7B/MATH·OLMo-3 7B/MBPP·Qwen3.5 9B/MBPP를
+이어받는다. 비교는 각 cohort 안의 학습 방법 사이에서 수행한다. 서로 다른 데이터의
+점수 차이만으로 모델 효과를 분리하지 않는다. Qwen/MATH는 기본 자동 배정에 포함하지 않는다.
 
 자식이 점유 중이거나 중단되어 종료75를 기록하면 torchrun의 종료1을 작업 실패로
 오인하지 않는다. 실제 rank 예외·치명적 signal이 함께 있으면 실패 기록을 우선한다.
@@ -316,7 +327,7 @@ GPU 작업의 자동 제출은 수행하지 않는다.
 원본 코드가 묶음에 없거나 기존 Python 환경이 달라졌으면 해당 원인을 출력하고 거부한다.
 신원 검사를 끄거나 새 코드에 옛 해시를 붙여서 통과시키지 않는다.
 기존 큐에도 현재의 공통 배정기를 적용한다. 각 cohort의 원본 Runtime은 그 큐에 기록된
-코드·Python으로 별도 자식 프로세스에서 실행하고, 새 배정기는 두 cohort의 실제 lease를
+코드·Python으로 별도 자식 프로세스에서 실행하고, 새 배정기는 세 cohort의 실제 lease를
 함께 비교한다. 원래 binding.json을 고치지 않는다. 새 제어 정책과 배정기4파일 해시,
 원본 binding은 `$V8_ROOT/.v8-dispatch-policies/`의 별도 불변 기록에 남긴다.
 프로세스 간 통신은 상속받은 로컬 socketpair이며 네트워크 listener를 만들지 않는다.
@@ -345,7 +356,7 @@ CPU 작은 무작위 OLMo 모델에서 응답8개·기존 종료조건·출력 �
 현재 checkout을 선택한 경우도 실행 전 별도의 불변 사본으로 고정한다. 실행 도중
 `git pull`이 되어도 이 worker가 이후 띄우는 child/config/helper는 바뀌지 않는다.
 이미 사용한 사본도 로컬 캐시에 남겨 후속 pull 뒤 같은 큐를 다시 열 때 재사용한다.
-두 cohort의 Python 경로가 달라도 공통 배정기를 사용한다. 각 원본 Runtime의
+세 cohort의 Python 경로가 달라도 공통 배정기를 사용한다. 각 원본 Runtime의
 NCCL 사전검사와 학습은 해당 cohort의 Python에서 실행한다.
 한 cohort의 원본/Python/메타데이터 오류는 그 cohort에만 표시하며 유효한 나머지는 계속한다.
 일부 실패를 숨기지 않도록 유효한 cohort가 끝난 뒤 전체 종료 코드는 실패로 남긴다.

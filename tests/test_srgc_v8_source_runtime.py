@@ -116,7 +116,7 @@ print('SAVED_RUNTIME_CPU_TRAINING_OK')
     assert 'SAVED_RUNTIME_CPU_TRAINING_OK' in result.stdout
 
 
-@pytest.mark.parametrize('cohort',['olmo_math','qwen_mbpp'])
+@pytest.mark.parametrize('cohort',['olmo_math','qwen_mbpp','olmo_mbpp'])
 def test_production_locator_uses_the_verified_training_identity_and_explains_missing_prefix(tmp_path,monkeypatch,cohort):
     from switching import cluster,spec
     cfg=spec.resolve(cohort,role='rebuttal_bank')

@@ -32,6 +32,7 @@ SCHEMA = 1
 DISPATCH_POLICY = 'source-recovery-node-interruption-v13'
 TERMINAL = {'completed_horizon', 'completed_budget'}
 PHASES = ('train', 'extension', 'evaluation')
+DEFAULT_COHORTS = ('olmo_math', 'qwen_mbpp', 'olmo_mbpp')
 CORRECTED_PLANNER = 'current-v8-016'  # evaluation planner replaced for pre-V8-016 coordinators
 
 
@@ -1390,9 +1391,9 @@ class Runtime:
         done.set();thread.join(timeout=10);return process.returncode
 
 
-def main(argv=None):
+def main(argv=None,*,selected_cohorts=None):
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('cohort',nargs='?',default='all',help='default: automatically share both olmo_math and qwen_mbpp')
+    parser.add_argument('cohort',nargs='?',default='all',help='default: share olmo_math, qwen_mbpp and olmo_mbpp')
     parser.add_argument('--runner-root',type=Path,default=os.environ.get('V8_RUNNER_ROOT',str(Path.cwd()/'v8/experiments')))
     parser.add_argument('--root',type=Path,default=os.environ.get('V8_ROOT'))
     parser.add_argument('--python',default=os.environ.get('V8_PYTHON',sys.executable),help='fallback Python; cohort-specific environments take priority')
@@ -1410,7 +1411,11 @@ def main(argv=None):
     args=parser.parse_args(argv)
     if args.root is None:parser.error('V8_ROOT or --root is required (shared by all nodes)')
     if not re.fullmatch(r'[A-Za-z0-9_-]+',args.cohort):parser.error('cohort must be a simple configured identifier')
-    cohorts=('olmo_math','qwen_mbpp') if args.cohort=='all' else (args.cohort,)
+    cohorts=tuple(selected_cohorts) if selected_cohorts is not None else DEFAULT_COHORTS if args.cohort=='all' else (args.cohort,)
+    if not cohorts or len(set(cohorts))!=len(cohorts) or any(not re.fullmatch(r'[A-Za-z0-9_-]+',c) for c in cohorts):
+        parser.error('selected cohorts must be nonempty, distinct configured identifiers')
+    if selected_cohorts is not None and args.cohort!='all' and cohorts!=(args.cohort,):
+        parser.error('selected cohorts disagree with the requested cohort')
     if args.status:
         statuses={}
         for cohort in cohorts:

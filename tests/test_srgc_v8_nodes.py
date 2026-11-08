@@ -439,21 +439,21 @@ def test_cli_status_is_read_only_and_needs_no_gpu_or_runner(tmp_path):
     assert not root.exists()
 
 
-def test_default_command_reports_both_cohorts_without_starting_anything(tmp_path):
+def test_default_command_reports_three_cohorts_without_starting_anything(tmp_path):
     root=tmp_path/'not-created'
     result=subprocess.run([sys.executable,nodes.__file__,'--root',str(root),'--status'],
                           text=True,capture_output=True,timeout=5)
     assert result.returncode==0,result.stderr
-    assert json.loads(result.stdout)=={'olmo_math':{'phase':'not_started'},'qwen_mbpp':{'phase':'not_started'}}
+    assert json.loads(result.stdout)=={c:{'phase':'not_started'} for c in nodes.DEFAULT_COHORTS}
     assert not root.exists()
 
 
-def test_shell_entrypoint_defaults_to_both_cohorts_without_python_overrides(tmp_path):
+def test_shell_entrypoint_defaults_to_three_cohorts_without_python_overrides(tmp_path):
     env={k:v for k,v in os.environ.items() if k not in ('V8_PYTHON','PAIR_PYTHON','SWITCH_PYTHON')}
     result=subprocess.run(['sh',str(Path(nodes.__file__).with_name('run_v8_nodes.sh')),
                            '--root',str(tmp_path/'not-created'),'--status'],env=env,text=True,capture_output=True,timeout=5)
     assert result.returncode==0,result.stderr
-    assert set(json.loads(result.stdout))=={'olmo_math','qwen_mbpp'}
+    assert set(json.loads(result.stdout))==set(nodes.DEFAULT_COHORTS)
     assert not (tmp_path/'not-created').exists()
 
 
@@ -638,7 +638,7 @@ def toy_mixed_worker(runner,root,worker):
     os.environ['CUDA_VISIBLE_DEVICES']='';os.environ['V8_FSYNC']='0'
     os.environ.setdefault('V8_CODE_ROOT',str(Path(__file__).resolve().parents[1]))
     pairs=[]
-    for cohort in ('olmo_math','qwen_mbpp'):
+    for cohort in nodes.DEFAULT_COHORTS:
         runtime=ToyRuntime(runner,root,cohort)
         pairs.append((nodes.Pool(runtime.root/'.multi-node',runtime.binding),runtime))
     try:rc=nodes.worker_loop_many(pairs,worker,threading.Event(),poll=.015)
@@ -648,7 +648,7 @@ def toy_mixed_worker(runner,root,worker):
     nodes.atomic(Path(root)/(worker+'-exit.json'),{'exit_code':rc})
 
 
-def test_real_v8_three_workers_automatically_share_both_cohorts(tmp_path,monkeypatch):
+def test_real_v8_three_workers_automatically_finish_three_cohorts(tmp_path,monkeypatch):
     runner=os.environ.get('V8_NODES_TEST_RUNTIME')
     if not runner:pytest.skip('V8 runtime source required for mixed-cohort integration')
     ctx=mp.get_context('fork')
@@ -658,9 +658,9 @@ def test_real_v8_three_workers_automatically_share_both_cohorts(tmp_path,monkeyp
         process.join(60)
         if process.is_alive():process.terminate();process.join();pytest.fail('mixed V8 CPU worker did not finish')
     assert [nodes.read(tmp_path/(f'node{i}-exit.json'))['exit_code'] for i in range(3)]==[0,0,0]
-    summaries={cohort:verify_toy_complete(runner,tmp_path,cohort,monkeypatch) for cohort in ('olmo_math','qwen_mbpp')}
+    summaries={cohort:verify_toy_complete(runner,tmp_path,cohort,monkeypatch) for cohort in nodes.DEFAULT_COHORTS}
     owners={cohort:{nodes.read(p)['worker'] for p in (tmp_path/cohort/'executed').glob('*.json')} for cohort in summaries}
-    assert owners['olmo_math']&owners['qwen_mbpp'],'workers must move between cohorts without fixed node shares'
+    assert all(owners['olmo_mbpp']&owners[c] for c in ('olmo_math','qwen_mbpp')),'workers must move between cohorts without fixed node shares'
     attempts={}
     for cohort in summaries:
         for path in (tmp_path/cohort/'.multi-node/jobs').glob('*.json'):
@@ -674,7 +674,7 @@ def test_real_v8_three_workers_automatically_share_both_cohorts(tmp_path,monkeyp
                  no_overlapping_jobs_per_worker=True,no_duplicate_execution=True,new_GPU_jobs=0))
 
 
-@pytest.mark.parametrize('cohort',['olmo_math','qwen_mbpp'])
+@pytest.mark.parametrize('cohort',['olmo_math','qwen_mbpp','olmo_mbpp'])
 def test_current_training_graph_has_55_ready_jobs_after_branch_parents_exist(tmp_path,cohort):
     runner=os.environ.get('V8_NODES_TEST_RUNTIME')
     if not runner:pytest.skip('V8 runtime source required for graph capacity verification')

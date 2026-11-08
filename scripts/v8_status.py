@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """V8 queue status in the same layout as `sh scripts/run_srgc.sh <dataset> status` (read-only).
 
-    sh scripts/v8_status.sh            # one snapshot of olmo_math and qwen_mbpp
+    sh scripts/v8_status.sh            # one snapshot of olmo_math, qwen_mbpp and olmo_mbpp
     sh scripts/v8_status.sh --watch    # refresh every 60 s until Ctrl-C (--watch 30 for 30 s)
 
 No locks, signals, Torch imports or queue writes.
@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from v8_probe import active_roots, last_row, read, root, tail  # noqa: E402
 from srgc_v8_nodes import retry_budget_failures  # same verified recovery boundary as the scheduler
 
-COHORTS = ('olmo_math', 'qwen_mbpp')
+COHORTS = ('olmo_math', 'qwen_mbpp', 'olmo_mbpp')
 ATTENTION = {'failed', 'interrupted', 'stopped', 'unconfirmed'}
 STALE_SECONDS = 180  # workers heartbeat every 10 s while a child runs (srgc_v8_nodes.Runtime.process)
 # Clean view liveness (user: 'idle 아닌데 자꾸 idle 이래 이미 삭제한 노드인데', 'status 업데이트 더 빠르게'):
@@ -714,8 +714,8 @@ LEGEND_TABLE = ("train/ext/eval = tasks done/all planned (ext = budget extension
                 "intr = interrupted, reruns · stuck = marked running but no live node runs it (DEAD node or no worker) · "
                 "other = unknown job state")
 LEGEND = "✓ done  ▶n running (n updates)  ○ ready  · waiting  ✗ failed  ! no training error  ⏸ interrupted  ? no heartbeat"
-COHORT_LABEL = {'olmo_math': 'OLMo MATH', 'qwen_mbpp': 'Qwen MBPP'}
-COHORT_SHORT = {'OLMo MATH': 'OLMo', 'Qwen MBPP': 'Qwen'}
+COHORT_LABEL = {'olmo_math': 'OLMo MATH', 'qwen_mbpp': 'Qwen MBPP', 'olmo_mbpp': 'OLMo MBPP'}
+COHORT_SHORT = {'OLMo MATH': 'OLMo', 'Qwen MBPP': 'Qwen', 'OLMo MBPP': 'OLMo-MBPP'}
 COLOR = False   # set by main() only when stdout is a terminal (never in logs, pipes or tests)
 STYLE = {'ok': '32', 'run': '1;32', 'bad': '1;31', 'warn': '33', 'dim': '2', 'head': '1', 'info': '36'}
 
@@ -1425,7 +1425,7 @@ def render(bases, now=None, gpus=None, host=None, cohorts=COHORTS, style='simple
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     def cohort_name(value):
-        # run_v8_nodes.sh accepts every configured cohort (configs/cohorts/<name>.json), not only the default two.
+        # run_v8_nodes.sh accepts every configured cohort, including those outside the default three.
         if not re.fullmatch(r'[A-Za-z0-9_-]+', value):
             raise argparse.ArgumentTypeError('cohort must be a simple configured identifier')
         return value

@@ -1,11 +1,11 @@
 #!/bin/sh
 # No arguments: reuse SRGC, verify this node and retry failed tasks with saved checkpoints.
 #   sh scripts/run_v8_nodes.sh            worker for this node (same command on every node)
-#   sh scripts/run_v8_nodes.sh --status   queue state of both cohorts (read-only, JSON)
+#   sh scripts/run_v8_nodes.sh --status   queue state of all three cohorts (read-only, JSON)
 #   sh scripts/run_v8_nodes.sh status     status table like `run_srgc.sh <dataset> status` (read-only;
 #                                         add --watch to refresh). Same as sh scripts/v8_status.sh
 #   sh scripts/run_v8_nodes.sh stop       stop this node's worker (same as sh scripts/v8_stop.sh)
-#   cohort words: olmo_math|math, qwen_mbpp|mbpp, all; mode words: run (default), status, stop
+#   cohort words: olmo_math|math, qwen_mbpp|mbpp, olmo_mbpp, all; mode words: run (default), status, stop
 set -eu
 # CDPATH would make `cd` print the directory and corrupt HERE.
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -19,11 +19,11 @@ if ! command -v "$PY" >/dev/null 2>&1; then
     echo "V8 startup: no python3 on PATH and no existing venv at ${VENV_DIR:-$WORK/.venv-cu126}" >&2
     exit 2
 fi
-# Same words as scripts/run_srgc.sh: [olmo_math|qwen_mbpp|all|math|mbpp] [run|status|stop].
+# Same words as scripts/run_srgc.sh; full cohort names also select olmo_mbpp.
 # Words used to be taken as a cohort name ("status" -> configs/cohorts/status.json not found).
 usage() {
-    echo "usage: sh scripts/run_v8_nodes.sh [olmo_math|qwen_mbpp|all] [run|status|stop] [--watch [SECONDS]] [--new-queue] [--status] [--retry-failed]" >&2
-    echo "  sh scripts/run_v8_nodes.sh              worker for this node, both cohorts (same command on every node)" >&2
+    echo "usage: sh scripts/run_v8_nodes.sh [olmo_math|qwen_mbpp|olmo_mbpp|all] [run|status|stop] [--watch [SECONDS]] [--new-queue] [--status] [--retry-failed]" >&2
+    echo "  sh scripts/run_v8_nodes.sh              worker for olmo_math, qwen_mbpp and olmo_mbpp (same command on every node)" >&2
     echo "  sh scripts/run_v8_nodes.sh status       status table like run_srgc.sh status (--watch to refresh)" >&2
     echo "  sh scripts/run_v8_nodes.sh stop         stop this node's V8 worker (checkpoints and queue kept)" >&2
     echo "  math = olmo_math, mbpp = qwen_mbpp" >&2
@@ -46,6 +46,7 @@ for arg in "$@"; do
         -*) set -- "$@" "$arg" ;;
         olmo_math|math) [ -z "$COHORT" ] && COHORT=olmo_math || { usage; exit 2; } ;;
         qwen_mbpp|mbpp) [ -z "$COHORT" ] && COHORT=qwen_mbpp || { usage; exit 2; } ;;
+        olmo_mbpp) [ -z "$COHORT" ] && COHORT=olmo_mbpp || { usage; exit 2; } ;;
         all) [ -z "$COHORT" ] && COHORT=all || { usage; exit 2; } ;;
         run|status|stop) [ -z "$MODE" ] && MODE=$arg || { usage; exit 2; } ;;
         *)
@@ -65,6 +66,6 @@ case "${MODE:-run}" in
         fi
         exec sh "$HERE/v8_stop.sh" ;;
 esac
-# run: options (in their original order, values and spaces intact), then the cohort (none = both).
+# run: options (in their original order, values and spaces intact), then the cohort (none = all three).
 if [ -n "$COHORT" ] && [ "$COHORT" != all ]; then set -- "$@" "$COHORT"; fi
 exec "$PY" "$HERE/v8_supervisor.py" "$@"

@@ -1,0 +1,63 @@
+{
+  "base_commit": "bd90294e624e3d036bf73602794594c3f307826f",
+  "user_request": "olmo mbpp 도 같은 명령어에서 똑같이 학습해서 결과 나오게 만들어놔 / 노는 노드 없게 / 지금 당장",
+  "changes": [
+    "Default source selection, fair dispatcher, shell and status/probe/progress include olmo_math, qwen_mbpp, olmo_mbpp. Command unchanged.",
+    "Dispatcher takes exactly the successfully selected entries; a source/environment failure does not block other ready cohorts or access a missing actor.",
+    "OLMo MBPP keeps its original config/seeds5-9/source plan and interpreter precedence. Full trajectory/SR/Uniform, frozen budget/extension, final evaluation, collection and analysis. Existing queue bindings and trainer sources remain pinned."
+  ],
+  "controls": {
+    "scope": "CPU software test, no H100/model scientific measurements",
+    "model_data": "Original V8 ToyBackend/runner/evaluator, synthetic toy_problem(0)",
+    "seeds": [
+      5,
+      6,
+      7
+    ],
+    "updates": "prefix25, matched75, retained50/75, safety100 in fixtures; original production275/cap400 unchanged",
+    "metrics": "All three cohorts complete; no duplicate or overlapping tasks per worker; workers change cohorts; correct selected-budget final evaluations; production collect/analyze emit policy outcomes and report",
+    "checkpoint_provenance": "Original optimizer/RNG and training rewards preserved; frozen original30 trainer hashes unchanged",
+    "capacity": "Five original seeds, On+SR25 per seed:10 initial tasks per cohort/30 total if all parents ready. No fake jobs to fill idle nodes."
+  },
+  "evidence": {
+    "finalpath-fixed.xml": {
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "targeted.xml": {
+      "tests": 114,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "finalpath.xml": {
+      "tests": 10,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "failure_record": "finalpath.xml:9pass/1fail because new CPU fixture omitted GROUP_VOLUME. Production shared-volume guard correctly rejected /dev/shm; test environment corrected in finalpath-fixed.xml. No guard disabled.",
+  "limitations": "H100 is on another computer and is not connected. No actual accuracy, memory, throughput, node progress or idle-resolution claim. New or idle workers started with current code join ready work; git pull does not change running frozen processes. Keep healthy learners/checkpoints. More nodes than ready work can still wait.",
+  "scientific_measurements": null,
+  "github_actions": "Remain disabled; no service, paid API, credit purchase or GPU allocation.",
+  "source_sha256": {
+    "docs/V8_MULTINODE_H100.md": "0730d2d7b6d52272a58c6ad4b5255462e99165d4c5790c288b6f27207921559b",
+    "scripts/run_v8_nodes.sh": "b3554fcd7282551db3fe7d424bcd2fc81eb55b2df3d49357305a7770e4f75a92",
+    "scripts/srgc_v8_nodes.py": "57cf92e755f73b2d6244be1ab3f32ebcc93d9e58283d5f12194a7538fe7ccf54",
+    "scripts/v8_bootstrap.py": "e6dad9eca9c99daac7349b432ab498dde34d1d10c5b5b96e211de925fe1b91b9",
+    "scripts/v8_dispatch.py": "b130952dbf195a27ca12cb15de260a193091563298c8df4eefffdc058dbe8938",
+    "scripts/v8_probe.py": "1a4e6d94f9c7f470d8518bc246e0766dab761ce9fe6371d885b37d03d1f27649",
+    "scripts/v8_progress_text.py": "5232f49497484fc94477a55a6378850509fe1b02d3b19ac64eaf0b135f967d28",
+    "scripts/v8_queue_runtime.py": "ab358cea6027d468029d48929b67dc0e5a258c10b0cb28d7c41c375c365c75a1",
+    "scripts/v8_status.py": "1519851cbc0ae423d2eea0f4921ed2e3ff0438b5bd48395737f92aed12f4a826",
+    "tests/test_srgc_v8_control_audit.py": "dc03744045658da3065cf3a212eb55979cd2d11ee68ec149fcd524080a8b7fee",
+    "tests/test_srgc_v8_nodes.py": "36d591f2813297a9ad9cc58e03c0f29b5ceffd09c3dc897be06df2686f18d6bb",
+    "tests/test_srgc_v8_queue_runtime.py": "54413ab6b95c8ca08fc897e226c18b081c3f29d904d45fa5e1bc1817bc4dabbd",
+    "tests/test_srgc_v8_source_runtime.py": "2ed811e8027ae8bf8d0e2e807715abfc3aeaad22330bb837032b214b57a473a7",
+    "tests/test_v8_status_word.py": "d9fb2f23bb4d13c8f09e583ef2ab3df99438ec4a8eaa6438523f8e04cb9b2888",
+    "tests/test_srgc_v8_olmo_mbpp.py": "ea37394d5f5211f268a3099216871ee80b13065f0db681fcfc10680afdbc6286"
+  }
+}
