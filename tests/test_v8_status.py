@@ -537,16 +537,36 @@ def test_failed_tasks_say_why_and_whether_it_is_a_real_failure(tmp_path):
         return "\n".join(lines[i:i + 6])
     k = block("  ! OLMo MATH s5 SR25 marked failed ")
     assert "at update 120/275" in k and "NOT a training error: killed from outside (SIGKILL, exit 9)" in k
-    assert "check memory on h-kill first" in k
+    assert "check dmesg on h-kill first" in k and "not retried yet: a node started with the current bundle retries" in k
     o = block("  ✗ OLMo MATH s6 SR50 FAILED ")
     assert "why:  GPU out of memory: torch.OutOfMemoryError: CUDA out of memory" in o and "ChildFailedError" not in o.split("next:")[0]
     f = block("  ! OLMo MATH s7 On marked failed ")
     assert "NOT a training failure: the run is complete (275/275 updates)" in f and "work is already complete" in f
     assert "rank 2: ValueError: bank hash differs" in block("  ✗ OLMo MATH s8 U50 FAILED ")
     assert "stall watchdog: no training progress for 30 min" in block("  ✗ OLMo MATH s9 SR25 FAILED ")
-    assert "failed under older code: a node started with the current bundle retries it once automatically" in block("  ✗ OLMo MATH s4 SR50 FAILED ")
+    assert "failed under older code: a node started with the current bundle retries it automatically" in block("  ✗ OLMo MATH s4 SR50 FAILED ")
     assert "rank 3: RuntimeError: NCCL communicator was aborted on rank 3" in block("  ✗ OLMo MATH s3 SR25 FAILED ")
     stats = status.clean_block(base, "olmo_math", now, "viewer", 200)[4]
     assert stats["failed"] == 5 and stats["marked"] == 2
     table = text.split("━━ V8 status")[0]
     assert "!" in table.split("seed")[1] and "✗" in table.split("seed")[1]
+
+
+
+def test_failure_next_step_follows_the_default_retry_rule(tmp_path):
+    """v11 (9c1e31c) retries failed tasks by default; the note must say so, with the attempt count."""
+    now = time.time()
+    base, q, m = two_cohort_base(tmp_path, now)
+    write(q / "state.json", {"phase": "train", "failure": None, "retry_failed_requested_at": now - 100,
+                             "automatic_retry_policy": {"policy": "v11", "max_failed_attempts": 3, "retry_delay": 60.0}})
+    def job(key, seed, attempts):
+        write(q / "jobs" / f"{key}.json", {"state": "failed", "phase": "train", "task": {"kind": "train", "method_id": "bank_sr_t025",
+              "training_seed": seed, "run_id": key, "horizon": 275}, "attempts": attempts})
+    a = lambda ended: {"id": "x", "exit_code": 1, "outcome": "failed", "started_at": now - 900, "ended_at": now - ended}
+    job("soon", 5, [a(20)])
+    job("ready", 6, [a(30), a(300)])
+    job("spent", 7, [a(900), a(600), a(300)])
+    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
+    assert "retried automatically: attempt 2/3 starts in 40s" in text
+    assert "retried automatically: attempt 3/3 is waiting for the next free node" in text
+    assert "3/3 failures used: no more automatic retries; fix the cause, then start one node with --max-attempts 4" in text

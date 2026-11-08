@@ -322,26 +322,30 @@ def failure_story(row, attempt, job, task, directory, state, live_policies, now)
     else:
         cause = f"exit {rc} without an error message in its log or rank error files"
     used = counted_failures(job)
+    auto = state.get('automatic_retry_policy') if isinstance(state.get('automatic_retry_policy'), dict) else {}
+    limit = auto.get('max_failed_attempts') if isinstance(auto.get('max_failed_attempts'), int) else MAX_ATTEMPTS
+    delay = auto.get('retry_delay') if isinstance(auto.get('retry_delay'), (int, float)) else RETRY_DELAY
     policy = attempt.get('controller_policy')
     recovered = {h.get('controller_policy') for h in job.get('recovery_history') or [] if isinstance(h, dict)}
-    retry_requested = bool(state.get('retry_failed_requested_at'))
+    # v11 (9c1e31c) retries failed tasks by default and records it in state.json; older workers follow the marker.
+    retrying = bool(state.get('retry_failed_requested_at') or state.get('automatic_retry_policy'))
     ended = attempt.get('ended_at') if isinstance(attempt.get('ended_at'), (int, float)) else None
-    if live_policies and policy and policy not in live_policies and not (recovered & live_policies):
-        nxt = 'failed under older code: a node started with the current bundle retries it once automatically'
-    elif retry_requested and used < MAX_ATTEMPTS:
-        wait = (ended + RETRY_DELAY - now) if ended else 0
-        nxt = f"retry {used + 1}/{MAX_ATTEMPTS} " + (f"in {age_text(wait)}" if wait > 0 else 'is ready: the next free node takes it')
-    elif used >= MAX_ATTEMPTS:
-        nxt = f"{used}/{MAX_ATTEMPTS} attempts used: no more automatic retries"
+    if used >= limit:
+        nxt = (f"{used}/{limit} failures used: no more automatic retries; fix the cause, then start one node "
+               f"with --max-attempts {used + 1}")
+    elif retrying:
+        wait = (ended + delay - now) if ended else 0
+        nxt = f"retried automatically: attempt {used + 1}/{limit} " + \
+              (f"starts in {age_text(wait)}" if wait > 0 else 'is waiting for the next free node')
+    elif live_policies and policy and policy not in live_policies and not (recovered & live_policies):
+        nxt = 'failed under older code: a node started with the current bundle retries it automatically'
     else:
-        nxt = 'not retried automatically: after fixing the cause, start one node with --retry-failed'
-    if finished and 'retries' not in nxt and 'retry ' not in nxt:
-        nxt = ('work is already complete; ' + nxt.replace('after fixing the cause, ', '') +
-               ' to have it re-checked (it resumes from its checkpoint, nothing finished is redone)')
-    elif not real and rc in (9, -9, 137) and 'retries' not in nxt and 'retry ' not in nxt:
-        host = row.get('host') or 'that node'
-        nxt = (f"check memory on {host} first (dmesg | grep -i 'killed process'), then start one node with --retry-failed; "
-               'it resumes from its last checkpoint')
+        nxt = (f"not retried yet: a node started with the current bundle retries failed tasks automatically "
+               f"(up to {limit} failures)")
+    if finished:
+        nxt = 'work is already complete (a retry resumes from its checkpoint, nothing finished is redone); ' + nxt
+    elif not real and rc in (9, -9, 137):
+        nxt += f"; if it was host memory (OOM killer), check dmesg on {row.get('host') or 'that node'} first"
     return dict(failure_cause=cause[:400], failure_next=nxt, failure_real=real, failure_at=at)
 
 
