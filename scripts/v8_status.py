@@ -705,8 +705,8 @@ def render_srgc(live, base, cohort, now, host):
 # One compact block per cohort: short column names, one symbol per cell, one line per running task
 # and per problem, one line for all nodes; the summary (counts, workers, this node) is at the bottom.
 
-LEGEND_TABLE = ("train/eval = tasks done/total (train includes budget extension) · updates = optimizer updates this plan adds "
-                "(a branch or extension counts from where it starts) · fail = real error · marked = failed, no training error · "
+LEGEND_TABLE = ("train/ext/eval = tasks done/all planned (ext = budget extension; a range or ≥ until that phase is planned) · updates = optimizer updates this plan adds "
+                "(a branch or extension counts from where it starts; + = extension updates still to be planned) · fail = real error · marked = failed, no training error · "
                 "intr = interrupted, reruns · stuck = marked running but no live node runs it (DEAD node or no worker) · "
                 "other = unknown job state")
 LEGEND = "✓ done  ▶n running (n updates)  ○ ready  · waiting  ✗ failed  ! no training error  ⏸ interrupted  ? no heartbeat"
@@ -775,6 +775,73 @@ def short_progress(row, now):
 
 def clip(line, width):
     return line if len(line) <= width else line[:max(10, width - 1)] + '…'
+
+
+def runner_config(cohort):
+    """base.json deep-merged with configs/cohorts/<cohort>.json from the runner next to this script."""
+    def merge(a, b):
+        out = dict(a)
+        for k, v in b.items():
+            out[k] = merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+        return out
+    here = Path(__file__).resolve().parent
+    roots = ([Path(os.environ['V8_RUNNER_ROOT'])] if os.environ.get('V8_RUNNER_ROOT') else []) + \
+            [here.parent / 'v8' / 'experiments']
+    for root in roots:
+        try:
+            base = json.loads((root / 'configs' / 'base.json').read_text())
+            mine = json.loads((root / 'configs' / 'cohorts' / f'{cohort}.json').read_text())
+            return merge(base, mine)
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def planned_cells(queue, cohort, rows):
+    """How many tasks each phase will have in total. Exact once that phase's plan is sealed
+    (plans/<phase>.json: train when every On trajectory is done, extension at the budget freeze,
+    evaluation after the extension); before that, the range the planner can produce from the config:
+    per seed 1 On trajectory + one SR branch per grid point (core ∪ extended) + at most one
+    Uniform destination; one extension per finished non-On run; at least one final evaluation per
+    run at the matched endpoint, plus budget-endpoint evaluations."""
+    phases = {'train': 'train', 'extension': 'ext', 'evaluation': 'eval'}
+    have = {k: sum(1 for r in rows if (r.get('phase') or ('evaluation' if r.get('kind') == 'evaluate' else 'train')) == ph)
+            for ph, k in phases.items()}
+    sealed = {k: (Path(queue) / 'plans' / f'{ph}.json').is_file() for ph, k in phases.items()}
+    out = {k: (have[k], have[k], 'exact') for k in phases.values() if sealed[k]}
+    cfg = runner_config(cohort)
+    seeds = ((cfg or {}).get('seeds') or {}).get('training') or []
+    job_seeds = {r['seed'] for r in rows if isinstance(r.get('seed'), int)}
+    grid = set(((cfg or {}).get('bank') or {}).get('core_grid') or []) | set(((cfg or {}).get('bank') or {}).get('extended_grid') or [])
+    if not seeds or not grid or not job_seeds <= set(seeds):
+        for k in phases.values():
+            out.setdefault(k, (have[k], None, 'unknown'))
+        return out
+    n = len(seeds)
+    train = out.get('train') or (n * (1 + len(grid)), n * (2 + len(grid)), 'range')
+    if train[2] == 'range' and have['train'] > train[1]:
+        train = (have['train'], None, 'unknown')      # this queue was planned with a different config
+    out['train'] = train
+    if 'ext' not in out:
+        out['ext'] = ((train[0] - n, train[1] - n, 'range') if train[1] is not None else (have['ext'], None, 'unknown'))
+    if 'eval' not in out:
+        out['eval'] = (train[0], None, 'at least')
+    t = (cfg or {}).get('training') or {}
+    H, P = t.get('matched_update_endpoint'), t.get('prefix_updates')
+    if isinstance(H, int) and isinstance(P, int) and out['train'][2] != 'exact':   # sealed: the real jobs decide
+        out['_train_updates_min'] = n * ((H - P) + sum(H - tau for tau in grid if tau < H))
+    return out
+
+
+def cells_text(done, plan):
+    lo, hi, kind = plan
+    if kind == 'exact':
+        return f"{done}/{lo}"
+    if kind == 'range':
+        return f"{done}/{lo}" if lo == hi else f"{done}/{lo}-{hi}"
+    if kind == 'at least':
+        return f"{done}/≥{lo}"
+    return f"{done}/?"
 
 
 def clean_block(base, cohort, now, host, width):
@@ -907,7 +974,9 @@ def clean_block(base, cohort, now, host, width):
                else ('ready' if r.get('ready') else 'waiting') if r['status'] == 'pending' else 'other')
         counts[key] += 1
     evals = [r for r in rows if r.get('kind') == 'evaluate']
-    trains = [r for r in rows if r.get('kind') != 'evaluate']
+    exts = [r for r in rows if r.get('kind') != 'evaluate' and r.get('phase') == 'extension']
+    trains = [r for r in rows if r.get('kind') != 'evaluate' and r.get('phase') != 'extension']
+    planned_tasks = planned_cells(queue, cohort, rows)
     phase = PHASE_LABEL.get(state.get('phase'), state.get('phase', 'not started'))
     total = len(rows)
     # Training progress in optimizer updates (what 'how far along' means for a run), plus task counts.
@@ -920,8 +989,10 @@ def clean_block(base, cohort, now, host, width):
             planned += r['total'] - start
             reached = r['total'] if r['status'] == 'done' else (r['done'] if isinstance(r.get('done'), int) else start)
             done_updates += max(0, min(reached, r['total']) - start)
-    pct = round(100 * counts['done'] / total) if total else 0
-    filled = round(12 * counts['done'] / total) if total else 0
+    phases_known = {k: v for k, v in planned_tasks.items() if not k.startswith('_')}
+    planned_total = max(total, sum(v[0] for v in phases_known.values())) if phases_known else total
+    pct = min(100, round(100 * counts['done'] / planned_total)) if planned_total else 0
+    filled = min(12, round(12 * counts['done'] / planned_total)) if planned_total else 0
     bar = '█' * filled + '░' * (12 - filled)
     summary = (f"{label:<10} {phase:<13} {bar} {counts['done']}/{total} done ({pct}%)  running {counts['running']}  "
                f"ready {counts['ready']}  waiting {counts['waiting']}  failed {counts['attention']}"
@@ -934,8 +1005,11 @@ def clean_block(base, cohort, now, host, width):
                  ready=counts['ready'], waiting=counts['waiting'], failed=counts['attention'],
                  interrupted=counts['interrupted'], dead=counts['dead'], marked=counts['marked'], other=counts['other'],
                  train=(sum(r['status'] == 'done' for r in trains), len(trains)),
+                 ext=(sum(r['status'] == 'done' for r in exts), len(exts)),
                  eval=(sum(r['status'] == 'done' for r in evals), len(evals)),
-                 updates=(done_updates, planned))
+                 planned=planned_tasks,
+                 updates=(done_updates, max(planned, planned_tasks.get('_train_updates_min') or 0)),
+                 updates_more=any(v[2] != 'exact' for k, v in planned_tasks.items() if not k.startswith('_')))
     return lines, summary, (nodes, wanted), attention, stats
 
 
@@ -1183,22 +1257,24 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
     out.append(paint('   ' + ', '.join(str(b) for b in bases), 'dim'))
 
     # 1. one aligned row per experiment
-    cols = ('phase', 'progress', 'train', 'eval', 'running', 'ready', 'waiting', 'failed', 'marked', 'interrupted',
+    cols = ('phase', 'progress', 'train', 'ext', 'eval', 'running', 'ready', 'waiting', 'failed', 'marked', 'interrupted',
             'on dead node', 'other', 'updates')
     table = []
     for st in stats:
         if not st.get('total'):
             table.append(dict(name=st['label'], phase=st.get('phase', 'not started')))
             continue
-        filled = round(12 * st['done'] / st['total'])
+        filled = min(12, round(12 * st['pct'] / 100))
         done_u, planned = st['updates']
-        tr, ev = st.get('train', (0, 0)), st.get('eval', (0, 0))
+        plan = {k: v for k, v in (st.get('planned') or {}).items() if not k.startswith('_')}
+        cells = {k: cells_text(st.get(k, (0, 0))[0], plan.get(k, (st.get(k, (0, 0))[1], st.get(k, (0, 0))[1], 'exact')))
+                 for k in ('train', 'ext', 'eval')}
         table.append(dict(name=st['label'], phase=st['phase'], progress=f"{'█' * filled}{'░' * (12 - filled)} {st['pct']:>3}%",
-                          train=f"{tr[0]}/{tr[1]}" if tr[1] else '-', eval=f"{ev[0]}/{ev[1]}" if ev[1] else '-',
+                          train=cells['train'], ext=cells['ext'], eval=cells['eval'],
                           other=st.get('other', 0), running=st['running'], ready=st['ready'], waiting=st['waiting'],
                           failed=st['failed'], marked=st.get('marked', 0), interrupted=st['interrupted'], **{'on dead node': st['dead']},
-                          updates=f"{done_u:,}/{planned:,}" if planned else '-'))
-    used = [c for c in cols if c in ('phase', 'progress', 'train', 'eval', 'running', 'updates')
+                          updates=(f"{done_u:,}/{planned:,}" + ('+' if st.get('updates_more') else '')) if planned else '-'))
+    used = [c for c in cols if c in ('phase', 'progress', 'train', 'ext', 'eval', 'running', 'updates')
             or any(isinstance(r.get(c), int) and r.get(c) for r in table)]
     def cell(r, c):
         v = r.get(c, '')
@@ -1206,7 +1282,7 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
     title = {'running': 'run', 'waiting': 'wait', 'failed': 'fail', 'interrupted': 'intr', 'on dead node': 'stuck'}
     name_w = max(10, *(len(r['name']) for r in table)) if table else 10
     w = {c: max(len(title.get(c, c)), *(len(cell(r, c)) for r in table)) for c in used}
-    right = {'train', 'eval', 'running', 'ready', 'waiting', 'failed', 'marked', 'interrupted', 'on dead node', 'other', 'updates'}
+    right = {'train', 'ext', 'eval', 'running', 'ready', 'waiting', 'failed', 'marked', 'interrupted', 'on dead node', 'other', 'updates'}
     fmt = lambda c, v: f"{v:>{w[c]}}" if c in right else f"{v:<{w[c]}}"
     out.append(paint(' ' + ' ' * name_w + '  ' + '  '.join(fmt(c, title.get(c, c)) for c in used), 'dim'))
     for r in table:
@@ -1219,6 +1295,23 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
                      'ok' if c == 'progress' else 'dim' if v.strip() in ('-', '') else None)
             parts.append(paint(v, style))
         out.append('  '.join(parts))
+    fill = []
+    for st in stats:
+        plan = st.get('planned')
+        if not plan:
+            continue
+        plan = {k: v for k, v in plan.items() if not k.startswith('_')}
+        lo = sum(v[0] for v in plan.values())
+        exact = all(v[2] == 'exact' for v in plan.values())
+        hi = None if any(v[1] is None for v in plan.values()) else sum(v[1] for v in plan.values())
+        total = f"{lo}" if exact else f"{lo}-{hi}" if hi is not None and hi != lo else f"≥{lo}" if hi is None else f"{lo}"
+        parts = ' + '.join(f"{k} {cells_text(0, v).split('/', 1)[1]}" for k, v in plan.items())
+        fill.append(f"{st['label']} {total} ({parts})")
+    if fill:
+        out.append(paint(' cells to fill: ' + ' · '.join(fill), None))
+        if any(v[2] != 'exact' for st in stats for k, v in (st.get('planned') or {}).items() if not k.startswith('_')):
+            out.append(paint('   exact when each phase is planned: train when every On trajectory is done, '
+                             'ext at the budget freeze, eval after the extension', 'dim'))
 
     # 2. problems, newest failures first
     if attention:
