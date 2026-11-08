@@ -233,12 +233,66 @@ def test_clean_view_is_compact_with_summary_last(tmp_path):
     assert "seed  On" in text and "▶37" in text
     assert "▶ s5 On" in text and "37/275" in text and "answering 3/40, 812 tok (5s ago)" in text
     assert "needs attention" in text and "CUDA out of memory" in text
-    assert lines[-4].startswith("OLMo MATH  training ") and "1/4 done (25%)  running 1  ready 0  waiting 1  failed 1  updates 37/275" in lines[-4]
-    assert lines[-3].startswith("Qwen MBPP  not started")
-    assert lines[-2].startswith("workers ") and lines[-1].startswith("this node  node01: ▶ s5 On")
+    bottom = lines[[i for i, line in enumerate(lines) if line.startswith("V8 status · ")][0]:]
+    assert bottom[1].startswith("OLMo MATH  training ") and "1/4 done (25%)  running 1  ready 0  waiting 1  failed 1  updates 37/275" in bottom[1]
+    assert bottom[2].startswith("Qwen MBPP  not started")
+    assert bottom[3].startswith("workers ") and bottom[4].startswith("this node  node01: ▶ s5 On")
+    assert bottom[5].startswith("nodes      1 total · 1 running · 0 DEAD")
+    assert "▶ node01" in bottom[7] and "running" in bottom[7] and "s5 On 37/275 (OLMo MATH)" in bottom[7]
     assert all(len(line) <= 120 for line in lines)
 
 
 def test_short_arm_names():
     assert status.short_arm("on_monitored") == "On"
     assert status.short_arm("bank_sr_t025") == "SR25" and status.short_arm("bank_uniform_t050") == "U50"
+
+
+
+def test_clean_view_node_table_shows_dead_hung_free_gone(tmp_path):
+    """'뭐가 죽은 노드이고 뭐가 뭔지 안보이잖아 … 밑에 추가해': per-node rows at the bottom."""
+    import fcntl, hashlib, os
+    now = time.time()
+    base = fixture(tmp_path, now)
+    q = base / "olmo_math" / ".multi-node"
+    for wid, age in (("node02.gpu4567", 3), ("node03.gpu0123", 2460), ("node05.gpu0123", 700), ("node04", 900)):
+        key = hashlib.sha256(json.dumps(wid).encode()).hexdigest()
+        write(q / "workers" / f"{key}.json", {"worker": wid, "at": now - age, "task": None})
+    write(q / "jobs" / "h.json", {"state": "running", "task": {"kind": "train", "method_id": "bank_sr_t050", "training_seed": 6,
+          "run_id": "s6sr50", "horizon": 275}, "attempts": [{"id": "x9", "worker": "node03.gpu0123", "started_at": now - 5000}]})
+    write(q / "jobs" / "i.json", {"state": "running", "task": {"kind": "train", "method_id": "bank_sr_t100", "training_seed": 7,
+          "run_id": "s7sr100", "horizon": 275}, "attempts": [{"id": "x8", "worker": "node05.gpu0123", "started_at": now - 5000}]})
+    (q / "leases").mkdir(exist_ok=True)
+    (q / "leases" / "h.lock").touch()
+    fd = os.open(q / "leases" / "i.lock", os.O_CREAT | os.O_RDWR)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        text = status.render_clean([base], now=now, gpus=[("0", 97, 61000)], host="node01", width=200)
+    finally:
+        os.close(fd)
+    bottom = text.split("V8 status · ")[1]
+    assert "nodes      5 total · 1 running · 1 idle · 2 DEAD · 1 gone" in bottom
+    first_node = lambda line: next((w for w in line.split() if w.startswith("node0")), None)
+    row = {first_node(line): line for line in bottom.splitlines() if line.startswith("         ") and first_node(line)}
+    assert row["node03"].lstrip().startswith("✗ node03") and " DEAD " in row["node03"] and "41 min ago" in row["node03"]
+    assert "s6 SR50 (OLMo MATH) — task is free, an idle node takes it over" in row["node03"]
+    assert "s7 SR100 (OLMo MATH) — lock still held" in row["node05"]
+    assert " idle " in row["node02"] and "waiting for work" in row["node02"]
+    assert " gone " in row["node04"] and "nothing waits for it" in row["node04"]
+    assert "on dead node 2" in bottom
+    order = [first_node(line) for line in bottom.splitlines() if line.startswith("         ") and first_node(line)]
+    assert order[:2] == ["node03", "node05"] or order[:2] == ["node05", "node03"]   # DEAD first
+    assert not (q / "leases" / "x.lock").exists()   # probe never creates lease files
+
+
+def test_clean_view_finished_nodes_are_not_dead(tmp_path):
+    import hashlib
+    now = time.time()
+    base = fixture(tmp_path, now)
+    q = base / "olmo_math" / ".multi-node"
+    write(q / "state.json", {**json.loads((q / "state.json").read_text()), "phase": "complete"})
+    for name in list((q / "jobs").glob("*.json")):
+        job = json.loads(name.read_text()); job["state"] = "done"; write(name, job)
+    for wid in ("node0", "node1"):
+        write(q / "workers" / f"{hashlib.sha256(json.dumps(wid).encode()).hexdigest()}.json", {"worker": wid, "at": now - 4000, "task": None})
+    bottom = status.render_clean([base], now=now, gpus=[], host="node09", width=160).split("V8 status · ")[1]
+    assert "0 DEAD" in bottom and "finished" in bottom and "queue complete" in bottom
