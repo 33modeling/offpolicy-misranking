@@ -397,15 +397,31 @@ class Runtime:
             if any(n.get('status')=='blocked' for n in notes):raise ValueError('Budget extension blocked: '+canonical(notes))
             return tasks,True
         from switching.bank import SeedBank
+        class EvaluationBank(SeedBank):
+            def __init__(self,*args,**kwargs):
+                super().__init__(*args,**kwargs);self.selected_endpoints={}
+
+            def budget_endpoint(self,*args,**kwargs):
+                selection=super().budget_endpoint(*args,**kwargs)
+                if selection['status']=='selected':
+                    endpoint=selection['endpoint']
+                    self.selected_endpoints[(endpoint['run_id'],endpoint['completed_update'])]=endpoint
+                return selection
+
         for seed in seeds:
             data=self.cluster.load_bundle(loc.loc['seeds'][str(seed)]['input_bundle'])
             run_ids=[p.parent.name for p in sorted((self.root/'runs').glob('*/manifest.json'))
                      if (read(p).get('training_seed'),read(p).get('cohort_id'),read(p).get('role'))==(seed,self.cohort,'rebuttal_bank')]
             tasks+=self.mx.eval_tasks(self.cfg,data,self.root,run_ids,split='final',updates={self.cfg['training']['matched_update_endpoint']})
-            bank=SeedBank(self.root,self.cfg,self.cohort,seed,'rebuttal_bank',evals={})
-            for row in bank.policy_rows(budget=budget):
-                if row.get('budget_status')=='selected':
-                    tasks+=self.mx.eval_tasks(self.cfg,data,self.root,[row['run_id']],split='final',updates={row['budget_endpoint_update']})
+            bank=EvaluationBank(self.root,self.cfg,self.cohort,seed,'rebuttal_bank',evals={})
+            bank.policy_rows(budget=budget)
+            # A budget endpoint can belong to the extension or pre-switch
+            # trajectory, rather than the matched-horizon branch in row.run_id.
+            for (run_id,update),endpoint in bank.selected_endpoints.items():
+                found=self.mx.eval_tasks(self.cfg,data,self.root,[run_id],split='final',updates={update})
+                if not found or any(t['snapshot_sha256']!=endpoint['snapshot_hash'] for t in found):
+                    raise ValueError('Selected budget checkpoint is missing or changed: '+run_id+'@'+str(update))
+                tasks+=found
         return tasks,True
 
     def ready(self,task):

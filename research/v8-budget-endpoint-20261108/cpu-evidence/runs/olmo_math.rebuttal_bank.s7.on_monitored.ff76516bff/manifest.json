@@ -1,0 +1,67 @@
+{
+  "attempts": [
+    {
+      "attempt_id": "80e32d6e31b44ff8a01cb66d865f21c7",
+      "start": "fork",
+      "start_update": 25,
+      "started_at": "2026-11-08T00:35:23+00:00"
+    }
+  ],
+  "cohort_id": "olmo_math",
+  "completed_updates": 75,
+  "config_hash": "ff76516bff88baf54d8491b3d48dc9f19d56ad180c61e82c88bdc57db2a803b0",
+  "created_at": "2026-11-08T00:35:23+00:00",
+  "final_phase": "on_policy",
+  "finished_at": "2026-11-08T00:35:23+00:00",
+  "method_id": "on_monitored",
+  "no_switch": true,
+  "role": "rebuttal_bank",
+  "run_id": "olmo_math.rebuttal_bank.s7.on_monitored.ff76516bff",
+  "status": "completed_horizon",
+  "study_id": "rlvr_switching_rebuttal_v8",
+  "task": {
+    "budget_cap_gpu_seconds": null,
+    "cohort_id": "olmo_math",
+    "config_hash": "ff76516bff88baf54d8491b3d48dc9f19d56ad180c61e82c88bdc57db2a803b0",
+    "cost_offset_gpu_seconds": null,
+    "deps": [],
+    "equivalence_key": "3dbe96d228f93ae9593dc4a6b9233e029551194566a8888e93b55c87e2fac09d",
+    "hard_cap": null,
+    "horizon": 75,
+    "kind": "train",
+    "latest_every": 1,
+    "method": {
+      "cache": {
+        "policy": "static_initial"
+      },
+      "destination": null,
+      "family": "on_continued",
+      "initial_selector": "on_policy",
+      "method_id": "on_monitored",
+      "monitor": true,
+      "policy": {
+        "policy": "never"
+      },
+      "prefix_updates": 25
+    },
+    "method_id": "on_monitored",
+    "parent": {
+      "completed_update": 25,
+      "kind": "prefix",
+      "path": "/home/kms/reports/rlvr-v8-nodes-20261108/budget-endpoint-final/test_real_v8_cpu_three_worker_0/olmo_math/prefixes/seed-7/prefix.pt",
+      "run_id": null,
+      "sha256": "92e2630ff02870fbe7a2e50edaae692099db35f1a3fd581827bc465b33e3d53f"
+    },
+    "retain_updates": [
+      50,
+      75
+    ],
+    "role": "rebuttal_bank",
+    "run_id": "olmo_math.rebuttal_bank.s7.on_monitored.ff76516bff",
+    "stage": "bank-trajectory",
+    "study_id": "rlvr_switching_rebuttal_v8",
+    "training_seed": 7
+  },
+  "training_seed": 7,
+  "transition_update": null
+}

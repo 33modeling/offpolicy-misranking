@@ -1,0 +1,23 @@
+{
+  "all_tasks_done": true,
+  "budget_endpoint_changed_run_cases": 16,
+  "budget_selected_checkpoints": 16,
+  "matched_updates": 75,
+  "new_GPU_jobs": 0,
+  "no_duplicate_execution": true,
+  "safety_cap": 100,
+  "scope": "CPU multi-process software integration; not scientific RLVR results",
+  "tasks": 37,
+  "training_seeds": [
+    5,
+    6,
+    7
+  ],
+  "workers": 3,
+  "phase_counts": {
+    "extension": 6,
+    "evaluation": 20,
+    "train": 11
+  },
+  "attempts": 37
+}

@@ -458,7 +458,7 @@ def toy_worker(runner,root,worker):
     nodes.atomic(Path(root)/(worker+'-exit.json'),{'exit_code':rc})
 
 
-def test_real_v8_cpu_three_worker_branch_bank(tmp_path):
+def test_real_v8_cpu_three_worker_branch_bank(tmp_path,monkeypatch):
     runner=os.environ.get('V8_NODES_TEST_RUNTIME')
     if not runner:pytest.skip('Set V8_NODES_TEST_RUNTIME to v8/experiments for the actual CPU runner integration')
     ctx=mp.get_context('fork')
@@ -482,6 +482,26 @@ def test_real_v8_cpu_three_worker_branch_bank(tmp_path):
     assert any(job['phase']=='evaluation' for job in jobs)
     assert len({job['task']['question_ids_hash'] for job in jobs if job['phase']=='evaluation'})==3
     assert (root/'frozen/budget.json').exists() and (root/'software-finalized.json').exists()
+    monkeypatch.setenv('V8_CODE_ROOT',os.environ.get('V8_CODE_ROOT',str(Path(__file__).resolve().parents[1])))
+    cfg=ToyRuntime(runner,tmp_path).cfg
+    from switching.bank import SeedBank
+    budget=nodes.read(root/'frozen/budget.json')['value']
+    evaluated={(job['task']['run_id'],job['task']['completed_update']):job['task']['snapshot_sha256']
+               for job in jobs if job['phase']=='evaluation'}
+    moved=[];selected=set()
+    for seed in [5,6,7]:
+        bank=SeedBank(root,cfg,'olmo_math',seed,'rebuttal_bank',evals={})
+        for row in bank.policy_rows(budget=budget):
+            if row.get('budget_status')!='selected':continue
+            tau=row['switch_update']
+            branch=bank.branches.get((row['destination'],tau)) if row['status']=='triggered' else None
+            choice=bank.budget_endpoint(row['family'],tau,branch,budget,
+                       include_check=row['family'] in ('srgc','srgc_uniform_destination'))['endpoint']
+            key=(choice['run_id'],choice['completed_update']);selected.add(key)
+            assert evaluated.get(key)==choice['snapshot_hash']
+            if choice['run_id']!=row['run_id']:moved.append(key)
+    assert moved,'CPU fixture must select at least one extension or pre-switch trajectory endpoint'
     nodes.atomic(tmp_path/'integration-summary.json',dict(scope='CPU multi-process software integration; not scientific RLVR results',
                  workers=3,training_seeds=[5,6,7],matched_updates=75,safety_cap=100,tasks=len(jobs),
-                 no_duplicate_execution=True,all_tasks_done=True,new_GPU_jobs=0))
+                 no_duplicate_execution=True,all_tasks_done=True,new_GPU_jobs=0,
+                 budget_selected_checkpoints=len(selected),budget_endpoint_changed_run_cases=len(moved)))

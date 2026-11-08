@@ -1,0 +1,1589 @@
+{
+  "root": "/home/kms/reports/rlvr-v8-nodes-20261108/budget-endpoint-final/test_real_v8_cpu_three_worker_0",
+  "files": {
+    "integration-summary.json": {
+      "bytes": 307,
+      "sha256": "4830f01d1687c412d7e647eea7cc3e939e04a1cb365f668ca6eaad42927a22fd"
+    },
+    "node0-exit.json": {
+      "bytes": 16,
+      "sha256": "d24219f6de94b955cf36d25bd2aca88e2d35eef45b9317b7083f55ec8fe9653c"
+    },
+    "node1-exit.json": {
+      "bytes": 16,
+      "sha256": "d24219f6de94b955cf36d25bd2aca88e2d35eef45b9317b7083f55ec8fe9653c"
+    },
+    "node2-exit.json": {
+      "bytes": 16,
+      "sha256": "d24219f6de94b955cf36d25bd2aca88e2d35eef45b9317b7083f55ec8fe9653c"
+    },
+    "olmo_math/.multi-node/binding.json": {
+      "bytes": 3998,
+      "sha256": "1ecf1e85ce6f5143e5f321d62c6990b2ddbf5ebced9e2913da0ee244b7e372e1"
+    },
+    "olmo_math/.multi-node/control.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/input-identity.json": {
+      "bytes": 1863,
+      "sha256": "61d4c0340bb70495132221d378830173de8d7b15f935901056b5c19bc0cae7bb"
+    },
+    "olmo_math/.multi-node/jobs/086ab2beb7189de056471847628ed4efcc40176cc5a9940c5708bbb6d478176c.json": {
+      "bytes": 1237,
+      "sha256": "6900d7906a0c47a5fca9269cd8a1f5b8218e799085072d79155b99f3522e8a9f"
+    },
+    "olmo_math/.multi-node/jobs/0c018e139676f07d076205caad42765f92de0753fe8304b9906e2e4e11ec7651.json": {
+      "bytes": 902,
+      "sha256": "cf40f8cd35aa9841a8ce5d84f958074730226a291cd7296febd3284262c788d7"
+    },
+    "olmo_math/.multi-node/jobs/0c5740f10c8de1d2310adbb6b5fed3e798b54f4b2118c60645436696605f67e4.json": {
+      "bytes": 1501,
+      "sha256": "b066b49d50b5ce6137142319203bf5a3fbbfe9dbb36e3b2bda878feaeb41ecdf"
+    },
+    "olmo_math/.multi-node/jobs/1caccc742bc9663e557a99bf457ba650613808050bcd13200ebfb900b2f249c3.json": {
+      "bytes": 902,
+      "sha256": "c25e9cc57ec7aeeb4baa9b3d88f3e205ab0991cd756f5419d0d17671b07a7dc4"
+    },
+    "olmo_math/.multi-node/jobs/1d28dd7aa2672f88934c85dc7e0b2ba1fcc8bff3c9be322c5fbd20f92c20e05d.json": {
+      "bytes": 902,
+      "sha256": "288002becb267703177ec6344676a06656d0b2ddf802cfc0bbbac5e50b117c96"
+    },
+    "olmo_math/.multi-node/jobs/1f00b52e4678acdf519095ea085d8b46a0310f19867ff06414f3ec14920309d4.json": {
+      "bytes": 901,
+      "sha256": "ad54822eff41954b54d89d51ec0923d36ab8801ec22532a9db4143d0e578a066"
+    },
+    "olmo_math/.multi-node/jobs/22572555a739777d7a532d1667c6654d310fabeec4a263efa7f1c609e3be76c9.json": {
+      "bytes": 901,
+      "sha256": "441ed99cb5026e9e4497b4ebfc957c436745f660be76f7fad99adc65ddc89486"
+    },
+    "olmo_math/.multi-node/jobs/2394d1eba3eaf9da496bf64186d0e891eb7ba8291e0ca25cf7b058c3406fba16.json": {
+      "bytes": 902,
+      "sha256": "733aae88ae722fad07971046571a9d3e45c8e3a5fd40ab861a916845c69865c1"
+    },
+    "olmo_math/.multi-node/jobs/36b10b5ec05e3dd19e89444410b11830b267bafd0dc139fd5fe65d10c2f970e7.json": {
+      "bytes": 902,
+      "sha256": "357e35509be76678550ecfc3491ca5167bf672d728a03828fcdb0e8f72ce9b42"
+    },
+    "olmo_math/.multi-node/jobs/3c3f6fcdae30f7b57b278dc9ef101d21a8e137216b62c5c986975dddf6d49dd1.json": {
+      "bytes": 1294,
+      "sha256": "ddde11042c0cd2a4fc3c04dcba9e77f5f8e66e24f9f819278e105f21182a59e6"
+    },
+    "olmo_math/.multi-node/jobs/3cfd169c351b72f530cece5dd804590374fa6ab5a299a8c64c25eca915b8677c.json": {
+      "bytes": 1629,
+      "sha256": "4a44ea0fbe7e47f4f63ad5e4911d17ead7c505169bb5706ce2cec5c0d43f3c64"
+    },
+    "olmo_math/.multi-node/jobs/3dba56027610803ce97138274b56ba4ab27057bcbc11533c26abbbc0acab31db.json": {
+      "bytes": 902,
+      "sha256": "4695225fd3ee01f09b4bd06843436938ec2e2e7b505c844d3c50c59f40f43a62"
+    },
+    "olmo_math/.multi-node/jobs/470efde1fd755e2dc829fceb1e72d949c4619121fa15def9cd2f6c8ccce01b15.json": {
+      "bytes": 1630,
+      "sha256": "79fc360418dcd773eca98330af27803b9a3835c9a24f2ef94eb4c21a9caf9027"
+    },
+    "olmo_math/.multi-node/jobs/4c339fdd5554817822fb50b5f759a58be4b9a20867053953de625670b98d43f0.json": {
+      "bytes": 1500,
+      "sha256": "41120fcaea78704837e2f63ce71501e86bfeda2414d282e94f3fdc5911dcc877"
+    },
+    "olmo_math/.multi-node/jobs/5146bc4536e0e8d43491ed69343238233028aaf612a064e45535f0c576b3f141.json": {
+      "bytes": 1632,
+      "sha256": "d3aef6c17db2a187c5eb7e5bfdef894b0eae8d652b3c132ff1920d4c5efbd9e1"
+    },
+    "olmo_math/.multi-node/jobs/5d4bc6941f93a12532f85d35f027d560fcdda1e30e0309b146ad2b79c31dd3d0.json": {
+      "bytes": 899,
+      "sha256": "15a374f1b7f5e3f9f95c21ce0660ba57991dda86f5a6469ff058481f69502a3a"
+    },
+    "olmo_math/.multi-node/jobs/6128919334d98232d704caa879dac22348f2973ba6e3d8527f0e7b7532c6380f.json": {
+      "bytes": 902,
+      "sha256": "9917b72d6b29abe4fb4b169050569b2b70ffc768e084043c730de51ecf123bd3"
+    },
+    "olmo_math/.multi-node/jobs/68754e9f4ed7a9cae945c3a4034dc110f3baa3d309bfd39edcf04ef54b9b616c.json": {
+      "bytes": 902,
+      "sha256": "b203b441ea80ee9d205b8b8450cca32bd311f7e9a5e4517fa6b98ab7e98c1ae3"
+    },
+    "olmo_math/.multi-node/jobs/6d3a1f33c6e89210e10b7ebe7d45660d9ed775a19ce2d1198def58acccc4eca8.json": {
+      "bytes": 1237,
+      "sha256": "bbe6f851aa84ec96a90b954bac13a92cace601a2779284e85ec4e9fd8f779caf"
+    },
+    "olmo_math/.multi-node/jobs/6fad6684a3a520eb22c736bd82e80fc56861f012ab7a41556197dfa00cacf443.json": {
+      "bytes": 902,
+      "sha256": "6ff3662c6eb7f70b37f6bbff29f14bef321df1fb7f984b161928815869fe9a08"
+    },
+    "olmo_math/.multi-node/jobs/706be26bb20f7603bc8c7f3999c9ca5cb80fdd5fdb20861ca2f52f8e6f08f52f.json": {
+      "bytes": 1478,
+      "sha256": "35363ddbaee816fd85a6eb0483135af7b40897343d53504715973e87f16fd355"
+    },
+    "olmo_math/.multi-node/jobs/731f2abfbf94132f1c2494982f8c57d88ba361d498d563914ba4db9f5257776c.json": {
+      "bytes": 901,
+      "sha256": "a301a7a30b465dbf6c86e95d6e4081313d37dabaaa9dddf6982dda3499261237"
+    },
+    "olmo_math/.multi-node/jobs/778208b463811c8d4fab2e4222fa8c27fbddddb6caab203edfb56bc36d3fb3ee.json": {
+      "bytes": 1296,
+      "sha256": "721511bd63c2eebc936eea7864d8060a4f0a3aded4dff5a6d2f231185694730b"
+    },
+    "olmo_math/.multi-node/jobs/77be7d539dbf23099cb14ecdc21b01039997bbc4fc8da0b606d8a40a6004856e.json": {
+      "bytes": 1477,
+      "sha256": "8dacf1eabed7dccb69996b89eaa3177d4e03305d6038aa0f372586df8a5102b5"
+    },
+    "olmo_math/.multi-node/jobs/7eb64bd7251ee1ec410379db34ecdb969dfc5f2338813766b0c71839b093144f.json": {
+      "bytes": 1478,
+      "sha256": "fc9b266eb77545573dee3a9ed950f6f4860877cb2f64347abe589a0b56857671"
+    },
+    "olmo_math/.multi-node/jobs/7ed6086589cfd387416eba57d7c0dcfe449fe7aae3cd0e799d989c73856e1ac7.json": {
+      "bytes": 902,
+      "sha256": "1d90596db3900387c8cfcdadb00ac909da46d94d819199524b76f75cfa2cd3e6"
+    },
+    "olmo_math/.multi-node/jobs/7fbe50ea99807e342aa4e71dda3e2e4ae73d5755150e2257c18b5d75fd95f400.json": {
+      "bytes": 902,
+      "sha256": "b5a2d8ac9f09ca6840b390646a91ee11064dd56fcd4e729ccf0a23bb41253afc"
+    },
+    "olmo_math/.multi-node/jobs/84c7488f9420c8d6fbd11080adb043dffde978363ae607bea3df2653f331a42d.json": {
+      "bytes": 1629,
+      "sha256": "a64931e03b541089a0c53b7e6fb323b36dae9f36e061de64d575b9a4be72a8cc"
+    },
+    "olmo_math/.multi-node/jobs/8946653182ffd46f54bd49ba40e5c6e85547f3a369674fb606ad877ec45a6f5c.json": {
+      "bytes": 902,
+      "sha256": "e3db528e8b19fefd44e607d60374e8b799f8c2b61bdcf5cb5f9da3f568660f96"
+    },
+    "olmo_math/.multi-node/jobs/8a2dee49d4e8da47cdb18dde723afcffe7eaa6e438d8f414e5a007cc776fbc05.json": {
+      "bytes": 900,
+      "sha256": "a633d7aef5727619781b2f5f9c38afd1603f78b099a215790c9bede09a08fa6e"
+    },
+    "olmo_math/.multi-node/jobs/98b7419e0d9e319da6f7a44b6f1ef804af2edf620b7293715d297ef864845972.json": {
+      "bytes": 1631,
+      "sha256": "7650629d80cdbb4aeeb998e339ee72d5b6883dfd42a6784cc1124b128deac32c"
+    },
+    "olmo_math/.multi-node/jobs/9bb4254bde4517490cdfb6d3681b5bdab03b50cffffa3bcf07dca8ba27a30a1b.json": {
+      "bytes": 1296,
+      "sha256": "e4e000a41d6093ec98c9622f83d704b07933d3ada81f7299103188b4665b09c2"
+    },
+    "olmo_math/.multi-node/jobs/a044c4f92b08dfc7b66a812d67931d4691b7e20b2c2493455bb5f544ba2ca677.json": {
+      "bytes": 900,
+      "sha256": "a1f26f7046f6fbc6371d5bde72e709155879b9d64e0fde94ac952de8dc85d642"
+    },
+    "olmo_math/.multi-node/jobs/b0d17c780c85bee0dccda547294184936b9d1faa2f1f5499afb30165d60255cc.json": {
+      "bytes": 1236,
+      "sha256": "783c7f12511bfac7169cf49a664502fe78218dfed0cc55a4e318ffad99ea44c5"
+    },
+    "olmo_math/.multi-node/jobs/bbc8d9acafa803e551a66a047b4763231d20d14633d63759eed96d7a49b033e1.json": {
+      "bytes": 912,
+      "sha256": "c4ed0b71a4b8c173402e630acee53643e87fc7d1872ed20a04392ed24235dc2c"
+    },
+    "olmo_math/.multi-node/jobs/bc4752a17753d94a0af05a04fb59aa086953f6823005b68932d39e6487cd73a8.json": {
+      "bytes": 1630,
+      "sha256": "a4322f56ba9db4a89988a0d8c37c17fcc708bf118a6f0c299f90a2d2b97d1d58"
+    },
+    "olmo_math/.multi-node/jobs/fe28dccdb076738509d98d8bd8efb635fac4fb8ae2a5f4e02d036929c9ac2959.json": {
+      "bytes": 912,
+      "sha256": "37183b41378c96426a9eef0d74625290bd3d94f9038ee7ea199845c5a28705b6"
+    },
+    "olmo_math/.multi-node/leases/086ab2beb7189de056471847628ed4efcc40176cc5a9940c5708bbb6d478176c.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/0c018e139676f07d076205caad42765f92de0753fe8304b9906e2e4e11ec7651.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/0c5740f10c8de1d2310adbb6b5fed3e798b54f4b2118c60645436696605f67e4.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/1caccc742bc9663e557a99bf457ba650613808050bcd13200ebfb900b2f249c3.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/1d28dd7aa2672f88934c85dc7e0b2ba1fcc8bff3c9be322c5fbd20f92c20e05d.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/1f00b52e4678acdf519095ea085d8b46a0310f19867ff06414f3ec14920309d4.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/22572555a739777d7a532d1667c6654d310fabeec4a263efa7f1c609e3be76c9.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/2394d1eba3eaf9da496bf64186d0e891eb7ba8291e0ca25cf7b058c3406fba16.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/36b10b5ec05e3dd19e89444410b11830b267bafd0dc139fd5fe65d10c2f970e7.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/3c3f6fcdae30f7b57b278dc9ef101d21a8e137216b62c5c986975dddf6d49dd1.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/3cfd169c351b72f530cece5dd804590374fa6ab5a299a8c64c25eca915b8677c.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/3dba56027610803ce97138274b56ba4ab27057bcbc11533c26abbbc0acab31db.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/470efde1fd755e2dc829fceb1e72d949c4619121fa15def9cd2f6c8ccce01b15.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/4c339fdd5554817822fb50b5f759a58be4b9a20867053953de625670b98d43f0.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/5146bc4536e0e8d43491ed69343238233028aaf612a064e45535f0c576b3f141.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/5d4bc6941f93a12532f85d35f027d560fcdda1e30e0309b146ad2b79c31dd3d0.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/6128919334d98232d704caa879dac22348f2973ba6e3d8527f0e7b7532c6380f.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/68754e9f4ed7a9cae945c3a4034dc110f3baa3d309bfd39edcf04ef54b9b616c.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/6d3a1f33c6e89210e10b7ebe7d45660d9ed775a19ce2d1198def58acccc4eca8.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/6fad6684a3a520eb22c736bd82e80fc56861f012ab7a41556197dfa00cacf443.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/706be26bb20f7603bc8c7f3999c9ca5cb80fdd5fdb20861ca2f52f8e6f08f52f.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/731f2abfbf94132f1c2494982f8c57d88ba361d498d563914ba4db9f5257776c.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/778208b463811c8d4fab2e4222fa8c27fbddddb6caab203edfb56bc36d3fb3ee.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/77be7d539dbf23099cb14ecdc21b01039997bbc4fc8da0b606d8a40a6004856e.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/7eb64bd7251ee1ec410379db34ecdb969dfc5f2338813766b0c71839b093144f.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/7ed6086589cfd387416eba57d7c0dcfe449fe7aae3cd0e799d989c73856e1ac7.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/7fbe50ea99807e342aa4e71dda3e2e4ae73d5755150e2257c18b5d75fd95f400.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/84c7488f9420c8d6fbd11080adb043dffde978363ae607bea3df2653f331a42d.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/8946653182ffd46f54bd49ba40e5c6e85547f3a369674fb606ad877ec45a6f5c.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/8a2dee49d4e8da47cdb18dde723afcffe7eaa6e438d8f414e5a007cc776fbc05.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/98b7419e0d9e319da6f7a44b6f1ef804af2edf620b7293715d297ef864845972.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/9bb4254bde4517490cdfb6d3681b5bdab03b50cffffa3bcf07dca8ba27a30a1b.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/a044c4f92b08dfc7b66a812d67931d4691b7e20b2c2493455bb5f544ba2ca677.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/b0d17c780c85bee0dccda547294184936b9d1faa2f1f5499afb30165d60255cc.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/bbc8d9acafa803e551a66a047b4763231d20d14633d63759eed96d7a49b033e1.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/bc4752a17753d94a0af05a04fb59aa086953f6823005b68932d39e6487cd73a8.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/leases/fe28dccdb076738509d98d8bd8efb635fac4fb8ae2a5f4e02d036929c9ac2959.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/.multi-node/plans/evaluation.json": {
+      "bytes": 18831,
+      "sha256": "4579881d3d27d32ba5451f4a7cdfb712e90b1ad54f1878670ded7bee85e9d6fd"
+    },
+    "olmo_math/.multi-node/plans/extension.json": {
+      "bytes": 8576,
+      "sha256": "bbc493e1f839a611f5b663505e5468bc357a0342db5042992cda363a04f98e4e"
+    },
+    "olmo_math/.multi-node/plans/train.json": {
+      "bytes": 15387,
+      "sha256": "72e58d150a399ee02e3a5c3f4f32ec8f6e1e4f99fa0277a656e0667b50d364c5"
+    },
+    "olmo_math/.multi-node/state.json": {
+      "bytes": 254,
+      "sha256": "3187aa4bc4ca4d4faa0429dca387c0d3c0213e2981897145237969c4cb352a5a"
+    },
+    "olmo_math/.multi-node/tasks/086ab2beb7189de056471847628ed4efcc40176cc5a9940c5708bbb6d478176c.json": {
+      "bytes": 1082,
+      "sha256": "5802e0f1862e06ff729f0c887f2dcef3abec10eedcc64e18dfe1655cbf17aa3c"
+    },
+    "olmo_math/.multi-node/tasks/0c018e139676f07d076205caad42765f92de0753fe8304b9906e2e4e11ec7651.json": {
+      "bytes": 742,
+      "sha256": "f03606ff83b85059fd46d440c4d4d369e0b9268e69caedc0075112bc9c22a437"
+    },
+    "olmo_math/.multi-node/tasks/0c5740f10c8de1d2310adbb6b5fed3e798b54f4b2118c60645436696605f67e4.json": {
+      "bytes": 1346,
+      "sha256": "b18ebf090f2234501a2cb2d5b3565fc597ef3ad4b7fab49eb4f02be08b4b396c"
+    },
+    "olmo_math/.multi-node/tasks/1caccc742bc9663e557a99bf457ba650613808050bcd13200ebfb900b2f249c3.json": {
+      "bytes": 742,
+      "sha256": "a3519884729b3d5a2eb2e195ef709490c7e163e783196955286ab79801b2fa06"
+    },
+    "olmo_math/.multi-node/tasks/1d28dd7aa2672f88934c85dc7e0b2ba1fcc8bff3c9be322c5fbd20f92c20e05d.json": {
+      "bytes": 742,
+      "sha256": "0dab92c58a736e7f144dec666fb7a4d15bfa7879347265d9725d79a7c174714f"
+    },
+    "olmo_math/.multi-node/tasks/1f00b52e4678acdf519095ea085d8b46a0310f19867ff06414f3ec14920309d4.json": {
+      "bytes": 742,
+      "sha256": "03989ca4a757251a9dd850d615f283f9d47026ed11444b2eb4bd1127a5620d48"
+    },
+    "olmo_math/.multi-node/tasks/22572555a739777d7a532d1667c6654d310fabeec4a263efa7f1c609e3be76c9.json": {
+      "bytes": 742,
+      "sha256": "a08b20e971de430c40803443d432eb9b586d7aa3a18047b9e02d85bb7ea749ce"
+    },
+    "olmo_math/.multi-node/tasks/2394d1eba3eaf9da496bf64186d0e891eb7ba8291e0ca25cf7b058c3406fba16.json": {
+      "bytes": 742,
+      "sha256": "8d6dd540ef3c36915576dcc12163eb281248f3d0521f3403b36d64adaecb6354"
+    },
+    "olmo_math/.multi-node/tasks/36b10b5ec05e3dd19e89444410b11830b267bafd0dc139fd5fe65d10c2f970e7.json": {
+      "bytes": 742,
+      "sha256": "2993db320c19b75521caadac7229699e588edee37ea133072cf2593bee6e8d46"
+    },
+    "olmo_math/.multi-node/tasks/3c3f6fcdae30f7b57b278dc9ef101d21a8e137216b62c5c986975dddf6d49dd1.json": {
+      "bytes": 1141,
+      "sha256": "55413f77c7d65e1c83c7803681a4dee6b22fc97c41f1976bcb2ba07d59a58989"
+    },
+    "olmo_math/.multi-node/tasks/3cfd169c351b72f530cece5dd804590374fa6ab5a299a8c64c25eca915b8677c.json": {
+      "bytes": 1472,
+      "sha256": "db30bcb147dc3c0bf0cb5e797c17f33cc6eda6ba5be03a8705cf2aab5e9e136c"
+    },
+    "olmo_math/.multi-node/tasks/3dba56027610803ce97138274b56ba4ab27057bcbc11533c26abbbc0acab31db.json": {
+      "bytes": 742,
+      "sha256": "20a6403ad9525c8bdf9a5d177737d90261a73742773e441f30126fd56e59ab91"
+    },
+    "olmo_math/.multi-node/tasks/470efde1fd755e2dc829fceb1e72d949c4619121fa15def9cd2f6c8ccce01b15.json": {
+      "bytes": 1471,
+      "sha256": "bdf06a2d9c1ea5de93dee3f65634aded4d24aed38de3bebc8b23d57647e4d162"
+    },
+    "olmo_math/.multi-node/tasks/4c339fdd5554817822fb50b5f759a58be4b9a20867053953de625670b98d43f0.json": {
+      "bytes": 1346,
+      "sha256": "a990bb1ffdc49f76a181e83760f5be16faa340c6e9fa5336268848ab363e6572"
+    },
+    "olmo_math/.multi-node/tasks/5146bc4536e0e8d43491ed69343238233028aaf612a064e45535f0c576b3f141.json": {
+      "bytes": 1473,
+      "sha256": "7fd6fcbfac00309b81175040deec261bf8ddb7853922f0e5ec643154f3620d87"
+    },
+    "olmo_math/.multi-node/tasks/5d4bc6941f93a12532f85d35f027d560fcdda1e30e0309b146ad2b79c31dd3d0.json": {
+      "bytes": 742,
+      "sha256": "270d794c5b28c1de434c98114aad22b87b577ecc2dad3a463973fbe659c301cb"
+    },
+    "olmo_math/.multi-node/tasks/6128919334d98232d704caa879dac22348f2973ba6e3d8527f0e7b7532c6380f.json": {
+      "bytes": 742,
+      "sha256": "0c324c12986d1c6b689de3807eb842cc62c5b18c8d6851c29023b65c000b58cf"
+    },
+    "olmo_math/.multi-node/tasks/68754e9f4ed7a9cae945c3a4034dc110f3baa3d309bfd39edcf04ef54b9b616c.json": {
+      "bytes": 742,
+      "sha256": "3ad52ff809d4cc272f8c824ea1a06023eb401357fe0d3a00274d1965ea087a10"
+    },
+    "olmo_math/.multi-node/tasks/6d3a1f33c6e89210e10b7ebe7d45660d9ed775a19ce2d1198def58acccc4eca8.json": {
+      "bytes": 1082,
+      "sha256": "e7454edd8027eb406fffa10683b48a80ab6c39aad83f3b71427162528f60ba72"
+    },
+    "olmo_math/.multi-node/tasks/6fad6684a3a520eb22c736bd82e80fc56861f012ab7a41556197dfa00cacf443.json": {
+      "bytes": 742,
+      "sha256": "79fbc9d3c6499072c6a71a061ce7ae1fa24a5106aa0cd443c6eed1d66d1243aa"
+    },
+    "olmo_math/.multi-node/tasks/706be26bb20f7603bc8c7f3999c9ca5cb80fdd5fdb20861ca2f52f8e6f08f52f.json": {
+      "bytes": 1323,
+      "sha256": "90e6944fc4047939a8c152136afbf0fcb41e8a156cc83d323a32259fa74d43f6"
+    },
+    "olmo_math/.multi-node/tasks/731f2abfbf94132f1c2494982f8c57d88ba361d498d563914ba4db9f5257776c.json": {
+      "bytes": 742,
+      "sha256": "bfc7c85dff61d759513323cddbdc7b622e560d88f20e6ceeed95dcc65e9b1c59"
+    },
+    "olmo_math/.multi-node/tasks/778208b463811c8d4fab2e4222fa8c27fbddddb6caab203edfb56bc36d3fb3ee.json": {
+      "bytes": 1141,
+      "sha256": "97352ac25c470abf1a8942f491feb981f1e0577aace0e2d65167fe31faa9e24f"
+    },
+    "olmo_math/.multi-node/tasks/77be7d539dbf23099cb14ecdc21b01039997bbc4fc8da0b606d8a40a6004856e.json": {
+      "bytes": 1323,
+      "sha256": "1f34918f0e9caac9553a5ebdd6ecd7c33695d1d9326b33b33a4212e43ef6a1be"
+    },
+    "olmo_math/.multi-node/tasks/7eb64bd7251ee1ec410379db34ecdb969dfc5f2338813766b0c71839b093144f.json": {
+      "bytes": 1323,
+      "sha256": "15c4d2332471efe607f7a8187b1cd367f028012d634218d9850aa1060ad1811c"
+    },
+    "olmo_math/.multi-node/tasks/7ed6086589cfd387416eba57d7c0dcfe449fe7aae3cd0e799d989c73856e1ac7.json": {
+      "bytes": 742,
+      "sha256": "db7dad639c9872ecbd942f34ab999ebf54000def52c2689930d93227d7dea4f7"
+    },
+    "olmo_math/.multi-node/tasks/7fbe50ea99807e342aa4e71dda3e2e4ae73d5755150e2257c18b5d75fd95f400.json": {
+      "bytes": 742,
+      "sha256": "bd7596d26ebaa1a9890032f6784453359d8896cded7e12669d3f4e0ee6e6ac03"
+    },
+    "olmo_math/.multi-node/tasks/84c7488f9420c8d6fbd11080adb043dffde978363ae607bea3df2653f331a42d.json": {
+      "bytes": 1472,
+      "sha256": "5f90c76a10779fb6d96051a6bc1bee75ab054b7369947dcf0ee6a275fd4f6ce9"
+    },
+    "olmo_math/.multi-node/tasks/8946653182ffd46f54bd49ba40e5c6e85547f3a369674fb606ad877ec45a6f5c.json": {
+      "bytes": 742,
+      "sha256": "544150d07d38acbb6f136ec30a29eed5ee41491f93d0581000e0bd68194c82cf"
+    },
+    "olmo_math/.multi-node/tasks/8a2dee49d4e8da47cdb18dde723afcffe7eaa6e438d8f414e5a007cc776fbc05.json": {
+      "bytes": 742,
+      "sha256": "2018109f7267c519487c51c8bd818676cb40cc597235455f2bb65fda526390fd"
+    },
+    "olmo_math/.multi-node/tasks/98b7419e0d9e319da6f7a44b6f1ef804af2edf620b7293715d297ef864845972.json": {
+      "bytes": 1473,
+      "sha256": "584bcfc06b8efd43b18f273aa1839d7c8da3cebb97c8b36807ae6e8f679be6dd"
+    },
+    "olmo_math/.multi-node/tasks/9bb4254bde4517490cdfb6d3681b5bdab03b50cffffa3bcf07dca8ba27a30a1b.json": {
+      "bytes": 1141,
+      "sha256": "410bb974c3caf2e0ec0993f933482fa530c313601f8ecf40e0831975e025bd05"
+    },
+    "olmo_math/.multi-node/tasks/a044c4f92b08dfc7b66a812d67931d4691b7e20b2c2493455bb5f544ba2ca677.json": {
+      "bytes": 742,
+      "sha256": "33d3d63f0836e7278c6020fb42906a45b05230bf42b0ba9704295c3085346c8e"
+    },
+    "olmo_math/.multi-node/tasks/b0d17c780c85bee0dccda547294184936b9d1faa2f1f5499afb30165d60255cc.json": {
+      "bytes": 1082,
+      "sha256": "fd668eebcde02d284cec08338e1a682c128f21166afac6dd96b5052858a55483"
+    },
+    "olmo_math/.multi-node/tasks/bbc8d9acafa803e551a66a047b4763231d20d14633d63759eed96d7a49b033e1.json": {
+      "bytes": 752,
+      "sha256": "3c2da2750265df3c5e7fecab171c4117943956b12615bd12dc61b35734cb21cb"
+    },
+    "olmo_math/.multi-node/tasks/bc4752a17753d94a0af05a04fb59aa086953f6823005b68932d39e6487cd73a8.json": {
+      "bytes": 1471,
+      "sha256": "fe63384ff62141f9a5d9dbcb04c722181e0fce26db488ce20cb13882885a7bed"
+    },
+    "olmo_math/.multi-node/tasks/fe28dccdb076738509d98d8bd8efb635fac4fb8ae2a5f4e02d036929c9ac2959.json": {
+      "bytes": 752,
+      "sha256": "d7b985342e7ab79c06c88af85da9c40659bd1af05c9a9b5804dbdccaff0253ce"
+    },
+    "olmo_math/.multi-node/workers/b209bd22d962aad24affa298414a42b30637531b69892dc7d31ea1b6761f6145.json": {
+      "bytes": 68,
+      "sha256": "12e938c33e79021b9575cc13e62c8e12a39747385d0f57ad36af64ed012b7fcc"
+    },
+    "olmo_math/.multi-node/workers/cc09ea481a32aae3fecaebaca1c510137b5f42bbf33714fd9ede3e01d9109d7a.json": {
+      "bytes": 69,
+      "sha256": "12b4ce40fdca454e1d34de5fc60d7c2601801289e8da58b8760f51e70a7bab32"
+    },
+    "olmo_math/.multi-node/workers/e7e846a1996b96a85482cfc1f902bef4045775b2d18df132cd15d45b28fc5951.json": {
+      "bytes": 69,
+      "sha256": "b8b185c87518450e7118c2e62692b7adbb25ec3464954b0b7a4eacdf93035024"
+    },
+    "olmo_math/evaluations/0b39b5765c16638d__07b394354c2a.json": {
+      "bytes": 1333,
+      "sha256": "e729f19e90042c867c4ebe558677ded7b73a6be027586312f83e9ccf430f96a5"
+    },
+    "olmo_math/evaluations/0c537b254180ee89__07b394354c2a.json": {
+      "bytes": 1334,
+      "sha256": "aba2548c8108de68064a2122365d8697519fc330d8d570dfd8b676061984f6ce"
+    },
+    "olmo_math/evaluations/1564e6c515810172__b773bf2acc62.json": {
+      "bytes": 1825,
+      "sha256": "00805e2f2ea20ff91b6c3bf6cecff8e269bd391aa3dd94f57ba5b457093fbc52"
+    },
+    "olmo_math/evaluations/2580899b5e5deeee__b773bf2acc62.json": {
+      "bytes": 1813,
+      "sha256": "d0a3fe95363352d38717ca49646e191f39caf0f7514b666a5c88027b1da161ec"
+    },
+    "olmo_math/evaluations/34c5dde617982d9c__8d0ae614c314.json": {
+      "bytes": 2295,
+      "sha256": "61d8a911e50e60695b54bf500e2ed830196df5e304daaeef4267f82d654cec68"
+    },
+    "olmo_math/evaluations/38f287d734c4c1a7__8d0ae614c314.json": {
+      "bytes": 2292,
+      "sha256": "10a6894e43f75fc2df379843512eed4dc5227ad9078c96352ead68b858a5fb29"
+    },
+    "olmo_math/evaluations/469458363d6bdb90__b773bf2acc62.json": {
+      "bytes": 1825,
+      "sha256": "d39c6972e525e5ee2186ed50870715397f0fa29a72fccdfbdc86b0f27c745391"
+    },
+    "olmo_math/evaluations/4d91a8b4ce001043__8d0ae614c314.json": {
+      "bytes": 2295,
+      "sha256": "a67cc981b96ea2c84f2a4f1a1f0dff81990a6d5d9b0f48f285460b82eb561007"
+    },
+    "olmo_math/evaluations/505a4a7983dbe5fa__8d0ae614c314.json": {
+      "bytes": 2293,
+      "sha256": "647b5d3607915edbc46dbe29ea0dd91c31b31aa961f8fa7bcf03359ff03fe94a"
+    },
+    "olmo_math/evaluations/5274dcb70e3b4fac__b773bf2acc62.json": {
+      "bytes": 1830,
+      "sha256": "b15b4dd7270bc3af88bc03e2013e5c7a8bde45dd962144218233b95fc289b245"
+    },
+    "olmo_math/evaluations/60d9ce97e15c972d__07b394354c2a.json": {
+      "bytes": 1332,
+      "sha256": "d5a16e33a9620bf73b8690fe9aa29ad7257dd4ea8d4bf15fe1580c9ba79602ae"
+    },
+    "olmo_math/evaluations/9ef397c87ccc6963__07b394354c2a.json": {
+      "bytes": 1335,
+      "sha256": "5225f3da4cfa6e38b2088be9907acf62860ed633fc3c3c8f9bc468bae0c574c2"
+    },
+    "olmo_math/evaluations/a6f42372bb52912a__07b394354c2a.json": {
+      "bytes": 1332,
+      "sha256": "eab409d32fe2c7b39f31bcfc8fd7a3f1f74e6271d51de5efa11aab6f6eedc417"
+    },
+    "olmo_math/evaluations/a904879b581c68a8__b773bf2acc62.json": {
+      "bytes": 1825,
+      "sha256": "ce6befa48dd30ca715f6941aaac965b0291e3e6774d7892f2b050434e405ce7a"
+    },
+    "olmo_math/evaluations/ace9dfd8d0399904__b773bf2acc62.json": {
+      "bytes": 1825,
+      "sha256": "d23339654d0652388729ae0d9ac82acba112687da02e4356013d3ccb12d8370e"
+    },
+    "olmo_math/evaluations/b6177884ec1c634b__8d0ae614c314.json": {
+      "bytes": 2295,
+      "sha256": "77383a7a8437a57e428749762a9998c148e80c5b642445871d24074d00e52ecc"
+    },
+    "olmo_math/evaluations/ba418353195a34ab__07b394354c2a.json": {
+      "bytes": 1335,
+      "sha256": "a18b5c9bbca9ec3bd081974ed9512ff0f6a62ffd67e54d671717892b19609890"
+    },
+    "olmo_math/evaluations/d50eb3d437ba7049__07b394354c2a.json": {
+      "bytes": 1336,
+      "sha256": "611e0de63d10bfa4415c65c5f471845d4e0722b37ad822b31ad365cb7c59b321"
+    },
+    "olmo_math/evaluations/d9ce3f379f84a48a__8d0ae614c314.json": {
+      "bytes": 2295,
+      "sha256": "92b59f9954b5224daf20c21aa4e6438aa8364269edead9854982da3ee7b4e027"
+    },
+    "olmo_math/evaluations/events/00067b38e4f04231b4e5c9317dde6c77.jsonl": {
+      "bytes": 1644,
+      "sha256": "a2bd6483099eb26d56edf38fecb5882ee54a62982878d213dc34f611b3b7c7d5"
+    },
+    "olmo_math/evaluations/events/07c4430d2300457096244e3666a4581d.jsonl": {
+      "bytes": 1634,
+      "sha256": "0c8c6f3a06b50ed001d9b30b74029007a75209cd646a61d0966b44402528c959"
+    },
+    "olmo_math/evaluations/events/0cf278fa3afc4058891d6d8a09794db9.jsonl": {
+      "bytes": 1634,
+      "sha256": "513b5d36f3700d53954c63ee21c212719c7d1ff588aecb640d467b99be47432f"
+    },
+    "olmo_math/evaluations/events/192d10ce2391414a9b41c6dd0a1b73df.jsonl": {
+      "bytes": 1633,
+      "sha256": "436dcf6556e02e12b3563544b9fa8ac434ac3d117109631112f7063d24855bcf"
+    },
+    "olmo_math/evaluations/events/3de6b0877a2a449ea27676d2fd51c637.jsonl": {
+      "bytes": 1634,
+      "sha256": "698e85d1cc24c9502e06cbf3f6ed43bcfe4d21038108e774a4358371cda7247e"
+    },
+    "olmo_math/evaluations/events/47f13ef0e30941d9a06a7d368dc3e9c7.jsonl": {
+      "bytes": 1634,
+      "sha256": "7b190a04f8ef7f19b890d73b533cad853a7932dcaf40acf2a83ad4e615de05a0"
+    },
+    "olmo_math/evaluations/events/485b5ff85e704d4d99ba9e7957abd395.jsonl": {
+      "bytes": 1634,
+      "sha256": "1a1cd3e0f78bc975fcb4d654a70cc07bfb2a812e91450bec623afc962c9144a4"
+    },
+    "olmo_math/evaluations/events/6e3f70ce74024a5f825968646033916b.jsonl": {
+      "bytes": 1643,
+      "sha256": "b71e4ad1ec88c39b46b6a1ce31b18aebacda65d759a56b930e619559c35af6ff"
+    },
+    "olmo_math/evaluations/events/735df74e8ecb4ba186999f13dbee24d3.jsonl": {
+      "bytes": 1632,
+      "sha256": "83d7cc17aeeca3b45b8fd0ebace0b5b083b23b4dc7da05e41722a38b16db7f6d"
+    },
+    "olmo_math/evaluations/events/7769db6a0b474a388cbde397f7eca0d0.jsonl": {
+      "bytes": 1634,
+      "sha256": "50dfb8e4447772f7fc7da558ce7c75a164c30911043e2e1b5269f6313240bf46"
+    },
+    "olmo_math/evaluations/events/7f2f0fbd35f246e3ac45fb82660ae208.jsonl": {
+      "bytes": 1634,
+      "sha256": "b9f2b0136a0ad89b2c5dc1478835764da0e41a462fc8311380641a794abfc33a"
+    },
+    "olmo_math/evaluations/events/86d3ffb813f247dd89d4deab6450a57a.jsonl": {
+      "bytes": 1634,
+      "sha256": "e7c4ab89f5c9262c0d757751c612cb280b28fde26de11384d6be5dc31736282b"
+    },
+    "olmo_math/evaluations/events/951d95aa9ddf465eb642a2d837025b1d.jsonl": {
+      "bytes": 1634,
+      "sha256": "7d4bb99fb61a4976b952dc5630b07393973f6d6548598ad0965a723d27caa849"
+    },
+    "olmo_math/evaluations/events/a2c82c1270b349dd86cf1910d208f0b3.jsonl": {
+      "bytes": 1633,
+      "sha256": "8a8dcb8be85efcbec6aeb2611033c2f8d720d8bfdfcd5cbd1bcd568d61fbd304"
+    },
+    "olmo_math/evaluations/events/a3b9403eb3214c848eb4d7dc84738249.jsonl": {
+      "bytes": 1634,
+      "sha256": "f569af7fffef47e4c7df000a5626792e08e263aeb281369f8bdf9a0372bbcdfa"
+    },
+    "olmo_math/evaluations/events/bafb73a5ec844bedb7fb2346ca92bb61.jsonl": {
+      "bytes": 1634,
+      "sha256": "0c1617ac35d57eb2961d636cbccdda5415885972240e70f07eb8a6f2e9dae853"
+    },
+    "olmo_math/evaluations/events/cc5460df522e4d49ae1375efd1868756.jsonl": {
+      "bytes": 1634,
+      "sha256": "ce309f79f7b120830934d3b39001c8e4d68d299de76d3b9f6101af0e1b265ff7"
+    },
+    "olmo_math/evaluations/events/ebb540d7cafa4c6784c1f7bd2781f02b.jsonl": {
+      "bytes": 1630,
+      "sha256": "7d7b67d0dc5b8b8c7939e92a1aacb51bf5c372f68e0bde52a616d289399c9974"
+    },
+    "olmo_math/evaluations/events/eef2b830cc2c4ec7bf57cf5eb5550e30.jsonl": {
+      "bytes": 1636,
+      "sha256": "6a788d19fcbc61895f79d97d0449bdda311e04f8c8a157bd7c46a2b1146a6578"
+    },
+    "olmo_math/evaluations/events/fa74e5f06e78461badb6cabb7761bcd9.jsonl": {
+      "bytes": 1633,
+      "sha256": "8b5177be0ce30302e1f5f589f60c658b17580421434ee1194f22dc27333f8e2e"
+    },
+    "olmo_math/evaluations/ff0cbd7f0deecf9a__b773bf2acc62.json": {
+      "bytes": 1812,
+      "sha256": "98238e308024cf15b6ccae825ef511013607cf1ecd664d787e5b16d09e20bc1a"
+    },
+    "olmo_math/executed/019d54a7bfd04f1bb9fe19a8ede1e2c2.json": {
+      "bytes": 282,
+      "sha256": "9937d904407888debfec12bf439807c7501ba90775e64e35259d680605462d6f"
+    },
+    "olmo_math/executed/06a4c829395f492fa01c52740aa1e245.json": {
+      "bytes": 345,
+      "sha256": "73fcb1734f68c41d8641b65c1acb744e2ef945697d646361fd79674a4cc82848"
+    },
+    "olmo_math/executed/07747d2034684e66a8daff51702b0099.json": {
+      "bytes": 343,
+      "sha256": "86d16cb8691609a9e16205979d29304c36a5bab94ea05d55312d136721ba3b48"
+    },
+    "olmo_math/executed/0ab7e675a7624e438ef88a89b0630fc2.json": {
+      "bytes": 356,
+      "sha256": "36a7d824493fdbf39f3c2809329d91bb41ff903d63b15acbbedbb36692dc7892"
+    },
+    "olmo_math/executed/0e7b35ead3be4ce2a4559bbf0aa27f85.json": {
+      "bytes": 343,
+      "sha256": "876d85d1d5b441665d2db81539f6a9eaae55ff7097ae6c34ef63c4f66d4ef25c"
+    },
+    "olmo_math/executed/11bec1d5798a4fe6af9e7dc1220fde97.json": {
+      "bytes": 343,
+      "sha256": "db3e57d7b312e599acc8b81248c5f1ede3d8eaa0013d4dd96bcb062d1015dda0"
+    },
+    "olmo_math/executed/14c090c7fad442a2ae71c47431db854f.json": {
+      "bytes": 281,
+      "sha256": "bbcd911b9611e3278459b75afa5456b4b94071e0a54bef34c6a8322919e638b6"
+    },
+    "olmo_math/executed/1555d9f71d2c4429a3157b6c5056cf8b.json": {
+      "bytes": 342,
+      "sha256": "532913962937da5ad0a2a0a3f40299c57f9055b0983e4af801d290e2bdc15b33"
+    },
+    "olmo_math/executed/179b0b0492604e0e9040b4f0d65b0ed5.json": {
+      "bytes": 345,
+      "sha256": "a23b5780e86cc48874fc8a5d3a5b79c262ea0fc587eea6274aa151100b8a11a9"
+    },
+    "olmo_math/executed/23db7062d9914a0890f5acf9a8829ce0.json": {
+      "bytes": 342,
+      "sha256": "5d5e80c644bf5ded0be521e21913522d81b1298c3db1bafd0cc1860c293fedcf"
+    },
+    "olmo_math/executed/32b83bf686224e8c80138d6a075eefbf.json": {
+      "bytes": 344,
+      "sha256": "4e98e45b25ca0af29f62bc0a175e2f11b493425a34438d83b9efb4f380700ca2"
+    },
+    "olmo_math/executed/394b28fcabb04c2daf40c447a15153ed.json": {
+      "bytes": 292,
+      "sha256": "4e2b87ccf045349fa7d22544356c7793d47226f48320c4fb96a27576f0c19a11"
+    },
+    "olmo_math/executed/3d35e5cb2caf43c483465e1400db8220.json": {
+      "bytes": 356,
+      "sha256": "0bd6a64bc07a1b4755c216777321231739971df65c64d7014e6d0caba42e369b"
+    },
+    "olmo_math/executed/419def85a9e74638874fb0b71507c8ce.json": {
+      "bytes": 282,
+      "sha256": "e0a5c70e503312c22ed24093f1c3532a394b8d58d6131905b2a85f9d33f442bb"
+    },
+    "olmo_math/executed/42647347fad545868b61a56adc777cdc.json": {
+      "bytes": 282,
+      "sha256": "cfb2385b2f316f3273405ffe109435c0dd12a5ad2a2f0ce90d420a852359f5c6"
+    },
+    "olmo_math/executed/54bfbce8191c48078e9db4398b872664.json": {
+      "bytes": 281,
+      "sha256": "dc2ed01f87825e77288db4d6b7430b8a11dab94e9768594cb245beb16cdae9e9"
+    },
+    "olmo_math/executed/5b25139980764a7c99a7e827d76c7af9.json": {
+      "bytes": 282,
+      "sha256": "e0861c63b3e58f5c271833db63be1481ffd136a254b05b468d85b3c9c546e328"
+    },
+    "olmo_math/executed/6811d91c37bf460f8e03999e0957c64e.json": {
+      "bytes": 345,
+      "sha256": "9118808826e0b9ea2f8a4619c9d7e6170ae0f4956a17a51508bca5e12042ce5f"
+    },
+    "olmo_math/executed/79cd22a491134c96ae2eb314b0e33779.json": {
+      "bytes": 282,
+      "sha256": "7a914e376eb9c69fa1510c229598f37bbdfb7cfcd0668195ad816e25a6a14bd4"
+    },
+    "olmo_math/executed/7b56c674a7fc410ebd9fc79ded704eb0.json": {
+      "bytes": 282,
+      "sha256": "3fe6d143edd0c9ef542f29c2e35db53ad3009163a6457ca272c7f6d21ea733c5"
+    },
+    "olmo_math/executed/7f0389d731fe4ab69c0b55b5a0c1c952.json": {
+      "bytes": 281,
+      "sha256": "cd3bd94fc8a3ac9ecf0ddfadd976264efb469a2d7f86bd3f37fe19871b3d751d"
+    },
+    "olmo_math/executed/7f85d2302b544feb886d080dab728755.json": {
+      "bytes": 281,
+      "sha256": "6919696682abb87d99dd2e970bd72641a777faef15be9233d0e6b82ec68eff4f"
+    },
+    "olmo_math/executed/7fdf2fbdfe68404086d8aa555d572bad.json": {
+      "bytes": 282,
+      "sha256": "fb94c9040eb10f62887b7f9ff369d2637aaa5d0219ffab822cd0ea94f2b8e237"
+    },
+    "olmo_math/executed/832e47333f0345d6aae42a4de88326b4.json": {
+      "bytes": 281,
+      "sha256": "2e1ed90c8a38e112cc562b7cc5a219e4ff26bc688a948b4e70b88a09c69a058d"
+    },
+    "olmo_math/executed/85ee17182fd44d60a8a69db52cfd7edb.json": {
+      "bytes": 346,
+      "sha256": "f16d4d9508dfe5a34352edc891a78e09672cb8899ecfd8d369d90d0226324a90"
+    },
+    "olmo_math/executed/90b9ba1e010e43919717c6e698fd42f1.json": {
+      "bytes": 292,
+      "sha256": "276e82e7523de6756656f84d82de73a27bc5258e7428682ee9f9f5fc617702fb"
+    },
+    "olmo_math/executed/97b2378f051848a983b9bac1709393ea.json": {
+      "bytes": 281,
+      "sha256": "3df9e9a0c140d3a7707ed937e16d320506908ef72bd9cfdfbbc3dd8bfdcf510e"
+    },
+    "olmo_math/executed/99ca1ead416246489429957929c3e6c1.json": {
+      "bytes": 343,
+      "sha256": "9ca6e3975533f90ab234f4ea25a2ffa6e0ff0e31b3ad2f921ba3f672b214b97c"
+    },
+    "olmo_math/executed/abd4090d1d334eb6a1fb3152ef2482e6.json": {
+      "bytes": 356,
+      "sha256": "d3ce50789310231685c8bdebad0c6cca451844860b8d9dd3baca43546f770d2e"
+    },
+    "olmo_math/executed/b86d5b383c8547959b14746ec3f892d2.json": {
+      "bytes": 344,
+      "sha256": "676951030436b9db2063b9907f180b5986e4c17b5bd6fafd6e6d09661807917e"
+    },
+    "olmo_math/executed/c69ee81777a84ddd9e88a41fb8b2c1d8.json": {
+      "bytes": 356,
+      "sha256": "2bfbd38de280365ae3fdd3e8b678a585b26eed3ff28a0516a479c0e7035f4cbd"
+    },
+    "olmo_math/executed/cc946b2a86664f6288f40cd0b84f7cc2.json": {
+      "bytes": 282,
+      "sha256": "db35b70928a7f49716096e18d92f0b1522c8ca96d25cd4fddd012dea1e714c09"
+    },
+    "olmo_math/executed/cf8558f91cb04729b34639a17dee0c84.json": {
+      "bytes": 356,
+      "sha256": "299ce1e61b987ff061593a3c29664f4f21a7dd63624336c7b42b284aba0b8e0e"
+    },
+    "olmo_math/executed/dc2d9da17489405684c8622d23cc1577.json": {
+      "bytes": 346,
+      "sha256": "ff5ea519a19bae57d0d3c8e50e5f647685e0fa42abc686b73a2cd8e960ab4add"
+    },
+    "olmo_math/executed/ed430e73fb42430891ad5da51086452c.json": {
+      "bytes": 345,
+      "sha256": "2c5d7debad796c3fc266ade17b4ee17c52137abaed17b31c0b873f45ef0a2cc0"
+    },
+    "olmo_math/executed/f2d1fdc085744dcc9ba941b4c8bb33a1.json": {
+      "bytes": 345,
+      "sha256": "c3b653f4e23f1e456025ce3c72312b65551e4d72e4c924f43a0a4f688b790254"
+    },
+    "olmo_math/executed/fd5d01d3189542f2b54793a06259bda9.json": {
+      "bytes": 282,
+      "sha256": "649d222928097ad08774cf4b5d5cb131702d52fe47d4c6f47f976e413caf4059"
+    },
+    "olmo_math/frozen/budget.json": {
+      "bytes": 542,
+      "sha256": "f27d487bcbc5eb228165ecaba346be4f7a6ed7ac51ae73ed7d04ba53c7ed02c7"
+    },
+    "olmo_math/inputs/seed-5.json": {
+      "bytes": 52875,
+      "sha256": "a2e11d9e17b560654aa925e290ee2721d8676631376f0391909cf7c3b8ba5237"
+    },
+    "olmo_math/inputs/seed-6.json": {
+      "bytes": 52485,
+      "sha256": "d0fe4acbea1458f0d69cc1b13376b9c6d17fb2e38be49edf3f174aaf7f0857df"
+    },
+    "olmo_math/inputs/seed-7.json": {
+      "bytes": 52095,
+      "sha256": "05bebbbca09340b888e046ad39dc41f3fd72615ffa351d69c5d016f56e611569"
+    },
+    "olmo_math/locator.json": {
+      "bytes": 1483,
+      "sha256": "724c28bec0282f1414ef51023e240876d04147e998b1a2e07d97e24071eac865"
+    },
+    "olmo_math/prefixes/seed-5/events.jsonl": {
+      "bytes": 38042,
+      "sha256": "4f903d88dac4fed6d0655229c473ba389c9aaf3539495dd5f4b305bb742578d5"
+    },
+    "olmo_math/prefixes/seed-5/prefix-ready.json": {
+      "bytes": 121,
+      "sha256": "6dd7cc2e7a45e0d960897ca762de82197c64ed3cd95ac246ad10bcc7d80824cf"
+    },
+    "olmo_math/prefixes/seed-5/prefix.pt": {
+      "bytes": 13839,
+      "sha256": "d2684d1299b0af4ca28b30d5d039d9751d5223e9b22105adbeca1bdfac0dcf1f"
+    },
+    "olmo_math/prefixes/seed-6/events.jsonl": {
+      "bytes": 38040,
+      "sha256": "2b634078d76e095925606b6b116b85230a866683108a6af036c32051a5d0f472"
+    },
+    "olmo_math/prefixes/seed-6/prefix-ready.json": {
+      "bytes": 121,
+      "sha256": "5981403ed31cb338e3e14ace20660400b1ab62892811946836318e221a5836de"
+    },
+    "olmo_math/prefixes/seed-6/prefix.pt": {
+      "bytes": 13839,
+      "sha256": "d2cf81d4ea2e830a8c733e8fcdc98cf6711836728989ce410f491b0e187d25eb"
+    },
+    "olmo_math/prefixes/seed-7/events.jsonl": {
+      "bytes": 38044,
+      "sha256": "57c99cad81b6734b86dd69e5cd25685c85dd0c0c29ef454014a6613459f9c47b"
+    },
+    "olmo_math/prefixes/seed-7/prefix-ready.json": {
+      "bytes": 121,
+      "sha256": "f04eb6c2b23c16ea78a260fc27fae81fce40fa19d23fd4d267b4f5176ac1ba07"
+    },
+    "olmo_math/prefixes/seed-7/prefix.pt": {
+      "bytes": 13842,
+      "sha256": "92e2630ff02870fbe7a2e50edaae692099db35f1a3fd581827bc465b33e3d53f"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t025.7523b1618a/.execution.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t025.7523b1618a/attempts/2e22c7c0acf740ef8cf50f8ff5f27a61/events.jsonl": {
+      "bytes": 51202,
+      "sha256": "9f1cefe5e8f2e4cb6e3255875c2a238bc53845b60736989639b49e8cb4bed9d4"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t025.7523b1618a/attempts/2e22c7c0acf740ef8cf50f8ff5f27a61/updates.jsonl": {
+      "bytes": 4545,
+      "sha256": "d3b5b061dbae82aac96ca0daf85f2e00dd7370c61c7345e4ad02b16a51bda138"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t025.7523b1618a/branch_start.json": {
+      "bytes": 1496,
+      "sha256": "e1efe661bd8f481f6aa55e154391884fa2cc42afd6fa177fcbb158ae560d650c"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t025.7523b1618a/history.jsonl": {
+      "bytes": 15893,
+      "sha256": "f9ea39dacb0ca4c0cd01dbbc5d39d5d431ae408b7cd2de9f065a468516b8a7e4"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t025.7523b1618a/latest.pt": {
+      "bytes": 79466,
+      "sha256": "77a7869292d81e412b8843b728fc0a45412a22ab1fb91aaa7a8374011d5935d1"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t025.7523b1618a/manifest.json": {
+      "bytes": 2477,
+      "sha256": "09a3448c200074ded77dfab68df044cf8a5d42631838d5e8c9af14ad31e22194"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t025.7523b1618a/snapshots/step-000096.pt": {
+      "bytes": 79466,
+      "sha256": "505a4a7983dbe5fab5f75e5c5c048e20bf68596885256912b178128adf75cd4a"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t025.7523b1618a/snapshots.jsonl": {
+      "bytes": 1195,
+      "sha256": "5821199665da14d4af98bc3c453e0c1e12ce13dd0619b58bd2e86fe30bf25629"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t025.7523b1618a/training_stats.jsonl": {
+      "bytes": 6519,
+      "sha256": "e53e714c174723eed7c3d999f39fbd8487470d134c4b42365160eb8619213ba8"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t025.f203ecac52/.execution.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t025.f203ecac52/attempts/646b8a55320d4bc8aa051a71eaf7af4e/events.jsonl": {
+      "bytes": 121940,
+      "sha256": "8945d9efdd2abec342d5515cd708d622aaa1ae42c1f635abba93d27f54c5ae34"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t025.f203ecac52/attempts/646b8a55320d4bc8aa051a71eaf7af4e/updates.jsonl": {
+      "bytes": 10851,
+      "sha256": "a4fa48b76d4725f48bcb89b3c8bc4a4698da734d33bdd544c91a65635cef75bb"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t025.f203ecac52/branch_start.json": {
+      "bytes": 1243,
+      "sha256": "28a02bdc179a36528e2ebab1c999326082a1913b0bfd21f8842176af9d0fd243"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t025.f203ecac52/history.jsonl": {
+      "bytes": 37882,
+      "sha256": "6990ec2969df1b12cd0d66f623f7f74b71d7fb32c9092e62574959d6c4a56a94"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t025.f203ecac52/latest.pt": {
+      "bytes": 163161,
+      "sha256": "cb45ddd84f6e0492b8d7d597c077a540bb88aa28fcf9bd17324f9ece21d42814"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t025.f203ecac52/manifest.json": {
+      "bytes": 2126,
+      "sha256": "2f2029c1903bbe97f3e3cf917333db9f76ad7692744cc4815e2d481f0c923a25"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t025.f203ecac52/snapshots/step-000050.pt": {
+      "bytes": 90026,
+      "sha256": "64fd9a02c8ff1cf32c94719998524bae9638373e6ccda120411ffcc7b4bd9a25"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t025.f203ecac52/snapshots/step-000075.pt": {
+      "bytes": 163161,
+      "sha256": "d9ce3f379f84a48aaa81c85ee737e8d8174c9213245a34b16e43b49b969ccd88"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t025.f203ecac52/snapshots.jsonl": {
+      "bytes": 2389,
+      "sha256": "e57e834a0fb9d5369471073ed740e4b5aea3f97b477b60bc770bbf44d1e13867"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t025.f203ecac52/training_stats.jsonl": {
+      "bytes": 5091,
+      "sha256": "92c00968478a128ba564cc27fc7a852065719f232ceb59455582b7ac64cdcf5a"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t050.03ab4b7b71/.execution.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t050.03ab4b7b71/attempts/a2568aeb036145b29f0f5d2c98ec7cfc/events.jsonl": {
+      "bytes": 43896,
+      "sha256": "7dbc2bf1dc3b71f60e9b7f114d19af44b802c811ae7ca94abdb4ce88e51d8bdd"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t050.03ab4b7b71/attempts/a2568aeb036145b29f0f5d2c98ec7cfc/updates.jsonl": {
+      "bytes": 3931,
+      "sha256": "1b9fe3ecda576114f135b3f57086c7cffaf4478b62952eebfaaba12c6e325b2c"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t050.03ab4b7b71/branch_start.json": {
+      "bytes": 1496,
+      "sha256": "e1a94fa9c6c32b926ae53f6b9c26cf490204b7efb44172e340d3b7a1229c4099"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t050.03ab4b7b71/history.jsonl": {
+      "bytes": 13662,
+      "sha256": "c49f725cfe23084222f59dc61e5c7547f1458511cdb80d019994eff4eab2f7fd"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t050.03ab4b7b71/latest.pt": {
+      "bytes": 70710,
+      "sha256": "f2823b57b96e608c7fc07e2bef8e8042421e6ef5f80fd7f33caa12b76e4d859c"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t050.03ab4b7b71/manifest.json": {
+      "bytes": 2479,
+      "sha256": "c8252cd04a5eef3eb736e6b82b3cd73c603f15ecf522e7a7a451378208ce79b7"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t050.03ab4b7b71/snapshots/step-000093.pt": {
+      "bytes": 70710,
+      "sha256": "38f287d734c4c1a70357b0d75b711b1de4d6ec738df66c9524aa9fbaf36aa689"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t050.03ab4b7b71/snapshots.jsonl": {
+      "bytes": 1195,
+      "sha256": "3c2dfa8160b3fb699f96c564e1f7e84091bfa17d9d58aa0aa7288a5c780f46f5"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t050.03ab4b7b71/training_stats.jsonl": {
+      "bytes": 6315,
+      "sha256": "b10cbb06107695c627efa113c7ba3c55d6e0af42f2b884a29739ee34b54c8d90"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t050.f4c9161e0f/.execution.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t050.f4c9161e0f/attempts/79fad7f5973b4950a3fde6b014f7e308/events.jsonl": {
+      "bytes": 60962,
+      "sha256": "422ca712bdc74dec0b53493a46340c75b33b020068b835594719755fa7e562ab"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t050.f4c9161e0f/attempts/79fad7f5973b4950a3fde6b014f7e308/updates.jsonl": {
+      "bytes": 5393,
+      "sha256": "3202900b8dba0ced343f69fdeea7b4a687526d3e742b4cc8b42e02d766e1e499"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t050.f4c9161e0f/branch_start.json": {
+      "bytes": 1496,
+      "sha256": "060ce3f1e26796fe05b1d0d6a1a837ee0a16acf4e90722e764f4a05397156ada"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t050.f4c9161e0f/history.jsonl": {
+      "bytes": 18908,
+      "sha256": "d91d6da32fee28158f2ed0ef779fcbd8f5e361cf926b8798c589473366b55b33"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t050.f4c9161e0f/latest.pt": {
+      "bytes": 90563,
+      "sha256": "6b47b4d4eaef5213231034ec600269b228bf4d04f9cadb593ddf6936456505f4"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t050.f4c9161e0f/manifest.json": {
+      "bytes": 2309,
+      "sha256": "e62044e8e9a1c24d90a60d995b537034dce9b233acfcc765dca32bdae421ff40"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t050.f4c9161e0f/snapshots/step-000075.pt": {
+      "bytes": 90563,
+      "sha256": "4d91a8b4ce0010434a69b5b0a99ef747112ea75c97f4d3388bb0b0e4fa4947a8"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t050.f4c9161e0f/snapshots.jsonl": {
+      "bytes": 1195,
+      "sha256": "d21da93012b62a5d6e3d28c38464be8ca150133c18956e4fb7730edf7aef3ce5"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t050.f4c9161e0f/training_stats.jsonl": {
+      "bytes": 5091,
+      "sha256": "e4181bdbdcd99a1b1be41d78a3a13d468a2cbd9a29b219bcb523211202184cb9"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.on_monitored.2d291dde78/.execution.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.on_monitored.2d291dde78/attempts/f3ebfeded8174acb92ae02209512ba60/events.jsonl": {
+      "bytes": 88397,
+      "sha256": "04f5879a0433299c799cf509fe39e8427338a3a8a901d071027a59bb3d2fbd03"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.on_monitored.2d291dde78/attempts/f3ebfeded8174acb92ae02209512ba60/updates.jsonl": {
+      "bytes": 12838,
+      "sha256": "d397d57bc624fdaf093526903ac5544d15f4a9aa9a8cbf217588a27d84931d29"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.on_monitored.2d291dde78/branch_start.json": {
+      "bytes": 1250,
+      "sha256": "d7ca2fe0c5c19ce13ee3622381269e7c6d6f666a0a0db452c4dd46df429679fe"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.on_monitored.2d291dde78/history.jsonl": {
+      "bytes": 23765,
+      "sha256": "9065181b510320ea33523135e162a90ee2b844f3380d9466ef0428ab018171f1"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.on_monitored.2d291dde78/latest.pt": {
+      "bytes": 32261,
+      "sha256": "a93cf0d5c7603c5381618ceab0bc3a23dc2ee1927beb65d5a243693c0025daa7"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.on_monitored.2d291dde78/manifest.json": {
+      "bytes": 2053,
+      "sha256": "578e0a5590f67e1bdcecf1dd42dc067d284661a8518db83be4ab5f082feda2fb"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.on_monitored.2d291dde78/signals.jsonl": {
+      "bytes": 1710,
+      "sha256": "31ba8f8c2f66630020e202ed86eeaeb4c0d8e197a05f3cb7f607a5a02f5f4865"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.on_monitored.2d291dde78/snapshots/step-000050.pt": {
+      "bytes": 23434,
+      "sha256": "b6177884ec1c634ba6a82f1a8a9bca7d14023bf51f27ae1fbf5de7ee37cec9fd"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.on_monitored.2d291dde78/snapshots/step-000075.pt": {
+      "bytes": 32261,
+      "sha256": "34c5dde617982d9ceaec11a616f20fb2cd8953348614695ebfc332d0cf22a87b"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.on_monitored.2d291dde78/snapshots.jsonl": {
+      "bytes": 2404,
+      "sha256": "5da508a25d4a07d3f3e3082c40f9ecb14a6841daa2d8a565960c290543dd7eaf"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s5.on_monitored.2d291dde78/training_stats.jsonl": {
+      "bytes": 5091,
+      "sha256": "5e9d8944d0e40c431318335886427da3643b5e9eb5a1bc27166f4dd292c91b06"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t025.56ea9bf87f/.execution.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t025.56ea9bf87f/attempts/0eef0962fdbc473b933bf7a331bc4750/events.jsonl": {
+      "bytes": 121928,
+      "sha256": "3610046856299febf93fc304dadfedd526e0589b533684a797c26d813e6af91f"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t025.56ea9bf87f/attempts/0eef0962fdbc473b933bf7a331bc4750/updates.jsonl": {
+      "bytes": 10887,
+      "sha256": "a09b2252153c7b43eecc13480d2e1ac99ed051361c55a894c1a3b281effd0327"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t025.56ea9bf87f/branch_start.json": {
+      "bytes": 1243,
+      "sha256": "880da37abb04f82820f2d3d7373f3cd78b81fb8913024458a9b126fc10280b0a"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t025.56ea9bf87f/history.jsonl": {
+      "bytes": 37914,
+      "sha256": "fa730139d8b95f3f5559c657737c46975171c6f5801182801d3ee3595025bc95"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t025.56ea9bf87f/latest.pt": {
+      "bytes": 163135,
+      "sha256": "a7bfcf3243d63c16b19bf83b292a7fd46c6933476236964c615171250d6c8e0d"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t025.56ea9bf87f/manifest.json": {
+      "bytes": 2126,
+      "sha256": "2aca019bcf515a6e64bf1d86fe5cf930924783a0ef148b47f0e6bc1f1948ef7c"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t025.56ea9bf87f/snapshots/step-000050.pt": {
+      "bytes": 90031,
+      "sha256": "66ff4a01f691ee53a552464978cb38a81a2ca9bfd2e36bbf8a75277d0d9af5cf"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t025.56ea9bf87f/snapshots/step-000075.pt": {
+      "bytes": 163135,
+      "sha256": "ff0cbd7f0deecf9a2a344190a66ac99a8b475f9432ec9d7af297dfe8501e4b33"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t025.56ea9bf87f/snapshots.jsonl": {
+      "bytes": 2390,
+      "sha256": "fd12f1b347d405155ce6087a922eb189b6e8c3789791db3d30fbae67f3b8452a"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t025.56ea9bf87f/training_stats.jsonl": {
+      "bytes": 5091,
+      "sha256": "5347c02e8d661abadb60ed5b069755b6dfe84408f08ebf61d9942d713d328300"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t025.f65aa7f3be/.execution.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t025.f65aa7f3be/attempts/c1a695539261422e97af8d671cc48b67/events.jsonl": {
+      "bytes": 53658,
+      "sha256": "fa8f8926e48aa8f139b05e245c02a21e96d0912c07017090557a71a06831e324"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t025.f65aa7f3be/attempts/c1a695539261422e97af8d671cc48b67/updates.jsonl": {
+      "bytes": 4775,
+      "sha256": "da7473ebc78f26b16ebedf04d04254889bb748fc4da68c12d1016a423de1ea13"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t025.f65aa7f3be/branch_start.json": {
+      "bytes": 1496,
+      "sha256": "6fcf4cf7ef184b50b53b284cd783407d7a30fecc1ce6bc09ab9e5f6c541425d2"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t025.f65aa7f3be/history.jsonl": {
+      "bytes": 16669,
+      "sha256": "8ef92bb38b0b65da048e44559fb30605bceca0e51d0635fed84b2d35db999815"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t025.f65aa7f3be/latest.pt": {
+      "bytes": 82374,
+      "sha256": "8269acf555318621663d23c6b9338782f3b09d6fa519eff2565c55e3a64f887c"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t025.f65aa7f3be/manifest.json": {
+      "bytes": 2479,
+      "sha256": "a304b354ef5e15776f9befa3db77ea6d3aa0f3b5d3c6bbd61c1e88a5dd89adcc"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t025.f65aa7f3be/snapshots/step-000097.pt": {
+      "bytes": 82374,
+      "sha256": "a904879b581c68a8f707134488c64009f3c8ac9acb85e0e22aa881286ae4c82f"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t025.f65aa7f3be/snapshots.jsonl": {
+      "bytes": 1195,
+      "sha256": "bc7963c5459eaed6b9b2174db62cb4879c0133d7e4693920964a7a2db7ab514f"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t025.f65aa7f3be/training_stats.jsonl": {
+      "bytes": 6587,
+      "sha256": "f84723241bee1bb9d7217bad38d868782febf1db591178bcd873e1eb64fece7a"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t050.2f4d2712e3/.execution.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t050.2f4d2712e3/attempts/b06ac5e3315e40edac27de164eef6cb9/events.jsonl": {
+      "bytes": 43896,
+      "sha256": "9094c6860f3bb80520f7b178d9feff65c03146022a498aa8306f4467d39b197b"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t050.2f4d2712e3/attempts/b06ac5e3315e40edac27de164eef6cb9/updates.jsonl": {
+      "bytes": 3917,
+      "sha256": "ae0e3566399897f7a79ee6fb995f0a6a87caa802a2ca34d36f399764032e91c8"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t050.2f4d2712e3/branch_start.json": {
+      "bytes": 1496,
+      "sha256": "bc34bde04986159419ca9ce73411646542c5ee8581a5142723fad91743e10809"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t050.2f4d2712e3/history.jsonl": {
+      "bytes": 13645,
+      "sha256": "ef4ed243939f6946e07ae295bf0bc2e1812a4617bea3f08c29531ed102f557aa"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t050.2f4d2712e3/latest.pt": {
+      "bytes": 70630,
+      "sha256": "645730dca73a284181845e6a42dff1295669e855c916fce1b0022fb514f8fcb0"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t050.2f4d2712e3/manifest.json": {
+      "bytes": 2478,
+      "sha256": "c6080294cb4d0838cfe438d94487d4444d200194d38a395e72fb870647e2c746"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t050.2f4d2712e3/snapshots/step-000093.pt": {
+      "bytes": 70630,
+      "sha256": "ace9dfd8d039990485bab1be8728541edd13aa473b47df128437c799de75c760"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t050.2f4d2712e3/snapshots.jsonl": {
+      "bytes": 1195,
+      "sha256": "511d7d3d2fa095c04b585d6f230fee77fdf820dfc0c92e613f7d8e07a90af199"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t050.2f4d2712e3/training_stats.jsonl": {
+      "bytes": 6315,
+      "sha256": "9bee8a05b1906ce173017157adc7180f36c3747eaf0b46030c2ec6a25f6817aa"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t050.cc5b523666/.execution.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t050.cc5b523666/attempts/ada7f31da16d4bb294a36a897ed4f011/events.jsonl": {
+      "bytes": 60966,
+      "sha256": "27480ab96a1b03ae8d5a0b4c2ce6272afd011e0c5b148368655cc6b4a9c38d80"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t050.cc5b523666/attempts/ada7f31da16d4bb294a36a897ed4f011/updates.jsonl": {
+      "bytes": 5381,
+      "sha256": "540aaf1f887ff85c178b9e46ca2dc4c472219e4d87fb1d1a0068a6b8d4fb7b5c"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t050.cc5b523666/branch_start.json": {
+      "bytes": 1496,
+      "sha256": "c0c8536b7f3c2961fc0cff328612490feb7125d428a60323b7f6a5ad3c96cd10"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t050.cc5b523666/history.jsonl": {
+      "bytes": 18892,
+      "sha256": "d1f7aaf1ce7b58dcd3d995401448e7658979a58a2c194148a60432669e7217da"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t050.cc5b523666/latest.pt": {
+      "bytes": 90485,
+      "sha256": "3e5a5925bc832a8deac14a6c7efe5672caeb450a502215a9c935b96dd578e9f5"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t050.cc5b523666/manifest.json": {
+      "bytes": 2309,
+      "sha256": "f762d8d369f353821bb12dbe9c04953191b63bef2791fd79233484af8dc2ca51"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t050.cc5b523666/snapshots/step-000075.pt": {
+      "bytes": 90485,
+      "sha256": "1564e6c515810172944b64115b7155433fb59f7c770965bd3fde263db4f30987"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t050.cc5b523666/snapshots.jsonl": {
+      "bytes": 1195,
+      "sha256": "be797a70b137ee619653c64760d6f3f8a7b39ed3a00f185c1c04cbc610e4a81b"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t050.cc5b523666/training_stats.jsonl": {
+      "bytes": 5091,
+      "sha256": "631f8b404f73f1ce0e40ff4987ad51f05b6dbacfa7be6cfeaaaf5c6042564cf0"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_uniform_t050.bd5b8f9ad0/.execution.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_uniform_t050.bd5b8f9ad0/attempts/2715ebfe0b95424aae498be3af78c516/events.jsonl": {
+      "bytes": 61334,
+      "sha256": "eec2857784e188da115a6d8623388386e141270baf8447bf96f8abd31460dfd2"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_uniform_t050.bd5b8f9ad0/attempts/2715ebfe0b95424aae498be3af78c516/updates.jsonl": {
+      "bytes": 5495,
+      "sha256": "047132012c71f618cb392f4de9fb987a2dddcd9cc767ce2c798889b5fcbdb005"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_uniform_t050.bd5b8f9ad0/branch_start.json": {
+      "bytes": 1500,
+      "sha256": "d52ec9e2785f2a6bde4fab1fc091e6ae8b26fb9cfd9e96e7b10e8e0b18ff44ed"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_uniform_t050.bd5b8f9ad0/history.jsonl": {
+      "bytes": 19137,
+      "sha256": "8666d3abb84bdf7e8b6f7bc98e7f2563ff719b216ea35dc74f2a9e3de9c693db"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_uniform_t050.bd5b8f9ad0/latest.pt": {
+      "bytes": 97121,
+      "sha256": "c49d8fbbd6fffd33736e8d96e542a7df5fc06969083006ddd5524440a589eebc"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_uniform_t050.bd5b8f9ad0/manifest.json": {
+      "bytes": 2347,
+      "sha256": "e23afcce45376abccca5192d166f85d0864aa3edd5af10cad410f08db627f5a1"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_uniform_t050.bd5b8f9ad0/snapshots/step-000075.pt": {
+      "bytes": 97121,
+      "sha256": "5274dcb70e3b4fac9bbb81db77c0296e20296295740c8f4a232c743a875b8cfc"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_uniform_t050.bd5b8f9ad0/snapshots.jsonl": {
+      "bytes": 1201,
+      "sha256": "729ad457fd0ee02902205201ef1fd3f080586a4696aaf4ce438a1fe1afc5dd73"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_uniform_t050.bd5b8f9ad0/training_stats.jsonl": {
+      "bytes": 5091,
+      "sha256": "2345a9881ebb02020371808d7dd4ca9fb133b84c17dbaa657ec802463774565f"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.on_monitored.8f37807778/.execution.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.on_monitored.8f37807778/attempts/071579076c4a4b0a9eb4f89b63bd7427/events.jsonl": {
+      "bytes": 88411,
+      "sha256": "2fc72a82fc05a430aacad8aaac1b0ca6e62005aad075ff155b01e354761d654b"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.on_monitored.8f37807778/attempts/071579076c4a4b0a9eb4f89b63bd7427/updates.jsonl": {
+      "bytes": 12791,
+      "sha256": "b557a74ac6531d1ad1dac677d3a767a95ef42a5c3961f4e01d17995637ebc33f"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.on_monitored.8f37807778/branch_start.json": {
+      "bytes": 1250,
+      "sha256": "42a78062c52a9555bb4bf2e903826673af97fa3d8a923e0457a18797135e4bb5"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.on_monitored.8f37807778/history.jsonl": {
+      "bytes": 23722,
+      "sha256": "a46c1642100e4596fefd12ba82f8b7edba28196efd29c99f0e75a2f1e3335617"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.on_monitored.8f37807778/latest.pt": {
+      "bytes": 32204,
+      "sha256": "7a1d770e4cb203cdfb2d039856aa67a8799aaf00a1fdc0db2ca416ce3b9c8478"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.on_monitored.8f37807778/manifest.json": {
+      "bytes": 2053,
+      "sha256": "bb238c361567f58ba59853d3f4015b3fe9799ca5e2915902deaad0f9b778b2fe"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.on_monitored.8f37807778/signals.jsonl": {
+      "bytes": 1708,
+      "sha256": "908f9182e0c2d932dc110799a9a3165325df884ae5907cc7adf010ef434e81c7"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.on_monitored.8f37807778/snapshots/step-000050.pt": {
+      "bytes": 23386,
+      "sha256": "2580899b5e5deeee12a15b04a9cebfd1f44a539e6eb31678d52304a75191540f"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.on_monitored.8f37807778/snapshots/step-000075.pt": {
+      "bytes": 32204,
+      "sha256": "469458363d6bdb90674c220703af4f64c7dd3730c5abf5ffac5ffe42d5c8922a"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.on_monitored.8f37807778/snapshots.jsonl": {
+      "bytes": 2404,
+      "sha256": "6011b0bf3b89e301ad287eaa4bc87f9d58c772fc61ac118143620b1aa36b5375"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s6.on_monitored.8f37807778/training_stats.jsonl": {
+      "bytes": 5088,
+      "sha256": "78b3327242a4d2e12733b93eeb5889c69bd259ca2bc17d93cfa53a20332d53c0"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t025.0cf7de8bd3/.execution.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t025.0cf7de8bd3/attempts/c42bf37f8d3c42c5bb886321836a1c26/events.jsonl": {
+      "bytes": 51211,
+      "sha256": "e35ff89779e3bca10d505823c009a6c17989c46bd18759ae2987ea61eb7ef488"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t025.0cf7de8bd3/attempts/c42bf37f8d3c42c5bb886321836a1c26/updates.jsonl": {
+      "bytes": 4552,
+      "sha256": "54e0c9845226011c5b75bef160de45059d859a1882aee3d9c65595b5d9b6dca5"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t025.0cf7de8bd3/branch_start.json": {
+      "bytes": 1496,
+      "sha256": "cd6cdd447b260e96f7e0083877943b82e68fa69ca62b64d59e7aa2c941c2a24f"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t025.0cf7de8bd3/history.jsonl": {
+      "bytes": 15902,
+      "sha256": "eb74d113a257bb146ff2f5417e9849bbd78ae86a9b5fff779666dc8969335d8b"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t025.0cf7de8bd3/latest.pt": {
+      "bytes": 79473,
+      "sha256": "68666c4e84cdb231a7a60dc1f7c3eb1d1e44c198c67b051e82ede10cd4449dca"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t025.0cf7de8bd3/manifest.json": {
+      "bytes": 2477,
+      "sha256": "8e1feed864a0d286feb562107975fac60c1274982654f5631618d14a74956cd0"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t025.0cf7de8bd3/snapshots/step-000096.pt": {
+      "bytes": 79473,
+      "sha256": "a6f42372bb52912a6bc78826120bbf1e8a18748a8e06b84b8ee851a1f263852d"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t025.0cf7de8bd3/snapshots.jsonl": {
+      "bytes": 1196,
+      "sha256": "21ba1832f23b80f74cb5586a4316da1118ed6e6eb20f0615bb05b783a25882e4"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t025.0cf7de8bd3/training_stats.jsonl": {
+      "bytes": 6517,
+      "sha256": "728a01dd63ab7673d4320b8c3226f610ce79f86a34ac0868abeba11fc84e7e83"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t025.e4bd3f0ec9/.execution.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t025.e4bd3f0ec9/attempts/63c39de93fbb4c3da064790c36ce4c00/events.jsonl": {
+      "bytes": 121919,
+      "sha256": "b96635eebab1c933a010d0bc33cdf99e630db9a9430c292b9bf90cec9e6b76db"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t025.e4bd3f0ec9/attempts/63c39de93fbb4c3da064790c36ce4c00/updates.jsonl": {
+      "bytes": 10832,
+      "sha256": "dea1d9534c4a7595af821f0db1ae7b7c2c9583b33120e6c46487fe03e3692e02"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t025.e4bd3f0ec9/branch_start.json": {
+      "bytes": 1243,
+      "sha256": "4cd5c3c79f6f32f2237fcad5a6cd9b074690cbd367964a340c73f33f0802c832"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t025.e4bd3f0ec9/history.jsonl": {
+      "bytes": 37858,
+      "sha256": "684f6561e0bc03f9a53389403b91bef970807804c2b04334bfd1e6f552d691f7"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t025.e4bd3f0ec9/latest.pt": {
+      "bytes": 163131,
+      "sha256": "6ecbf1b40aa0b814f3a9fdedcbd4f4077085172047c13db5e097b1b891d0947d"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t025.e4bd3f0ec9/manifest.json": {
+      "bytes": 2126,
+      "sha256": "77bfa20178074042ebc77888060a22dcfe0d2610c0e6a2ac1a9352252667c34f"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t025.e4bd3f0ec9/snapshots/step-000050.pt": {
+      "bytes": 90032,
+      "sha256": "e278d49ac10cf1256f5c542901ac0e68deb571485f4ca674b889203aa96a66f8"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t025.e4bd3f0ec9/snapshots/step-000075.pt": {
+      "bytes": 163131,
+      "sha256": "ba418353195a34ab374573bccf82a39e10b822cf0a38a2a95212fe48be3d3b6b"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t025.e4bd3f0ec9/snapshots.jsonl": {
+      "bytes": 2390,
+      "sha256": "7e4c6629dfa9e469d607491e66cac539c925912b44d4d3f52aa30148dbe3da5a"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t025.e4bd3f0ec9/training_stats.jsonl": {
+      "bytes": 5089,
+      "sha256": "1c04b732e53a24a36b8b3b9c0157f814abaf6827f30ebb3b75e73f801ec8980d"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t050.4f7df5fa3f/.execution.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t050.4f7df5fa3f/attempts/0303f774ee68404ab625249002180986/events.jsonl": {
+      "bytes": 31704,
+      "sha256": "91613969a197f08862e207efdb3286115f2397b2a87a7d27639f823cb65caa48"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t050.4f7df5fa3f/attempts/0303f774ee68404ab625249002180986/updates.jsonl": {
+      "bytes": 2803,
+      "sha256": "7059ebd3183985200463898452dde5265bd6e7829926699859dba09da2765a6d"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t050.4f7df5fa3f/branch_start.json": {
+      "bytes": 1496,
+      "sha256": "ab274cc3515113419809e38c65d79e942ab4c0f29911a80863d74623330cee88"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t050.4f7df5fa3f/history.jsonl": {
+      "bytes": 9830,
+      "sha256": "e3cbb912841d9ba2123e8b999a36f0098533e7aa04d4a70bf2d5027ee980208c"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t050.4f7df5fa3f/latest.pt": {
+      "bytes": 56019,
+      "sha256": "2d33947bed16c7ee6729df0869560a4465540565e3d01c65040a4333dd1da947"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t050.4f7df5fa3f/manifest.json": {
+      "bytes": 2478,
+      "sha256": "06f7160b4e8a6a2c6a1cdea7610945cc66e119af16fa6c4c15a47832f4063e7f"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t050.4f7df5fa3f/snapshots/step-000088.pt": {
+      "bytes": 56019,
+      "sha256": "0c537b254180ee89cfb97b4a11962ca37b018f8ed4f1bfd00a758cf253d963c6"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t050.4f7df5fa3f/snapshots.jsonl": {
+      "bytes": 1196,
+      "sha256": "741d42f96743d3a69663572e7bdb6fa4ff564c7d02d26c3bfc92c0a87bcb0029"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t050.4f7df5fa3f/training_stats.jsonl": {
+      "bytes": 5968,
+      "sha256": "9eb43e456aa4367ad276a56da9230f02a6cc60530c0101ba5b42b295046da0d1"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t050.80da76783b/.execution.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t050.80da76783b/attempts/546e9baada404cfca50a1cf398a32769/events.jsonl": {
+      "bytes": 60963,
+      "sha256": "24c0ad515f7aa99a3dafd7dca02d725776c6ff1f6851e92e3da8a0ef1bd15e94"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t050.80da76783b/attempts/546e9baada404cfca50a1cf398a32769/updates.jsonl": {
+      "bytes": 5365,
+      "sha256": "432af05f6b9e94f8198a35b888492b9230936c724b5724095b340580e3086223"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t050.80da76783b/branch_start.json": {
+      "bytes": 1496,
+      "sha256": "0baa24a7348a4c08805416676f677233d0e1b38b7f36a4db39cb5210e7b19a6f"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t050.80da76783b/history.jsonl": {
+      "bytes": 18874,
+      "sha256": "425cae27ecabb09eb8ca3a43789c18a1321a874fe5bbfa1829b7da96b8c9cfb3"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t050.80da76783b/latest.pt": {
+      "bytes": 90495,
+      "sha256": "72e2a82a27d914a3e4351207d4a6fa3aa0dd6e7db9d5379fb3f4de6aa16dcb23"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t050.80da76783b/manifest.json": {
+      "bytes": 2309,
+      "sha256": "c3f18353ccd776eed91b001a890dbfbac7364aea8a1504e6c6f2174f415be06a"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t050.80da76783b/snapshots/step-000075.pt": {
+      "bytes": 90495,
+      "sha256": "60d9ce97e15c972de9dd16054fd4af1242ae5c2d5c2ebc3a7cbb4be649ddf33b"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t050.80da76783b/snapshots.jsonl": {
+      "bytes": 1195,
+      "sha256": "4f58d42b671a98665b514bfd1ec1b5a470c76d2954faa10abe51f3f63ef7a88e"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t050.80da76783b/training_stats.jsonl": {
+      "bytes": 5086,
+      "sha256": "f0837e223c280a59568ee46beb872deffba4621509d5251b9dce8b9ff8790928"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_uniform_t050.c9d16effba/.execution.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_uniform_t050.c9d16effba/attempts/4cb9b33f2b08440fa0c243ed8aa02904/events.jsonl": {
+      "bytes": 61317,
+      "sha256": "b1eedd36750da956876e162ec22f6b473a74237578128a2b84960fce39383b99"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_uniform_t050.c9d16effba/attempts/4cb9b33f2b08440fa0c243ed8aa02904/updates.jsonl": {
+      "bytes": 5557,
+      "sha256": "6f9bcf6f89dbda9b4004fdcb93e75c5c9438887a02a8673b81851a30dd313df0"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_uniform_t050.c9d16effba/branch_start.json": {
+      "bytes": 1500,
+      "sha256": "9771c9b0db680ffe70dec6b104574b0d3c3b72141aaac37feb759dd21384f7a7"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_uniform_t050.c9d16effba/history.jsonl": {
+      "bytes": 19188,
+      "sha256": "4b3883d9ac4e28810032d8defcfbc31e06fdb2d9e65e4f9f8db44b57796bdbd6"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_uniform_t050.c9d16effba/latest.pt": {
+      "bytes": 97135,
+      "sha256": "fd235a84cc7bf3b0521a5c7705c54a49903139911f40e24e6eb7ca365f7e5e1d"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_uniform_t050.c9d16effba/manifest.json": {
+      "bytes": 2347,
+      "sha256": "7984c14756a5e69bdfa349bc2f41d02b37bade5c63a6edcfa6397cdf3e033b57"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_uniform_t050.c9d16effba/snapshots/step-000075.pt": {
+      "bytes": 97135,
+      "sha256": "d50eb3d437ba7049ae2cc1e3f35120e1cfd45c18d6e94be9674856cb65a2ff52"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_uniform_t050.c9d16effba/snapshots.jsonl": {
+      "bytes": 1201,
+      "sha256": "65977b344e738aad78af4cf57e87f381ea0fb60067e2d137a656e5611dc70381"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_uniform_t050.c9d16effba/training_stats.jsonl": {
+      "bytes": 5087,
+      "sha256": "a580b5c5ef48e8c0dcc09647be1158d82677ac49a8aa9341a978f5e78c339a3a"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.on_monitored.ff76516bff/.execution.lock": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.on_monitored.ff76516bff/attempts/80e32d6e31b44ff8a01cb66d865f21c7/events.jsonl": {
+      "bytes": 88401,
+      "sha256": "0c47f27effb9086004249b5bb5e514987b880b2db41f48c5e399e3e82425534d"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.on_monitored.ff76516bff/attempts/80e32d6e31b44ff8a01cb66d865f21c7/updates.jsonl": {
+      "bytes": 12803,
+      "sha256": "19c942f99c1bef3bd54a2320b4c0225859babed19ee2c2db2712b25cbd64b459"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.on_monitored.ff76516bff/branch_start.json": {
+      "bytes": 1250,
+      "sha256": "df2347e2aa250e983ba370158847ff89a6f8b671930955456eb2a7f7fe8c35fd"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.on_monitored.ff76516bff/history.jsonl": {
+      "bytes": 23732,
+      "sha256": "68e1af0f2f8672d3c6ec0097a536e5c2b8fa674cadf94c9a045c32a1e3d266b4"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.on_monitored.ff76516bff/latest.pt": {
+      "bytes": 32223,
+      "sha256": "567c01f61c1f95950ed8f617b4c1026d9c5280909a0f96ed083ae54a544942ce"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.on_monitored.ff76516bff/manifest.json": {
+      "bytes": 2053,
+      "sha256": "db62976939ecd2fae6fe3d41875353555253e69eaea19e4e39e37bc8c5a4011a"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.on_monitored.ff76516bff/signals.jsonl": {
+      "bytes": 1711,
+      "sha256": "c38a4188d6b6f49f1af8a22a2a520c1b323478de44c732f9bd822902e8c2989f"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.on_monitored.ff76516bff/snapshots/step-000050.pt": {
+      "bytes": 23399,
+      "sha256": "9ef397c87ccc6963d5e37d05f18b7fb91e14872e4e9a4c64117f90ba951dd68f"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.on_monitored.ff76516bff/snapshots/step-000075.pt": {
+      "bytes": 32223,
+      "sha256": "0b39b5765c16638d9517df96a2366a232ef3cec23cfbc5696809f622b8521081"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.on_monitored.ff76516bff/snapshots.jsonl": {
+      "bytes": 2403,
+      "sha256": "5b1b7d7cec0dbb28bf4db4d10249ea0fa1896035dda98823916249a1f7c40f82"
+    },
+    "olmo_math/runs/olmo_math.rebuttal_bank.s7.on_monitored.ff76516bff/training_stats.jsonl": {
+      "bytes": 5087,
+      "sha256": "f6099dae8779ac6670bf7ae4dcc8cc7218346ebd4a34e9c10a798826a7d235b9"
+    },
+    "olmo_math/software-finalized.json": {
+      "bytes": 49,
+      "sha256": "bb1089603bb683e6b73df2380077df544c27c07274b29043c079db05e784c41f"
+    }
+  }
+}

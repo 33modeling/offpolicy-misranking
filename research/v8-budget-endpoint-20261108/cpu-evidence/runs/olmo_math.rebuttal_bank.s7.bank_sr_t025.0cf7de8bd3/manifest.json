@@ -1,0 +1,73 @@
+{
+  "attempts": [
+    {
+      "attempt_id": "c42bf37f8d3c42c5bb886321836a1c26",
+      "start": "fork",
+      "start_update": 75,
+      "started_at": "2026-11-08T00:35:23+00:00"
+    }
+  ],
+  "cohort_id": "olmo_math",
+  "completed_updates": 96,
+  "config_hash": "0cf7de8bd366c24880d53cc456d6a17984f424b19ea7dedcdd524bcbe1e9cd84",
+  "created_at": "2026-11-08T00:35:23+00:00",
+  "final_phase": "sr",
+  "finished_at": "2026-11-08T00:35:24+00:00",
+  "method_id": "bank_sr_t025",
+  "no_switch": false,
+  "role": "rebuttal_bank",
+  "run_id": "olmo_math.rebuttal_bank.s7.bank_sr_t025.0cf7de8bd3",
+  "status": "completed_budget",
+  "study_id": "rlvr_switching_rebuttal_v8",
+  "task": {
+    "budget_cap_gpu_seconds": 0.1497205370105803,
+    "cohort_id": "olmo_math",
+    "config_hash": "0cf7de8bd366c24880d53cc456d6a17984f424b19ea7dedcdd524bcbe1e9cd84",
+    "cost_offset_gpu_seconds": 0.1054888223297894,
+    "deps": [
+      "olmo_math.rebuttal_bank.s7.bank_sr_t025.e4bd3f0ec9"
+    ],
+    "equivalence_key": "b9026c6fa3e48a3aa3e230ba22503f1694d309edb30c89023602ab39535fd04a",
+    "est_update_gpu_seconds": 0.002109776446595788,
+    "hard_cap": 100,
+    "horizon": 75,
+    "kind": "train",
+    "latest_every": 1,
+    "method": {
+      "branch_update": 25,
+      "cache": {
+        "policy": "static_initial"
+      },
+      "destination": null,
+      "extension_of": "olmo_math.rebuttal_bank.s7.bank_sr_t025.e4bd3f0ec9",
+      "family": "fixed_sr",
+      "initial_selector": "sr",
+      "method_id": "bank_sr_t025",
+      "monitor": false,
+      "policy": {
+        "policy": "never"
+      },
+      "prefix_updates": 25
+    },
+    "method_id": "bank_sr_t025",
+    "parent": {
+      "completed_update": 75,
+      "kind": "snapshot",
+      "path": "/home/kms/reports/rlvr-v8-nodes-20261108/budget-endpoint-final/test_real_v8_cpu_three_worker_0/olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t025.e4bd3f0ec9/snapshots/step-000075.pt",
+      "run_id": "olmo_math.rebuttal_bank.s7.bank_sr_t025.e4bd3f0ec9",
+      "sha256": "ba418353195a34ab374573bccf82a39e10b822cf0a38a2a95212fe48be3d3b6b",
+      "state_hash": "71d25b89b9a866aea4854ae40f993464211620b457d5fce539276e19eb9b4210"
+    },
+    "retain_updates": [
+      75,
+      100
+    ],
+    "role": "rebuttal_bank",
+    "run_id": "olmo_math.rebuttal_bank.s7.bank_sr_t025.0cf7de8bd3",
+    "stage": "budget-extension",
+    "study_id": "rlvr_switching_rebuttal_v8",
+    "training_seed": 7
+  },
+  "training_seed": 7,
+  "transition_update": null
+}

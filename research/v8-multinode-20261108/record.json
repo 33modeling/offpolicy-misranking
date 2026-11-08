@@ -163,5 +163,9 @@
     "V8-013",
     "V8-014",
     "V8-015"
-  ]
+  ],
+  "followup_budget_coverage_correction": {
+    "record": "research/v8-budget-endpoint-20261108/record.json",
+    "note": "Earlier28-job completion and70 passing checks did not verify every canonical budget endpoint. New regression reproduces omitted extension evaluation on the earlier code; the corrected coordinator executes37 tasks and verifies16 selected endpoints. Earlier evidence is preserved and is not complete budget-coverage proof."
+  }
 }

@@ -1,0 +1,70 @@
+{
+  "attempts": [
+    {
+      "attempt_id": "ada7f31da16d4bb294a36a897ed4f011",
+      "start": "fork",
+      "start_update": 50,
+      "started_at": "2026-11-08T00:35:23+00:00"
+    }
+  ],
+  "cohort_id": "olmo_math",
+  "completed_updates": 75,
+  "config_hash": "cc5b523666093c217f330f5d5fa8232d5bb11867b85ae2d316c0381966e2d02e",
+  "created_at": "2026-11-08T00:35:23+00:00",
+  "final_phase": "sr",
+  "finished_at": "2026-11-08T00:35:23+00:00",
+  "method_id": "bank_sr_t050",
+  "no_switch": false,
+  "role": "rebuttal_bank",
+  "run_id": "olmo_math.rebuttal_bank.s6.bank_sr_t050.cc5b523666",
+  "status": "completed_horizon",
+  "study_id": "rlvr_switching_rebuttal_v8",
+  "task": {
+    "budget_cap_gpu_seconds": null,
+    "cohort_id": "olmo_math",
+    "config_hash": "cc5b523666093c217f330f5d5fa8232d5bb11867b85ae2d316c0381966e2d02e",
+    "cost_offset_gpu_seconds": null,
+    "deps": [
+      "olmo_math.rebuttal_bank.s6.on_monitored.8f37807778"
+    ],
+    "equivalence_key": "d1076d91a05898d9b1c1f4d4d02ba981cc416bc46c1c1ab4d38ce8367b2927b8",
+    "hard_cap": null,
+    "horizon": 75,
+    "kind": "train",
+    "latest_every": 1,
+    "method": {
+      "branch_update": 50,
+      "cache": {
+        "policy": "static_initial"
+      },
+      "destination": null,
+      "family": "fixed_sr",
+      "initial_selector": "sr",
+      "method_id": "bank_sr_t050",
+      "monitor": false,
+      "policy": {
+        "policy": "never"
+      },
+      "prefix_updates": 25
+    },
+    "method_id": "bank_sr_t050",
+    "parent": {
+      "completed_update": 50,
+      "kind": "snapshot",
+      "path": "/home/kms/reports/rlvr-v8-nodes-20261108/budget-endpoint-final/test_real_v8_cpu_three_worker_0/olmo_math/runs/olmo_math.rebuttal_bank.s6.on_monitored.8f37807778/snapshots/step-000050.pt",
+      "run_id": "olmo_math.rebuttal_bank.s6.on_monitored.8f37807778",
+      "sha256": "2580899b5e5deeee12a15b04a9cebfd1f44a539e6eb31678d52304a75191540f",
+      "state_hash": "a2340490e549a96059ed736646f91fde77eb756c466987599665152e313799c0"
+    },
+    "retain_updates": [
+      75
+    ],
+    "role": "rebuttal_bank",
+    "run_id": "olmo_math.rebuttal_bank.s6.bank_sr_t050.cc5b523666",
+    "stage": "bank-branches",
+    "study_id": "rlvr_switching_rebuttal_v8",
+    "training_seed": 6
+  },
+  "training_seed": 6,
+  "transition_update": null
+}

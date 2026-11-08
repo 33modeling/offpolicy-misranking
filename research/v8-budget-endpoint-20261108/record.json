@@ -1,0 +1,90 @@
+{
+  "kind": "budget endpoint checkpoint/run identity correction; CPU software results only",
+  "user_context": "multi-node acceleration and existing checkpoint reuse clarification",
+  "hypothesis": "Every cost-selected budget endpoint must be evaluated from its actual run/checkpoint identity, including extension runs and pre-switch trajectory endpoints.",
+  "baseline_commit": "5d1e8f50fcd7160978511850d4959d43af0544dc",
+  "paper_runner_commit": "3d0c08336950d2697dc66cbe3570a230e449f33b",
+  "source_sha256": {
+    "scripts/srgc_v8_nodes.py": "509f41bd73c14b071f8a74195aa5401b1f5bcfa46fdee853a040566a1c33e050",
+    "tests/test_srgc_v8_nodes.py": "66cc8351f4e5a14c48f6e3f6f0449b997f6800726994a82192b362c6847d2539",
+    "docs/V8_MULTINODE_H100.md": "e405b838bf2cfd3bec0a92f727bccde3c0c10301617e68c6208d2b5e1fbb2e47"
+  },
+  "cause": "The earlier coordinator, following published cluster.budget_eval_tasks, paired a policy row matched-horizon run_id with budget_endpoint_update. The actual selected endpoint can have a different run_id, so eval_tasks silently returned no checkpoint.",
+  "fix": "Capture the canonical SeedBank.budget_endpoint selector result while policy_rows executes; schedule its actual run_id/update/hash. Missing or changed selected checkpoint fails explicitly. Published paper source is untouched.",
+  "controls": [
+    "Same frozen trainer and source runtime",
+    "Same actual V8 ToyBackend seeds5/6/7 with prefix25,H75,safety100",
+    "Same frozen cost-only budget selection; no reward-based endpoint changes",
+    "Different seed evaluation sets100/70/40",
+    "Old coordinator blob with strengthened new integration assertion fails on missing selected checkpoint; fixed coordinator passes"
+  ],
+  "metrics": {
+    "tasks": "Unique dispatched task identity, not scientific result count",
+    "budget_coverage": "Each canonical selected endpoint run_id/update maps to the evaluated checkpoint SHA256",
+    "duplicates": "Multiple execution records per task identity",
+    "reward": "Training-batch logs and final held-out evaluations remain separate; CPU ToyBackend values are software data"
+  },
+  "software_results": {
+    "final_tests_passed": 70,
+    "failures": 0,
+    "skips": 0,
+    "old_code_regression_failed_as_expected": true,
+    "integration": {
+      "all_tasks_done": true,
+      "budget_endpoint_changed_run_cases": 16,
+      "budget_selected_checkpoints": 16,
+      "matched_updates": 75,
+      "new_GPU_jobs": 0,
+      "no_duplicate_execution": true,
+      "safety_cap": 100,
+      "scope": "CPU multi-process software integration; not scientific RLVR results",
+      "tasks": 37,
+      "training_seeds": [
+        5,
+        6,
+        7
+      ],
+      "workers": 3,
+      "phase_counts": {
+        "extension": 6,
+        "evaluation": 20,
+        "train": 11
+      },
+      "attempts": 37
+    }
+  },
+  "scientific_measurements": {
+    "new_GPU_jobs": 0,
+    "new_RLVR_results": 0,
+    "multi_H100_speedup": "unmeasured",
+    "actual_remote_checkpoint_files": "not mounted or inspected"
+  },
+  "failures_retained": [
+    "budget-endpoint-fix: first strengthened parent-process assertion could not import switching; test fixture corrected to initialize parent Runtime.",
+    "budget-endpoint-before: old-code probe omitted V8_NODES_TEST_RUNTIME and skipped; not counted as a reproduction.",
+    "budget-endpoint-before-verified: environment provided, old code assertion fails because extension checkpoint evaluation is absent.",
+    "budget-endpoint-final: all70 tests pass,37 tasks complete and all16 selected endpoints have matching evaluated snapshot hashes."
+  ],
+  "provenance": {
+    "raw_reports": "verification/raw-reports.json",
+    "raw_integration": "/home/kms/reports/rlvr-v8-nodes-20261108/budget-endpoint-final/test_real_v8_cpu_three_worker_0",
+    "raw_checkpoints_and_logs": "verification/raw-integration-manifest.json; original .pt/attempt logs retained at root",
+    "metadata": "cpu-evidence/",
+    "prior_partial_evidence": "research/v8-multinode-20261108/ remains preserved"
+  },
+  "checkpoint_reuse": {
+    "olmo_math": "existing seeds5–9 prefix.pt/prefix-ready.json",
+    "qwen_mbpp": "existing seeds5–9 prefix.pt/prefix-ready.json",
+    "resume": "same V8 task latest.pt; config/method identity must match",
+    "state": "model/optimizer/selector loaded; saved process RNG restored when present",
+    "qualification": "Code path verified; actual remote GPU files have not been inspected. Old275-update arm results are not automatically relabeled as new V8 runs."
+  },
+  "node_capacity": {
+    "hard_node_limit": null,
+    "GPUs_per_worker": 4,
+    "initial_ready_tasks_per_cohort": 10,
+    "initial_condition": "all five seed25 prefixes available; five On trajectories plus five SR25 branches",
+    "qualification": "Later checkpoint branches unlock more tasks; concurrency changes with dependencies and remaining tasks. Not a speedup or allocation measurement."
+  },
+  "reproduce": "CUDA_VISIBLE_DEVICES= V8_NODES_TEST_RUNTIME=/path/to/v8/experiments V8_HISTORY_TEST_RUNTIME=/path/to/v8/experiments python3 -m pytest --noconftest -q tests/test_srgc_v8_nodes.py tests/test_srgc_v8_history.py"
+}
