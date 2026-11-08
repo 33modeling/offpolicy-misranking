@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-08T11:57:20+09:00",
+  "recorded_at": "2026-11-08T12:14:04+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "7d89fb9b0efad70d49843b4302e831c0c10859e6",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/7d89fb9b0efad70d49843b4302e831c0c10859e6",
-    "all_available_commits": 1179,
+    "source_commit": "bf0660616df9a2206f0f1e03205c63a3f70542f0",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/bf0660616df9a2206f0f1e03205c63a3f70542f0",
+    "all_available_commits": 1186,
     "fix_commit_records": 118,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
@@ -24,7 +24,7 @@
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hang-fix-20261108:f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:7d89fb9b0efad70d49843b4302e831c0c10859e6",
+      "refs/heads/master:bf0660616df9a2206f0f1e03205c63a3f70542f0",
       "refs/remotes/origin/audit/codecheck-20260820:5dd447990296042e334679c85e7672477cd7c5d3",
       "refs/remotes/origin/audit/p1-integrity:5dfda89ec3be2cc4d60f8f0371eeaf00790f6644",
       "refs/remotes/origin/docs/mbpp-budget-incident-20260919:fa1c6897b2b26ef002dd165c94f58702b1f9e1ed",
@@ -33,7 +33,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:7d89fb9b0efad70d49843b4302e831c0c10859e6"
+      "refs/remotes/origin/master:bf0660616df9a2206f0f1e03205c63a3f70542f0"
     ]
   },
   "incidents": [
@@ -2908,6 +2908,14 @@
           "code_commit": "419072869dc1c9b280c4d3c47e5430b4e97e9d25",
           "text": "이전 실행기에서 같은 오류를 재현했다. 고정 원본3d0c083의 runtime/config/test를 코드 저장소 v8/experiments에 포함하고 자체 경로를 우선 찾게 수정했다. provenance audit용 역사 CSV6개도 원본 바이트 그대로 포함했다. 현 코드 구성의88검사 통과, upstream102개 중101통과·1skip. 새 archive를 별도 폴더에 풀어 실제 switching.cli inspect-repo import를 검증했다. 실제 H100 학습 성공으로 보고하지 않는다.",
           "url": "https://github.com/33modeling/offpolicy-misranking/tree/419072869dc1c9b280c4d3c47e5430b4e97e9d25/research/v8-runtime-delivery-20261108"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "delivery_regression_recorded",
+          "status": "code_fixed",
+          "text": "단일 버전 호환 묶음을 현재 큐 확인 없이 전달한 후 identity differs가 재발했다. 별도 V8-022에 사용자 보고와 Codex 책임, 모든 실패·원본 신원 자동 선택 수정을 보존했다. 실제 H100 진행은 미확인이다.",
+          "evidence_kind": "code_test"
         }
       ]
     },
@@ -3084,6 +3092,55 @@
           "type": "source_fix_verified",
           "status": "code_fixed",
           "text": "작업이 생성된 큐의 자동교체를 제거했다. 첫 update 전에도 이전 binding/control.lock을 보존하고 다른 runtime을 거부한다. 작업/고정입력이 없는 준비 실패 복구만 유지한다. 기존 실행용 호환판은 cbd68a4 coordinator와 v8 원본52파일을 그대로 보존한다.",
+          "evidence_kind": "code_test"
+        }
+      ]
+    },
+    {
+      "id": "V8-022",
+      "title": "현재 큐 신원을 확인하지 않고 단일 버전 호환 묶음을 배포·재시작 안내",
+      "area": "배포 호환성·기존 실험 재개",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "introduction_commit": "7d89fb9b0efad70d49843b4302e831c0c10859e6",
+      "cause": "Codex가 현재 큐를 cbd68a4로 가정한 compatibility archive를 전달했다. 파일 자체가 그 버전과 일치하는지만 검사했고 사용자 큐의 실제 coordinator/runner 해시와 Python/package 신원에 맞는지 자동 선택하지 않았다. 원격 binding을 받지 못해 사용자가 본 오류의 실제 차이 필드는 아직 미확인이다.",
+      "impact": "실행 명령이 다시 identity differs from this queue에서 거부돼 사용자 재시작과 노드 시간을 낭비했다. 큐 신원 검사는 끄거나 기록을 지워서 해결할 문제가 아니다.",
+      "attribution": "Codex의 배포 가정·호환 검증 누락과 재시작 안내 오류. 사용자 경로 설정이나 trainer 문제로 전가하지 않는다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "큐 실제 신원에 따른 원본 자동 선택",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/bf0660616df9a2206f0f1e03205c63a3f70542f0/scripts/v8_queue_runtime.py"
+        },
+        {
+          "kind": "code_test",
+          "label": "이전 실패·37검사·원본 Runtime/Pool 실제 재개·한계",
+          "url": "https://github.com/33modeling/offpolicy-misranking/tree/bf0660616df9a2206f0f1e03205c63a3f70542f0/research/v8-queue-source-20261108"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "reported",
+          "status": "open",
+          "text": "사용자가 이전 묶음 안내 뒤 v8 queue error identity differs from this queue를 다시 보고하고 즉시 수정과 모든 오류 영구 기록을 지시했다.",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "기존 binding을 읽고 coordinator/runner를 독립적으로 해시 대조한다. 기존 Python/package 버전도 맞춰 선택한다. 보관9실행기×5런타임45조합 및6개 실제 과거 Runtime/Pool 신원 재개를 포함한37검사 통과. 원래 큐/lock inode/학습 기록과 frozen trainer30파일 불변. 새 오프라인 묶음은74파일을 추출 뒤 검증했다. 실제 H100 재실행 성공은 아직 미확인이다.",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "failure_retained",
+          "status": "code_fixed",
+          "text": "개발 중 fixture3실패(동일한 commit에서 coordinator/runner가 함께 바뀐다고 가정한2건, 새 helper를 빠뜨린 기존 shell fixture1건)를 first.xml에 보존했다. 수정 전 단일 버전 묶음과 배포 안내도 삭제하지 않고 superseded 기록으로 남긴다.",
           "evidence_kind": "code_test"
         }
       ]

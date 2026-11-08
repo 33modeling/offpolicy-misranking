@@ -12502,6 +12502,76 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "89a5916bc4afad595abae9a4677650658fd3b23d",
+      "at": "2026-11-08T11:59:27+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Record V8 stop recovery, queue guard and unresolved loading report",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/89a5916bc4afad595abae9a4677650658fd3b23d",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "ec3d4de00caf4f00f8b03cc88298e7ba2216c557",
+      "at": "2026-11-08T12:00:03+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Verify interrupted V8 reward exports and retained checkpoints",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/ec3d4de00caf4f00f8b03cc88298e7ba2216c557",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "32365b355b939686799bb0429059ad1f2377049e",
+      "at": "2026-11-08T12:02:19+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 node launcher: shared GPU leases, busy wait, cohort isolation, clearer startup errors",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/32365b355b939686799bb0429059ad1f2377049e",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "aaa378624afcd4e3dbdaa390fc5541eb89c1f243",
+      "at": "2026-11-08T12:11:55+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Resume V8 queues with their exact archived source and Python identity",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/aaa378624afcd4e3dbdaa390fc5541eb89c1f243",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "ec96cf92827c2ca79db2678582ee8d20e2fd9b69",
+      "at": "2026-11-08T12:07:43+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 queue: explicit --new-queue for a stuck queue started by another bundle",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/ec96cf92827c2ca79db2678582ee8d20e2fd9b69",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "0fc190149fc6b81994980a8754551b14470abd66",
+      "at": "2026-11-08T12:11:55+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Integrate explicit queue restart with exact-source resume",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/0fc190149fc6b81994980a8754551b14470abd66",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "bf0660616df9a2206f0f1e03205c63a3f70542f0",
+      "at": "2026-11-08T12:12:50+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Package every published V8 queue source and retain recovery regressions",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/bf0660616df9a2206f0f1e03205c63a3f70542f0",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

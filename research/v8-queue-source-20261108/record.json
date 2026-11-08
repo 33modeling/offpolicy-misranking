@@ -22,5 +22,21 @@
   "archive_builder": "scripts/build_v8_runtime_archive.py uses local Git objects only; v8/queue-runtimes.zip is carried offline.",
   "source_fix_commit": "aaa3786",
   "command": "sh scripts/run_v8_nodes.sh",
-  "verification": "37targeted cases passed after integrating latestec96cf9; includes45historical coordinator/runner combinations and six real original Runtime/Pool acceptance checks. No GPU training was run."
+  "verification": "37targeted cases passed after integrating latestec96cf9; includes45historical coordinator/runner combinations and six real original Runtime/Pool acceptance checks. No GPU training was run.",
+  "delivery": {
+    "primary": "git pull; sh scripts/run_v8_nodes.sh",
+    "user_latest_instruction": "User will only git pull; no extraction steps. Exact historical source archive is tracked in v8/queue-runtimes.zip and selector is tracked in scripts.",
+    "legacy_optional_archive": {
+      "commit": "bf0660616df9a2206f0f1e03205c63a3f70542f0",
+      "archive": "/home/kms/Downloads/rlvr-v8-queue-fix-bf06606.tar.gz",
+      "sha256": "3587f1824e2325a550fc133f32d1209590717196382ed6ee34fb10f742216c1b",
+      "files": 74,
+      "all_files_verified_after_extraction": true,
+      "two_cohort_status_pass": true,
+      "historical_source_archive_included": true,
+      "GPU_jobs": 0,
+      "extracted_root": "/home/kms/reports/rlvr-v8-stop-20261108/rlvr-v8-queue-fix-bf06606/rlvr-v8-queue-fix-bf06606"
+    },
+    "actual_H100_execution": "unverified"
+  }
 }
