@@ -1,0 +1,15 @@
+{
+  "kind": "read-only diagnosis of reported Loading weights stall",
+  "user_report": "loading weights 하고 멈춰 잇는데?",
+  "status": "underlying runtime cause unverified; awaiting last log lines and elapsed time",
+  "confirmed_code_observation": "V8 worker has no per-update console output; progress.record is disabled when SRGC_PROGRESS_DIR is not configured. This does not prove that the reported job is healthy or stalled.",
+  "tool": "sh scripts/v8_probe.sh",
+  "behavior": "read nvidia-smi plus active worker V8_ROOT, local job metadata, current-attempt update record and bounded log tail; no Torch import or checkpoint load, no queue edits/signals/restarts",
+  "checks": "5CPU regressions pass: read-only snapshot, existing default root, active process root discovery, current-attempt/partial record isolation, Loading-only state without false training claim",
+  "scientific_results": {
+    "new_GPU_jobs": 0,
+    "new_RLVR_results": 0,
+    "current_H100_health": "unknown"
+  },
+  "limits": "A single unchanged snapshot or GPU activity is not proof of learner progress. Printed updates are raw attempt records, not checkpoint durability confirmation."
+}
