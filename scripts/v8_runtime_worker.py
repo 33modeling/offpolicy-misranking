@@ -8,6 +8,7 @@ import signal
 import socket
 import sys
 import threading
+import uuid
 from v8_rpc import send,receive
 
 
@@ -25,6 +26,48 @@ def activate_trainer(environment):
     return code
 
 
+def child_result(rc,directory,environment,log,label):
+    """A real rank fault wins over an interruption marker; never turn errors into success."""
+    if not rc:return rc
+    failures=[]
+    for path in sorted(directory.glob('rank-*-error.json')):
+        try:
+            row=json.loads(path.read_text())
+            if row.get('invocation')!=environment['V8_FAILURE_TOKEN']:continue
+            error=row['error'];message=error.get('message',{})
+            if isinstance(message,str):message=dict(message=message)
+            failures.append(dict(rank=row['rank'],message=message.get('message','Unknown rank error'),
+                traceback=message.get('extraInfo',{}).get('py_callstack'),error_file=str(path),original_error=error))
+        except (OSError,ValueError,KeyError,TypeError,AttributeError) as exc:
+            print(f'Cannot read rank error {path}: {exc}; original process exit={rc}',flush=True)
+    if failures:
+        report=dict(schema=1,attempt_id=directory.name,exit_code=rc,task=label,failures=failures)
+        try:
+            target=directory/'child-failure.json';temporary=target.with_suffix('.tmp')
+            temporary.write_text(json.dumps(report)+'\n');os.replace(temporary,target)
+        except OSError as exc:print(f'Cannot retain child failure summary: {exc}; log={log}',flush=True)
+        for failure in failures:
+            text=f'RANK FAILURE rank={failure["rank"]}: {failure["message"]}; traceback={failure["error_file"]}'
+            print(text,flush=True)
+            try:
+                with Path(log).open('a') as handle:handle.write(text+'\n')
+            except OSError as exc:print(f'Cannot append rank failure to {log}: {exc}',flush=True)
+        return rc
+    marker=Path(environment['V8_EXIT_FILE'])
+    try:
+        row=json.loads(marker.read_text())
+        if (type(row.get('exit_code')) is int and row['exit_code']==75
+                and row.get('status') in ('busy','interrupted')
+                and (not label or not row.get('task') or row['task']==label)):
+            print(f'TASK {row["status"].upper()}: {label}; original child exit75, '
+                  f'torchrun exit={rc}; checkpoints retained',flush=True)
+            return 75
+    except FileNotFoundError:pass
+    except (OSError,ValueError,TypeError,AttributeError) as exc:
+        print(f'Cannot read task exit marker {marker}: {exc}; retaining process exit={rc}',flush=True)
+    return rc
+
+
 def run_srgc_child(runtime,command,log,fds,stop,*,extra=None,label=None,interval=5):
     """Use the existing SRGC lifecycle/progress watchdog; supervisor already spools its console."""
     code=activate_trainer(runtime.environment)
@@ -35,14 +78,17 @@ def run_srgc_child(runtime,command,log,fds,stop,*,extra=None,label=None,interval
         paths=[str(code),str(code/'src'),*environment.get('PYTHONPATH','').split(os.pathsep)]
         environment['PYTHONPATH']=os.pathsep.join(dict.fromkeys(path for path in paths if path))
     directory=Path(environment['SRGC_PROGRESS_DIR']);directory.mkdir(parents=True,exist_ok=True)
+    token=uuid.uuid4().hex
+    environment.update(V8_FAILURE_TOKEN=token,V8_EXIT_FILE=str(directory/('exit-'+token+'.json')))
     stall=float(environment.get('V8_TASK_STALL_SECONDS','1800'))
     if not math.isfinite(stall) or stall<=0:raise ValueError('V8_TASK_STALL_SECONDS must be finite and positive')
     print(f'RUN {runtime.cohort}:{label or "task"}; log={log}; '
           f'SRGC progress watchdog={stall:g}s; no completed optimizer update is implied',flush=True)
     try:
-        return run_child(command,Path(log),environment,pass_fds=tuple(fds),
+        rc=run_child(command,Path(log),environment,pass_fds=tuple(fds),
                          heartbeat=lambda pid:runtime.heartbeat('child:'+str(pid)),should_stop=stop.is_set,
                          interval=interval,progress=lambda:signature(directory),stall_seconds=stall)
+        return child_result(rc,directory,environment,log,label)
     except TimeoutError as exc:
         with Path(log).open('a') as handle:handle.write(f'TIMEOUT: {exc}\n')
         print(f'TIMEOUT {runtime.cohort}:{label or "task"}: {exc}; checkpoints retained',flush=True)

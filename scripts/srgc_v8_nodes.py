@@ -29,7 +29,7 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'independent-cohort-source-recovery-v6'
+DISPATCH_POLICY = 'independent-cohort-child-errors-v7'
 TERMINAL = {'completed_horizon', 'completed_budget'}
 PHASES = ('train', 'extension', 'evaluation')
 
@@ -421,6 +421,14 @@ class Pool:
     def finish(self,key,rc,runtime,stop):
         path=self.root/'jobs'/(key+'.json');job=read(path)
         job['attempts'][-1].update(exit_code=rc,ended_at=time.time())
+        failure_path=self.root/'progress'/job['attempts'][-1]['id']/'child-failure.json'
+        if failure_path.is_file():
+            try:
+                failure=read(failure_path)
+                if failure.get('attempt_id')==job['attempts'][-1]['id']:
+                    job['attempts'][-1]['child_failure']=failure
+            except (OSError,ValueError,AttributeError) as exc:
+                job['attempts'][-1]['error_record_read_error']=str(exc)
         try:done=runtime.done(job['task'])
         except Exception as exc:
             done=False;job['attempts'][-1]['output_validation_error']=str(exc)

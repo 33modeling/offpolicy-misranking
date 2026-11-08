@@ -153,6 +153,9 @@ def collect(base, cohort, now):
             lines = [x for x in tail(log, 32768) if x.strip()]
             row['last_line'] = lines[-1].strip()[:160] if lines else None
             row['error'] = row.get('error') or last_error_line(lines) or (str(attempt.get('error'))[:200] if attempt.get('error') else None)
+            failures=(attempt.get('child_failure') or {}).get('failures') or []
+            if failures:
+                row['error']='; '.join(f"rank {f.get('rank')}: {f.get('message')}" for f in failures)[:600]
         if row['status'] in ('running', 'unconfirmed') and attempt.get('id'):
             events = progress_events(base, queue, attempt.get('id'), row.get('host'), now)
             row['progress'], progress_age = progress_text(events)
