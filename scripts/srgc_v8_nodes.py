@@ -377,15 +377,12 @@ def worker_loop(pool,runtime,worker,stop,*,poll=3,device_fds=(),retry=False):
 
 
 def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_gate=None):
-    """One GPU group takes the next ready job from any cohort, without fixed shares.
-
-    A cohort whose setup or task fails is recorded and left alone; the worker keeps
-    serving the other cohort and returns 1 at the end (never a silent success).
-    gpu_gate() -> (ok, message) defers new GPU claims while the GPUs are in use.
-    """
+    """Finish healthy setup first; globally serialize only lease-count comparison and task claim."""
     if not pairs:raise ValueError('At least one cohort is required')
-    initialized=set();terminal={};last_report=0;reasons={};busy_report=0
+    initialized=set();terminal={};last_report=0;reasons={};busy_report=0;setup_report=0
     cursor=int(digest(worker)[:8],16)%len(pairs)
+    roots=[p.root.parent.parent if p.root.name=='.multi-node' else p.root.parent for p,_ in pairs]
+    dispatch_lock=Path(os.path.commonpath([str(p.resolve()) for p in roots]))/'.v8-dispatch.lock'
     for pool,runtime in pairs:
         def heartbeat(task=None,pool=pool):
             atomic(pool.root/'workers'/(digest(worker)+'.json'),
@@ -406,9 +403,11 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
         claim_ok,busy=(True,None) if gpu_gate is None else gpu_gate()
         if not claim_ok and time.monotonic()-busy_report>=300:
             print(f'[{worker}] waiting before new GPU work: {busy}',flush=True);busy_report=time.monotonic()
+        # Discovery/preparation is outside the global dispatch lock. Warm every cohort before
+        # taking any GPU job, rather than filling one model while the other is still undiscovered.
         for index in [(cursor+i)%len(pairs) for i in range(len(pairs))]:
             if index in terminal:continue
-            pool,runtime=pairs[index];claimed=None;action='waiting'
+            pool,runtime=pairs[index];action='waiting'
             with pool.control() as control:
                 if control is not None:
                     if index not in initialized:
@@ -420,7 +419,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                             give_up(index,pool,'node check',exc);progressed=True;continue
                         initialized.add(index)
                     try:
-                        action,claimed=pool.tick(runtime,worker,stop,claim_ok)
+                        action,_=pool.tick(runtime,worker,stop,False)
                         if action in ('prepare','freeze','finalize'):
                             print(f'[{worker}] {cohort(pool)}: CPU stage {action} started',flush=True)
                             runtime.barrier(action,control.fd,stop,device_fds)
@@ -437,7 +436,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                         if stop.is_set():return 75
                         if (pool.root/'state.json').exists():pool.fail(f'{type(exc).__name__}: {exc}')
                         give_up(index,pool,'stage',exc);progressed=True;continue
-            runtime.heartbeat(claimed[2].get('run_id') if claimed else None)
+            runtime.heartbeat(None)
             if action=='failed':
                 state=pool.queue_state()
                 reasons[cohort(pool)]=canonical(state.get('failure'))
@@ -446,7 +445,46 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
             if action in ('complete','failed'):
                 terminal[index]=action;progressed=True;continue
             if action=='advance':progressed=True
-            if not claimed:continue
+        pending_setup=[]
+        for index,(pool,_) in enumerate(pairs):
+            if index in terminal:continue
+            state=read(pool.root/'state.json') if (pool.root/'state.json').exists() else {}
+            if not state.get('failure') and state.get('phase','prepare')=='prepare':pending_setup.append(cohort(pool))
+        claimed=None;index=None
+        if pending_setup:
+            if time.monotonic()-setup_report>=30:
+                print(f'[{worker}] waiting for cohort setup: {", ".join(pending_setup)}; no GPU jobs claimed until healthy setup is ready',flush=True)
+                setup_report=time.monotonic()
+        elif claim_ok and len(terminal)<len(pairs):
+            gate=Lock(dispatch_lock)
+            try:
+                if gate.acquire():
+                    # Kernel-held task leases, not heartbeat age or stale running labels, are
+                    # authoritative. Claim while this same shared lock remains held.
+                    live={i:len(pool.held_leases()) for i,(pool,_) in enumerate(pairs) if i not in terminal}
+                    order=sorted(live,key=lambda i:(live[i],(i-cursor)%len(pairs)))
+                    for candidate in order:
+                        pool,runtime=pairs[candidate]
+                        state=read(pool.root/'state.json')
+                        if state.get('phase') not in PHASES or state.get('failure'):continue
+                        with pool.control() as control:
+                            if control is None:
+                                # Metadata contention is not evidence that the less busy cohort
+                                # has no work. Retry instead of sending everyone to the other model.
+                                break
+                            try:action,claimed=pool.tick(runtime,worker,stop,True)
+                            except BindingMismatch as exc:
+                                give_up(candidate,pool,'queue identity',exc);progressed=True;continue
+                            except Exception as exc:
+                                if stop.is_set():return 75
+                                pool.fail(f'{type(exc).__name__}: {exc}')
+                                give_up(candidate,pool,'stage',exc);progressed=True;continue
+                            if claimed:index=candidate;break
+                            if action=='advance':progressed=True
+            finally:gate.close()
+        # GPU execution, admission and CPU barriers NEVER hold the cross-cohort lock.
+        if claimed is not None:
+            pool,runtime=pairs[index]
             lease,key,task,attempt=claimed;cursor=(index+1)%len(pairs)
             log=pool.root/'logs'/(attempt['id']+'.log')
             print(f'[{worker}] {time.strftime("%Y-%m-%d %H:%M:%S")} {cohort(pool)} {task["kind"]} '
@@ -463,7 +501,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                     time.sleep(min(poll,.2))
             finally:lease.close()
             print(f'[{worker}] {time.strftime("%Y-%m-%d %H:%M:%S")} {cohort(pool)} task finished rc={rc} log={log}',flush=True)
-            dispatched=True;break
+            dispatched=True
         if time.monotonic()-last_report>=60:
             print(f'[{worker}] '+canonical({p.binding.get('cohort','?'):p.status() for p,_ in pairs}),flush=True)
             last_report=time.monotonic()

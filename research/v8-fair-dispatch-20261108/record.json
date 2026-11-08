@@ -1,0 +1,14 @@
+{
+  "user_report": "10nodes all Qwen MBPP; additional nodes appear unassigned; user reports wasted nodes and requests permanent bug record",
+  "observed_remote": "Actual OLMo node status requested; not received yet. No real-node duration/cost invented.",
+  "confirmed_reproduction": "Existing worker_loop_many with10different worker IDs all hashing to Qwen first assigns all10Qwen, including claims while OLMo setup is not ready. Existing10Qwen leased jobs also fail to prioritize newly arriving workers for OLMo.2baseline failures/1borrowing control pass.",
+  "fix_policy": "Finish healthy cohort setup before first GPU claim, compare actual held task leases under one shared dispatch lock, atomically claim from less busy ready cohort. No global lock held over preparation or GPU execution.",
+  "CPU_controls": "10simultaneous workers5/5;4lateworkers7/7; existing10legacyQwen leases cause next4workers to choose OLMo; no-ready OLMo allows Qwen borrowing; no duplicate task claims; checkpoint sentinel unchanged.3tests pass.",
+  "delivery_scope": "Core scheduler fix first. Exact-source resume driver integration is still in progress; existing historical queues do not automatically adopt a changed coordinator hash.",
+  "checkpoint_retention": "No .pt removal; immutable25-update snapshots preserved; latest.pt continues to be updated for recovery. Numeric engine, optimizer/RNG and reward files not edited.",
+  "scientific_results": {
+    "GPU_jobs": 0,
+    "real_H100_allocation_verified": false,
+    "wasted_node_time_or_money": null
+  }
+}

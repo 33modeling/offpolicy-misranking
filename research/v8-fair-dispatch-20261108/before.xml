@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="3" time="0.471" timestamp="2026-11-08T13:16:51.489221+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_fair_dispatch" name="test_ten_simultaneous_qwen_biased_nodes_and_four_late_nodes_are_balanced" time="0.191"><failure message="AssertionError: assert Counter({'qwen_mbpp': 10}) == {'olmo_math':...qwen_mbpp': 5}&#10;  &#10;  Differing items:&#10;  {'qwen_mbpp': 10} != {'qwen_mbpp': 5}&#10;  Right contains 1 more item:&#10;  {'olmo_math': 5}&#10;  Use -v to get more diff">tmp_path = PosixPath('/dev/shm/v8-fair-before-kms/test_ten_simultaneous_qwen_bia0')
+
+    def test_ten_simultaneous_qwen_biased_nodes_and_four_late_nodes_are_balanced(tmp_path):
+        ctx=mp.get_context('fork');stop=ctx.Event();processes=[];names=biased_names(14)
+        keep=tmp_path/'keep/step-000025.pt';keep.parent.mkdir();keep.write_bytes(b'optimizer RNG reward checkpoint sentinel')
+        before=hashlib.sha256(keep.read_bytes()).hexdigest()
+        try:
+            for name in names[:10]:
+                process=ctx.Process(target=node,args=(tmp_path,name,stop));process.start();processes.append(process)
+&gt;           assert wait_claims(tmp_path,10)=={'olmo_math':5,'qwen_mbpp':5}
+E           AssertionError: assert Counter({'qwen_mbpp': 10}) == {'olmo_math':...qwen_mbpp': 5}
+E             
+E             Differing items:
+E             {'qwen_mbpp': 10} != {'qwen_mbpp': 5}
+E             Right contains 1 more item:
+E             {'olmo_math': 5}
+E             Use -v to get more diff
+
+tests/test_srgc_v8_fair_dispatch.py:77: AssertionError</failure></testcase><testcase classname="tests.test_srgc_v8_fair_dispatch" name="test_new_workers_prefer_olmo_when_ten_legacy_qwen_jobs_hold_leases" time="0.033"><failure message="AssertionError: assert Counter({'olm...wen_mbpp': 2}) == {'olmo_math': 4}&#10;  &#10;  Differing items:&#10;  {'olmo_math': 2} != {'olmo_math': 4}&#10;  Left contains 1 more item:&#10;  {'qwen_mbpp': 2}&#10;  Use -v to get more diff">tmp_path = PosixPath('/dev/shm/v8-fair-before-kms/test_new_workers_prefer_olmo_w0')
+
+    def test_new_workers_prefer_olmo_when_ten_legacy_qwen_jobs_hold_leases(tmp_path):
+        ctx=mp.get_context('fork');stop=ctx.Event();processes=[];leases=[]
+        for cohort in ('olmo_math','qwen_mbpp'):
+            runtime=Runtime(tmp_path,cohort,stop);pool=nodes.Pool(tmp_path/cohort/'.multi-node',runtime.binding);pool.initialize()
+            nodes.atomic(pool.root/'state.json',dict(phase='train',failure=None,actions=[],failure_history=[]))
+            nodes.atomic(tmp_path/(cohort+'-prepared'),{'prepared':True})
+        for i in range(10):
+            lease=nodes.Lock(tmp_path/'qwen_mbpp/.multi-node/leases'/('legacy-'+str(i)+'.lock'))
+            assert lease.acquire();leases.append(lease)
+        try:
+            for name in biased_names(4):
+                process=ctx.Process(target=node,args=(tmp_path,name,stop));process.start();processes.append(process)
+&gt;           assert wait_claims(tmp_path,4)=={'olmo_math':4}
+E           AssertionError: assert Counter({'olm...wen_mbpp': 2}) == {'olmo_math': 4}
+E             
+E             Differing items:
+E             {'olmo_math': 2} != {'olmo_math': 4}
+E             Left contains 1 more item:
+E             {'qwen_mbpp': 2}
+E             Use -v to get more diff
+
+tests/test_srgc_v8_fair_dispatch.py:98: AssertionError</failure></testcase><testcase classname="tests.test_srgc_v8_fair_dispatch" name="test_no_ready_olmo_work_allows_qwen_to_borrow_free_workers" time="0.175" /></testsuite></testsuites>
