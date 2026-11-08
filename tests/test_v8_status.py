@@ -215,4 +215,5 @@ def test_simple_view_also_puts_summary_at_the_bottom(tmp_path):
     base = fixture(tmp_path, now)
     text = status.render([base], now=now, gpus=[("0", 97, 61000)], host="node01", cohorts=("olmo_math",))
     assert text.index("seed  ") < text.index("V8 olmo_math · ") < text.index("done 1 · running 1")
-    assert text.rstrip().splitlines()[-1].startswith("done 1 · running 1")
+    assert text.rstrip().splitlines()[-2].startswith("done 1 · running 1")
+    assert text.rstrip().splitlines()[-1].startswith("workers: ")

@@ -495,7 +495,8 @@ def summary_at_bottom(text, extra=()):
         rest = rest[1:]
     while rest and rest[0] == '':
         rest = rest[1:]
-    details = [line for line in rest]
+    details = [line for line in rest if not line.startswith('workers: ')]
+    extra = [*[line for line in rest if line.startswith('workers: ')], *extra]
     while details and details[-1] == '':
         details.pop()
     body = [*details, ''] if details else []
