@@ -1,0 +1,100 @@
+{
+  "source_commit": "173c50063011aa04019f97812ee36f1b6705bff8",
+  "task_failure_fix_commit": "34be136",
+  "lifecycle_fix_commit": "b9cddf8",
+  "concurrent_science_commit": "f13cd3d",
+  "merge_commit": "fc612ac",
+  "hypothesis": "Unlike the existing SRGC worker, V8 promotes one task failure to a cohort-wide block. Five existing MBPP jobs can continue while idle workers refuse all remaining ready work. The V8 child also omitted SRGC run_child progress-watchdog semantics before model generation, and the supervisor labels every absent model event Preparing without evidence.",
+  "reference_code": [
+    "srgc_rebuttal/cluster.py:run_child,run_worker",
+    "scripts/srgc_multi_queue.py:run_worker_multi",
+    "scripts/srgc_qwen35_worker.py:drain",
+    "scripts/srgc_worker_status.py:run_with_status,explain_blocked"
+  ],
+  "changes": [
+    "Keep each failed task and its attempts separate from independent ready jobs; unresolved failures still prevent freeze/evaluation/success.",
+    "Demote only a known legacy task-exit cohort block whose existing job is failed; retain the full error in failure_history and task_failures, no task auto-retry or queue/binding/checkpoint reset.",
+    "Explicit --retry-failed reopens failed jobs even when no cohort-wide failure remains; structural/input/setup errors are never silently unblocked.",
+    "Use the original srgc_rebuttal.cluster.run_child for GPU subprocess lifecycle, inherited leases, work-file signature stall detection, stop and cleanup; map timeout124 to a failed task and keep checkpoints.",
+    "Before rank work exists, show assigned task/cohort/seed/method, actual queue failure, job counts, task log and latest launcher output. Do not assert normal preparation merely from absent events.",
+    "Restrict local launch evidence by owner launch/PID and exact hostname, reject a different FQDN sharing a prefix; unreadable/malformed state is unknown/error."
+  ],
+  "experiment": {
+    "models_data": "Production OLMo MATH/Qwen MBPP five-seed DAG with CPU dummy prefix files and kernel file leases; real original SRGC child lifecycle on plain CPU subprocesses.",
+    "controls": [
+      "Old published controller:2failure-isolation regressions fail, structural-failure control passes",
+      "5existing Qwen task leases, one legacy failed SR25 task per cohort and old cohort-wide task errors;12new workers must claim distinct independent jobs, including OLMo, without retrying either failed job",
+      "One failed task followed by ready other-seed and SR25 tasks; healthy tasks complete then final unresolved failure remains explicit",
+      "Original checkpoint25 sentinel and binding bytes/inode unchanged during old-error isolation",
+      "Original SRGC run_child with no progress returns timeout124; changing real work signatures permits normal completion and passes the inherited task descriptor"
+    ],
+    "seeds_updates": "Planning seeds5–9, synthetic25prefix/50dependency files. No optimizer update or trained model result in these lease fixtures. Full suite includes previously recorded tiny CPU Olmo output/RNG equality test.",
+    "metrics": "CPU claims, task attempts, queue failure scope, exact bytes/inode, CPU child timeout/normal exit; these are software tests, not model rewards or H100 throughput."
+  },
+  "results": {
+    "before": {
+      "failed": 2,
+      "passed": 1
+    },
+    "core_first": {
+      "passed": 71
+    },
+    "five_legacy": {
+      "passed": 6,
+      "new_claims": 12,
+      "legacy_qwen_leases": 5,
+      "new_olmo_claims_at_least": 5,
+      "failed_jobs_retried": 0
+    },
+    "merge_science": {
+      "passed": 34
+    },
+    "status": {
+      "passed": 39
+    },
+    "original_srgc_lifecycle": {
+      "passed": 2
+    },
+    "full": {
+      "passed": 248,
+      "failed": 0,
+      "seconds": 33.57
+    },
+    "readonly_followup": {
+      "passed": 14,
+      "failed": 0
+    },
+    "archive": {
+      "passed": 14,
+      "coordinators": 17,
+      "runners": 6
+    },
+    "frozen_trainer_files_unchanged": 30
+  },
+  "retained_failures": [
+    "before.xml preserves the actual cohort-block regressions",
+    "merged.xml preserves initial test collection error: --noconftest omitted helpers path; rerun with explicit existing helper path in merged-verified.xml and full.xml"
+  ],
+  "scientific_results": {
+    "actual_H100_OLMo_start": "unverified; user still reports only5MBPP nodes and preparing/no GPU work",
+    "GPU_runs_started_by_this_agent": 0,
+    "training_rewards": "unchanged, no new measurements",
+    "held_out_rewards": "unmeasured, not substituted",
+    "wasted_node_hours": null,
+    "monetary_cost": null
+  },
+  "provenance": "Retain every previous failed attempt, checkpoint, optimizer/RNG and25-update reward/snapshot record. Concurrent f13cd3d scientific runner changes were preserved by merge and original historical runners remain archived; existing queues use exact recorded sources. Control changes only apply after relaunching a worker.",
+  "publication": "Code173c500 exact remote verified. No public bug-board deployment, service restart or GPU allocation performed.",
+  "evidence": [
+    "five-legacy.xml",
+    "fixed-first.xml",
+    "readonly-errors.xml",
+    "full.xml",
+    "merged-verified.xml",
+    "status.xml",
+    "lifecycle.xml",
+    "archive.xml",
+    "merged.xml",
+    "before.xml"
+  ]
+}

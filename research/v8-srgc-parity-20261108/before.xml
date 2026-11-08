@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="3" time="0.071" timestamp="2026-11-08T14:44:06.723326+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_task_failure_isolation" name="test_failed_task_does_not_block_other_seed_or_ready_sr25" time="0.002"><failure message="AssertionError: assert {'at': 1794116646.7794569, 'detail': 'task exit=9; output verified=False', 'task': '2a02e033e89f2b966ff81ae2dad97fa5b80748ec53d502083be996c5aefb8f99'} is None">tmp_path = PosixPath('/dev/shm/v8-failure-scope-before-kms/test_failed_task_does_not_bloc0')
+
+    def test_failed_task_does_not_block_other_seed_or_ready_sr25(tmp_path):
+        pool,runtime,stop=setup(tmp_path)
+        lease,key,task,attempt=claim(pool,runtime,stop)
+        pool.finish(key,9,runtime,stop);lease.close()
+&gt;       assert nodes.read(pool.root/'state.json')['failure'] is None
+E       AssertionError: assert {'at': 1794116646.7794569, 'detail': 'task exit=9; output verified=False', 'task': '2a02e033e89f2b966ff81ae2dad97fa5b80748ec53d502083be996c5aefb8f99'} is None
+
+tests/test_srgc_v8_task_failure_isolation.py:34: AssertionError</failure></testcase><testcase classname="tests.test_srgc_v8_task_failure_isolation" name="test_old_cohort_wide_task_failure_is_demoted_without_retry_reset_or_checkpoint_change" time="0.002"><failure message="AssertionError: assert {'at': 1794116646.790546, 'detail': 'task exit=9; output verified=False', 'task': '2a02e033e89f2b966ff81ae2dad97fa5b80748ec53d502083be996c5aefb8f99'} is None">tmp_path = PosixPath('/dev/shm/v8-failure-scope-before-kms/test_old_cohort_wide_task_fail0')
+
+    def test_old_cohort_wide_task_failure_is_demoted_without_retry_reset_or_checkpoint_change(tmp_path):
+        pool,runtime,stop=setup(tmp_path)
+        lease,key,task,attempt=claim(pool,runtime,stop)
+        job=nodes.read(pool.root/'jobs'/(key+'.json'));job['state']='failed'
+        job['attempts'][-1]['exit_code']=9;nodes.atomic(pool.root/'jobs'/(key+'.json'),job);lease.close()
+        pool.fail('task exit=9; output verified=False',key)
+        before=(pool.root/'jobs'/(key+'.json')).read_bytes()
+        saved=tmp_path/'olmo_math/runs/checkpoint/step-000025.pt';saved.parent.mkdir(parents=True)
+        saved.write_bytes(b'original optimizer RNG intermediate rewards')
+        inode=(pool.root/'binding.json').stat().st_ino;binding=(pool.root/'binding.json').read_bytes()
+        pool.initialize()
+        state=nodes.read(pool.root/'state.json')
+&gt;       assert state['failure'] is None
+E       AssertionError: assert {'at': 1794116646.790546, 'detail': 'task exit=9; output verified=False', 'task': '2a02e033e89f2b966ff81ae2dad97fa5b80748ec53d502083be996c5aefb8f99'} is None
+
+tests/test_srgc_v8_task_failure_isolation.py:61: AssertionError</failure></testcase><testcase classname="tests.test_srgc_v8_task_failure_isolation" name="test_structural_or_unknown_failure_is_never_silently_unblocked" time="0.001" /></testsuite></testsuites>
