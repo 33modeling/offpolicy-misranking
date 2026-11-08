@@ -6796,5 +6796,79 @@
         "evidence_kind": "code_test"
       }
     ]
+  },
+  {
+    "id": "V8-100",
+    "title": "V8 status 가 지운 노드를 idle 로 보이고, 다른 실험 쪽에서 일하는 노드도 idle 로 보이며, 갱신이 느림",
+    "area": "V8 실행·재개·상태 감사",
+    "severity": "high",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "",
+    "cause": "작업 없는 worker 를 heartbeat 3분 안이면 살아 있다고 봤고, worker 가 실험마다 따로 쓰는 heartbeat 를 가장 최근 것 하나로 합쳤다. 그래서 지운 노드가 3분 동안 idle 로 남았고, 한 실험에서 CPU 단계·작업 확인·claim 대기 중인 노드가 다른 실험의 heartbeat 때문에 idle 로 보였다. 작업이 걸린 노드는 heartbeat 만으로 판단해 모델 로딩·admission 중에도 heartbeat 가 없으면 죽은 것처럼 셀 수 있었다. --watch 기본 갱신은 60초였고 한 번 갱신에 큐를 세 번 읽었다.",
+    "impact": "사용자 보고 'status 업데이트 더 빠르게 해. idle 아닌데 자꾸 idle 이래 이미 삭제한 노드인데'. 노드 상태를 믿을 수 없었다.",
+    "attribution": "Claude 의 결함(상태 화면 판정 / 배포 묶음 빌더). 같은 날 수정. 이미 게시된 커밋 행을 바꾸지 않으려고 introduction_commit 은 비움.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "수정 커밋 a870f59",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/a870f59"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "사용자",
+        "type": "reported",
+        "status": "open",
+        "text": "사용자 보고 'status 업데이트 더 빠르게 해. idle 아닌데 자꾸 idle 이래 이미 삭제한 노드인데'. 노드 상태를 믿을 수 없었다.",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "--watch 기본 3초, 갱신마다 실험별 큐 한 번만 읽기(0.10→0.08초, 이 PC tmpfs). 작업 없는 worker 는 30초 안 heartbeat 만 살아 있음(지운 노드는 30초 안에 gone). 한 실험에서는 heartbeat 가 새로운데 열린 다른 실험에서 끊겼으면 busy(CPU 단계는 단계와 로그 시각, 아니면 작업 확인·claim). 10분 넘게 끊겼으면 idle 에 'not serving … (gave up?)'. 작업이 걸린 worker 는 작업 lease 잠금 기준: 잡혀 있으면 조용해도 running, 풀렸고 heartbeat 60초 넘게 없으면 DEAD, 잡혀 있는데 10분 넘게 조용하면 DEAD(hung). 준비된 작업이 있는데 놀면 'idle while N tasks are ready'. 회귀 시험 5개: 지운 노드 사라짐·busy 판정 3가지·lease 판정·준비 작업 표시·갱신당 큐 1회와 3초 기본값.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/a870f59",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "V8-101",
+    "title": "v1.0.14·v1.0.15 묶음에 srgc_verifier_fallback.py 가 빠져 새로 시작하면 'Shared dispatcher files are missing' 으로 멈춤",
+    "area": "V8 실행·재개·상태 감사",
+    "severity": "critical",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "",
+    "cause": "153a4d8(11-08 16:56)부터 v8_bootstrap.py 가 시작 전에 scripts/srgc_verifier_fallback.py 를 필수 파일로 검사하고 v8_dispatch.py 가 그 해시를 기록한다. 묶음 빌더는 이전 목록과 scripts/(v8_|srgc_v8_|run_v8)* 패턴만 따라가서, 이름이 문자열로만 나오는 이 파일을 넣지 않았다. v1.0.13(1e47050) 이하는 153a4d8 이전이라 영향 없음.",
+    "impact": "v1.0.14(21b58c0)·v1.0.15(9ddc003)로 노드에서 run 하면 시작 단계에서 종료되어 새 노드가 붙지 않는다. 이미 돌던 worker 는 영향 없음.",
+    "attribution": "Claude 의 결함(상태 화면 판정 / 배포 묶음 빌더). 같은 날 수정. 이미 게시된 커밋 행을 바꾸지 않으려고 introduction_commit 은 비움.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "수정 커밋 a870f59",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/a870f59"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "reproduced",
+        "status": "open",
+        "text": "v1.0.16 빌드 중 발견. v1.0.15 를 풀어 run 하면 시작 단계에서 종료: v1.0.14(21b58c0)·v1.0.15(9ddc003)로 노드에서 run 하면 시작 단계에서 종료되어 새 노드가 붙지 않는다. 이미 돌던 worker 는 영향 없음.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "v1.0.16 에 파일을 넣고, 빌드 검사에 (1) v8 실행 코드가 문자열로 가리키는 scripts/*.py 가 모두 묶음에 있는지 (2) v8_bootstrap.py required 목록이 모두 있는지를 추가. 재현: v1.0.15 를 풀어 run 하면 'V8 startup: Shared dispatcher files are missing'; v1.0.16 은 '[v8] dispatch policy=… controller=…' 까지 진행(이 PC 는 GPU 없음으로 그 뒤 종료).",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/a870f59",
+        "evidence_kind": "code_test"
+      }
+    ]
   }
 ]

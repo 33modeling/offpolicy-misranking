@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-08T17:38:33+09:00",
+  "recorded_at": "2026-11-08T17:48:21+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "dce70b30de4d75e0df0b41ac340731f6fec3d67a",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/dce70b30de4d75e0df0b41ac340731f6fec3d67a",
-    "all_available_commits": 1281,
+    "source_commit": "a870f596b03848fadfe79764978b08006316c9e2",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/a870f596b03848fadfe79764978b08006316c9e2",
+    "all_available_commits": 1283,
     "fix_commit_records": 136,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
@@ -26,6 +26,7 @@
       "refs/heads/bugboard:aa2c212cd3393b5fe99098ab4458e2e3c37111cf",
       "refs/heads/bugboard-audit:61a7b68fc2c31bb5b09772852abc860f5ec168e2",
       "refs/heads/bugboard-status2:612312f955ddd7cefe220e90a85696139108c8a5",
+      "refs/heads/bugboard-status3:a870f596b03848fadfe79764978b08006316c9e2",
       "refs/heads/bugboard2:b7432d1cbb1f6cdd2cd044f23cd8ffaf25a57560",
       "refs/heads/bugboard3:b101cd9069dcc6ce920f42a1242174b83b9e6010",
       "refs/heads/docs/mbpp-budget-incident-20260919:fa1c6897b2b26ef002dd165c94f58702b1f9e1ed",
@@ -35,7 +36,7 @@
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hang-fix-20261108:f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:dce70b30de4d75e0df0b41ac340731f6fec3d67a",
+      "refs/heads/master:70f4c3154c889ec2636541a852b0d026546d763d",
       "refs/heads/v8-coord-fixes-20261108:377c256e55f80c64b484d82ef812064ed9e7c8a3",
       "refs/heads/v8-modes:6821c9c09292662008eb4f933c74bae7490358ed",
       "refs/heads/v8-nodes:3adf26925b2b1c1bf572cf0e68f75b26bbae3ddc",
@@ -47,6 +48,7 @@
       "refs/heads/v8-status-bottom:94a76aa9483e323066159197d040bb6b0d5b257e",
       "refs/heads/v8-status-clean:2f6994f544c150e58e2e3d7f43e6e67c16ae442e",
       "refs/heads/v8-status-lease:f418288156a4633f243691417f1e453be9bf8c0c",
+      "refs/heads/v8-status-live:a870f596b03848fadfe79764978b08006316c9e2",
       "refs/heads/v8-status-node-view:21b58c03963e32a327ade081419acb508d0fcf5a",
       "refs/heads/v8-status-nodes2:1e47050b470a5eef8a9ca86fac577e06d3bb5abc",
       "refs/heads/v8-status-progress:7fa90b7f51fc50939a8cc53b9c115abe22bda381",
@@ -63,7 +65,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:dce70b30de4d75e0df0b41ac340731f6fec3d67a"
+      "refs/remotes/origin/master:a870f596b03848fadfe79764978b08006316c9e2"
     ]
   },
   "incidents": [
@@ -6861,6 +6863,80 @@
           "status": "remote_verification_pending",
           "text": "재현원문·수정전실패·302CPU회귀·34후속·65archive시험·측정한계를GitHub에보존했다. 실제H100정상화/전체노드활성은아직확인하지못했다.",
           "url": "https://github.com/33modeling/offpolicy-misranking/blob/dce70b30de4d75e0df0b41ac340731f6fec3d67a/research/v8-live-dense-memory-20261108/record.json",
+          "evidence_kind": "code_test"
+        }
+      ]
+    },
+    {
+      "id": "V8-100",
+      "title": "V8 status 가 지운 노드를 idle 로 보이고, 다른 실험 쪽에서 일하는 노드도 idle 로 보이며, 갱신이 느림",
+      "area": "V8 실행·재개·상태 감사",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "introduction_commit": "",
+      "cause": "작업 없는 worker 를 heartbeat 3분 안이면 살아 있다고 봤고, worker 가 실험마다 따로 쓰는 heartbeat 를 가장 최근 것 하나로 합쳤다. 그래서 지운 노드가 3분 동안 idle 로 남았고, 한 실험에서 CPU 단계·작업 확인·claim 대기 중인 노드가 다른 실험의 heartbeat 때문에 idle 로 보였다. 작업이 걸린 노드는 heartbeat 만으로 판단해 모델 로딩·admission 중에도 heartbeat 가 없으면 죽은 것처럼 셀 수 있었다. --watch 기본 갱신은 60초였고 한 번 갱신에 큐를 세 번 읽었다.",
+      "impact": "사용자 보고 'status 업데이트 더 빠르게 해. idle 아닌데 자꾸 idle 이래 이미 삭제한 노드인데'. 노드 상태를 믿을 수 없었다.",
+      "attribution": "Claude 의 결함(상태 화면 판정 / 배포 묶음 빌더). 같은 날 수정. 이미 게시된 커밋 행을 바꾸지 않으려고 introduction_commit 은 비움.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "수정 커밋 a870f59",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/a870f59"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "사용자",
+          "type": "reported",
+          "status": "open",
+          "text": "사용자 보고 'status 업데이트 더 빠르게 해. idle 아닌데 자꾸 idle 이래 이미 삭제한 노드인데'. 노드 상태를 믿을 수 없었다.",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "--watch 기본 3초, 갱신마다 실험별 큐 한 번만 읽기(0.10→0.08초, 이 PC tmpfs). 작업 없는 worker 는 30초 안 heartbeat 만 살아 있음(지운 노드는 30초 안에 gone). 한 실험에서는 heartbeat 가 새로운데 열린 다른 실험에서 끊겼으면 busy(CPU 단계는 단계와 로그 시각, 아니면 작업 확인·claim). 10분 넘게 끊겼으면 idle 에 'not serving … (gave up?)'. 작업이 걸린 worker 는 작업 lease 잠금 기준: 잡혀 있으면 조용해도 running, 풀렸고 heartbeat 60초 넘게 없으면 DEAD, 잡혀 있는데 10분 넘게 조용하면 DEAD(hung). 준비된 작업이 있는데 놀면 'idle while N tasks are ready'. 회귀 시험 5개: 지운 노드 사라짐·busy 판정 3가지·lease 판정·준비 작업 표시·갱신당 큐 1회와 3초 기본값.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/a870f59",
+          "evidence_kind": "code_test"
+        }
+      ]
+    },
+    {
+      "id": "V8-101",
+      "title": "v1.0.14·v1.0.15 묶음에 srgc_verifier_fallback.py 가 빠져 새로 시작하면 'Shared dispatcher files are missing' 으로 멈춤",
+      "area": "V8 실행·재개·상태 감사",
+      "severity": "critical",
+      "first_reported": "2026-11-08",
+      "introduction_commit": "",
+      "cause": "153a4d8(11-08 16:56)부터 v8_bootstrap.py 가 시작 전에 scripts/srgc_verifier_fallback.py 를 필수 파일로 검사하고 v8_dispatch.py 가 그 해시를 기록한다. 묶음 빌더는 이전 목록과 scripts/(v8_|srgc_v8_|run_v8)* 패턴만 따라가서, 이름이 문자열로만 나오는 이 파일을 넣지 않았다. v1.0.13(1e47050) 이하는 153a4d8 이전이라 영향 없음.",
+      "impact": "v1.0.14(21b58c0)·v1.0.15(9ddc003)로 노드에서 run 하면 시작 단계에서 종료되어 새 노드가 붙지 않는다. 이미 돌던 worker 는 영향 없음.",
+      "attribution": "Claude 의 결함(상태 화면 판정 / 배포 묶음 빌더). 같은 날 수정. 이미 게시된 커밋 행을 바꾸지 않으려고 introduction_commit 은 비움.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "수정 커밋 a870f59",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/a870f59"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "reproduced",
+          "status": "open",
+          "text": "v1.0.16 빌드 중 발견. v1.0.15 를 풀어 run 하면 시작 단계에서 종료: v1.0.14(21b58c0)·v1.0.15(9ddc003)로 노드에서 run 하면 시작 단계에서 종료되어 새 노드가 붙지 않는다. 이미 돌던 worker 는 영향 없음.",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "v1.0.16 에 파일을 넣고, 빌드 검사에 (1) v8 실행 코드가 문자열로 가리키는 scripts/*.py 가 모두 묶음에 있는지 (2) v8_bootstrap.py required 목록이 모두 있는지를 추가. 재현: v1.0.15 를 풀어 run 하면 'V8 startup: Shared dispatcher files are missing'; v1.0.16 은 '[v8] dispatch policy=… controller=…' 까지 진행(이 PC 는 GPU 없음으로 그 뒤 종료).",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/a870f59",
           "evidence_kind": "code_test"
         }
       ]

@@ -13522,6 +13522,26 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "70f4c3154c889ec2636541a852b0d026546d763d",
+      "at": "2026-11-08T17:38:34+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Record continuing OLMo idle report and dense-memory/checkpoint-display fixes",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/70f4c3154c889ec2636541a852b0d026546d763d",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "a870f596b03848fadfe79764978b08006316c9e2",
+      "at": "2026-11-08T17:45:21+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: faster refresh; removed nodes vanish in 30 s; busy is not idle",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/a870f596b03848fadfe79764978b08006316c9e2",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }
