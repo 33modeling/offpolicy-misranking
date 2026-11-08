@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="0.099" timestamp="2026-11-08T11:55:01.847617+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_launch_visibility" name="test_started_queue_preserves_binding_and_control_inode_before_first_update" time="0.024"><failure message="Failed: DID NOT RAISE ValueError">tmp_path = PosixPath('/tmp/pytest-of-kms/pytest-309/test_started_queue_preserves_b0')
+
+    def test_started_queue_preserves_binding_and_control_inode_before_first_update(tmp_path):
+        root = _queue(tmp_path, dict(STABLE, coordinator_sha256="old", runner_sha256={"a": "1"}))
+        (root / "state.json").write_text('{"phase": "train", "failure": null, "actions": [], "failure_history": []}')
+        attempt = tmp_path / "olmo_math" / "runs" / "trajectory-5" / "attempts" / "x"
+        attempt.mkdir(parents=True)
+        (attempt / "updates.jsonl").write_text("")
+        new=nodes.Pool(root, dict(STABLE, coordinator_sha256="new", runner_sha256={"a": "2"}))
+        with new.control():
+            control_inode=(root/'control.lock').stat().st_ino
+&gt;           with pytest.raises(ValueError, match="identity differs"):new.initialize()
+E           Failed: DID NOT RAISE ValueError
+
+tests/test_srgc_v8_launch_visibility.py:216: Failed</failure></testcase></testsuite></testsuites>

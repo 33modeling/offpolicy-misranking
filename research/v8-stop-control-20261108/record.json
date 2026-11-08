@@ -41,5 +41,66 @@
     "queue_after_event_gate": "34 passed /7 optional runtime fixtures skipped",
     "actual_v8_CPU_integration": "8 passed with V8_NODES_TEST_RUNTIME set; covers both-cohort scheduling, saved prefix branching, final budget endpoints; no GPU jobs"
   },
-  "pending": "Actual H100 Loading weights stall is still unverified; no user-node logs have been received."
+  "pending": "Actual H100 Loading weights stall is still unverified; no user-node logs have been received.",
+  "release_artifacts": [
+    {
+      "release_commit": "7d89fb9b0efad70d49843b4302e831c0c10859e6",
+      "numerical_source_commit": "cbd68a4a6c1c45cd21475182a211abfff78eea8d",
+      "mode": "existing_cbd68a4_compatibility",
+      "archive": "/home/kms/Downloads/rlvr-v8-control-compat-7d89fb9.tar.gz",
+      "sha256": "f9427768cb5e9fd1b19db69dc337ce1b8db3017c96180a8c38f5382be08cf6fa",
+      "files": 71,
+      "all_files_verified_after_extraction": true,
+      "bound_runtime_files_base_exact": 52,
+      "status": {
+        "olmo_math": {
+          "phase": "not_started"
+        },
+        "qwen_mbpp": {
+          "phase": "not_started"
+        }
+      },
+      "GPU_training": false
+    },
+    {
+      "release_commit": "7d89fb9b0efad70d49843b4302e831c0c10859e6",
+      "numerical_source_commit": "7d89fb9b0efad70d49843b4302e831c0c10859e6",
+      "mode": "fresh_queue",
+      "archive": "/home/kms/Downloads/rlvr-v8-startup-7d89fb9.tar.gz",
+      "sha256": "880271442bc7292165b86585485cc2b06205cfe7e4d1bc7f467e9114416274ca",
+      "files": 72,
+      "all_files_verified_after_extraction": true,
+      "bound_runtime_files_base_exact": 0,
+      "status": {
+        "olmo_math": {
+          "phase": "not_started"
+        },
+        "qwen_mbpp": {
+          "phase": "not_started"
+        }
+      },
+      "GPU_training": false
+    }
+  ],
+  "superseded_artifacts": [
+    "rlvr-v8-stop-fix-92b0c3e.tar.gz: superseded by guarded fresh startup and source-compatible control bundle; do not use for queue migration"
+  ],
+  "release_verification": {
+    "full_root_suite": "117 passed /1 skipped /1 mixed-cohort fixture timeout on local disk; same case re-run once unchanged on RAM temp passed in2.49s. Aggregate119cases:118passed /1skipped. Initial failing full report retained. No actual GPU/model job started.",
+    "upstream": "101 passed /1 skipped plus12 subtests",
+    "upstream_initial_invocation": "8collection errors because helpers import path not set by root pytest configuration; corrected PYTHONPATH; raw first XML retained locally",
+    "actual_GPU_training": false,
+    "original_30_trainer_files": "baseline hash unchanged",
+    "queue_guard": "20checks pass; pre-fix regression fails as intended",
+    "skip_reasons": {
+      "root": [
+        "Set V8_HISTORY_TEST_RUNTIME to v8/experiments for the CPU runner integration"
+      ],
+      "upstream": [
+        "requires the code repo and CPU torch/transformers/peft"
+      ]
+    },
+    "mixed_cohort_RAM_retry": "Real V8 ToyBackend3workers/2cohorts, all stage/budget endpoint checks pass on RAM temp. This checks software scheduling, not persistent filesystem durability or H100 performance."
+  },
+  "test_termination_observation": "When bounded cleanup was requested for the two local blocked test runs, they had already exited. No processes were signalled; local-test-io-interruption.json records an empty target set."
 }

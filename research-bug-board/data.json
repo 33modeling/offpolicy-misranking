@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-08T11:23:03+09:00",
+  "recorded_at": "2026-11-08T11:57:20+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "cbd68a4a6c1c45cd21475182a211abfff78eea8d",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/cbd68a4a6c1c45cd21475182a211abfff78eea8d",
-    "all_available_commits": 1169,
+    "source_commit": "7d89fb9b0efad70d49843b4302e831c0c10859e6",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/7d89fb9b0efad70d49843b4302e831c0c10859e6",
+    "all_available_commits": 1179,
     "fix_commit_records": 118,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
@@ -22,8 +22,9 @@
       "refs/heads/experiments/srgc-cost-replication:937b9490170b71c2d8931d68d9b934d120cd8da3",
       "refs/heads/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
+      "refs/heads/hang-fix-20261108:f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:cbd68a4a6c1c45cd21475182a211abfff78eea8d",
+      "refs/heads/master:7d89fb9b0efad70d49843b4302e831c0c10859e6",
       "refs/remotes/origin/audit/codecheck-20260820:5dd447990296042e334679c85e7672477cd7c5d3",
       "refs/remotes/origin/audit/p1-integrity:5dfda89ec3be2cc4d60f8f0371eeaf00790f6644",
       "refs/remotes/origin/docs/mbpp-budget-incident-20260919:fa1c6897b2b26ef002dd165c94f58702b1f9e1ed",
@@ -32,7 +33,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:cbd68a4a6c1c45cd21475182a211abfff78eea8d"
+      "refs/remotes/origin/master:7d89fb9b0efad70d49843b4302e831c0c10859e6"
     ]
   },
   "incidents": [
@@ -2947,6 +2948,142 @@
           "type": "source_fix_verified",
           "status": "code_fixed",
           "text": "보존 package 전체 바이트를 검증하고 실제 archived engine을 모델 생성 전에 선택한다. Qwen은 원래 engine+adapter 합성 해시와 run/prefix 일치를 검증한다.96검사 통과, upstream101통과·1skip. 양쪽 identity 경로에서 실제 archived engine의 CPU ToyBackend25→50 continuation과 production locator5seed 검증을 확인했다. 준비 실패/미시작 큐만 기록 보존 후 재시도하며, 작업이 하나라도 있으면 binding 변경을 거부한다. 실제 H100 진행을 확인한 결과는 아니다.",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "later_migration_correction",
+          "status": "code_fixed",
+          "text": "후속 f1bb211에서 추가된 첫 update 전 started-queue 자동교체는 V8-021에서 검토·재현 후7d89fb9로 제거했다. 기존 초기 실패 복구 범위와 history는 보존한다.",
+          "evidence_kind": "code_test"
+        }
+      ]
+    },
+    {
+      "id": "V8-019",
+      "title": "V8 종료 시 분리된 rank가 stdout을 붙잡으면 무한 대기",
+      "area": "프로세스 종료·중단 복구",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "introduction_commit": null,
+      "cause": "이전 Runtime.process는 stdout PIPE를 읽는 thread.join에 제한시간이 없었고, process group 밖으로 분리된 rank와 TERM 무시 자식을 강제 정리하지 못했다. 실제 사용자 노드의 kernel 상태는 미관측이다.",
+      "impact": "Ctrl-C 뒤에도 제어가 돌아오지 않고 해당 GPU 프로세스가 남을 수 있다. 이 종료 결함과 모델 로딩 원인은 별개다.",
+      "attribution": "사용자 종료 불가 보고 후 Codex가 별도 supervisor·동일 UID/실행 소유권 기반 stop 도구를 추가했다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "bounded supervisor",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/7d89fb9b0efad70d49843b4302e831c0c10859e6/scripts/v8_supervisor.py"
+        },
+        {
+          "kind": "source",
+          "label": "PID 생성시점·실행 소유권 확인",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/7d89fb9b0efad70d49843b4302e831c0c10859e6/scripts/v8_processes.py"
+        },
+        {
+          "kind": "source",
+          "label": "검사·실패·한계",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/7d89fb9b0efad70d49843b4302e831c0c10859e6/research/v8-stop-control-20261108/record.json"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "reported",
+          "status": "open",
+          "text": "사용자가 Loading weights 후 종료도 안 된다고 보고했다.",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "분리세션/TERM무시 자식 정리, 다른 root·launch 보존, PID 재사용 제외, 두번째 Ctrl-C 강제 종료, stdout EOF 없이 bounded 종료를 CPU 프로세스 검사로 확인했다. 유예10초 후 SIGKILL; 중단 불가능한 kernel I/O의 남은 PID는 성공 처리하지 않는다. 사용자 H100에서의 종료 결과는 아직 미검증이다.",
+          "evidence_kind": "code_test"
+        }
+      ]
+    },
+    {
+      "id": "V8-020",
+      "title": "실제 H100의 Loading weights 이후 진행 정지 보고",
+      "area": "모델 로딩·실제 노드 진단",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "introduction_commit": null,
+      "cause": "미확인. 실제 노드의 마지막 로그·경과시간·rank stack·완료 update를 아직 받지 못했다. 콘솔 무출력이나 GPU 이용률만으로 정상 또는 deadlock을 확정하지 않는다.",
+      "impact": "모델 로딩/분산 초기화/첫 학습 작업 중 어디에서 멈췄는지 확인이 필요하다. 실제 학습 성능과 중간 reward는 이번 코드 검사에서 측정하지 않았다.",
+      "attribution": "사용자 실제 H100 보고. Codex/Claude가 실행 환경·진단·출력·종료 경로를 수정했으나 실제 노드 원인 해결과 동일시하지 않는다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "현재 attempt·로그·GPU 읽기 전용 진단",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/7d89fb9b0efad70d49843b4302e831c0c10859e6/scripts/v8_probe.py"
+        },
+        {
+          "kind": "source",
+          "label": "원인 미확인 상태",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/7d89fb9b0efad70d49843b4302e831c0c10859e6/research/v8-loading-probe-20261108/record.json"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "reported",
+          "status": "open",
+          "text": "사용자가 loading weights에서 멈췄다고 보고했다. 현재 실제 H100의 상태와 원인은 미확인이다.",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "diagnostics_available",
+          "status": "open",
+          "text": "읽기 전용 probe와 실제 rank 작업 단계 관측을 추가했다. 신호·checkpoint 로드·큐 수정 없이 현재 attempt를 구분한다. 실행 환경/NCCL preflight/진행 출력은 소프트웨어 검사만 완료했으며 실제 노드 재검증은 남아 있다.",
+          "evidence_kind": "code_test"
+        }
+      ]
+    },
+    {
+      "id": "V8-021",
+      "title": "첫 update 전 큐 자동 교체가 공유 control.lock 경로와 실행 신원을 바꿈",
+      "area": "다중 노드 큐·실험 신원 보존",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "introduction_commit": "f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
+      "cause": "완료 update와 활성 작업 lease가 없으면 .multi-node 전체를 rename하는 경로가 추가됐다. 이 조건은 다른 노드의 idle worker 부재를 보장하지 않으며, held control.lock과 새 경로의 lock inode가 달라질 수 있다. Trainer/config 일치만으로 child/verifier 변경의 동등성도 증명되지 않는다.",
+      "impact": "기존 worker가 다른 코드의 새 큐를 수정하거나 잠금 영역이 분리될 위험. 실험 records가 없는 것으로 보이는 첫 update 전에도 신원을 보존해야 한다.",
+      "attribution": "Claude의 f1bb211 도입, Codex 통합 검토에서 발견·회귀 검사 재현 후 자동교체를 제거했다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "started queue와 control inode 보존 검사",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/7d89fb9b0efad70d49843b4302e831c0c10859e6/tests/test_srgc_v8_launch_visibility.py"
+        },
+        {
+          "kind": "source",
+          "label": "이전 실패·수정 후 검증",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/7d89fb9b0efad70d49843b4302e831c0c10859e6/research/v8-stop-control-20261108/record.json"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "reproduced",
+          "status": "open",
+          "text": "강화된 started-queue 검사를 f1bb211 경로에 실행해 거부되지 않고 기존 큐가 이동하는 실패를 재현했다. 실제 H100 병렬 충돌을 관측한 결과가 아니다.",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "작업이 생성된 큐의 자동교체를 제거했다. 첫 update 전에도 이전 binding/control.lock을 보존하고 다른 runtime을 거부한다. 작업/고정입력이 없는 준비 실패 복구만 유지한다. 기존 실행용 호환판은 cbd68a4 coordinator와 v8 원본52파일을 그대로 보존한다.",
           "evidence_kind": "code_test"
         }
       ]

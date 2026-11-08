@@ -12402,6 +12402,106 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "cd46b40932589a71c90c35870b8c170ad93fe954",
+      "at": "2026-11-08T11:23:03+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Retain V8 source compatibility failure and validated bundle",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/cd46b40932589a71c90c35870b8c170ad93fe954",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "961e66f43ad5c498b5f99683f483813bcaee5c0c",
+      "at": "2026-11-08T11:34:25+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Add nonintrusive V8 loading and progress probe",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/961e66f43ad5c498b5f99683f483813bcaee5c0c",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "919a2b2895d89624c127c3dfaec563b904bb4405",
+      "at": "2026-11-08T11:43:13+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Bound V8 stop cleanup and preserve process ownership",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/919a2b2895d89624c127c3dfaec563b904bb4405",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "d1e6ce72ab2e29196bf4348b5c6de5356ab37344",
+      "at": "2026-11-08T11:46:47+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Document bounded stop and distinguish loading observation from progress",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/d1e6ce72ab2e29196bf4348b5c6de5356ab37344",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "f6b1b53090634feded721981d0b9f73b85870b32",
+      "at": "2026-11-08T11:43:19+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 launch: make post-load progress visible and match the seed runs' child launch",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/f6b1b53090634feded721981d0b9f73b85870b32",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
+      "at": "2026-11-08T11:47:10+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 queue: start a fresh queue when only launcher code changed and no update completed",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "881c9a6c46285c41ecbe5a0420c211f4c857902f",
+      "at": "2026-11-08T11:49:14+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Integrate launch visibility with bounded V8 supervisor",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/881c9a6c46285c41ecbe5a0420c211f4c857902f",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "92b0c3e8347ddc6a7b542e46abdbfd32dddf08b1",
+      "at": "2026-11-08T11:52:36+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Track active V8 attempt progress across integrated launchers",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/92b0c3e8347ddc6a7b542e46abdbfd32dddf08b1",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "add2eb7ae0369eec3e94533271755f9757bef50e",
+      "at": "2026-11-08T11:54:02+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Gate CPU branch scheduling assertion on work events",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/add2eb7ae0369eec3e94533271755f9757bef50e",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "7d89fb9b0efad70d49843b4302e831c0c10859e6",
+      "at": "2026-11-08T11:55:48+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve started V8 queue identity and control lock during upgrades",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/7d89fb9b0efad70d49843b4302e831c0c10859e6",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }
