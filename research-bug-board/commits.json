@@ -13402,6 +13402,66 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "db933822840a987eccc727dca17c62df217ffbfe",
+      "at": "2026-11-08T16:38:27+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Record original-rank error loss and distinguish CPU fixes from the unverified H100 cause",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/db933822840a987eccc727dca17c62df217ffbfe",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "153a4d87bcf86c0555d33bea6dfea5ca1c4c15ce",
+      "at": "2026-11-08T16:56:56+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Restore recorded seed verifier and rollout memory guards in archived V8 children",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/153a4d87bcf86c0555d33bea6dfea5ca1c4c15ce",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "1e47050b470a5eef8a9ca86fac577e06d3bb5abc",
+      "at": "2026-11-08T16:48:05+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: node table at the bottom (running / idle / DEAD / gone / finished)",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/1e47050b470a5eef8a9ca86fac577e06d3bb5abc",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "f290df287223d9809c34957e7619e75950c427fd",
+      "at": "2026-11-08T16:56:56+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve node-status updates with legacy verifier and OOM repair",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/f290df287223d9809c34957e7619e75950c427fd",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "ec296ac3a6bf818b76df78cdb8de88fb9b24a4fe",
+      "at": "2026-11-08T16:59:23+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Document actual verifier and rollout repair provenance and CUDA failure limits",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/ec296ac3a6bf818b76df78cdb8de88fb9b24a4fe",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "e91e333ecc8230c2b7b93a37803ce64c5bd02945",
+      "at": "2026-11-08T17:02:11+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve legacy gold/OOM reproductions and 295 regression checks",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/e91e333ecc8230c2b7b93a37803ce64c5bd02945",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

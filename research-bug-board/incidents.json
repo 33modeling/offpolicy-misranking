@@ -5491,6 +5491,15 @@
         "text": "수정: child 에서도 seed 실행과 같은 감싸기를 쓴다: TorchBackend = install_resumable_rollouts(<run>/rollout-cache/<attempt or phase>). prepare_verifier_runtime 실패는 모든 rank 에서 치명적으로 처리(또는 all_reduce 로 합의 후 중단). / 회귀 시험: 가짜 backend 로 첫 rollout 에 torch.OutOfMemoryError 를 1회 내면 재시도 후 진행하는지. bootstrap 을 한 rank 에서만 실패시키면 모든 rank 가 같은 오류로 끝나는지.",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/19a0161",
         "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "archived_runtime_recurrence_fix",
+        "status": "remote_verification_pending",
+        "text": "기존 RT-05 수정이 최신 child에 있어도 exact-source resume의 옛 runner에는 적용되지 않았다.7 runner 중2에 verifier installer,6에 protected rollout이 없다. 새 Context adapter가 source 선택 뒤 기존 seed verifier와 캐시/OOM 보호를 연결하고 실제 적용·helper SHA·reward runtime 변경을 per-rank receipt에 남긴다. 데이터/체크포인트/기존 보상은 보존한다.295 CPU회귀+기존 pinned verifier5 통과; 실제 H100 용량·진행은 미확인이다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/153a4d87bcf86c0555d33bea6dfea5ca1c4c15ce",
+        "evidence_kind": "code_test"
       }
     ]
   },
@@ -6354,6 +6363,164 @@
         "type": "remote_verification_pending",
         "status": "remote_verification_pending",
         "text": "수정 소스와 원시 CPU 증거·보존 런타임 묶음을 master에 push하고 exact remote 확인. 앞쪽 H100 traceback/Root Cause 요청은 아직 응답 전이다. 실제 OLMo 시작/업데이트/성공 또는 원래 GPU 실패 원인 해결은 미검증으로 유지한다. 공개 현황판 배포는 이 소스 장부 push와 별개다.",
+        "evidence_kind": "limitation"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "user",
+        "type": "underlying_errors_reported",
+        "status": "remote_verification_pending",
+        "text": "사용자가 ChildFailedError 아래 오류3개를 추가했다: valueerror gold answer could not be parsed / torch.outofmemoryerror / runtimeError /pytorch/build/aten/src/Aten/RegisterCUDA SymIntArrayRef. 앞2개 관련 legacy 호출 누락은 V8-091/092에서 재현·수정했고, 마지막은 전체 문장/traceback 미수신으로 V8-093 open을 유지한다. 실제 H100 정상화로 닫지 않는다.",
+        "evidence_kind": "user_report"
+      }
+    ]
+  },
+  {
+    "id": "V8-091",
+    "title": "보존된 옛 child가 strict math_reward를 계속 선택해 gold parse 실패 시 OLMo 작업 중단",
+    "area": "V8 원본 런타임 재개·MATH verifier",
+    "severity": "critical",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "",
+    "cause": "최신 child의 verifier fallback 수정이 exact-source로 선택된 옛2개 child에는 없다. 기존 backend.verifier에 strict math_reward가 그대로 바인딩되어 parse 결과가 비면 ValueError가 난다.",
+    "impact": "사용자가 OLMo 실패의 원문 gold answer could not be parsed를 제공했다. 로컬 원본 함수로 같은 오류를 재현했다. 실제 실패 gold/원격 traceback은 미수신이므로 특정 입력·timeout 원인과 H100 재개는 미검증이다.",
+    "attribution": "Codex의 원본 source 보존과 현재 런타임 복구 연결 누락. 기존 seed용 fallback은 있었으나 선택된 오래된 child에 연결되지 않았다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "원본 source 선택 뒤 verifier/rollout 보호 연결",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/153a4d87bcf86c0555d33bea6dfea5ca1c4c15ce"
+      },
+      {
+        "kind": "code_test",
+        "label": "재현·295 CPU회귀·pinned verifier·한계 및 실패 보존",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/e91e333ecc8230c2b7b93a37803ce64c5bd02945/research/v8-gold-oom-20261108/record.json"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "user",
+        "type": "reported",
+        "status": "open",
+        "text": "valueerror gold answer could not be parsed",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "실제 strict reward의 empty-parse 경로를 재현한 뒤 backend에 기존 seed fallback만 연결했다. 읽히는 gold는 math-verify, 나머지는 기존 normalized Answer-line 비교이며 빈 gold는 거부한다. 사용자/MBPP verifier와 원본 입력800개(빈 gold0)는 보존한다. helper8파일 고정·SHA·verifier identity와 실제 reward_runtime_changed를 기록하여 effective reward 변경을 숨기지 않는다. 초기 fixture PYTHONPATH 오류2개와 실제 오류 재현2개도 보존했다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/153a4d87bcf86c0555d33bea6dfea5ca1c4c15ce",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "remote_verification_pending",
+        "status": "remote_verification_pending",
+        "text": "수정과 원시 증거를 원격 exact 확인했다. 실제 H100에서 해당 gold 경로 통과와 OLMo optimizer update는 아직 관측하지 못했다. 이전 보상/held-out 값/체크포인트는 다시 쓰지 않았다.",
+        "evidence_kind": "limitation"
+      }
+    ]
+  },
+  {
+    "id": "V8-092",
+    "title": "옛 V8 backend의 rollout 캐시 해제·OOM 복구 누락과 현재 보호의 train 경로 누락",
+    "area": "V8 OLMo 메모리·동일 rollout 복구",
+    "severity": "high",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "",
+    "cause": "보존된6개 child에는 기존 seed 실행의 protected rollout class가 없다. 최신 보호 class도 scoring/evaluate에서만 활성화되어 train rollout에는 꺼져 있다. 실패 traceback이 GPU tensor를 소유한 채 정리하면 cache 해제로 회수하지 못할 수 있다.",
+    "impact": "사용자가 torch.outofmemoryerror를 보고했다. CPU 주입 재현에서 원래 경로는 첫 OOM으로 종료한다. 실제 메모리 초과가 발생한 연산/할당량/남은 GPU 메모리는 아직 없어 이 보호만으로 실제 용량 초과가 해결됐다고 보지 않는다.",
+    "attribution": "Codex V8가 원래 seed 실행의 메모리 보호를 모든 선택된 런타임에 연결하지 못한 누락. 실제 H100의 다른 할당 원인은 미확정이다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "원본 source 선택 뒤 verifier/rollout 보호 연결",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/153a4d87bcf86c0555d33bea6dfea5ca1c4c15ce"
+      },
+      {
+        "kind": "code_test",
+        "label": "재현·295 CPU회귀·pinned verifier·한계 및 실패 보존",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/e91e333ecc8230c2b7b93a37803ce64c5bd02945/research/v8-gold-oom-20261108/record.json"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "user",
+        "type": "reported",
+        "status": "open",
+        "text": "torch.outofmemoryerror",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "실패 except scope를 빠져나온 뒤 unreachable tensor GC/cache 해제, 동일 prompt/8응답/seed17 호출을 한 번만 재시도했다. weakref로 실패 frame 해제를 검증했다. 기존 보호는 train rollout에도 연결하되 optimizer update를 재호출하지 않는다. 지속 OOM은2호출 뒤 실패, 다른 CUDA RuntimeError는1호출 뒤 그대로 실패. 응답 수/길이/배치·attention은 줄이거나 바꾸지 않았다.295 CPU회귀/원본 trainer30 SHA 동일, original snapshots 보존.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/153a4d87bcf86c0555d33bea6dfea5ca1c4c15ce",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "remote_verification_pending",
+        "status": "remote_verification_pending",
+        "text": "CUDA cache 동작은 CPU fake hook과 주입 오류로 검증했으며 실제80GB H100 메모리 감소·용량 적합·학습 진도는 미측정이다. 실제 OOM allocation/traceback이 필요하다. source/증거는 exact push 확인.",
+        "evidence_kind": "limitation"
+      }
+    ]
+  },
+  {
+    "id": "V8-093",
+    "title": "RegisterCUDA / SymIntArrayRef CUDA RuntimeError: 전체 오류·연산 원인 미확인",
+    "area": "V8 CUDA 런타임 오류 조사",
+    "severity": "high",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "",
+    "cause": "아직 원인이 확인되지 않았다. 제공된 PyTorch C++ 경로와 SymIntArrayRef 함수 서명만으로 실패 연산·장치·shape 또는 다른 원인을 구분할 수 없다.",
+    "impact": "사용자가 이를 세 오류 중 하나라고 명시했다. 독립적인 실제 CUDA 오류의 전체 문장/traceback과 H100 환경이 미수신이므로 해결 또는 다른 오류와 동일 원인이라고 판정하지 않는다.",
+    "attribution": "현재 원격 실패의 원인 코드/도입 커밋/도구 귀속은 미확인이다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "원문 CUDA 실패·마지막 작업·확인 가능한 allocator 정보 보존",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/153a4d87bcf86c0555d33bea6dfea5ca1c4c15ce"
+      },
+      {
+        "kind": "code_test",
+        "label": "다른 RuntimeError를 재시도/성공 처리하지 않는 검사",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/e91e333ecc8230c2b7b93a37803ce64c5bd02945/research/v8-gold-oom-20261108/record.json"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "user",
+        "type": "reported",
+        "status": "open",
+        "text": "runtimeError /pytorch/build/aten/src/Aten/RegisterCUDA SymIntArrayRef / 이렇게 3개야",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "diagnostics_added",
+        "status": "open",
+        "text": "cuda-failure-rank-N.json에 원래 오류/notes·마지막 실제 rank 작업·가능한 allocator통계를 보존한다. CUDA 오류 뒤 새 kernel을 실행하는 진단은 추가하지 않았다. 해당 종류 RuntimeError는 OOM으로 뭉뚱그려 재시도하지 않고 원문 실패를 유지하는 CPU 검사를 통과했다. 이것은 실제 원인 수정이 아니다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/153a4d87bcf86c0555d33bea6dfea5ca1c4c15ce",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "missing_remote_trace",
+        "status": "open",
+        "text": "RuntimeError 전체 문장과 앞뒤15줄을 비동기로 요청했고 아직 응답 전이다. 실제 CUDA 원인 수정·H100 검증은 남아 있다.",
         "evidence_kind": "limitation"
       }
     ]
