@@ -51,7 +51,9 @@ class DevTuning(unittest.TestCase):
             select_dev(self.rows + [dict(self.rows[0], role="test")], candidates=[50], key="tau", tie_tolerance_pp=0.1)
 
     def test_frozen_tuning_test_access(self):
-        f = frozen_tuning(cohort="c", dev_seeds=[15], dev_eval_hash="h", fixed={"selected": 100})
+        u = frozen_tuning(cohort="c", dev_seeds=[15], dev_eval_hash="h", fixed={"selected": 100})
+        self.assertEqual(u["test_access_status"], "unverified")  # not checked -> never "clean" (SCI-02)
+        f = frozen_tuning(cohort="c", dev_seeds=[15], dev_eval_hash="h", fixed={"selected": 100}, test_runs_seen=[])
         self.assertEqual(f["test_access_status"], "clean")
         g = frozen_tuning(cohort="c", dev_seeds=[15], dev_eval_hash="h", fixed={"selected": 100}, test_runs_seen=["x"])
         self.assertEqual(g["test_access_status"], "contaminated")

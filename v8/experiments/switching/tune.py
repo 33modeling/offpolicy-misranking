@@ -77,11 +77,14 @@ def select_dev(rows, *, candidates, key, value_key="reward_fraction", cost_key="
         near = [c for c in near if stats[c]["mean_cost"] == low]
     chosen = min(near, key=lambda c: (c is None, c if c is not None else 0))
     return {"selected": chosen, "stats": stats, "tie_tolerance_pp": tie_tolerance_pp,
-            "tie_rule": ["mean_reward", "lower_mean_cost_within_tolerance", "smaller_value"]}
+            "tie_rule": ["mean_reward", "lower_mean_cost_within_tolerance", "smaller_value"],
+            # plan Code 8 E1 asks for the development reward at budget B; record which endpoint was used
+            "objective": value_key, "objective_endpoint": "frozen_budget" if value_key.startswith("budget_")
+            else "matched_update (not the plan's budget-B objective)"}
 
 
 def frozen_tuning(*, cohort, dev_seeds, dev_eval_hash, fixed, plateau=None, refresh=None, budget=None,
-                  tau_distribution=None, dev_run_ids=(), code_identity=None, config_hash=None, test_runs_seen=()):
+                  tau_distribution=None, dev_run_ids=(), code_identity=None, config_hash=None, test_runs_seen=None):
     body = {"cohort": cohort, "development_seed_ids": list(dev_seeds), "development_eval_split_hash": dev_eval_hash,
             "fixed": fixed, "fixed_sr_tuned_tau": fixed["selected"] if fixed else None,
             "plateau": plateau, "plateau_epsilon": plateau["selected"] if plateau else None,
@@ -89,7 +92,9 @@ def frozen_tuning(*, cohort, dev_seeds, dev_eval_hash, fixed, plateau=None, refr
             "primary_budget": budget, "tau_distribution": tau_distribution,
             "tau_distribution_hash": sha256_json(tau_distribution) if tau_distribution else None,
             "development_run_ids": list(dev_run_ids), "code_identity": code_identity, "config_hash": config_hash,
-            "test_access_status": "clean" if not test_runs_seen else "contaminated",
-            "test_runs_seen": list(test_runs_seen), "frozen_at": utc_now()}
+            # clean only if the caller actually listed the test runs that existed (an empty list); None = unchecked
+            "test_access_status": ("unverified" if test_runs_seen is None else
+                                   "clean" if not test_runs_seen else "contaminated"),
+            "test_runs_seen": None if test_runs_seen is None else list(test_runs_seen), "frozen_at": utc_now()}
     body["tuning_hash"] = sha256_json({k: v for k, v in body.items() if k != "frozen_at"})
     return body

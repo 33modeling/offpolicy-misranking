@@ -103,8 +103,16 @@ def audit_cell(cell, run_root: Path | None):
         problems.append(f"recomputed {recomputed} vs reported {cell['reward_fraction']}")
     if cell.get("switch_update") is not None and endpoint.get("switched_at") != cell["switch_update"]:
         problems.append(f"switch {endpoint.get('switched_at')} vs reported {cell['switch_update']}")
+    if cell.get("never_switched") and endpoint.get("switched_at") is not None:
+        problems.append(f"reported never_switched but the endpoint switched at {endpoint.get('switched_at')}")
+    switch_unverified = (cell["arm"] == "switch" and cell.get("switch_update") is None
+                         and not cell.get("never_switched"))
     if problems:
         out.update(status="inconsistent", reason="; ".join(problems))
+    elif switch_unverified:
+        out.update(status="incomplete_provenance",
+                   reason=f"reward verified; the source has no reported switch time to compare with the endpoint "
+                          f"switched_at={endpoint.get('switched_at')}")
     elif not linked:
         out.update(status="incomplete_provenance", reason="prefix checkpoint hash not linked to prefix-ready.json")
     elif not endpoint.get("cost_measurement_complete"):

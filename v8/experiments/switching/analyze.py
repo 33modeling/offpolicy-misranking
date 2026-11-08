@@ -88,6 +88,8 @@ def stratified_sign_test(per_cohort_deltas: dict):
 def by_policy(rows, key="reward_fraction", *, status_ok=("triggered", "not_triggered", "ran")):
     out = {}
     for r in rows:
+        if key.startswith("budget_") and r.get("budget_status") != "selected":
+            continue  # capped_at_horizon / undetermined / infeasible: no observed budget endpoint
         if r.get("status") in status_ok and r.get(key) is not None:
             out.setdefault(r["policy_id"], {})[r["seed"]] = r[key]
     return out
@@ -113,9 +115,12 @@ def loso_contrast(rows, seeds, *, taus=None, adaptive="srgc_current", key="rewar
     res = loso(rewards, seeds)
     tuned = {s: v["tuned_reward"] for s, v in res["per_seed"].items() if v.get("tau_hat") is not None}
     contrast = paired(table.get(adaptive, {}), tuned, seeds, label=f"{adaptive} - LOSO tuned fixed", interval=False)
-    contrast.update(interval_method="withheld: crossfit folds share tuning seeds (not IID)",
-                    naive_iid_t_not_valid=paired(table.get(adaptive, {}), tuned, seeds, interval=True)[
-                        "ci_low"] is not None)
+    naive = paired(table.get(adaptive, {}), tuned, seeds, interval=True)
+    contrast.update(interval_method="withheld as primary: crossfit folds share tuning seeds (not IID)",
+                    naive_paired_t={k: naive.get(k) for k in ("ci_low", "ci_high", "confidence", "p_two_sided")} | {
+                        "df": naive["n_training_seeds"] - 1 if naive["n_training_seeds"] > 1 else None,
+                        "caveat": "paired t treating LOSO folds as independent; the same seeds tune and evaluate "
+                                  "(rebuttal plan v2 6.2), so this interval is optimistic"})
     oracle = {s: v["reward"] for s, v in res["oracle"].items()}
     gb = res["grid_best_same_seeds"]
     return {"loso": res, "primary_contrast": contrast,
@@ -124,24 +129,50 @@ def loso_contrast(rows, seeds, *, taus=None, adaptive="srgc_current", key="rewar
                                       label="minus same-seed grid best (optimistic)", interval=False)}
 
 
-def secondary(rows, seeds, *, confidence=0.95):
-    t = by_policy(rows)
-    pairs = [("srgc_current", "on_continued"), ("srgc_current", "fixed_sr_t050"), ("srgc_current", "srgc_two_negative"),
-             ("srgc_two_negative", "srgc_one_negative"), ("srgc_current", "plateau_sr_eps0005"),
-             ("srgc_current", "plateau_sr_eps0000"), ("srgc_current", "plateau_sr_eps0010"),
-             ("srgc_current", "srgc_three_negative"), ("srgc_current", "srgc_current_c50"),
-             ("srgc_current", "srgc_uniform_destination"), ("srgc_current", "sampled_time_sr.d0")]
+BANK_PAIRS = [("srgc_current", "on_continued"), ("srgc_current", "fixed_sr_t050"), ("srgc_current", "srgc_two_negative"),
+              ("srgc_two_negative", "srgc_one_negative"), ("srgc_current", "plateau_sr_eps0005"),
+              ("srgc_current", "plateau_sr_eps0000"), ("srgc_current", "plateau_sr_eps0010"),
+              ("srgc_current", "srgc_three_negative"), ("srgc_current", "srgc_current_c50"),
+              ("srgc_current", "srgc_uniform_destination"), ("srgc_current", "sampled_time_sr.d0")]
+# prospective (fresh-seed) arms carry their method ids (plan Code 13.5 tables B, D, F, G)
+TEST_PAIRS = [("srgc_current", "on_continued"), ("srgc_current", "sr_early"), ("srgc_current", "uniform_early"),
+              ("srgc_current", "plateau_sr_tuned"), ("srgc_current", "srgc_two_negative"),
+              ("srgc_two_negative", "srgc_one_negative"), ("srgc_current", "srgc_uniform_destination"),
+              ("srgc_current", "sampled_time_sr")]
+SAME_TAU_PAIRS = {("srgc_current", "srgc_uniform_destination")}  # E3: destination only differs at an equal tau
+
+
+def _same_tau(rows, a, b, seeds):
+    tau = {}
+    for r in rows:
+        if r["policy_id"] in (a, b):
+            tau[(r["policy_id"], r["seed"])] = r.get("switch_update")
+    return [s for s in seeds if (a, s) in tau and (b, s) in tau and tau[(a, s)] != tau[(b, s)]]
+
+
+def secondary(rows, seeds, *, confidence=0.95, key="reward_fraction", pairs=None):
+    t = by_policy(rows, key)
+    if pairs is None:
+        pairs = TEST_PAIRS if any(r.get("status") == "ran" for r in rows) else BANK_PAIRS
+        pairs = pairs + [(p, "sr_early") for p in sorted(t) if p.startswith("sr_early_refreshed_k")]
     out = []
     for a, b in pairs:
-        if a in t and b in t:
-            r = paired(t[a], t[b], seeds, confidence=confidence, label=f"{a} - {b}")
-            r["exploratory"] = True
-            out.append(r)
+        if a not in t or b not in t:
+            out.append({"label": f"{a} - {b}", "status": "missing_policy", "key": key,
+                        "missing": [p for p in (a, b) if p not in t], "exploratory": True})
+            continue
+        ta, tb = t[a], t[b]
+        mismatch = _same_tau(rows, a, b, seeds) if (a, b) in SAME_TAU_PAIRS else []
+        if mismatch:  # different trigger times: not a same-state destination contrast for those seeds
+            ta = {s: v for s, v in ta.items() if s not in mismatch}
+        r = paired(ta, tb, seeds, confidence=confidence, label=f"{a} - {b}")
+        r.update(exploratory=True, key=key, tau_mismatch_seeds=mismatch)
+        out.append(r)
     for p in t:
         if p.startswith("fixed_uniform_t"):
             tau = p[-3:]
             out.append(dict(paired(t.get(f"fixed_sr_t{tau}", {}), t[p], seeds, confidence=confidence,
-                                   label=f"E3 same-parent SR - Uniform at tau_s ({tau})"), exploratory=True))
+                                   label=f"E3 same-parent SR - Uniform at tau_s ({tau})"), exploratory=True, key=key))
     return out
 
 

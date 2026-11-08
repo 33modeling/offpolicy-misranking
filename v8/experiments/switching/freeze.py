@@ -7,11 +7,23 @@ from pathlib import Path
 from .common import read_json, sha256_file, sha256_json, utc_now, write_once_json
 
 
-def freeze_budget(rows, *, policy_id="srgc_current", scope="cold_start_algorithm", files_read=()):
-    """B from cost-only data. Refuses if any evaluation file was read to compute it."""
+def freeze_budget(rows, *, policy_id="srgc_current", scope="cold_start_algorithm", files_read=(), expected_seeds=None):
+    """B from cost-only data. Refuses if any evaluation file was read to compute it.
+
+    Every seed must have an observed policy outcome (no silent subset mean). Budget endpoints and budget
+    extensions compare CONTINUATION costs, so a complete cold-start B is refused rather than compared
+    against continuation costs (it would give every arm prefix + cache of extra budget).
+    """
     if any("evaluations" in Path(f).parts for f in files_read):
         raise ValueError("budget freeze must not read evaluation outputs")
-    picks = [r for r in rows if r["policy_id"] == policy_id and r.get("status") in ("triggered", "not_triggered")]
+    mine = [r for r in rows if r["policy_id"] == policy_id]
+    unobserved = sorted({str(r.get("seed")) for r in mine if r.get("status") not in ("triggered", "not_triggered")})
+    absent = sorted({str(s) for s in expected_seeds or ()} - {str(r.get("seed")) for r in mine})
+    if unobserved or absent:
+        raise ValueError(f"budget cannot be frozen: {policy_id} outcome not observed for seeds "
+                         f"{sorted(set(unobserved) | set(absent))} (statuses "
+                         f"{sorted({str(r.get('status')) for r in mine if str(r.get('seed')) in unobserved})})")
+    picks = [r for r in mine if r.get("status") in ("triggered", "not_triggered")]
     if not picks:
         raise ValueError(f"no {policy_id} rows with composed costs")
     key = "cold_start_gpu_seconds" if scope == "cold_start_algorithm" else "continuation_gpu_seconds"
@@ -20,6 +32,9 @@ def freeze_budget(rows, *, policy_id="srgc_current", scope="cold_start_algorithm
     if any(v is None for v in values):
         values = [r.get("continuation_gpu_seconds") for r in picks]
         used_scope = "continuation_algorithm (cold-start incomplete)"
+    elif scope == "cold_start_algorithm":
+        raise ValueError("a complete cold-start budget is not supported: budget endpoints and extensions compare "
+                         "continuation costs; freeze with scope='continuation_algorithm'")
     if any(v is None for v in values):
         raise ValueError("budget cannot be frozen: composed costs are incomplete")
     inputs = [{"seed": r.get("seed"), "run_id": r.get("run_id"), "switch_update": r.get("switch_update"),
