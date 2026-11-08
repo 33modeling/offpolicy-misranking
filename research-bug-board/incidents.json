@@ -3968,6 +3968,15 @@
         "status": "remote_verification_pending",
         "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
         "evidence_kind": "user_instruction_and_limitation"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "user / Codex",
+        "type": "continued_failure_and_correction",
+        "status": "remote_verification_pending",
+        "text": "사용자가 MATH On5만 실행되고 SR25는 하나도 동작하지 않으며 계속 OOM이라고 명확히 정정했다. 단순5상한·정상dependency대기로 설명하지 않는다. 실제 task/worker/trace는 미관측이다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/9c1e31c5962b0cfac68d664c7e15b11664cd59b9",
+        "evidence_kind": "user_report_and_code_test"
       }
     ]
   },
@@ -4597,6 +4606,15 @@
         "status": "remote_verification_pending",
         "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
         "evidence_kind": "user_instruction_and_limitation"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "user / Codex",
+        "type": "continued_failure_and_correction",
+        "status": "remote_verification_pending",
+        "text": "이전 수정은 이전 controller 실패를한번복구했지만 같은 controller에서실패하면기본으로제외했다. 사용자자동복구요구를충분히처리하지못한점과v11기본60초/총실패3회복구수정을추가기록한다. 원본기록은유지한다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/9c1e31c5962b0cfac68d664c7e15b11664cd59b9",
+        "evidence_kind": "user_report_and_code_test"
       }
     ]
   },
@@ -6620,6 +6638,15 @@
         "status": "remote_verification_pending",
         "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
         "evidence_kind": "user_instruction_and_limitation"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "user / Codex",
+        "type": "continued_failure_and_correction",
+        "status": "remote_verification_pending",
+        "text": "사용자가 v10수정후에도 OLMo-MATH CUDA OOM과SR25전부실패를보고했다. Dense참조/CPU snapshot정리만으로사용자실제문제가해결됐다는증거가없다. Qwen과달리OLMo decoder activation checkpointing이빠진별도차이를확인해v11보완했다. 실제H100할당원인과SR25재개는아직미확인이다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/9c1e31c5962b0cfac68d664c7e15b11664cd59b9",
+        "evidence_kind": "user_report_and_code_test"
       }
     ]
   },
@@ -7152,6 +7179,114 @@
         "text": "시각은 숫자일 때만 사용. 이 PC /dev/shm 의 큐 11,651개를 clean·simple·classic 세 화면으로 34,953번 그려 오류 0. v1.0.18 묶음.",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/719b086",
         "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "V8-106",
+    "title": "동일 실행기에서 한번 실패한 SR25를 기본 명령이 재시도하지 않고 계속 제외함",
+    "area": "V8 기본 자동 복구",
+    "severity": "high",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "23b549a9a34d56cc2fb3e35e90845ceac239e076",
+    "cause": "retry_requested는명시옵션또는공유수동요청만인정했고새노드복구도이전controller실패에만적용했다. 현재controller의작업실패는기본실행에서재시도되지않았다.",
+    "impact": "SR25가한번OOM나면그작업이다시배정되지않고일부On만실행될수있다.",
+    "attribution": "Codex가이전수정에서현재실패복구와OLMo/Qwen메모리차이를충분히확인하지못했다. 보존코드도입자의도구귀속은명시증거없이추정하지않으며현재재현·수정은Codex가수행했다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "OLMo activation recomputation 및 기본 자동복구",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/9c1e31c5962b0cfac68d664c7e15b11664cd59b9"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "user",
+        "type": "reported",
+        "status": "open",
+        "text": "OLMo-MATH CUDA OOM 반복, SR25 하나도 동작하지 않음, 한번 fail된 작업 자동 복구 요구",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "전체323회귀/추가7시험/archive65통과. tiny actualOLMo 출력/gradient/생성토큰/RNG/1회GRPO optimizer상태동일,저장activation제어31360→4288bytes. 기본자동재시도와60초지연/3회상한/신원오류보존검증. 이수치는실제7B/H100성공또는학습보상이아니다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/9c1e31c5962b0cfac68d664c7e15b11664cd59b9",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "remote_verification_pending",
+        "status": "remote_verification_pending",
+        "text": "실제H100에연결되어있지않고OOM전문/실패stage를아직받지못했다. 근본원인의실제노드일치와SR25 25→26재개확인은남아있으므로완료처리하지않는다.",
+        "evidence_kind": "limitation"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "raw_evidence_published",
+        "status": "remote_verification_pending",
+        "text": "재현 실패 원문, 중단된 검증 기록, 전체 회귀 323개·추가 OLMo/자동 복구 7개·archive 65개 통과와 CPU 메모리 측정 정의를 보존했다. 실제 SR25 H100의 OOM 원인 일치와 optimizer update 재개는 확인하지 못했다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/b34cb3698057becd08a7ec4d2952ec64f2aaa31d/research/v8-olmo-sr25-auto-retry-20261108/record.json",
+        "evidence_kind": "code_test_and_limitation"
+      }
+    ]
+  },
+  {
+    "id": "V8-107",
+    "title": "OLMo 학습 decoder의 activation checkpointing 누락: Qwen 보호와 다른 메모리 경로",
+    "area": "V8 OLMo forward/backward 메모리",
+    "severity": "high",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "",
+    "cause": "OLMo backend는decoder의역전파활성값을그대로보관하고logits head조각만checkpoint했다. 생성용eval상태이므로decoder checkpointflag만켜도작동하지않는다. QwenBackend는이미non-reentrant checkpointing과logps범위training mode를사용한다.",
+    "impact": "긴8응답중활성응답의logprob forward/backward가더큰메모리를필요로한다. 사용자SR25 OOM의실제실패연산/할당이이차이때문인지는H100원시로그없어확정하지못했다.",
+    "attribution": "Codex가이전수정에서현재실패복구와OLMo/Qwen메모리차이를충분히확인하지못했다. 보존코드도입자의도구귀속은명시증거없이추정하지않으며현재재현·수정은Codex가수행했다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "OLMo activation recomputation 및 기본 자동복구",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/9c1e31c5962b0cfac68d664c7e15b11664cd59b9"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "user",
+        "type": "reported",
+        "status": "open",
+        "text": "OLMo-MATH CUDA OOM 반복, SR25 하나도 동작하지 않음, 한번 fail된 작업 자동 복구 요구",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "전체323회귀/추가7시험/archive65통과. tiny actualOLMo 출력/gradient/생성토큰/RNG/1회GRPO optimizer상태동일,저장activation제어31360→4288bytes. 기본자동재시도와60초지연/3회상한/신원오류보존검증. 이수치는실제7B/H100성공또는학습보상이아니다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/9c1e31c5962b0cfac68d664c7e15b11664cd59b9",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "remote_verification_pending",
+        "status": "remote_verification_pending",
+        "text": "실제H100에연결되어있지않고OOM전문/실패stage를아직받지못했다. 근본원인의실제노드일치와SR25 25→26재개확인은남아있으므로완료처리하지않는다.",
+        "evidence_kind": "limitation"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "raw_evidence_published",
+        "status": "remote_verification_pending",
+        "text": "재현 실패 원문, 중단된 검증 기록, 전체 회귀 323개·추가 OLMo/자동 복구 7개·archive 65개 통과와 CPU 메모리 측정 정의를 보존했다. 실제 SR25 H100의 OOM 원인 일치와 optimizer update 재개는 확인하지 못했다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/b34cb3698057becd08a7ec4d2952ec64f2aaa31d/research/v8-olmo-sr25-auto-retry-20261108/record.json",
+        "evidence_kind": "code_test_and_limitation"
       }
     ]
   }

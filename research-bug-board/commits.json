@@ -13612,6 +13612,46 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "ef03f0a52aac9d4516866737e07a2c2e4c01d631",
+      "at": "2026-11-08T19:27:04+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Bug board: v1.0.17 status attention-sort TypeError (fixed 719b086)",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/ef03f0a52aac9d4516866737e07a2c2e4c01d631",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "616a1e3a5ba03620144c98f7370165e0107c4a63",
+      "at": "2026-11-08T20:09:57+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: cleaner layout with aligned summary table and colours",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/616a1e3a5ba03620144c98f7370165e0107c4a63",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "9c1e31c5962b0cfac68d664c7e15b11664cd59b9",
+      "at": "2026-11-08T20:36:05+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Recompute OLMo activations and retry failed tasks from saved checkpoints by default",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/9c1e31c5962b0cfac68d664c7e15b11664cd59b9",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "b34cb3698057becd08a7ec4d2952ec64f2aaa31d",
+      "at": "2026-11-08T20:38:08+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve OLMo memory controls, default-retry reproductions and source archive",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/b34cb3698057becd08a7ec4d2952ec64f2aaa31d",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }
