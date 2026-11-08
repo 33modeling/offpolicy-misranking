@@ -27,6 +27,78 @@ from switching.cluster import load_bundle, v8_root  # noqa: E402
 from switching.common import read_json  # noqa: E402
 
 
+def _stamp():
+    import time
+    return time.strftime("%H:%M:%S")
+
+
+def install_diagnostics(root, task_id, rank):
+    """Per-rank stack dumps: on SIGUSR1, on fatal signals and every V8_STACK_DUMP_SECONDS (default 1800)."""
+    import faulthandler
+    import signal
+    stacks = Path(root) / ".multi-node" / "stacks"
+    stacks.mkdir(parents=True, exist_ok=True)
+    handle = open(stacks / f"{task_id}-rank{rank}.txt", "a", buffering=1)
+    handle.write(f"== {_stamp()} pid={os.getpid()} rank={rank} task={task_id}\n")
+    faulthandler.enable(file=handle, all_threads=True)
+    try:
+        faulthandler.register(signal.SIGUSR1, file=handle, all_threads=True, chain=False)
+    except (AttributeError, ValueError, RuntimeError):
+        pass
+    seconds = int(os.environ.get("V8_STACK_DUMP_SECONDS", "1800") or 0)
+    if seconds > 0:
+        faulthandler.dump_traceback_later(seconds, repeat=True, file=handle)
+    return handle
+
+
+def install_progress(rank, interval=None):
+    """Print the frozen backend's own progress records (rank 0, throttled) so long refreshes are visible."""
+    import time
+    interval = float(os.environ.get("V8_PROGRESS_SECONDS", "60") if interval is None else interval)
+    from srgc_rebuttal import progress as progress_module
+    targets = []
+    for name in ("torch_backend", "run_experiment"):
+        try:
+            targets.append(importlib.import_module(f"srgc_rebuttal.{name}"))
+        except Exception:  # noqa: BLE001 - optional module in older frozen engines
+            pass
+    state = {"last": 0.0, "count": 0}
+
+    def wrap(original):
+        if getattr(original, "_v8_progress", False):
+            return original
+
+        def record(stage, **details):
+            original(stage, **details)
+            state["count"] += 1
+            now = time.monotonic()
+            if rank == 0 and now - state["last"] >= interval:
+                state["last"] = now
+                text = " ".join(f"{k}={v}" for k, v in details.items())
+                print(f"PROGRESS {_stamp()} stage={stage} records={state['count']} {text}".rstrip(), flush=True)
+        record._v8_progress = True
+        return record
+
+    for module in targets:
+        if hasattr(module, "progress"):
+            module.progress = wrap(module.progress)
+    progress_module.record = wrap(progress_module.record)
+    return state
+
+
+def install_verifier_fallback(code_root, rank):
+    """Same tolerant math verifier the seed 5-9 children installed (srgc_step_checkpoints / srgc_sr_refresh)."""
+    sys.path.insert(0, str(Path(code_root) / "scripts"))
+    try:
+        from srgc_verifier_fallback import install
+    except ImportError as exc:
+        if rank == 0:
+            print(f"WARN verifier fallback unavailable: {exc}", flush=True)
+        return False
+    install()
+    return True
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--cohort", required=True)
@@ -65,6 +137,11 @@ def main():
     plan = load_plan(Path(seed_loc["plan_path"]))
     world = plan["world_size"]
     rank, local_rank = initialize(world)
+    install_diagnostics(root, args.task, rank)
+    if rank == 0:
+        print(f"V8 {_stamp()} ranks ready world={world} task={args.task} kind={task.get('kind')} "
+              f"seed={task.get('training_seed')} (progress every {os.environ.get('V8_PROGRESS_SECONDS', '60')}s; "
+              f"stack dumps: {root / '.multi-node' / 'stacks'}; kill -USR1 <pid> dumps now)", flush=True)
     with ExitStack() as stack:
         stack.push(lambda exc_type, *_: dist.destroy_process_group() if exc_type is None else None)
         if profile == "qwen":
@@ -92,10 +169,18 @@ def main():
                 pass
             del prefix_state
         ctx_holder = {}
-        meter = torch_meter(lambda e: ctx_holder["ctx"].on_meter_event(e))
+        def on_meter_event(event):
+            if rank == 0 and isinstance(event, dict) and event.get("phase"):
+                seconds = event.get("seconds") or event.get("wall_seconds")
+                print(f"PHASE {_stamp()} {event.get('phase')} {event.get('state', 'started')}"
+                      + (f" {float(seconds):.0f}s" if isinstance(seconds, (int, float)) else ""), flush=True)
+            ctx_holder["ctx"].on_meter_event(event)
+        meter = torch_meter(on_meter_event)
         from peft import LoraConfig, get_peft_model
         from srgc_rebuttal import torch_backend
         torch.manual_seed(task["training_seed"])  # LoRA initialization protocol of run_experiment.py
+        install_verifier_fallback(code_root, rank)
+        install_progress(rank)
         model, tokenizer = load_model(plan["model"], plan["model_revision"], torch.device("cuda", local_rank),
                                       attention=attention)
         model = get_peft_model(model, LoraConfig(r=16, lora_alpha=32, target_modules=["q_proj", "v_proj"],
@@ -120,6 +205,10 @@ def main():
                                      "generation_spec": f"max_new_tokens={plan['max_new_tokens']},T=1,top_p=1",
                                      "verifier_hash": plan["verifier"]})
         ctx_holder["ctx"] = ctx
+        if rank == 0:
+            print(f"V8 {_stamp()} model+LoRA ready; starting {task.get('kind')} run "
+                  f"{task.get('run_id') or task.get('task_id')} — the first update includes the selection "
+                  f"refresh and can take 15-30 min (OLMo) or 2-3 h (Qwen); PROGRESS lines follow", flush=True)
         try:
             res = execute_eval(task, ctx) if task["kind"] == "evaluate" else execute_train(task, ctx)
         except Interrupted as exc:
