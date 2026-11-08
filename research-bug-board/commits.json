@@ -13082,6 +13082,76 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "7628a8956de7d7de97d468e8f777dc838d132217",
+      "at": "2026-11-08T14:58:03+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve rolling legacy-worker regression and remote verification limit",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/7628a8956de7d7de97d468e8f777dc838d132217",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "f4cccb8a82b2814a06f211afc859c22fdd579019",
+      "at": "2026-11-08T15:10:49+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Make frozen V8 actors import the selected original SRGC checkout",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/f4cccb8a82b2814a06f211afc859c22fdd579019",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "19a0161b14877e204aae01f8513c551e60b52d44",
+      "at": "2026-11-08T14:52:09+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Fix v8 runtime audit findings RT-01..RT-12 (rank faults, kills, stops, exit 75)",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/19a0161b14877e204aae01f8513c551e60b52d44",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "debe7298153990d4321d642dba7fdcc2fc8b4c58",
+      "at": "2026-11-08T15:10:49+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve concurrent runtime audit fixes with frozen actor import repair",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/debe7298153990d4321d642dba7fdcc2fc8b4c58",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "235ded015e9ba281ea62e4f29d1d2f792c0dc7e2",
+      "at": "2026-11-08T15:12:15+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Pass the verified trainer import path to SRGC subprocesses too",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/235ded015e9ba281ea62e4f29d1d2f792c0dc7e2",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "2e35f3418324cb2fd9d374c368770773e40b6542",
+      "at": "2026-11-08T15:13:39+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve cached-actor import reproduction and original runtime sources",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/2e35f3418324cb2fd9d374c368770773e40b6542",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "7078f414f70e4832046a8deb538a3ba4fc54bfe6",
+      "at": "2026-11-08T15:14:24+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Record cached-actor SRGC import regression and verified path repair",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/7078f414f70e4832046a8deb538a3ba4fc54bfe6",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
     }
   ]
 }

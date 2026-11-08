@@ -1,13 +1,13 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-08T14:58:03+09:00",
+  "recorded_at": "2026-11-08T15:14:56+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "3dd7c2104749f38d6569414388b9a683aaa19e58",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/3dd7c2104749f38d6569414388b9a683aaa19e58",
-    "all_available_commits": 1237,
-    "fix_commit_records": 125,
+    "source_commit": "2e35f3418324cb2fd9d374c368770773e40b6542",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/2e35f3418324cb2fd9d374c368770773e40b6542",
+    "all_available_commits": 1244,
+    "fix_commit_records": 128,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
     "first_commit_at": "2026-08-07T05:56:48+09:00",
@@ -17,6 +17,7 @@
     "branch_snapshot": [
       "refs/archive/board-stash-985e95e:985e95e92ad644edc967db41bf2b48c7bd9a91fd",
       "refs/archive/board-stash-index-9b48040:9b4804084cde6639035980009f63c0ec2eb121f2",
+      "refs/archive/paper-board-0a43515950c1:0a43515950c1c9880a83ebfee73f1fb4189cbe49",
       "refs/heads/audit/codecheck-20260820:5dd447990296042e334679c85e7672477cd7c5d3",
       "refs/heads/audit/p1-integrity:5dfda89ec3be2cc4d60f8f0371eeaf00790f6644",
       "refs/heads/bugboard:aa2c212cd3393b5fe99098ab4458e2e3c37111cf",
@@ -29,12 +30,12 @@
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hang-fix-20261108:f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:3dd7c2104749f38d6569414388b9a683aaa19e58",
-      "refs/heads/v8-coord-fixes-20261108:fc612ac9edc7d15b129a9649c65d5acc7d8723fb",
+      "refs/heads/master:7078f414f70e4832046a8deb538a3ba4fc54bfe6",
+      "refs/heads/v8-coord-fixes-20261108:debe7298153990d4321d642dba7fdcc2fc8b4c58",
       "refs/heads/v8-modes:6821c9c09292662008eb4f933c74bae7490358ed",
       "refs/heads/v8-nodes:3adf26925b2b1c1bf572cf0e68f75b26bbae3ddc",
       "refs/heads/v8-perm:0719ee96d5a109e131c2626943d474a6b2e7a0b7",
-      "refs/heads/v8-runtime-fixes-20261108:0a43515950c1c9880a83ebfee73f1fb4189cbe49",
+      "refs/heads/v8-runtime-fixes-20261108:19a0161b14877e204aae01f8513c551e60b52d44",
       "refs/heads/v8-science-fixes-20261108:f13cd3d1392440d58e96e4f77b4147ad0aa62205",
       "refs/heads/v8-statefix:a085f266bf68849d1e24b0b96048680e77ef6563",
       "refs/heads/v8-status:a3675bbd4b6f678b3ef8fbacde56aaf072d0aafa",
@@ -49,7 +50,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:8bfe5a966a01921ab1a68a5890b0d4e9c714e307"
+      "refs/remotes/origin/master:7078f414f70e4832046a8deb538a3ba4fc54bfe6"
     ]
   },
   "incidents": [
@@ -4357,6 +4358,64 @@
           "type": "remote_verification_pending",
           "status": "remote_verification_pending",
           "text": "173c500 원격exact 확인. 실제 H100 추가 할당·OLMo optimizer update·처리량·노드 손실시간은 측정하지 못했다. 체크포인트/optimizer/RNG/25-update 기록은 보존하고 기존 고정 worker는 재실행 때 새 제어가 적용된다. 공개 현황판 배포는 별도 미실행이다.",
+          "evidence_kind": "limitation"
+        }
+      ]
+    },
+    {
+      "id": "V8-044",
+      "title": "캐시 actor가 원본 srgc_rebuttal import 경로를 활성화하지 않아 ModuleNotFoundError",
+      "area": "V8 캐시 실행기·원본 SRGC 패키지 경로",
+      "severity": "critical",
+      "first_reported": "2026-11-08",
+      "introduction_commit": "b9cddf8",
+      "cause": "Codex가 run_srgc_child에서 srgc_rebuttal.cluster/progress를 import하도록 바꾸면서, 저장소 밖 private control cache에서 시작하는 부모 actor의 sys.path에 선택된 V8_CODE_ROOT를 넣지 않았다. Runtime child environment의 PYTHONPATH는 부모 sys.path를 바꾸지 않는다. checkout 내부에서 실행한 이전 검사들이 이 누락을 가렸다.",
+      "impact": "사용자 보고 no module named srgc_rebutal. 실제 fresh-cache 외부cwd/PYTHONPATH없는 CPU 재현에서 from srgc_rebuttal.cluster import run_child가 No module named srgc_rebuttal로 실패했다. 이 경로의 SRGC 자식은 시작되지 못했다. 실제 원격 다른 오류·학습 진행은 별도 미검증이다.",
+      "attribution": "Codex b9cddf8의 경로 활성화 누락 및 실제 캐시 진입조건을 빠뜨린 테스트 범위. 패키지 설치 문제가 아니며 frozen numerical package30파일은 그대로다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "원본 경로 활성화 및 자식 전달 수정",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/235ded015e9ba281ea62e4f29d1d2f792c0dc7e2"
+        },
+        {
+          "kind": "code_test",
+          "label": "실제 실패·외부cwd 재현·수정 검사·원본 보존",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/2e35f3418324cb2fd9d374c368770773e40b6542/research/v8-trainer-import-20261108/record.json"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "user",
+          "type": "reported",
+          "status": "open",
+          "text": "no module named srgc_rebutal / 제대로 하는게 없네 빨리 고쳐",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "reproduced",
+          "status": "open",
+          "text": "새 private-cache/control에 actor/RPC만 복사하고 저장소 밖cwd·PYTHONPATH제거·기존V8_CODE_ROOT만 설정해 동일 ModuleNotFoundError를 재현했다. before.xml1실패를 보존한다.",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "f4cccb8/235ded0: bootstrap이 원본root/src를 상속 PYTHONPATH에 넣고 actor는 원본Runtime/SRGC import 전에 해당root를 활성화한다. run_srgc_child 자식도 같은root/src를 받는다. 기존 경로는 보존하며 원본 경로 인자·패키지 설치·신원 우회를 요구하지 않는다. 수정52검사, 동시19a0161 RT변경 병합 후52검사, 부모+자식패키지 실제 import25검사,18coordinator/7runner재개14검사 통과. 기존checkpoint/optimizer/RNG/reward/attempt 기록 보존.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/235ded015e9ba281ea62e4f29d1d2f792c0dc7e2",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "remote_verification_pending",
+          "status": "remote_verification_pending",
+          "text": "코드235ded0 원격exact 확인. 이미 실패로 기록된 작업은 명시적 --retry-failed로 재배정할 수 있다. 실제 H100 OLMo의 학습 시작/완료는 아직 관찰하지 못했고 자동 성공으로 집계하지 않는다. 공개 현황판 배포는 별도 미실행이다.",
           "evidence_kind": "limitation"
         }
       ]
