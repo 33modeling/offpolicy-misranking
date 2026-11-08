@@ -18,7 +18,7 @@ REPO=Path(__file__).resolve().parents[1]
 
 
 def copy_controls(target):
-    for name in ['v8_supervisor.py','v8_processes.py','v8_probe.py','v8_stop.py','v8_control_output.py']:
+    for name in ['v8_supervisor.py','v8_processes.py','v8_probe.py','v8_stop.py','v8_control_output.py','v8_progress_text.py']:
         path=REPO/'scripts'/name
         if path.exists():shutil.copyfile(path,target/name)
 

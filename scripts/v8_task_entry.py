@@ -14,6 +14,7 @@ def main():
         raise ValueError('Original v8 child bytes differ from the selected runner identity')
     spec=importlib.util.spec_from_file_location('_v8_original_child',path)
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    if hasattr(module,'install_progress'):module.install_progress=lambda *args,**kwargs:None
     install(int(os.environ.get('RANK','0')))
     sys.argv=[str(path),*sys.argv[2:]]
     return module.main()

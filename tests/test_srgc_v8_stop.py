@@ -40,7 +40,7 @@ def test_supervisor_reads_current_attempt_progress_and_excludes_other_launch(tmp
     ours=row(1,'a',tag='ours');ours['env']['SRGC_PROGRESS_DIR']=str(current)
     other=row(1,'b',tag='other');other['env']['SRGC_PROGRESS_DIR']=str(foreign)
     events=supervisor.work_events({10:ours,20:other},'ours',tmp_path/'fallback')
-    assert len(events)==1 and 'policy_update' in events[0] and 'foreign' not in events[0]
+    assert len(events)==1 and 'Optimizer update completed' in events[0] and 'foreign' not in events[0]
     # Older coordinator inherits the supervisor's directory instead of making an attempt directory.
     assert supervisor.work_events({},'ours',current)==events
 
@@ -65,7 +65,7 @@ def test_detached_rank_ignoring_term_is_stopped_but_foreign_launch_survives(tmp_
 @pytest.mark.parametrize('normal_exit',[False,True])
 def test_supervisor_second_interrupt_stops_detached_rank_without_stdout_join(tmp_path,normal_exit):
     scripts=Path(__file__).resolve().parents[1]/'scripts'
-    for name in ['v8_supervisor.py','v8_processes.py','v8_probe.py','v8_control_output.py']:shutil.copyfile(scripts/name,tmp_path/name)
+    for name in ['v8_supervisor.py','v8_processes.py','v8_probe.py','v8_control_output.py','v8_progress_text.py']:shutil.copyfile(scripts/name,tmp_path/name)
     rank=tmp_path/'cluster_child.py'
     rank.write_text('import signal,time\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\nprint("RANK_READY",flush=True)\nwhile True:time.sleep(.02)\n')
     bootstrap=tmp_path/'v8_bootstrap.py';pidfile=tmp_path/'rank.pid'

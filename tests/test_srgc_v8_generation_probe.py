@@ -12,7 +12,7 @@ import types
 
 import pytest
 
-from scripts.v8_generation_probe import DecodeObserver,observed_generate
+from scripts.v8_generation_probe import DecodeObserver,observed_generate,install
 
 REPO=Path(__file__).resolve().parents[1]
 
@@ -104,10 +104,10 @@ def test_supervisor_shows_decode_counts_and_distinguishes_entered_event(tmp_path
     event=dict(stage='generation',updated=time.time(),generation_call=2,sequence_tokens=91,decode_steps=88)
     (tmp_path/'rank-0.json').write_text(json.dumps(event))
     line=v8_supervisor.work_events({},'fixture',tmp_path)[0]
-    assert 'sequence_tokens=91 decode_steps=88' in line
+    assert 'Writing model answers' in line and 'sequence length 91 tokens including input' in line
     event.update(stage='generation_start',progress_kind='entered_only')
     (tmp_path/'rank-0.json').write_text(json.dumps(event))
-    assert 'no decode step recorded yet' in v8_supervisor.work_events({},'fixture',tmp_path)[0]
+    assert 'no newly decoded token recorded yet' in v8_supervisor.work_events({},'fixture',tmp_path)[0]
 
 
 @pytest.mark.parametrize('has_progress',[False,True])
@@ -143,3 +143,49 @@ def main():
     else:
         assert result.returncode!=0 and not marker.exists()
         assert 'bytes differ' in result.stderr
+
+
+def test_logs_report_actual_local_questions_purpose_and_optimizer_steps_without_changing_results(monkeypatch,tmp_path):
+    rows=[];ledger=[]
+    progress=types.ModuleType('srgc_rebuttal.progress');progress.record=lambda stage,**d:rows.append((stage,d))
+    pkg=types.ModuleType('srgc_rebuttal');pkg.progress=progress
+    monkeypatch.setitem(sys.modules,'srgc_rebuttal',pkg);monkeypatch.setitem(sys.modules,'srgc_rebuttal.progress',progress)
+    hf=types.ModuleType('transformers');hf.StoppingCriteriaList=list;monkeypatch.setitem(sys.modules,'transformers',hf)
+    class Model:
+        def generate(self,**kw):
+            assert kw['num_return_sequences']==8 and kw['max_new_tokens']==2048
+            for size in (4,5):kw['stopping_criteria'][-1](fake_ids(size),None)
+            return 'unchanged model result'
+    class Backend:
+        rank=1;world=2
+        def __init__(self):
+            self.model=Model();self.cost_meter=types.SimpleNamespace(sections=['validation'],event=dict(phase='selection'))
+        def score_gradients(self,ids,*,responses,group_size,seed):
+            result={}
+            for q in ids[self.rank::self.world]:
+                assert self.model.generate(input_ids=fake_ids(3),num_return_sequences=responses,max_new_tokens=2048)=='unchanged model result'
+                progress.record('rollout',prompt=q,responses=responses)
+                progress.record('gradient_scoring',prompt=q);result[q]='unchanged gradient'
+            return result
+        def train(self,ids,**kwargs):
+            progress.record('policy_update');return dict(loss=0.25)
+    class Context:
+        def __init__(self,backend):
+            self.backend=backend;self.out_root=tmp_path/'olmo_math';self.meter=types.SimpleNamespace(record=lambda _:None)
+        def on_meter_event(self,event):ledger.append(event)
+    mod=types.ModuleType('switching.runner');mod.Context=Context
+    parent=types.ModuleType('switching');parent.__path__=[]
+    monkeypatch.setitem(sys.modules,'switching',parent);monkeypatch.setitem(sys.modules,'switching.runner',mod)
+    install(1);ctx=Context(Backend())
+    assert ctx.backend.score_gradients(['q0','q1','q2'],responses=8,group_size=8,seed=7)=={'q1':'unchanged gradient'}
+    events=[d for stage,d in rows if stage=='generation']
+    assert events and events[0]['questions_total']==events[0]['question_index']==1
+    assert events[0]['questions_answered']==events[0]['optimizer_steps_this_process']==0
+    assert events[0]['purpose']=='score reference questions to rank training candidates'
+    completed=[d for stage,d in rows if stage=='gradient_scoring'][-1]
+    assert completed['questions_answered']==completed['gradient_scores_completed']==1
+    assert ctx.backend.train(['q0','q1'],responses=8,seed=7,objective='grpo')==dict(loss=.25)
+    assert rows[-1][1]['optimizer_steps_this_process']==1
+    event=dict(phase='checkpoint_save',checkpoint=25,state='finished',wall_seconds=1.)
+    ctx.meter.record(event)
+    assert ledger==[event] and ledger[0] is event

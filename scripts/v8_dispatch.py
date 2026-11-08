@@ -124,7 +124,7 @@ def main():
     entries={entry['cohort']:entry for entry in plan['entries']}
     controls={name:hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
               for name in ('v8_dispatch.py','v8_runtime_worker.py','v8_rpc.py','srgc_v8_nodes.py',
-                           'v8_task_entry.py','v8_generation_probe.py')}
+                           'v8_task_entry.py','v8_generation_probe.py','v8_progress_text.py')}
     plan['dispatch_policy']=nodes.DISPATCH_POLICY
     plan['controller_sha256']=controls['srgc_v8_nodes.py']
     print(f'[v8] dispatch policy={nodes.DISPATCH_POLICY} controller={controls["srgc_v8_nodes.py"][:12]}',flush=True)

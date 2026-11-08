@@ -13,6 +13,7 @@ import uuid
 from v8_processes import TAG,select,stop,table
 from v8_probe import read,root
 from v8_control_output import emit,run_control
+from v8_progress_text import describe
 
 
 def work_events(rows,launch,fallback):
@@ -24,9 +25,9 @@ def work_events(rows,launch,fallback):
         for rank in range(4):
             event=read(directory/f'rank-{rank}.json')
             if isinstance(event,dict) and isinstance(event.get('updated'),(int,float)):
-                details=''.join(f' {name}={event[name]}' for name in ('generation_call','sequence_tokens','decode_steps') if name in event)
-                if event.get('progress_kind')=='entered_only':details+=' (entered; no decode step recorded yet)'
-                parts.append(f'rank{rank}={event.get("stage","?")}{details} event_age={time.time()-event["updated"]:.0f}s')
+                age=time.time()-event['updated']
+                kind='stage entered' if event.get('progress_kind')=='entered_only' else 'last new token' if event.get('progress_kind')=='returned_decode_steps' else 'last work record'
+                parts.append(f'GPU process {rank} | {describe(event.get("stage","?"),event)} | {kind} {age:.0f}s ago')
     return parts
 
 
@@ -46,7 +47,7 @@ def main():
     def report():
         while not finished.wait(15):
             parts=work_events(table(),launch,progress)
-            print('[v8 status] '+(' | '.join(parts) if parts else 'startup: no rank work event recorded yet'),flush=True)
+            print('[Training status] '+(' | '.join(parts) if parts else 'Preparing this node; no GPU work has been recorded yet'),flush=True)
     def relay(log):
         with log.open('rb') as reader:
             while True:
