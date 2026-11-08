@@ -235,8 +235,9 @@ def test_clean_view_is_compact_with_summary_last(tmp_path):
     bottom = lines[[i for i, line in enumerate(lines) if line.startswith("V8 status · ")][0]:]
     assert bottom[1].startswith("OLMo MATH  training ") and "1/4 done (25%)  running 1  ready 0  waiting 1  failed 1  updates 37/275" in bottom[1]
     assert bottom[2].startswith("Qwen MBPP  not started")
-    assert bottom[3].startswith("this node  node01: ▶ s5 On")
-    assert bottom[4].startswith("nodes      1 host · 1 running · 0 DEAD")
+    assert bottom[3] == "needs attention (1)" and bottom[4].startswith("  ✗ OLMo MATH s6 eval eval-final failed")
+    assert bottom[5].startswith("this node  node01: ▶ s5 On")
+    assert bottom[6].startswith("nodes      1 host · 1 running · 0 DEAD")
     row = next(line for line in bottom if line.startswith(" ▶ node01"))
     for cell in (" running ", " OLMo MATH ", " s5 On ", " 37/275 ", "answering 3/40, 812 tok (5s ago)"):
         assert cell in row, (cell, row)
@@ -299,7 +300,7 @@ def test_node_table_one_row_per_worker_with_what_it_does(tmp_path):
     a2 = by["h100-a02"][0]
     assert a2.startswith(" ▶ ") and " 0-3 " in a2 and " OLMo MATH " in a2 and " s6 SR25 " in a2 and " 3h02m " in a2 \
         and "scoring questions (20s ago)" in a2
-    assert by["h100-a03"][0].startswith(" ✗ ") and "task is free, an idle node takes it over" in by["h100-a03"][0]
+    assert by["h100-a03"][0].startswith(" ✗ ") and "node down or hung? restart that node" in by["h100-a03"][0]
     assert "lock still held" in by["h100-a04"][0]
     b10 = by["h100-b10"]
     assert " 0-3 or 4-7 " in b10[0] and " Qwen MBPP " in b10[0] and " s7 On " in b10[0] and " 40m " in b10[0]
@@ -345,16 +346,18 @@ def node_rows(text):
     return [line for line in bottom if line[:3] in (" ▶ ", " ✗ ", "   ") and " h-" in line[:10]]
 
 
-def test_removed_node_disappears_within_30_seconds(tmp_path):
-    """'idle 아닌데 자꾸 idle 이래 이미 삭제한 노드인데': a node without a heartbeat for >30 s is not idle."""
+def test_removed_node_disappears_within_90_seconds(tmp_path):
+    """'idle 아닌데 자꾸 idle 이래 이미 삭제한 노드인데': a node without a heartbeat for >90 s is not idle.
+    (Not 30 s: another node's heartbeat file can be read up to ~60 s stale on a shared file system.)"""
     now = time.time()
     base, q, m = two_cohort_base(tmp_path, now)
     for queue in (q, m):
         worker_beat(queue, "h-alive.1", 2, None, now)
-        worker_beat(queue, "h-removed.2", 40, None, now)
+        worker_beat(queue, "h-removed.2", 100, None, now)
+        worker_beat(queue, "h-slowread.3", 70, None, now)   # stale read of a live node: still alive
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
     rows = node_rows(text)
-    assert len(rows) == 1 and " h-alive " in rows[0] and " idle " in rows[0]
+    assert len(rows) == 2 and " h-alive " in rows[0] and " idle " in rows[0] and " h-slowread " in rows[1]
     assert "(1 gone not shown; --all-nodes)" in text
 
 
@@ -362,16 +365,18 @@ def test_busy_in_other_cohort_is_not_idle(tmp_path):
     """Fresh heartbeat in Qwen but silent in OLMo during OLMo's CPU stage / task scan: busy, not idle."""
     now = time.time()
     base, q, m = two_cohort_base(tmp_path, now, olmo_phase="freeze")
-    worker_beat(m, "h-cpu.1", 2, None, now); worker_beat(q, "h-cpu.1", 50, None, now)
+    worker_beat(m, "h-cpu.1", 2, None, now); worker_beat(q, "h-cpu.1", 150, None, now)
     log = q / "logs" / "cpu-freeze-abc.log"; log.parent.mkdir(parents=True); log.write_text("x\n"); os.utime(log, (now - 2, now - 2))
     rows = node_rows(status.render_clean([base], now=now, gpus=[], host="viewer", width=200))
     assert len(rows) == 1 and " busy " in rows[0] and " OLMo MATH " in rows[0] and "CPU stage budget freeze, log 2s ago" in rows[0]
     base2, q2, m2 = two_cohort_base(tmp_path / "b", now)
-    worker_beat(m2, "h-scan.1", 2, None, now); worker_beat(q2, "h-scan.1", 40, None, now)
+    worker_beat(m2, "h-scan.1", 2, None, now); worker_beat(q2, "h-scan.1", 150, None, now)
+    worker_beat(m2, "h-short.2", 2, None, now); worker_beat(q2, "h-short.2", 60, None, now)   # short scan / stale read
     rows = node_rows(status.render_clean([base2], now=now, gpus=[], host="viewer", width=200))
-    assert " busy " in rows[0] and "checking / claiming tasks (40s)" in rows[0]
+    assert " busy " in rows[0] and " h-scan " in rows[0] and "checking / claiming tasks (2 min)" in rows[0]
+    assert " idle " in rows[1] and " h-short " in rows[1]
     base3, q3, m3 = two_cohort_base(tmp_path / "c", now)
-    worker_beat(m3, "h-gave.1", 2, None, now); worker_beat(q3, "h-gave.1", 900, None, now)
+    worker_beat(m3, "h-gave.1", 2, None, now); worker_beat(q3, "h-gave.1", 1000, None, now)
     rows = node_rows(status.render_clean([base3], now=now, gpus=[], host="viewer", width=200))
     assert " idle " in rows[0] and "not serving OLMo MATH (gave up? see its console)" in rows[0]
 
@@ -384,18 +389,18 @@ def test_assigned_task_uses_the_lease_lock_not_heartbeat_age(tmp_path):
         write(q / "jobs" / f"{key}.json", {"state": "running", "phase": "train", "task": {"kind": "train", "method_id": "bank_sr_t025",
               "training_seed": 5, "run_id": key, "horizon": 275}, "attempts": [{"id": key + "a", "worker": wid, "started_at": now - started}]})
     (q / "leases").mkdir()
-    job("held", "h-load.1"); worker_beat(q, "h-load.1", 120, None, now)          # model load: silent but lock held
-    job("free40", "h-blip.2"); worker_beat(q, "h-blip.2", 40, None, now); (q / "leases" / "free40.lock").touch()
-    job("free90", "h-gone.3"); worker_beat(q, "h-gone.3", 90, None, now); (q / "leases" / "free90.lock").touch()
+    job("held", "h-load.1"); worker_beat(q, "h-load.1", 240, None, now)          # model load: silent but lock held
+    job("free40", "h-blip.2"); worker_beat(q, "h-blip.2", 120, None, now); (q / "leases" / "free40.lock").touch()
+    job("free90", "h-gone.3"); worker_beat(q, "h-gone.3", 200, None, now); (q / "leases" / "free90.lock").touch()
     fd = os.open(q / "leases" / "held.lock", os.O_CREAT | os.O_RDWR); fcntl.flock(fd, fcntl.LOCK_EX)
     try:
         text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
     finally:
         os.close(fd)
     by = {next(w for w in r.split() if w.startswith("h-")): r for r in node_rows(text)}
-    assert " running " in by["h-load"] and "no heartbeat 2 min, task lock held" in by["h-load"]
-    assert " running " in by["h-blip"]
-    assert by["h-gone"].startswith(" ✗ ") and " DEAD " in by["h-gone"] and "task is free" in by["h-gone"]
+    assert " running " in by["h-load"] and "no heartbeat 4 min, task lock held" in by["h-load"]
+    assert " running " in by["h-blip"] and not by["h-blip"].startswith(" ✗ ")   # 'free' lock + 2 min: not DEAD
+    assert by["h-gone"].startswith(" ✗ ") and " DEAD " in by["h-gone"] and "no heartbeat 3 min" in by["h-gone"]
     assert "running 2" in text and "on dead node 1" in text
 
 
@@ -421,3 +426,54 @@ def test_one_scan_per_cohort_per_refresh_and_fast_watch(tmp_path, monkeypatch):
     assert status._COLLECT_CACHE is None
     import inspect
     assert "const=3.0" in inspect.getsource(status.main)
+
+
+
+def test_odd_records_never_crash_the_screen(tmp_path):
+    """Harness (v1.0.16, with the original checkout): an int worker id crashed the node table and a run
+    manifest attempt without attempt_id raised KeyError. Both must render; a broken record is listed."""
+    now = time.time()
+    base, q, m = two_cohort_base(tmp_path, now)
+    write(q / "jobs" / "a1.json", {"state": "running", "task": {"kind": "train", "run_id": "r1", "training_seed": 5,
+          "method_id": "on_monitored", "horizon": 275}, "attempts": [{"id": "x", "worker": 123, "started_at": now - 60}]})
+    write(base / "olmo_math" / "runs" / "r1" / "manifest.json", {"attempts": [{"no_attempt_id": True}]})
+    write(q / "jobs" / "a2.json", {"state": "pending", "task": ["not", "a", "dict"], "attempts": "nope"})
+    write(q / "jobs" / "a3.json", {"state": "running", "task": {"kind": "train", "run_id": "r3"}, "attempts": [None]})
+    write(base / "olmo_math" / "runs" / "r3" / "manifest.json", {"attempts": "broken"})
+    (q / "leases").mkdir(); (q / "leases" / "a1.lock").touch()
+    for style in ("clean", "simple", "srgc"):
+        text = status.render([base], now=now, gpus=[], host="viewer", style=style)
+        assert "Traceback" not in text and "OLMo" in text or "olmo_math" in text
+    clean = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
+    assert " 123 " in clean and " DEAD " in clean
+
+
+
+def test_healthy_nodes_never_get_an_x_and_attention_is_at_the_bottom(tmp_path):
+    """'status 이상해 정상인게 엑스표시나와', 'needs attention 이거 업데이트가 안되는거 같음'."""
+    now = time.time()
+    base, q, m = two_cohort_base(tmp_path, now)
+    (q / "leases").mkdir()
+    for i in range(4):   # running tasks whose lock looks free from this node, heartbeat 5-150 s old
+        key = f"t{i}"
+        write(q / "jobs" / f"{key}.json", {"state": "running", "phase": "train", "task": {"kind": "train",
+              "method_id": "bank_sr_t025", "training_seed": 5 + i, "run_id": key, "horizon": 275},
+              "attempts": [{"id": key + "a", "worker": f"h-ok{i}.1", "started_at": now - 900}]})
+        (q / "leases" / f"{key}.lock").touch()
+        worker_beat(q, f"h-ok{i}.1", (5, 60, 120, 150)[i], f"child:{i}", now)
+    write(q / "jobs" / "f.json", {"state": "failed", "phase": "train", "task": {"kind": "train", "method_id": "bank_sr_t050",
+          "training_seed": 9, "run_id": "f"}, "attempts": [{"id": "fa", "started_at": now - 7300, "ended_at": now - 7200,
+          "error": "task exit=1"}]})
+    write(q / "jobs" / "i.json", {"state": "interrupted", "phase": "train", "task": {"kind": "train", "method_id": "on_monitored",
+          "training_seed": 8, "run_id": "i"}, "attempts": [{"id": "ia", "started_at": now - 400, "ended_at": now - 300}]})
+    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
+    rows = node_rows(text)
+    assert len(rows) == 4 and all(r.startswith(" ▶ ") and " running " in r for r in rows), rows
+    assert "on dead node" not in text and "· 0 DEAD" in text
+    top, bottom = text.split("V8 status · ")
+    assert "needs attention" not in top and "needs attention (2)" in bottom
+    lines = bottom.splitlines()
+    i = lines.index("needs attention (2)")
+    assert lines[i + 1].startswith("  ✗ OLMo MATH s9 SR50 failed ") and "(attempt 1): task exit=1" in lines[i + 1]
+    assert lines[i + 2].startswith("  ⏸ OLMo MATH s8 On interrupted 5 min ago: reruns automatically")
+    assert "failed 1" in bottom and "interrupted 1" in bottom
