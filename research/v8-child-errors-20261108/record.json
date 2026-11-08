@@ -1,0 +1,79 @@
+{
+  "source_commit": "3b21b44945fd0853681565f48a88a6dd173561b5",
+  "merged_source": "ca3d300349577349826907cc86666b777b2231ea",
+  "user_report": "torch.distributed.elastic.multiprocessing.errors.ChildFailedError; 고쳐",
+  "hypothesis": "The summary exception alone does not identify the failing GPU rank cause. The control actor lost the busy/interrupted exit75 through torchrun exit1, and the entrypoint lacked official elastic rank recording. Latest source also needed original rank errors to win over a simultaneous busy marker, and existing logs preferred the generic elastic wrapper.",
+  "attribution": "Codex child lifecycle/entrypoint/reporting gaps. The concurrent COORD audit23b549a independently added the basic exit-marker conversion and node-local fault protections; these changes were integrated rather than overwritten. The signal/exception priority, attempt-scoped fresh markers, rank-error capture, SystemExit capture and original-log selection extend that contract.",
+  "tested": {
+    "data": "Actual existing CPU torchrun with two rank processes, real SRGC run_child and frozen-child hash verification; no GPU or pretrained model. Controlled original child fixtures emit busy75, ordinary ValueError, failed SystemExit, simultaneous rank0busy+rank1ValueError, and rank0busy+rank1SIGKILL.",
+    "controls": "Preserve nonzero status for actual exceptions and fatal signals, ignore foreign/stale markers, reject wrong task/status/noninteger exit75, retain current invocation only, preserve attempt and status root errors. Original child bytes/binding unchanged. Existing CPU DAG/observer/output/RNG/history tests included.",
+    "seeds_updates": "No experiment seed/model transformation or optimizer update from these torchrun fault fixtures; seeds in other CPU DAG tests are metadata/toy controls only.",
+    "metrics": "Return code, original traceback and error-file retention, observed SIGKILL, task-attempt error/status display, checkpoint/binding preservation. Not a measured training reward, fixed-held-out reward, learning throughput or actual H100 result."
+  },
+  "before": "before.xml:4 failures. Actual busy exits75 on both ranks produced exactly ChildFailedError and parent exit1; real rank causes had no retained original elastic error file or structured task report.",
+  "fix": "Use official PyTorch elastic record around the exact selected child, include nonzero nonresumable SystemExit, copy error payload with invocation token into attempt progress. Interpret exit75 only from the fresh current-task marker and only without a real rank fault or fatal signal. Retain faults as child-failure.json and in the original attempt, print their message after the elastic summary, and prefer specific exceptions from historical logs in status. Signal-killed processes have no invented Python traceback.",
+  "integration_failures": "merged-all.xml:273 passed,2 fixture failures. One expected the old fixed exit-marker pathname; the other copied a supervisor without its existing v8_progress_text import dependency. Retained failures; updated assertions to check fresh marker isolation and copied the required dependency. Final coordination/error/status rerun42 passed; later compact-status merge28 passed.",
+  "evidence": {
+    "core.xml": {
+      "tests": 95,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "signal-and-status.xml": {
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "compact-merge.xml": {
+      "tests": 28,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "archive-and-entry.xml": {
+      "tests": 24,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "status-guards.xml": {
+      "tests": 22,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "merged-all.xml": {
+      "tests": 275,
+      "failures": 2,
+      "errors": 0,
+      "skipped": 0
+    },
+    "first-fixed.xml": {
+      "tests": 18,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "before.xml": {
+      "tests": 4,
+      "failures": 4,
+      "errors": 0,
+      "skipped": 0
+    },
+    "final-error-and-coordination.xml": {
+      "tests": 42,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "archive": {
+    "coordinators": 24,
+    "runners": 7,
+    "files": 438
+  },
+  "checkpoint_provenance": "Thirty original frozen srgc_rebuttal file hashes match baseline. No checkpoint, optimizer/RNG, reward, raw failure/attempt or original scientific binding was deleted or relabelled. Original Runtime snapshots retained; control overrides remain receipted.",
+  "limitations": "The user supplied only ChildFailedError, not the preceding H100 traceback/Root Cause or rank log; an asynchronous request for those lines is pending. These CPU fixes do not establish the actual remote OLMo failure cause, successful startup, optimizer updates or scientific completion. No GPU node allocation, paid API/model call or web/development server was started; CPU torchrun used its own temporary rendezvous."
+}
