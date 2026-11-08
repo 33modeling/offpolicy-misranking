@@ -96,5 +96,15 @@
     "archive.xml",
     "merged.xml",
     "before.xml"
-  ]
+  ],
+  "rolling_legacy_followup": {
+    "base_commit": "21a5227",
+    "controller_sha256": "b9918ca5a46f36207d11e2af8b458b56fcb54b4728737c2a418e43e8c4b74e21",
+    "reason": "The five historical workers may remain alive and publish a legacy cohort-wide task error AFTER new workers have joined.",
+    "change": "Both discovery and tick reuse the validated task-only conversion, preserving the failed job and attempts; structural failures remain blocked.",
+    "tests_passed": 75,
+    "failures": 0,
+    "evidence": "rolling-legacy.xml",
+    "real_H100_status": "still unverified"
+  }
 }

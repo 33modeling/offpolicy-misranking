@@ -86,3 +86,16 @@ def test_explicit_retry_reopens_only_failed_tasks_even_without_cohort_failure(tm
     assert retry_key==key
     assert len(nodes.read(pool.root/'jobs'/(key+'.json'))['attempts'])==2
     lease.close()
+
+
+def test_legacy_worker_failure_published_after_join_does_not_reblock_ready_jobs(tmp_path):
+    pool,runtime,stop=setup(tmp_path)
+    lease,key,task,attempt=claim(pool,runtime,stop)
+    pool.finish(key,9,runtime,stop);lease.close()
+    # An old coordinator can still be running one of the five MBPP jobs.
+    pool.fail('task exit=9; output verified=False',key)
+    action,next_claim=pool.tick(runtime,'already-joined-node',stop)
+    assert action=='claimed' and next_claim[1]!=key
+    assert nodes.read(pool.root/'state.json')['failure'] is None
+    assert len(nodes.read(pool.root/'jobs'/(key+'.json'))['attempts'])==1
+    next_claim[0].close()

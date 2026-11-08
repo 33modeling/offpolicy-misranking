@@ -276,6 +276,11 @@ class Pool:
             raise BindingMismatch(f"{self.binding.get('cohort')}: another node replaced this queue's code/Python record "
                                   "while this worker was running; restart this worker with the same bundle as the others.")
         state=self.queue_state()
+        if isinstance(state.get('failure'),dict) and state['failure'].get('task'):
+            # A still-running historical worker can publish its old cohort-wide
+            # task exit after this node has already joined. Reuse the same
+            # validated, task-only conversion; never retry the failed task.
+            self.initialize();state=self.queue_state()
         if state['failure']:return 'failed',None
         phase=state['phase']
         if phase=='complete':return 'complete',None
@@ -484,6 +489,8 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                         if read(pool.root/'binding.json')!=pool.binding:
                             raise BindingMismatch('Queue identity changed while this worker was running')
                         state=pool.queue_state()
+                        if isinstance(state.get('failure'),dict) and state['failure'].get('task'):
+                            pool.initialize();state=pool.queue_state()
                         action='failed' if state.get('failure') else state['phase']
                         if action in PHASES:action='waiting'
                         if action in ('prepare','freeze','finalize'):
