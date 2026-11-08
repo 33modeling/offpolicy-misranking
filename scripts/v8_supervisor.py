@@ -40,6 +40,7 @@ def before_model_work(rows,launch,base,console,host=None):
     for folder in sorted(bases):
         for item in snapshot(folder,host):
             label=item['cohort'];failure=item.get('failure')
+            for error in item.get('record_errors',[]):lines.append('STATUS ERROR '+label+': '+error)
             if failure:
                 detail=failure.get('detail',str(failure)) if isinstance(failure,dict) else str(failure)
                 lines.append(f'BLOCKED {label}: {detail}; queue={folder/label/".multi-node/state.json"}')
@@ -72,7 +73,10 @@ def main():
     def report():
         while not finished.wait(15):
             rows=table();parts=work_events(rows,launch,progress)
-            if not parts:parts=before_model_work(rows,launch,root(env),log)
+            if not parts:
+                try:parts=before_model_work(rows,launch,root(env),log)
+                except (OSError,ValueError,TypeError,KeyError) as exc:
+                    parts=[f'STATUS ERROR: cannot read this launch state: {type(exc).__name__}: {exc}; console log={log}']
             print('[Training status] '+' | '.join(parts),flush=True)
     def relay(log):
         with log.open('rb') as reader:

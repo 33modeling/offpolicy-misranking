@@ -64,3 +64,11 @@ def test_short_hostname_cannot_adopt_a_different_fqdn_worker(tmp_path):
          attempts=[dict(id='f',worker='node.cluster.example.123')]))
     assert not probe.snapshot(tmp_path,'node')[0]['local_jobs']
     assert len(probe.snapshot(tmp_path,'node.cluster.example')[0]['local_jobs'])==1
+
+
+def test_malformed_state_and_job_are_not_reported_as_normal_preparation(tmp_path):
+    queue=tmp_path/'olmo_math/.multi-node';(queue/'jobs').mkdir(parents=True)
+    (queue/'state.json').write_text('{unfinished')
+    (queue/'jobs/bad.json').write_text('[]')
+    item=probe.snapshot(tmp_path,'host')[0]
+    assert item['phase']=='unknown' and len(item['record_errors'])==2
