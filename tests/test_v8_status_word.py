@@ -63,3 +63,11 @@ def test_mode_words(tmp_path):
     for args in (["status", "status"], ["math", "mbpp"], ["results"]):
         out = run(args, tmp_path)
         assert out.returncode == 2 and "usage:" in out.stderr and "Traceback" not in out.stderr
+
+
+
+def test_status_view_options_are_forwarded(tmp_path):
+    out = run(["status", "--all-nodes"], tmp_path)
+    assert out.returncode == 0 and "V8 status · " in out.stdout, out.stderr
+    out = run(["math", "status", "--classic"], tmp_path)
+    assert out.returncode == 0 and "unknown" not in out.stderr, out.stderr

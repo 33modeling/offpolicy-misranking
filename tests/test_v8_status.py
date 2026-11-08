@@ -236,7 +236,7 @@ def test_clean_view_is_compact_with_summary_last(tmp_path):
     assert bottom[1].startswith("OLMo MATH  training ") and "1/4 done (25%)  running 1  ready 0  waiting 1  failed 1  updates 37/275" in bottom[1]
     assert bottom[2].startswith("Qwen MBPP  not started")
     assert bottom[3].startswith("this node  node01: ▶ s5 On")
-    assert bottom[4].startswith("nodes      1 host, 1 worker · 1 running · 0 DEAD")
+    assert bottom[4].startswith("nodes      1 host · 1 running · 0 DEAD")
     row = next(line for line in bottom if line.startswith(" ▶ node01"))
     for cell in (" running ", " OLMo MATH ", " s5 On ", " 37/275 ", "answering 3/40, 812 tok (5s ago)"):
         assert cell in row, (cell, row)
@@ -288,11 +288,11 @@ def test_node_table_one_row_per_worker_with_what_it_does(tmp_path):
         os.close(fd)
     bottom = text.split("V8 status · ")[1].splitlines()
     head = next(line for line in bottom if line.startswith("nodes "))
-    assert "8 hosts" not in head and "7 hosts, 8 workers" in head
-    assert "3 running · 1 starting · 1 idle · 2 DEAD · 1 gone" in head and "DEAD: h100-a03, h100-a04" in head
+    assert "6 hosts · 3 running · 1 starting · 1 idle · 2 DEAD" in head and "DEAD: h100-a03, h100-a04" in head
+    assert "(1 gone not shown; --all-nodes)" in head
     rows = [line for line in bottom if line[:3] in (" ▶ ", " ✗ ", "   ") and " h100-" in line[:12]]
     assert [r.split()[1] if r[1] in "▶✗" else r.split()[0] for r in rows] == \
-        ["h100-a01", "h100-a02", "h100-a03", "h100-a04", "h100-b10", "h100-b10", "h100-b11", "h100-b12"]   # host order
+        ["h100-a01", "h100-a02", "h100-b10", "h100-b10", "h100-b11", "h100-a03", "h100-a04"]   # running, starting, idle, DEAD
     by = {}
     for r in rows:
         by.setdefault(r.split()[1] if r[1] in "▶✗" else r.split()[0], []).append(r)
@@ -305,7 +305,9 @@ def test_node_table_one_row_per_worker_with_what_it_does(tmp_path):
     assert " 0-3 or 4-7 " in b10[0] and " Qwen MBPP " in b10[0] and " s7 On " in b10[0] and " 40m " in b10[0]
     assert " starting " in b10[1] and "loading runtime / checking node" in b10[1]
     assert " idle " in by["h100-b11"][0] and "waiting for work" in by["h100-b11"][0]
-    assert " gone " in by["h100-b12"][0]
+    assert "h100-b12" not in by and not any(" gone " in r for r in rows)   # 'gone 보기 싫어': gone workers are only counted
+    everything = status.render_clean([base], now=now, gpus=[("0", 97, 61000)], host="h100-a01", width=200, all_nodes=True)
+    assert " h100-b12 " in everything and " gone " in everything
     assert not (q / "leases" / "j2.lock").exists()   # the probe never creates lease files
 
 
@@ -321,7 +323,7 @@ def test_clean_view_finished_nodes_are_not_dead(tmp_path):
     for wid in ("node0.11", "node1.12"):
         worker_beat(q, wid, 4000, None, now)
     bottom = status.render_clean([base], now=now, gpus=[], host="node09", width=160).split("V8 status · ")[1]
-    assert "0 DEAD" in bottom and "2 finished" in bottom and "queue complete" in bottom
+    assert "0 DEAD" in bottom and "(2 finished not shown; --all-nodes)" in bottom and "node0 " not in bottom
 
 
 def test_short_arm_names():

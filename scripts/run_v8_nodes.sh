@@ -28,7 +28,7 @@ usage() {
     echo "  sh scripts/run_v8_nodes.sh stop         stop this node's V8 worker (checkpoints and queue kept)" >&2
     echo "  math = olmo_math, mbpp = qwen_mbpp" >&2
 }
-COHORT=; MODE=; WATCH=; VALUE_NEXT=; WATCH_NEXT=
+COHORT=; MODE=; WATCH=; VALUE_NEXT=; WATCH_NEXT=; VIEW=
 n=$#
 for arg in "$@"; do
     if [ -n "$VALUE_NEXT" ]; then VALUE_NEXT=; set -- "$@" "$arg"; continue; fi
@@ -42,6 +42,7 @@ for arg in "$@"; do
         --gpus|--root|--python|--poll-seconds|--runner-root|--max-attempts|--retry-delay) VALUE_NEXT=1; set -- "$@" "$arg" ;;
         --watch) WATCH=--watch; WATCH_NEXT=1 ;;
         --watch=*) WATCH="--watch ${arg#--watch=}" ;;
+        --all-nodes|--simple|--classic) VIEW="$VIEW $arg" ;;
         -*) set -- "$@" "$arg" ;;
         olmo_math|math) [ -z "$COHORT" ] && COHORT=olmo_math || { usage; exit 2; } ;;
         qwen_mbpp|mbpp) [ -z "$COHORT" ] && COHORT=qwen_mbpp || { usage; exit 2; } ;;
@@ -56,8 +57,8 @@ done
 shift "$n"
 case "${MODE:-run}" in
     status)
-        if [ -n "$COHORT" ] && [ "$COHORT" != all ]; then exec "$PY" "$HERE/v8_status.py" --cohort "$COHORT" $WATCH; fi
-        exec "$PY" "$HERE/v8_status.py" $WATCH ;;
+        if [ -n "$COHORT" ] && [ "$COHORT" != all ]; then exec "$PY" "$HERE/v8_status.py" --cohort "$COHORT" $WATCH $VIEW; fi
+        exec "$PY" "$HERE/v8_status.py" $WATCH $VIEW ;;
     stop)
         if [ -n "$COHORT" ] || [ "$#" -gt 0 ]; then
             echo "V8 stop: stops every V8 process of this node (all cohorts, checkpoints and queue kept); the words/options '${COHORT:+$COHORT }$*' are not used by stop." >&2

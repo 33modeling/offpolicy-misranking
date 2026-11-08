@@ -837,9 +837,10 @@ def node_table(bases, cohorts, now, this_host=None):
             cells.append(dict(host=e['host'], pid=pid, gpus=gpus, state=state, experiment=experiment, task=task,
                               updates=updates, took=took, doing=doing, beat=beat))
         out.extend(cells)
-    return out
+    rank = {'running': 0, 'starting': 1, 'idle': 2, 'DEAD': 3, 'gone': 4, 'finished': 5}
+    return sorted(out, key=lambda r: (rank[r['state']], natural(r['host']), natural(r['pid'])))
 
-def render_clean(bases, now=None, gpus=None, host=None, cohorts=COHORTS, width=None):
+def render_clean(bases, now=None, gpus=None, host=None, cohorts=COHORTS, width=None, all_nodes=False):
     import shutil
     now = time.time() if now is None else now
     host = host or socket.gethostname()
@@ -869,37 +870,40 @@ def render_clean(bases, now=None, gpus=None, host=None, cohorts=COHORTS, width=N
     gpu_text = ' '.join(f'{i}:{u}%' for i, u, _ in gpus) if gpus else 'unknown'
     out.append(f"this node  {host}: {mine or 'no V8 task here'} · GPU {gpu_text}")
     table = node_table(bases, cohorts, now, host)
+    shown = table if all_nodes else [r for r in table if r['state'] not in ('gone', 'finished')]
     if table:
         order = ('running', 'starting', 'idle', 'DEAD', 'gone', 'finished')
         per = {k: sorted({(r['host'], r['pid']) for r in table if r['state'] == k}) for k in order}
-        procs = len({(r['host'], r['pid']) for r in table})
-        hosts = len({r['host'] for r in table})
         alive = len(per['running']) + len(per['starting']) + len(per['idle'])
+        hosts = len({r['host'] for r in table if r['state'] not in ('gone', 'finished')})
+        hidden = [f"{len(per[k])} {k}" for k in ('gone', 'finished') if per[k]]
         more = max(0, wanted - alive)
-        out.append(f"nodes      {hosts} host{'s' if hosts != 1 else ''}, {procs} worker{'s' if procs != 1 else ''} · "
-                   + ' · '.join(f"{len(per[k])} {k}" for k in order if per[k] or k in ('running', 'DEAD'))
-                   + (f"   DEAD: {', '.join(h for h, _ in per['DEAD'])}" if per['DEAD'] else ''))
+        out.append(f"nodes      {hosts} host{'s' if hosts != 1 else ''} · "
+                   + ' · '.join(f"{len(per[k])} {k}" for k in ('running', 'starting', 'idle', 'DEAD') if per[k] or k in ('running', 'DEAD'))
+                   + (f"   DEAD: {', '.join(h for h, _ in per['DEAD'])}" if per['DEAD'] else '')
+                   + (f"   ({', '.join(hidden)} not shown; --all-nodes)" if hidden and not all_nodes else ''))
         out.append(f"           tasks that can run now: {wanted} · alive workers: {alive}"
                    + (f" → {more} more 4-GPU node{'s' if more != 1 else ''} would help" if more else ''))
-        cols = (('host', 'host'), ('gpus', 'gpus'), ('state', 'state'), ('experiment', 'experiment'), ('task', 'task'),
-                ('updates', 'updates'), ('took', 'running for'), ('beat', 'heartbeat'))
-        w = {k: max(len(title), *(len(str(r[k])) for r in table)) for k, title in cols}
-        out.append('   ' + '  '.join(f"{title:<{w[k]}}" for k, title in cols) + '  now')
-        for r in table:
-            mark = '✗' if r['state'] == 'DEAD' else '▶' if r['state'] == 'running' else ' '
-            out.append(f" {mark} " + '  '.join(f"{str(r[k]):<{w[k]}}" for k, _ in cols) + f"  {r['doing']}")
-        out.append("   DEAD = no heartbeat for over 3 min while a task is assigned · gone = no heartbeat, no task · "
-                   "finished = queue complete")
+        if shown:
+            cols = (('host', 'host'), ('gpus', 'gpus'), ('state', 'state'), ('experiment', 'experiment'), ('task', 'task'),
+                    ('updates', 'updates'), ('took', 'running for'), ('beat', 'heartbeat'))
+            w = {k: max(len(title), *(len(str(r[k])) for r in shown)) for k, title in cols}
+            out.append('   ' + '  '.join(f"{title:<{w[k]}}" for k, title in cols) + '  now')
+            for r in shown:
+                mark = '✗' if r['state'] == 'DEAD' else '▶' if r['state'] == 'running' else ' '
+                out.append(f" {mark} " + '  '.join(f"{str(r[k]):<{w[k]}}" for k, _ in cols) + f"  {r['doing']}")
+            if per['DEAD']:
+                out.append("   DEAD = no heartbeat for over 3 min while a task is assigned")
     else:
         out.append("nodes      no worker has started yet" + (f" · tasks that can run now: {wanted}" if wanted else ''))
     return '\n'.join(clip(line, width) for line in out) + '\n'
 
 
-def render(bases, now=None, gpus=None, host=None, cohorts=COHORTS, style='simple'):
+def render(bases, now=None, gpus=None, host=None, cohorts=COHORTS, style='simple', all_nodes=False):
     now = time.time() if now is None else now
     host = host or socket.gethostname()
     if style == 'clean':
-        return render_clean(bases, now=now, gpus=gpus, host=host, cohorts=cohorts)
+        return render_clean(bases, now=now, gpus=gpus, host=host, cohorts=cohorts, all_nodes=all_nodes)
     live = original_renderer() if style == 'srgc' else None
     if live is not None:
         return '\n'.join(render_srgc(live, base, cohort, now, host) for base in bases for cohort in cohorts)
@@ -919,17 +923,18 @@ def main(argv=None):
     parser.add_argument('--cohort', action='append', type=cohort_name, help='show only this cohort (repeatable)')
     parser.add_argument('--simple', action='store_true', help='older simplified V8 view')
     parser.add_argument('--classic', action='store_true', help='the original run_srgc.sh status screen layout')
+    parser.add_argument('--all-nodes', action='store_true', help='also list gone and finished workers')
     parser.add_argument('--watch', nargs='?', const=60.0, type=float, default=None, metavar='SECONDS',
                         help='refresh every SECONDS (default 60) until Ctrl-C')
     args = parser.parse_args(argv)
     # An explicit V8_ROOT wins; otherwise the roots of this node's running V8 processes, else the default.
     bases = [Path(os.environ['V8_ROOT'])] if os.environ.get('V8_ROOT') else (active_roots() or [root(os.environ)])
     if args.watch is None:
-        sys.stdout.write(render(bases, cohorts=tuple(args.cohort or COHORTS), style='simple' if args.simple else 'srgc' if args.classic else 'clean'))
+        sys.stdout.write(render(bases, cohorts=tuple(args.cohort or COHORTS), style='simple' if args.simple else 'srgc' if args.classic else 'clean', all_nodes=args.all_nodes))
         return 0
     try:
         while True:
-            sys.stdout.write('\033[H\033[2J' + render(bases, cohorts=tuple(args.cohort or COHORTS), style='simple' if args.simple else 'srgc' if args.classic else 'clean') + f"\n(refresh every {int(args.watch)}s · Ctrl-C to stop)\n")
+            sys.stdout.write('\033[H\033[2J' + render(bases, cohorts=tuple(args.cohort or COHORTS), style='simple' if args.simple else 'srgc' if args.classic else 'clean', all_nodes=args.all_nodes) + f"\n(refresh every {int(args.watch)}s · Ctrl-C to stop)\n")
             sys.stdout.flush()
             time.sleep(max(5.0, args.watch))
     except KeyboardInterrupt:
