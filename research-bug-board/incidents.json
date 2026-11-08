@@ -3047,6 +3047,14 @@
         "status": "open",
         "text": "이전 이벤트의 첫 update 소요시간15~30분/2~3시간은 이번 사용자 H100에서 측정한 값이 아니다. 콘솔 무출력·heartbeat 지연만으로 정상 학습이나 중단을 확정하지 않는다. 제어 경로 결함8개를 CPU에서 재현·수정했으나 실제 Loading weights 정지 원인과 해결 여부는 여전히 미확인이다.",
         "evidence_kind": "measurement_limit"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "user / Codex",
+        "type": "unresolved_retention_audit",
+        "status": "open",
+        "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+        "evidence_kind": "user_instruction_and_limitation"
       }
     ]
   },
@@ -3952,6 +3960,14 @@
         "text": "사용자가 OLMo-MATH 정지와 전체 노드 idle을 다시 보고했다. 준비된 독립 작업/실패 격리 및 새로운 worker의 이전 실패 복구는 CPU 시험을 통과했으나 실제 노드 queue/dispatch policy/학습 재개는 아직 미확인이다. 완료나 정상 대기로 닫지 않는다.",
         "evidence_kind": "user_report_and_cpu_reproduction",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/d9ad4421873afe77f487bf13bd1e36b8bdc33d32"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "user / Codex",
+        "type": "unresolved_retention_audit",
+        "status": "remote_verification_pending",
+        "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+        "evidence_kind": "user_instruction_and_limitation"
       }
     ]
   },
@@ -4170,6 +4186,14 @@
         "status": "remote_verification_pending",
         "text": "원격 master dad57ff exact 확인. 실행 중인 기존 고정 worker는 git pull만으로 바뀌지 않는다. source 완료와 실제 H100 OLMo 시작/생성 정체 해결을 구분한다. 원격 미시작 사용자 보고는 계속 미해결로 기록하며 공개 현황판 배포는 수행하지 않았다.",
         "evidence_kind": "limitation"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "user / Codex",
+        "type": "unresolved_retention_audit",
+        "status": "remote_verification_pending",
+        "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+        "evidence_kind": "user_instruction_and_limitation"
       }
     ]
   },
@@ -4220,6 +4244,14 @@
         "status": "remote_verification_pending",
         "text": "원격 master dad57ff exact 확인. 실행 중인 기존 고정 worker는 git pull만으로 바뀌지 않는다. source 완료와 실제 H100 OLMo 시작/생성 정체 해결을 구분한다. 원격 미시작 사용자 보고는 계속 미해결로 기록하며 공개 현황판 배포는 수행하지 않았다.",
         "evidence_kind": "limitation"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "user / Codex",
+        "type": "unresolved_retention_audit",
+        "status": "remote_verification_pending",
+        "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+        "evidence_kind": "user_instruction_and_limitation"
       }
     ]
   },
@@ -4296,6 +4328,14 @@
         "text": "사용자가 --retry-failed를 기본 명령에 강제하지 말고 새 노드에서 실행하겠다고 명시했다. 이전 수동 재시도 전용 정책을 V8-046에서 보강했다. 검증된 새 노드는 이전 제어기의 실패를 현 복구 정책당 한 번 재개하며 원래 실패·checkpoint를 보존한다. 같은 정책의 실패·입력/설정 오류·살아 있는 lease는 자동 반복하거나 우회하지 않는다. 실제 H100은 여전히 미검증이다.",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/1a3358ba6c4e0e3e484141acad5a1ba7db4e2e09",
         "evidence_kind": "source"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "user / Codex",
+        "type": "unresolved_retention_audit",
+        "status": "remote_verification_pending",
+        "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+        "evidence_kind": "user_instruction_and_limitation"
       }
     ]
   },
@@ -4346,6 +4386,14 @@
         "status": "remote_verification_pending",
         "text": "173c500 원격exact 확인. 실제 H100 추가 할당·OLMo optimizer update·처리량·노드 손실시간은 측정하지 못했다. 체크포인트/optimizer/RNG/25-update 기록은 보존하고 기존 고정 worker는 재실행 때 새 제어가 적용된다. 공개 현황판 배포는 별도 미실행이다.",
         "evidence_kind": "limitation"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "user / Codex",
+        "type": "unresolved_retention_audit",
+        "status": "remote_verification_pending",
+        "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+        "evidence_kind": "user_instruction_and_limitation"
       }
     ]
   },
@@ -4404,6 +4452,14 @@
         "status": "remote_verification_pending",
         "text": "코드235ded0 원격exact 확인. 이미 실패로 기록된 작업은 명시적 --retry-failed로 재배정할 수 있다. 실제 H100 OLMo의 학습 시작/완료는 아직 관찰하지 못했고 자동 성공으로 집계하지 않는다. 공개 현황판 배포는 별도 미실행이다.",
         "evidence_kind": "limitation"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "user / Codex",
+        "type": "unresolved_retention_audit",
+        "status": "remote_verification_pending",
+        "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+        "evidence_kind": "user_instruction_and_limitation"
       }
     ]
   },
@@ -4467,6 +4523,14 @@
         "status": "remote_verification_pending",
         "text": "수정·증거·실행 원본 묶음을 master에 push하고 exact remote 확인. 실제 H100 OLMo 시작·optimizer update·처리량은 아직 미검증이다. 실행 중인 worker는 고정된 옛 코드를 유지하며 대기/실패 worker 재실행부터 적용된다. 공개 버그 현황판의 배포는 이 소스 push와 별개로 수행하지 않았다.",
         "evidence_kind": "limitation"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "user / Codex",
+        "type": "unresolved_retention_audit",
+        "status": "remote_verification_pending",
+        "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+        "evidence_kind": "user_instruction_and_limitation"
       }
     ]
   },
@@ -4525,6 +4589,14 @@
         "status": "remote_verification_pending",
         "text": "수정본·검증 원시 기록·원본 런타임 묶음을 master에 push하고 exact remote 확인. 새 노드는 git pull 후 sh scripts/run_v8_nodes.sh 기본 명령 사용. 실제 H100 OLMo 시작·update·처리량은 아직 미확인이다. 공개 버그 현황판 배포와 소스 장부 갱신은 구분한다.",
         "evidence_kind": "limitation"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "user / Codex",
+        "type": "unresolved_retention_audit",
+        "status": "remote_verification_pending",
+        "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+        "evidence_kind": "user_instruction_and_limitation"
       }
     ]
   },
@@ -5416,6 +5488,14 @@
         "text": "사용자 ChildFailedError 보고 후 실제 CPU torchrun2rank로 busy75→parent1 오인을 다시 재현했다. 동시 COORD 기본 exit marker 수정도 보존 통합했다. 추가로 원래 rank 예외·치명 signal은 busy marker보다 우선하며, invocation마다 새 marker를 사용한다. 정상 중단을 실패로 보거나 실제 예외를 성공/정상중단으로 바꾸지 않는 검사를 통과했다. 실제 사용자 H100 원인/학습 시작은 여전히 미확인이다.",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/3b21b44945fd0853681565f48a88a6dd173561b5",
         "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "user / Codex",
+        "type": "unresolved_retention_audit",
+        "status": "remote_verification_pending",
+        "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+        "evidence_kind": "user_instruction_and_limitation"
       }
     ]
   },
@@ -5509,6 +5589,14 @@
         "text": "기존 RT-05 수정이 최신 child에 있어도 exact-source resume의 옛 runner에는 적용되지 않았다.7 runner 중2에 verifier installer,6에 protected rollout이 없다. 새 Context adapter가 source 선택 뒤 기존 seed verifier와 캐시/OOM 보호를 연결하고 실제 적용·helper SHA·reward runtime 변경을 per-rank receipt에 남긴다. 데이터/체크포인트/기존 보상은 보존한다.295 CPU회귀+기존 pinned verifier5 통과; 실제 H100 용량·진행은 미확인이다.",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/153a4d87bcf86c0555d33bea6dfea5ca1c4c15ce",
         "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "user / Codex",
+        "type": "unresolved_retention_audit",
+        "status": "remote_verification_pending",
+        "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+        "evidence_kind": "user_instruction_and_limitation"
       }
     ]
   },
@@ -6381,6 +6469,14 @@
         "status": "remote_verification_pending",
         "text": "사용자가 ChildFailedError 아래 오류3개를 추가했다: valueerror gold answer could not be parsed / torch.outofmemoryerror / runtimeError /pytorch/build/aten/src/Aten/RegisterCUDA SymIntArrayRef. 앞2개 관련 legacy 호출 누락은 V8-091/092에서 재현·수정했고, 마지막은 전체 문장/traceback 미수신으로 V8-093 open을 유지한다. 실제 H100 정상화로 닫지 않는다.",
         "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "user / Codex",
+        "type": "unresolved_retention_audit",
+        "status": "remote_verification_pending",
+        "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+        "evidence_kind": "user_instruction_and_limitation"
       }
     ]
   },
@@ -6431,6 +6527,14 @@
         "status": "remote_verification_pending",
         "text": "수정과 원시 증거를 원격 exact 확인했다. 실제 H100에서 해당 gold 경로 통과와 OLMo optimizer update는 아직 관측하지 못했다. 이전 보상/held-out 값/체크포인트는 다시 쓰지 않았다.",
         "evidence_kind": "limitation"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "user / Codex",
+        "type": "unresolved_retention_audit",
+        "status": "remote_verification_pending",
+        "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+        "evidence_kind": "user_instruction_and_limitation"
       }
     ]
   },
@@ -6508,6 +6612,14 @@
         "text": "재현원문·수정전실패·302CPU회귀·34후속·65archive시험·측정한계를GitHub에보존했다. 실제H100정상화/전체노드활성은아직확인하지못했다.",
         "url": "https://github.com/33modeling/offpolicy-misranking/blob/dce70b30de4d75e0df0b41ac340731f6fec3d67a/research/v8-live-dense-memory-20261108/record.json",
         "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "user / Codex",
+        "type": "unresolved_retention_audit",
+        "status": "remote_verification_pending",
+        "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+        "evidence_kind": "user_instruction_and_limitation"
       }
     ]
   },
@@ -6558,6 +6670,14 @@
         "status": "open",
         "text": "RuntimeError 전체 문장과 앞뒤15줄을 비동기로 요청했고 아직 응답 전이다. 실제 CUDA 원인 수정·H100 검증은 남아 있다.",
         "evidence_kind": "limitation"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "user / Codex",
+        "type": "unresolved_retention_audit",
+        "status": "open",
+        "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+        "evidence_kind": "user_instruction_and_limitation"
       }
     ]
   },
@@ -6794,6 +6914,14 @@
         "text": "재현원문·수정전실패·302CPU회귀·34후속·65archive시험·측정한계를GitHub에보존했다. 실제H100정상화/전체노드활성은아직확인하지못했다.",
         "url": "https://github.com/33modeling/offpolicy-misranking/blob/dce70b30de4d75e0df0b41ac340731f6fec3d67a/research/v8-live-dense-memory-20261108/record.json",
         "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "user / Codex",
+        "type": "unresolved_retention_audit",
+        "status": "remote_verification_pending",
+        "text": "사용자: \"버그 현황에 니가 못고친거 다 박제해\". 이 항목의 미해결 또는 실제 노드 검증 대기 상태와 이전 실패·수정 이력을 보존한다. CPU/source 시험을 실제 H100 해결로 바꾸지 않는다. 최신 MBPP14/MATH5·idle 보고를 받았지만 이 개별 항목이 모두 재발했다고 판정한 것은 아니다.",
+        "evidence_kind": "user_instruction_and_limitation"
       }
     ]
   },
@@ -6868,6 +6996,51 @@
         "text": "v1.0.16 에 파일을 넣고, 빌드 검사에 (1) v8 실행 코드가 문자열로 가리키는 scripts/*.py 가 모두 묶음에 있는지 (2) v8_bootstrap.py required 목록이 모두 있는지를 추가. 재현: v1.0.15 를 풀어 run 하면 'V8 startup: Shared dispatcher files are missing'; v1.0.16 은 '[v8] dispatch policy=… controller=…' 까지 진행(이 PC 는 GPU 없음으로 그 뒤 종료).",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/a870f59",
         "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "V8-102",
+    "title": "다른 노드가 MATH 대기열을 복구해도 기존 idle worker가 실패 판단을 영구 보관해 재배정에 복귀하지 않음",
+    "area": "V8 실패 복구 후 다중 노드 배정",
+    "severity": "high",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "375cd4ed17ec2c2c2f0fdbf49d7d7a8789b5d6f1",
+    "cause": "worker_loop_many의 terminal[index]=failed 이후 모든 반복에서 해당 cohort를 건너뛰었다. 다른 노드가 shared state.failure를 정상적으로 해제해도 그 사실을 재검사하지 않았다.",
+    "impact": "복구한 일부 새 worker만 MATH를 실행하고 기존 idle worker는 Qwen만 기다리는 상태가 가능하다. 사용자 MBPP14/MATH5 현상과 실제 동일 원인인지는 원격 상태 미관측으로 확정하지 않는다.",
+    "attribution": "기존 공유 대기열 복구/배정 구현의 로컬 terminal cache 복귀 누락. 이전 수정에서 이 경로를 확인하지 못한 책임과 이번 재현·수정은 Codex에 있다. 도입 커밋의 작성 도구는 별도 명시 증거 없이 단정하지 않는다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "다른 노드에서 공유 실패 복구 후 재검증·배정 복귀",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/f1cfb075d6b6eb90c74ffdefd17c9c7ed523d5e7"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "user",
+        "type": "reported",
+        "status": "open",
+        "text": "mbpp는14개가 되고 math는왜5개 최대 이후는 다 idle / 고쳐",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "before-real2실패/1guard통과를 보존했다. 공유 실패가 외부에서 해제된 경우 동일binding확인과 입력재검증 후 복귀한다. 입력오류·외부binding은배정거부, checkpoint와실패기록보존. 관련21/전체315/archive65시험통과. 고정5상한을제거했다고 주장하는수정은아니다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/f1cfb075d6b6eb90c74ffdefd17c9c7ed523d5e7",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "remote_verification_pending",
+        "status": "remote_verification_pending",
+        "text": "소스수정은push확인했지만실제H100의worker정책·대기열·MATH재개·OOM해결은미확인이다. 사용자노드의5개현상을해결했다고닫지않는다.",
+        "evidence_kind": "limitation"
       }
     ]
   }
