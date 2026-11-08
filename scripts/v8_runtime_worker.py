@@ -22,7 +22,8 @@ def main():
         runtime=module.Runtime(entry['runner'],plan['root'],cohort,sys.executable,plan['gpus'])
         def heartbeat(task=None):
             module.atomic(runtime.root/'.multi-node/workers'/(module.digest(plan['worker'])+'.json'),
-                          dict(worker=plan['worker'],pid=os.getpid(),at=module.time.time(),task=task))
+                          dict(worker=plan['worker'],pid=os.getpid(),at=module.time.time(),task=task,
+                               dispatch_policy=plan.get('dispatch_policy'),controller_sha256=plan.get('controller_sha256')))
         runtime.heartbeat=heartbeat
         send(channel,dict(ok=True,binding=runtime.binding))
     except Exception as exc:

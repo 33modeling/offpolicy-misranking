@@ -843,10 +843,13 @@ def test_worker_loop_relocks_the_fresh_queue_before_ticking(tmp_path):
     class Rt:
         binding={'cohort':'olmo_math','code':'v1.0.4'}
         def verify_node(self):pass
+        def barrier(self,*args):pass
     pool=nodes.Pool(root,Rt.binding,new_queue=True);seen=[]
     def tick(*args):
         probe=nodes.Lock(root/'control.lock');free=probe.acquire();probe.close()
-        seen.append(not free);return 'complete',None
+        seen.append(not free)
+        state=nodes.read(root/'state.json');state['phase']='complete';nodes.atomic(root/'state.json',state)
+        return 'complete',None
     pool.tick=tick
     assert nodes.worker_loop(pool,Rt(),'w',threading.Event(),poll=.001)==0
     assert seen==[True]  # the worker held the NEW directory's control.lock when it ticked

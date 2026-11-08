@@ -29,6 +29,7 @@ import time
 import uuid
 
 SCHEMA = 1
+DISPATCH_POLICY = 'global-live-task-leases-v2'
 TERMINAL = {'completed_horizon', 'completed_budget'}
 PHASES = ('train', 'extension', 'evaluation')
 
@@ -367,7 +368,16 @@ class Pool:
             lease.close()
         unreadable=problems+[str(p) for p in (self.root,self.root/'jobs',self.root/'leases',self.root/'workers')
                     if p.exists() and not os.access(p,os.R_OK|(os.X_OK if p.is_dir() else 0))]
-        result=dict(phase=state['phase'],failure=state.get('failure'),known_task_counts=counts,leased_tasks=owners)
+        workers=[]
+        for path in self.root.glob('workers/*.json'):
+            try:
+                beat=read(path)
+                workers.append(dict(worker=beat.get('worker'),dispatch_policy=beat.get('dispatch_policy'),
+                                    controller_sha256=beat.get('controller_sha256'),
+                                    heartbeat_age_seconds=round(time.time()-beat['at']) if isinstance(beat.get('at'),(int,float)) else None))
+            except (OSError,ValueError,AttributeError):unreadable.append(str(path))
+        result=dict(phase=state['phase'],failure=state.get('failure'),known_task_counts=counts,leased_tasks=owners,
+                    dispatch_workers=workers)
         if unreadable:result['unreadable']=unreadable;result['note']='some queue records could not be read; counts are incomplete. Run --status as the account that runs the workers.'
         return result
 
@@ -383,10 +393,12 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
     cursor=int(digest(worker)[:8],16)%len(pairs)
     roots=[p.root.parent.parent if p.root.name=='.multi-node' else p.root.parent for p,_ in pairs]
     dispatch_lock=Path(os.path.commonpath([str(p.resolve()) for p in roots]))/'.v8-dispatch.lock'
+    controller_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     for pool,runtime in pairs:
         def heartbeat(task=None,pool=pool):
             atomic(pool.root/'workers'/(digest(worker)+'.json'),
-                   dict(worker=worker,pid=os.getpid(),at=time.time(),task=task))
+                   dict(worker=worker,pid=os.getpid(),at=time.time(),task=task,
+                        dispatch_policy=DISPATCH_POLICY,controller_sha256=controller_sha256))
         runtime.heartbeat=heartbeat
     def cohort(pool):
         return pool.binding.get('cohort','?')
@@ -419,7 +431,14 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                             give_up(index,pool,'node check',exc);progressed=True;continue
                         initialized.add(index)
                     try:
-                        action,_=pool.tick(runtime,worker,stop,False)
+                        # Inspect only phase metadata here. Re-scanning the whole DAG on every
+                        # idle node keeps control.lock busy before the shared claim gate, and
+                        # repeats the same RPC/filesystem work immediately before the real tick.
+                        if read(pool.root/'binding.json')!=pool.binding:
+                            raise BindingMismatch('Queue identity changed while this worker was running')
+                        state=pool.queue_state()
+                        action='failed' if state.get('failure') else state['phase']
+                        if action in PHASES:action='waiting'
                         if action in ('prepare','freeze','finalize'):
                             print(f'[{worker}] {cohort(pool)}: CPU stage {action} started',flush=True)
                             runtime.barrier(action,control.fd,stop,device_fds)
@@ -448,6 +467,8 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
         pending_setup=[]
         for index,(pool,_) in enumerate(pairs):
             if index in terminal:continue
+            if index not in initialized:
+                pending_setup.append(cohort(pool)+' (node verification)');continue
             state=read(pool.root/'state.json') if (pool.root/'state.json').exists() else {}
             if not state.get('failure') and state.get('phase','prepare')=='prepare':pending_setup.append(cohort(pool))
         claimed=None;index=None
@@ -461,7 +482,8 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                 if gate.acquire():
                     # Kernel-held task leases, not heartbeat age or stale running labels, are
                     # authoritative. Claim while this same shared lock remains held.
-                    live={i:len(pool.held_leases()) for i,(pool,_) in enumerate(pairs) if i not in terminal}
+                    live={i:len(pool.held_leases()) for i,(pool,_) in enumerate(pairs)
+                          if i in initialized and i not in terminal}
                     order=sorted(live,key=lambda i:(live[i],(i-cursor)%len(pairs)))
                     for candidate in order:
                         pool,runtime=pairs[candidate]

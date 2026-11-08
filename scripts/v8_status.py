@@ -141,11 +141,13 @@ def worker_records(queue, now):
             status = 'running'
         else:
             status = 'idle'
-        records.append(dict(worker=worker, host=worker.rsplit('.', 1)[0], status=status, task=task, age=age))
+        records.append(dict(worker=worker, host=worker.rsplit('.', 1)[0], status=status, task=task, age=age,
+                            controller_sha256=beat.get('controller_sha256'),dispatch_policy=beat.get('dispatch_policy')))
     return records
 
 
 def node_lines(workers, rows):
+    expected=hashlib.sha256(Path(__file__).with_name('srgc_v8_nodes.py').read_bytes()).hexdigest()
     active = [w for w in workers if w['status'] != 'stale']
     hidden = len(workers) - len(active)
     lines = []
@@ -160,7 +162,9 @@ def node_lines(workers, rows):
                 what = 'running' if str(w['task']).startswith('child:') else f"running {w['task']}"
             else:
                 what = 'idle (nothing claimable)'
-            lines.append(f"  {w['worker']:<24} {what} · heartbeat {age_text(w['age'])} ago")
+            version=w.get('controller_sha256')
+            controller=('current '+version[:12] if version==expected else 'different '+version[:12] if version else 'unverified')
+            lines.append(f"  {w['worker']:<24} {what} · heartbeat {age_text(w['age'])} ago · dispatch {controller}")
         if hidden:
             lines.append(f"  ({hidden} node record{'s' if hidden != 1 else ''} without a heartbeat in the last "
                          f"{STALE_SECONDS // 60} min not shown; not proof the process stopped)")

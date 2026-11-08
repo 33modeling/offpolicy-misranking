@@ -124,6 +124,15 @@ sh scripts/run_v8_nodes.sh --status
 worker는60초마다 현황을 출력한다. 자식 출력은 터미널과 각 cohort 로그에 남긴다.
 노드마다 같은 GPU 그룹에서 worker 하나를 실행한다.
 
+`--status`의 `dispatch_workers`에는 각 worker가 실제 기록한 제어 코드 해시와
+정책 버전이 나온다. 표 형식 `status`는 `dispatch current <hash>`(현재 checkout과
+같음), `dispatch different <hash>`(다름), `dispatch unverified`(기록 없음)를 구분한다.
+정책 파일이 디스크에 있다는 것만으로 실행 중인 worker에 적용됐다고 판단하지 않는다.
+현재 배정 정책은 `global-live-task-leases-v2`다. 유휴 worker는 배정 전에 모든 작업을
+중복 검사하지 않으며, 그 노드의 입력 검증을 통과한 뒤에만 claim할 수 있다.
+원본 Runtime 초기화에는120초 제한을 두고, 한 cohort가 초기화에 응답하지 않으면
+오류를 표시하고 다른 cohort를 계속한다. 학습 실행 시간에는 이 초기화 제한을 적용하지 않는다.
+
 Ctrl-C/SIGTERM은 자식 실행기에 전달된다. 종료 유예는10초이며 강제 종료되면 마지막으로
 저장된 체크포인트에서 같은 명령으로 재개한다. 종료 직전 업데이트의 저장은 보장하지 않는다.
 실제 실패 원인을 고친 뒤에는 같은 명령에 `--retry-failed`를 붙인다.

@@ -128,3 +128,14 @@ def test_unreadable_or_corrupt_records_are_reported_not_hidden(tmp_path):
         (q / "state.json").chmod(0o644)
     assert "ERROR some queue records could not be read" in text
     assert "state.json" in text and "1 job record(s) unreadable or corrupt: zz.json" in text
+
+
+def test_status_distinguishes_applied_controller_from_old_and_unknown_workers(tmp_path):
+    now=time.time();base=fixture(tmp_path,now);q=base/'olmo_math/.multi-node'
+    expected=hashlib.sha256((Path(status.__file__).parent/'srgc_v8_nodes.py').read_bytes()).hexdigest()
+    for name,version in [('current.1',expected),('older.2','f'*64),('unknown.3',None)]:
+        write(q/'workers'/(name+'.json'),dict(worker=name,at=now,task=None,controller_sha256=version))
+    text=status.render([base],now=now,gpus=[],host='local')
+    assert 'dispatch current '+expected[:12] in text
+    assert 'dispatch different ffffffffffff' in text
+    assert 'dispatch unverified' in text

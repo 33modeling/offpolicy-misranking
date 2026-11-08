@@ -231,7 +231,7 @@ def test_old_worker_does_not_poison_a_queue_with_a_different_binding(tmp_path):
         calls=0
         def tick(self,*args,**kwargs):
             self.calls+=1
-            if self.calls==2:
+            if self.calls==1:
                 nodes.atomic(self.root/'binding.json',updated)
             return super().tick(*args,**kwargs)
     class Idle:

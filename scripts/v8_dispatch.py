@@ -1,6 +1,7 @@
 """Versioned fair dispatcher over exact per-cohort numerical runtimes; uses only local socketpairs."""
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import signal
@@ -19,6 +20,10 @@ class RuntimeProxy:
         self.binding=dict(schema=1,cohort=self.cohort,root=str(self.root))
         self.channel,child=socket.socketpair()
         try:
+            timeout=float(os.environ.get('V8_RUNTIME_INIT_TIMEOUT','120'))
+            if not math.isfinite(timeout) or timeout<=0:raise ValueError('V8_RUNTIME_INIT_TIMEOUT must be finite and positive')
+            self.channel.settimeout(timeout)
+            print(f'[v8] {self.cohort}: opening original runtime with {self.python}; startup timeout={timeout:g}s',flush=True)
             self.process=subprocess.Popen([self.python,str(Path(__file__).with_name('v8_runtime_worker.py')),
                 str(child.fileno()),str(planfile),self.cohort],env=os.environ,pass_fds=(child.fileno(),),stdin=subprocess.DEVNULL)
             child.close();reply,fds=receive(self.channel)
@@ -26,8 +31,12 @@ class RuntimeProxy:
             if reply is None:raise RuntimeError('runtime actor exited during initialization')
             if not reply.get('ok'):raise ValueError(reply.get('error','actor initialization failed'))
             self.binding=reply['binding']
-        except Exception as exc:self.error=f'{type(exc).__name__}: {exc}'
-        finally:child.close()
+        except Exception as exc:
+            self.error=f'{type(exc).__name__}: {exc}'
+            self.close(grace=.2)  # initialization has not launched any training task
+        finally:
+            child.close()
+            if self.channel.fileno()!=-1:self.channel.settimeout(None)
 
     def call(self,method,*args,fds=(),stop=None):
         if self.error:raise ValueError(self.error)
@@ -52,14 +61,14 @@ class RuntimeProxy:
     def execute(self,task,matrix,fd,stop,device_fds,attempt):
         return self.call('execute',task,str(matrix),attempt,fds=(fd,*device_fds),stop=stop)
 
-    def close(self):
+    def close(self,grace=2):
         self.channel.close()
         if self.process is not None:
-            try:self.process.wait(timeout=2)
+            try:self.process.wait(timeout=grace)
             except subprocess.TimeoutExpired:
                 self.process.terminate()
-                try:self.process.wait(timeout=2)
-                except subprocess.TimeoutExpired:self.process.kill()
+                try:self.process.wait(timeout=grace)
+                except subprocess.TimeoutExpired:self.process.kill();self.process.wait(timeout=2)
 
 
 def main():
@@ -71,12 +80,15 @@ def main():
     entries={entry['cohort']:entry for entry in plan['entries']}
     controls={name:hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
               for name in ('v8_dispatch.py','v8_runtime_worker.py','v8_rpc.py','srgc_v8_nodes.py')}
+    plan['dispatch_policy']=nodes.DISPATCH_POLICY
+    plan['controller_sha256']=controls['srgc_v8_nodes.py']
+    print(f'[v8] dispatch policy={nodes.DISPATCH_POLICY} controller={controls["srgc_v8_nodes.py"][:12]}',flush=True)
     def factory(runner,root,cohort,python,gpus):
         plan['root']=str(Path(root).resolve());plan['gpus']=gpus
         runfile.write_text(json.dumps(plan))
         actor=RuntimeProxy(entries[cohort],plan,runfile);actors.append(actor)
         if not actor.error:
-            record=dict(schema=1,policy='global-live-task-leases-v1',controller_source=controls,
+            record=dict(schema=1,policy=nodes.DISPATCH_POLICY,controller_source=controls,
                         original_runtime_binding=actor.binding,numerical_runtime_changed=False)
             receipt=Path(root)/'.v8-dispatch-policies'/(cohort+'-'+nodes.digest(record)+'.json')
             if receipt.exists():
