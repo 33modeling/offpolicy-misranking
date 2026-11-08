@@ -2973,6 +2973,14 @@
         "status": "code_fixed",
         "text": "분리세션/TERM무시 자식 정리, 다른 root·launch 보존, PID 재사용 제외, 두번째 Ctrl-C 강제 종료, stdout EOF 없이 bounded 종료를 CPU 프로세스 검사로 확인했다. 유예10초 후 SIGKILL; 중단 불가능한 kernel I/O의 남은 PID는 성공 처리하지 않는다. 사용자 H100에서의 종료 결과는 아직 미검증이다.",
         "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "followup_control_audit",
+        "status": "code_fixed",
+        "text": "후속 코드/현황판 대조에서V8-023~030의8결함을 재현해 수정했다. 원래 실패와 수정 전후 XML을 보존한다. CPU검사는 실제 H100의 Loading weights 원인을 확정하거나 학습 완료를 뜻하지 않는다.",
+        "evidence_kind": "code_test"
       }
     ]
   },
@@ -3013,6 +3021,14 @@
         "type": "diagnostics_available",
         "status": "open",
         "text": "읽기 전용 probe와 실제 rank 작업 단계 관측을 추가했다. 신호·checkpoint 로드·큐 수정 없이 현재 attempt를 구분한다. 실행 환경/NCCL preflight/진행 출력은 소프트웨어 검사만 완료했으며 실제 노드 재검증은 남아 있다.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "followup_control_audit",
+        "status": "open",
+        "text": "후속 코드/현황판 대조에서V8-023~030의8결함을 재현해 수정했다. 원래 실패와 수정 전후 XML을 보존한다. CPU검사는 실제 H100의 Loading weights 원인을 확정하거나 학습 완료를 뜻하지 않는다.",
         "evidence_kind": "code_test"
       }
     ]
@@ -3104,6 +3120,414 @@
         "status": "code_fixed",
         "text": "개발 중 fixture3실패(동일한 commit에서 coordinator/runner가 함께 바뀐다고 가정한2건, 새 helper를 빠뜨린 기존 shell fixture1건)를 first.xml에 보존했다. 수정 전 단일 버전 묶음과 배포 안내도 삭제하지 않고 superseded 기록으로 남긴다.",
         "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "followup_control_audit",
+        "status": "code_fixed",
+        "text": "후속 코드/현황판 대조에서V8-023~030의8결함을 재현해 수정했다. 원래 실패와 수정 전후 XML을 보존한다. CPU검사는 실제 H100의 Loading weights 원인을 확정하거나 학습 완료를 뜻하지 않는다.",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "V8-023",
+    "title": "콘솔 출력이 막히면 종료 처리·마지막 flush도 무한 대기",
+    "area": "V8 실행·재개·상태 감사",
+    "severity": "high",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "919a2b2895d89624c127c3dfaec563b904bb4405",
+    "cause": "Full console can block supervisor stop logging and standalone stop before cleanup, then Python final flush.",
+    "impact": "종료·원본 재현·모델 배정 또는 상태 해석을 잘못할 수 있다. 이번 재현은 CPU 소프트웨어 검사이며 사용자 실제 H100 원인·학습 결과와 구별한다.",
+    "attribution": "도입 커밋과 Codex 검토·재현·수정을 명시한다. V8-030은 incoming bebbd08 상태 변경을 합치는 과정에서 재현·정정했으며, V8-028의 새 화면 통합은21b071d 변경도 보존했다. 그 외 Codex 구현·통합에서 놓친 결함을 포함한다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "감사·수정 코드",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/e7f8f5ae018092e6e825b14bb7cdacfd050606d7"
+      },
+      {
+        "kind": "code_test",
+        "label": "실패·검증·한계 영구 기록",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/e7f8f5ae018092e6e825b14bb7cdacfd050606d7/research/v8-control-audit-20261108"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "reproduced",
+        "status": "open",
+        "text": "Full console can block supervisor stop logging and standalone stop before cleanup, then Python final flush. before.xml first2failures; blocked receiver still allows simulated2MiB work milestone and bounded SIGINT cleanup after fix.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "Control diagnostics are best effort in daemon writers; exit is bounded after cleanup. Child output goes to private local console log and is relayed separately. CPU control56/runtime115/upstream104passed(1skip). Actual H100 outcome remains unverified.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "evidence_link_correction",
+        "status": "code_fixed",
+        "text": "앞의 소스커밋 링크 시점에는 후속 검증 폴더가 아직 없었다. 보존 검사가 URL 덮어쓰기를 거부한 이력도 남긴다. 원문을 보존하고 실제 검증 파일이 있는 후속 커밋으로 정정한다: https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
+        "evidence_kind": "audit_metadata"
+      }
+    ]
+  },
+  {
+    "id": "V8-024",
+    "title": "종료 스냅샷 뒤 생긴 legacy rank가 정리 대상에서 빠짐",
+    "area": "V8 실행·재개·상태 감사",
+    "severity": "high",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "919a2b2895d89624c127c3dfaec563b904bb4405",
+    "cause": "Legacy untagged coordinator can spawn a detached rank after initial stop snapshot; stop falsely returns success.",
+    "impact": "종료·원본 재현·모델 배정 또는 상태 해석을 잘못할 수 있다. 이번 재현은 CPU 소프트웨어 검사이며 사용자 실제 H100 원인·학습 결과와 구별한다.",
+    "attribution": "도입 커밋과 Codex 검토·재현·수정을 명시한다. V8-030은 incoming bebbd08 상태 변경을 합치는 과정에서 재현·정정했으며, V8-028의 새 화면 통합은21b071d 변경도 보존했다. 그 외 Codex 구현·통합에서 놓친 결함을 포함한다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "감사·수정 코드",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/e7f8f5ae018092e6e825b14bb7cdacfd050606d7"
+      },
+      {
+        "kind": "code_test",
+        "label": "실패·검증·한계 영구 기록",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/e7f8f5ae018092e6e825b14bb7cdacfd050606d7/research/v8-control-audit-20261108"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "reproduced",
+        "status": "open",
+        "text": "Legacy untagged coordinator can spawn a detached rank after initial stop snapshot; stop falsely returns success. before.xml thirdfailure; newly spawned TERM-ignoring rank removed after fix.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "Refresh the selected same-node/UID/root scope throughout termination; retain PID creation-time checks. CPU control56/runtime115/upstream104passed(1skip). Actual H100 outcome remains unverified.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "evidence_link_correction",
+        "status": "code_fixed",
+        "text": "앞의 소스커밋 링크 시점에는 후속 검증 폴더가 아직 없었다. 보존 검사가 URL 덮어쓰기를 거부한 이력도 남긴다. 원문을 보존하고 실제 검증 파일이 있는 후속 커밋으로 정정한다: https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
+        "evidence_kind": "audit_metadata"
+      }
+    ]
+  },
+  {
+    "id": "V8-025",
+    "title": "한 cohort의 시작 오류가 정상인 다른 cohort까지 막음",
+    "area": "V8 실행·재개·상태 감사",
+    "severity": "high",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "aaa378624afcd4e3dbdaa390fc5541eb89c1f243",
+    "cause": "One cohort source/metadata/missing interpreter can abort preflight before the healthy other cohort starts.",
+    "impact": "종료·원본 재현·모델 배정 또는 상태 해석을 잘못할 수 있다. 이번 재현은 CPU 소프트웨어 검사이며 사용자 실제 H100 원인·학습 결과와 구별한다.",
+    "attribution": "도입 커밋과 Codex 검토·재현·수정을 명시한다. V8-030은 incoming bebbd08 상태 변경을 합치는 과정에서 재현·정정했으며, V8-028의 새 화면 통합은21b071d 변경도 보존했다. 그 외 Codex 구현·통합에서 놓친 결함을 포함한다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "감사·수정 코드",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/e7f8f5ae018092e6e825b14bb7cdacfd050606d7"
+      },
+      {
+        "kind": "code_test",
+        "label": "실패·검증·한계 영구 기록",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/e7f8f5ae018092e6e825b14bb7cdacfd050606d7/research/v8-control-audit-20261108"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "reproduced",
+        "status": "open",
+        "text": "One cohort source/metadata/missing interpreter can abort preflight before the healthy other cohort starts. before.xml/environment-before.xml; unknown source/malformed identity/partial JSON/missing interpreter and aggregate-exit checks.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "Collect per-cohort selection errors, continue only valid cohorts, preserve failure exit1 after valid work. Explicit missing cohort interpreter is never silently replaced. CPU control56/runtime115/upstream104passed(1skip). Actual H100 outcome remains unverified.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "evidence_link_correction",
+        "status": "code_fixed",
+        "text": "앞의 소스커밋 링크 시점에는 후속 검증 폴더가 아직 없었다. 보존 검사가 URL 덮어쓰기를 거부한 이력도 남긴다. 원문을 보존하고 실제 검증 파일이 있는 후속 커밋으로 정정한다: https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
+        "evidence_kind": "audit_metadata"
+      }
+    ]
+  },
+  {
+    "id": "V8-026",
+    "title": "다른 Python 환경의 두 모델이 한 admission interpreter를 공유",
+    "area": "V8 실행·재개·상태 감사",
+    "severity": "high",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "f6b1b53090634feded721981d0b9f73b85870b32",
+    "cause": "Different cohort interpreters were grouped under one coordinator; frozen admission uses sys.executable, possibly the other cohort environment.",
+    "impact": "종료·원본 재현·모델 배정 또는 상태 해석을 잘못할 수 있다. 이번 재현은 CPU 소프트웨어 검사이며 사용자 실제 H100 원인·학습 결과와 구별한다.",
+    "attribution": "도입 커밋과 Codex 검토·재현·수정을 명시한다. V8-030은 incoming bebbd08 상태 변경을 합치는 과정에서 재현·정정했으며, V8-028의 새 화면 통합은21b071d 변경도 보존했다. 그 외 Codex 구현·통합에서 놓친 결함을 포함한다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "감사·수정 코드",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/e7f8f5ae018092e6e825b14bb7cdacfd050606d7"
+      },
+      {
+        "kind": "code_test",
+        "label": "실패·검증·한계 영구 기록",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/e7f8f5ae018092e6e825b14bb7cdacfd050606d7/research/v8-control-audit-20261108"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "reproduced",
+        "status": "open",
+        "text": "Different cohort interpreters were grouped under one coordinator; frozen admission uses sys.executable, possibly the other cohort environment. before.xml lastfailure; actual launch argument/environment interception verifies both selected Python contexts.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "Separate workers by exact selected Python path as well as source. Each admission and child starts in its own recorded environment. CPU control56/runtime115/upstream104passed(1skip). Actual H100 outcome remains unverified.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "evidence_link_correction",
+        "status": "code_fixed",
+        "text": "앞의 소스커밋 링크 시점에는 후속 검증 폴더가 아직 없었다. 보존 검사가 URL 덮어쓰기를 거부한 이력도 남긴다. 원문을 보존하고 실제 검증 파일이 있는 후속 커밋으로 정정한다: https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
+        "evidence_kind": "audit_metadata"
+      }
+    ]
+  },
+  {
+    "id": "V8-027",
+    "title": "실행 중 git pull로 이후 child·config 소스가 바뀔 수 있음",
+    "area": "V8 실행·재개·상태 감사",
+    "severity": "high",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "aaa378624afcd4e3dbdaa390fc5541eb89c1f243",
+    "cause": "Live current source paths could change after selection and before a later child launch during git pull.",
+    "impact": "종료·원본 재현·모델 배정 또는 상태 해석을 잘못할 수 있다. 이번 재현은 CPU 소프트웨어 검사이며 사용자 실제 H100 원인·학습 결과와 구별한다.",
+    "attribution": "도입 커밋과 Codex 검토·재현·수정을 명시한다. V8-030은 incoming bebbd08 상태 변경을 합치는 과정에서 재현·정정했으며, V8-028의 새 화면 통합은21b071d 변경도 보존했다. 그 외 Codex 구현·통합에서 놓친 결함을 포함한다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "감사·수정 코드",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/e7f8f5ae018092e6e825b14bb7cdacfd050606d7"
+      },
+      {
+        "kind": "code_test",
+        "label": "실패·검증·한계 영구 기록",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/e7f8f5ae018092e6e825b14bb7cdacfd050606d7/research/v8-control-audit-20261108"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "reproduced",
+        "status": "open",
+        "text": "Live current source paths could change after selection and before a later child launch during git pull. hot-pull-before.xml; simulate checkout worker+child replacement, verify selected bytes unchanged and queue reopens from the original local snapshot without the old checkout.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "Freeze selected production coordinator/runner/helper/CSV bytes before exec. Verify hashes and retain a private source registry for later pulls/restarts. CPU control56/runtime115/upstream104passed(1skip). Actual H100 outcome remains unverified.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "evidence_link_correction",
+        "status": "code_fixed",
+        "text": "앞의 소스커밋 링크 시점에는 후속 검증 폴더가 아직 없었다. 보존 검사가 URL 덮어쓰기를 거부한 이력도 남긴다. 원문을 보존하고 실제 검증 파일이 있는 후속 커밋으로 정정한다: https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
+        "evidence_kind": "audit_metadata"
+      }
+    ]
+  },
+  {
+    "id": "V8-028",
+    "title": "상태 화면의 원격 GPU 유휴 오판과 FQDN 소실",
+    "area": "V8 실행·재개·상태 감사",
+    "severity": "high",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "a3675bbd4b6f678b3ef8fbacde56aaf072d0aafa",
+    "cause": "Status used local GPU idle state for remote jobs and truncated FQDN at the first dot.",
+    "impact": "종료·원본 재현·모델 배정 또는 상태 해석을 잘못할 수 있다. 이번 재현은 CPU 소프트웨어 검사이며 사용자 실제 H100 원인·학습 결과와 구별한다.",
+    "attribution": "도입 커밋과 Codex 검토·재현·수정을 명시한다. V8-030은 incoming bebbd08 상태 변경을 합치는 과정에서 재현·정정했으며, V8-028의 새 화면 통합은21b071d 변경도 보존했다. 그 외 Codex 구현·통합에서 놓친 결함을 포함한다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "감사·수정 코드",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/e7f8f5ae018092e6e825b14bb7cdacfd050606d7"
+      },
+      {
+        "kind": "code_test",
+        "label": "실패·검증·한계 영구 기록",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/e7f8f5ae018092e6e825b14bb7cdacfd050606d7/research/v8-control-audit-20261108"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "reproduced",
+        "status": "open",
+        "text": "Status used local GPU idle state for remote jobs and truncated FQDN at the first dot. status-before.xml; remote hostname/GPU ownership controls and local positive control.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "Merge current status layout, preserve full host and scope GPU warning to the same host. CPU control56/runtime115/upstream104passed(1skip). Actual H100 outcome remains unverified.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "evidence_link_correction",
+        "status": "code_fixed",
+        "text": "앞의 소스커밋 링크 시점에는 후속 검증 폴더가 아직 없었다. 보존 검사가 URL 덮어쓰기를 거부한 이력도 남긴다. 원문을 보존하고 실제 검증 파일이 있는 후속 커밋으로 정정한다: https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
+        "evidence_kind": "audit_metadata"
+      }
+    ]
+  },
+  {
+    "id": "V8-029",
+    "title": "이전 worker의 신원 오류가 새 큐의 실패 상태를 오염",
+    "area": "V8 실행·재개·상태 감사",
+    "severity": "high",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "32365b355b939686799bb0429059ad1f2377049e",
+    "cause": "Old worker detecting a changed binding called pool.fail and poisoned the new queue state.",
+    "impact": "종료·원본 재현·모델 배정 또는 상태 해석을 잘못할 수 있다. 이번 재현은 CPU 소프트웨어 검사이며 사용자 실제 H100 원인·학습 결과와 구별한다.",
+    "attribution": "도입 커밋과 Codex 검토·재현·수정을 명시한다. V8-030은 incoming bebbd08 상태 변경을 합치는 과정에서 재현·정정했으며, V8-028의 새 화면 통합은21b071d 변경도 보존했다. 그 외 Codex 구현·통합에서 놓친 결함을 포함한다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "감사·수정 코드",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/e7f8f5ae018092e6e825b14bb7cdacfd050606d7"
+      },
+      {
+        "kind": "code_test",
+        "label": "실패·검증·한계 영구 기록",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/e7f8f5ae018092e6e825b14bb7cdacfd050606d7/research/v8-control-audit-20261108"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "reproduced",
+        "status": "open",
+        "text": "Old worker detecting a changed binding called pool.fail and poisoned the new queue state. poison-before.xml; simulated source replacement verifies the new binding and its failure=None stay unchanged.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "Handle BindingMismatch separately and stop the old cohort without writing its failure into the new queue. CPU control56/runtime115/upstream104passed(1skip). Actual H100 outcome remains unverified.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "evidence_link_correction",
+        "status": "code_fixed",
+        "text": "앞의 소스커밋 링크 시점에는 후속 검증 폴더가 아직 없었다. 보존 검사가 URL 덮어쓰기를 거부한 이력도 남긴다. 원문을 보존하고 실제 검증 파일이 있는 후속 커밋으로 정정한다: https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
+        "evidence_kind": "audit_metadata"
+      }
+    ]
+  },
+  {
+    "id": "V8-030",
+    "title": "오래된 heartbeat만으로 학습 중단·재개 가능을 확정",
+    "area": "V8 실행·재개·상태 감사",
+    "severity": "high",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "bebbd08eef8377eb1fe9723c087031c0e5612ed8",
+    "cause": "Incoming status change inferred stopped learner and safe resume from stale/missing heartbeat, even with fresh remote work logs.",
+    "impact": "종료·원본 재현·모델 배정 또는 상태 해석을 잘못할 수 있다. 이번 재현은 CPU 소프트웨어 검사이며 사용자 실제 H100 원인·학습 결과와 구별한다.",
+    "attribution": "도입 커밋과 Codex 검토·재현·수정을 명시한다. V8-030은 incoming bebbd08 상태 변경을 합치는 과정에서 재현·정정했으며, V8-028의 새 화면 통합은21b071d 변경도 보존했다. 그 외 Codex 구현·통합에서 놓친 결함을 포함한다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "감사·수정 코드",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/e7f8f5ae018092e6e825b14bb7cdacfd050606d7"
+      },
+      {
+        "kind": "code_test",
+        "label": "실패·검증·한계 영구 기록",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/e7f8f5ae018092e6e825b14bb7cdacfd050606d7/research/v8-control-audit-20261108"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "reproduced",
+        "status": "open",
+        "text": "Incoming status change inferred stopped learner and safe resume from stale/missing heartbeat, even with fresh remote work logs. heartbeat-before.xml; fresh work log +900s stale heartbeat cannot become stopped or next-worker-resumes advice.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "Mark activity unconfirmed and liveness unverified, never claim ranks/leases stopped or promise automatic resume from heartbeat age. CPU control56/runtime115/upstream104passed(1skip). Actual H100 outcome remains unverified.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "evidence_link_correction",
+        "status": "code_fixed",
+        "text": "앞의 소스커밋 링크 시점에는 후속 검증 폴더가 아직 없었다. 보존 검사가 URL 덮어쓰기를 거부한 이력도 남긴다. 원문을 보존하고 실제 검증 파일이 있는 후속 커밋으로 정정한다: https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/b1598373d9ca1c0934204d3fbd65229e0f1705f7/research/v8-control-audit-20261108",
+        "evidence_kind": "audit_metadata"
       }
     ]
   }

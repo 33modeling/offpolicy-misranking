@@ -12572,6 +12572,156 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "ec4bc5b8985f29fee4153bf5c2586f5915135fe9",
+      "at": "2026-11-08T12:14:52+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Permanently record wrong V8 bundle assumption and failed restart guidance",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/ec4bc5b8985f29fee4153bf5c2586f5915135fe9",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "7c70c825070e62129cbaf896add34246bfccc6a8",
+      "at": "2026-11-08T12:15:25+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 queue: bundle mismatch points only to --new-queue, not --retry-failed",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/7c70c825070e62129cbaf896add34246bfccc6a8",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "a3675bbd4b6f678b3ef8fbacde56aaf072d0aafa",
+      "at": "2026-11-08T12:21:19+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status view: sh scripts/v8_status.sh (read-only, Korean, --watch)",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/a3675bbd4b6f678b3ef8fbacde56aaf072d0aafa",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "acfb9e0cb4aacba1d2653acf7fe4b067dfaf9784",
+      "at": "2026-11-08T12:36:48+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Fix V8 control deadlocks, immutable resume, cohort isolation and ownership checks",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/acfb9e0cb4aacba1d2653acf7fe4b067dfaf9784",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "4b75e8cc57324f19fba6e534e1b8178c5923241e",
+      "at": "2026-11-08T12:24:19+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status shell: CDPATH-safe and venv python when python3 is missing",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/4b75e8cc57324f19fba6e534e1b8178c5923241e",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "bec8fe4a9d71c427acd3b443fcf3b20cd9c37132",
+      "at": "2026-11-08T12:29:39+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 helper shells: no __pycache__ in the code checkout, CDPATH-safe, venv python fallback",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/bec8fe4a9d71c427acd3b443fcf3b20cd9c37132",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "21b071d2f2478b1f72a2c237368395cc2ebd179a",
+      "at": "2026-11-08T12:35:30+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: same layout as run_srgc.sh <dataset> status",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/21b071d2f2478b1f72a2c237368395cc2ebd179a",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "029b9d62c219fe31a4860e12c62d0c70dd15afe6",
+      "at": "2026-11-08T12:37:37+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Integrate helper shell fixes with V8 control audit",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/029b9d62c219fe31a4860e12c62d0c70dd15afe6",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "95869e4af0e588122e163e2fda96c3c30a1074c2",
+      "at": "2026-11-08T12:41:53+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Keep healthy V8 cohort available with an invalid peer interpreter",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/95869e4af0e588122e163e2fda96c3c30a1074c2",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "bebbd08eef8377eb1fe9723c087031c0e5612ed8",
+      "at": "2026-11-08T12:37:56+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: a job whose worker stopped is shown as stopped, not running",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/bebbd08eef8377eb1fe9723c087031c0e5612ed8",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "1d475369a7833241f1d92bc2c0e792a17c734659",
+      "at": "2026-11-08T12:41:53+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Integrate latest V8 status changes for audited liveness handling",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/1d475369a7833241f1d92bc2c0e792a17c734659",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "e7f8f5ae018092e6e825b14bb7cdacfd050606d7",
+      "at": "2026-11-08T12:44:13+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Treat stale V8 heartbeats as unverified activity rather than stopped training",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/e7f8f5ae018092e6e825b14bb7cdacfd050606d7",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "b1598373d9ca1c0934204d3fbd65229e0f1705f7",
+      "at": "2026-11-08T12:45:39+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve every V8 control-audit reproduction and verification result",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/b1598373d9ca1c0934204d3fbd65229e0f1705f7",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "9b4804084cde6639035980009f63c0ec2eb121f2",
+      "at": "2026-11-08T12:45:48+09:00",
+      "author": "33modeling",
+      "title": "index on v8-status3: bebbd08 [Skip CI] [skip review] V8 status: a job whose worker stopped is shown as stopped, not running",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/9b4804084cde6639035980009f63c0ec2eb121f2",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "985e95e92ad644edc967db41bf2b48c7bd9a91fd",
+      "at": "2026-11-08T12:45:48+09:00",
+      "author": "33modeling",
+      "title": "WIP on v8-status3: bebbd08 [Skip CI] [skip review] V8 status: a job whose worker stopped is shown as stopped, not running",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/985e95e92ad644edc967db41bf2b48c7bd9a91fd",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }
