@@ -283,3 +283,22 @@ def test_pool_status_reports_unreadable_records_instead_of_crashing(tmp_path):
     assert result["known_task_counts"] == {"done": 1}
     assert any("state.json" in x for x in result["unreadable"]) and any("b.json" in x for x in result["unreadable"])
     assert "incomplete" in result["note"]
+
+
+def test_pool_status_with_another_accounts_lease_file(tmp_path):
+    if os.geteuid() == 0:
+        return
+    pool = nodes.Pool(tmp_path / "q", {"cohort": "olmo_math"})
+    pool.initialize()
+    (pool.root / "jobs").mkdir()
+    (pool.root / "jobs" / "a.json").write_text('{"state": "running", "task": {"kind": "train"}, "attempts": []}')
+    (pool.root / "leases").mkdir(exist_ok=True)
+    lease = pool.root / "leases" / "a.lock"
+    lease.write_text("")
+    lease.chmod(0)                       # like a lock file owned by the worker's account
+    try:
+        result = pool.status()
+    finally:
+        lease.chmod(0o644)
+    assert result["known_task_counts"] == {"running": 1}
+    assert any("a.lock: lease state unknown" in x for x in result["unreadable"])

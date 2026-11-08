@@ -405,16 +405,20 @@ class Pool:
                 problems.append(f'{path}: not a job record');continue
             job.setdefault('attempts',[])
             counts[job.get('state','?')]=counts.get(job.get('state','?'),0)+1
-            lease=Lock(self.root/'leases'/(path.stem+'.lock'))
-            if not lease.acquire():
-                last=job['attempts'][-1] if job['attempts'] else {}
-                row=dict(task=path.stem,worker=last.get('worker'),method=job['task'].get('method_id'),
-                         seed=job['task'].get('training_seed'),kind=job['task'].get('kind'))
-                log=self.root/'logs'/(str(last.get('id'))+'.log')
-                if last.get('id') and log.exists():
-                    row.update(log=str(log),log_written_seconds_ago=round(time.time()-log.stat().st_mtime))
-                owners.append(row)
-            lease.close()
+            try:
+                lease=Lock(self.root/'leases'/(path.stem+'.lock'))
+                if not lease.acquire():
+                    last=job['attempts'][-1] if job['attempts'] else {}
+                    row=dict(task=path.stem,worker=last.get('worker'),method=job['task'].get('method_id'),
+                             seed=job['task'].get('training_seed'),kind=job['task'].get('kind'))
+                    log=self.root/'logs'/(str(last.get('id'))+'.log')
+                    if last.get('id') and log.exists():
+                        row.update(log=str(log),log_written_seconds_ago=round(time.time()-log.stat().st_mtime))
+                    owners.append(row)
+                lease.close()
+            except OSError as exc:
+                # Another account's lease file (read-only status run): report it, do not stop the status.
+                problems.append(f"{self.root/'leases'/(path.stem+'.lock')}: lease state unknown ({exc.strerror or exc})")
         unreadable=problems+[str(p) for p in (self.root,self.root/'jobs',self.root/'leases',self.root/'workers')
                     if p.exists() and not os.access(p,os.R_OK|(os.X_OK if p.is_dir() else 0))]
         workers=[]
