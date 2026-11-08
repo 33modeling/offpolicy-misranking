@@ -3,7 +3,7 @@
 모든 4×H100 노드에서 같은 명령을 실행한다.
 
 ```sh
-sh "$EXPORT_CODE_ROOT/scripts/run_v8_nodes.sh"
+sh scripts/run_v8_nodes.sh
 ```
 
 별도 모델명이나 노드별 역할을 지정하지 않는다. 한 worker가 OLMo MATH와 Qwen
@@ -11,45 +11,30 @@ MBPP 양쪽의 준비된 작업을 확인하고, 한 번에4GPU 작업 하나를
 끝나면 다음 cohort부터 확인한다. 한쪽이 체크포인트를 기다리거나 완료되면 다른
 쪽의 준비된 작업을 가져온다. 모델별 고정 노드 할당이나 GPU 분할은 하지 않는다.
 
-## 실행 환경
+## 기존 환경 자동 사용
 
-현재 paper runner는 `offpolicy-misranking-paper-v2`의
-`3d0c08336950d2697dc66cbe3570a230e449f33b`이다. 그 checkout의 최상위 폴더에서
-실행한다. 필요한 환경은 이미 설치한 H100 환경을 사용한다.
+기존 코드 저장소에서는 위 명령 한 줄을 실행한다. 오프라인 배포 묶음에서는
+최상위의 `sh run.sh` 한 줄을 실행한다. 새로 export하거나 경로 인자를 붙이지 않는다.
 
-| 변수 | 용도 |
-| --- | --- |
-| `EXPORT_CODE_ROOT` | 최신 실행 도구를 받는 별도 offpolicy-misranking checkout |
-| `V8_CODE_ROOT` | 원래 seed 실험에 사용한 고정 trainer checkout. 변경하지 않는다. |
-| `V8_ROOT` | 모든 노드에 같은 절대경로로 연결된 공유 실험 폴더 |
-| `PAIR_PYTHON` | 기존 OLMo 환경 Python. 미지정 시 공통 Python 사용 |
-| `SWITCH_PYTHON` | 기존 Qwen 환경 Python. 미지정 시 공통 Python 사용 |
-| `V8_PYTHON` | 공통 Python 및 controller 실행 Python. 선택 사항 |
+새 bootstrap은 기존 `scripts/run_srgc.sh`, `scripts/run_srgc_qwen35.sh`의 규칙을
+사용한다. 기존 `OM_WORK`/`GROUP_VOLUME`/`OM_USER`를 우선 사용하며, 미지정 기본은
+`/group-volume/minsoo3.kim/offpolicy-misranking`이다. 기존 `.venv-cu126/bin/python`을
+재사용하고 `PAIR_PYTHON`/`SWITCH_PYTHON` 등 기존 override도 보존한다.
 
-controller는 `V8_PYTHON`, `PAIR_PYTHON`, `SWITCH_PYTHON`, `python3` 순서로
-사용 가능한 설정을 선택한다. cohort 자식은 `V8_PYTHON_OLMO_MATH` 또는
-`V8_PYTHON_QWEN_MBPP`의 명시 설정, 해당 `PAIR_PYTHON`/`SWITCH_PYTHON`, 공통
-Python 순서로 선택한다. 각 자식 환경의 실제 Python/package 버전도 별도로 확인한다.
-새 환경을 만들거나 package를 자동 설치하지 않는다.
+원래 trainer는 기존 `V8_CODE_ROOT`/`OM_CODE_ROOT`, 저장된 locator의 원본 코드 경로,
+현재 저장소·상위 저장소 및 기존 user-volume 위치에서 찾는다. 기존 run의 구현 해시와
+prefix 해시는 원래 검증 경로에서 확인한다. runtime은 오프라인 묶음에 포함된
+`v8/experiments`나 기존 v8 checkout에서 찾는다. source는 paper commit
+`3d0c08336950d2697dc66cbe3570a230e449f33b` 그대로다.
 
-도구 checkout을 갱신한 뒤 같은 단일 실행 명령을 모든 노드에서 사용한다.
-`EXPORT_CODE_ROOT`는 `V8_CODE_ROOT`와 분리한다.
+공유 결과 경로는 기존 `V8_ROOT`, 또는 같은 작업 폴더의 `v8/`를 쓴다. exporter는
+자기 위치를 사용한다. 원래 경로·checkpoint·venv를 옮기거나 다시 만들지 않는다.
+명시된 Python이 깨졌거나 기존 입력 신원이 다르면 다른 실험으로 조용히 바꾸지 않고
+실패 이유를 출력한다.
 
-```sh
-git -C "$EXPORT_CODE_ROOT" fetch origin master
-git -C "$EXPORT_CODE_ROOT" checkout --detach FETCH_HEAD
-export V8_RUNNER_ROOT="$PWD/v8/experiments"
-sh "$EXPORT_CODE_ROOT/scripts/run_v8_nodes.sh"
-```
-
-모든 노드의 도구·paper runner·trainer·설정과 cohort별 환경 버전은 같아야 한다.
-GPU 번호가 다른4GPU 그룹이면 `--gpus 4,5,6,7`을 붙인다. 겹치는 GPU 그룹은
-cohort에 관계없이 모델을 실행하기 전에 거부한다.
-
-기존 전체 실행기를 사용 중이면 체크포인트를 저장하며 종료한 뒤 모두 같은
-실행기로 전환한다. 기존 결과·학습 기록·체크포인트를 삭제하거나 초기화하지 않는다.
-생성된 큐는 coordinator 버전을 고정한다. 기존 큐의 binding과 다른 버전은 거부한다.
-이 변경은 이미 실행 중인 옛 버전의 큐를 자동으로 다시 쓰거나 이전하지 않는다.
+GitHub 연결이 없는 기존 클러스터에는 소스·최신 실행기·고정 v8 runtime을 포함한
+오프라인 묶음을 사용한다. 노드에서 git fetch, package 설치, 모델 재학습용 초기화,
+수동 경로 입력은 요구하지 않는다. 모든 노드는 같은 묶음 버전을 사용한다.
 
 ## 실행 순서를 반영한 병렬 수
 
@@ -110,7 +95,7 @@ worker는 실패 종료 코드를 반환한다. 환경·입력 사전검사 오�
 ## 현황과 재개
 
 ```sh
-sh "$EXPORT_CODE_ROOT/scripts/run_v8_nodes.sh" --status
+sh scripts/run_v8_nodes.sh --status
 ```
 
 양쪽의 `phase`, `known_task_counts`, `leased_tasks`, `failure`가 함께 출력된다.
