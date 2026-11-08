@@ -51,12 +51,13 @@ def alive(identities,rows=None):
     return {pid:start for pid,start in identities.items() if pid in rows and rows[pid]['start']==start and rows[pid]['state']!='Z'}
 
 
-def stop(identities,*,tag=None,grace=10,force=None):
+def stop(identities,*,tag=None,root=None,grace=10,force=None):
     """Bounded cleanup. SIGKILL-pending kernel waits are reported, never called stopped."""
     known=dict(identities);started=time.monotonic();killed=False;kill_at=None;notified=set()
     while True:
         rows=table()
         if tag:known.update(select(rows,tag=tag))
+        elif root is not None:known.update(select(rows,root=root))
         remaining=alive(known,rows)
         if not remaining:return []
         now=time.monotonic()

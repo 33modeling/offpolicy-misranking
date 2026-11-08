@@ -65,7 +65,7 @@ def test_detached_rank_ignoring_term_is_stopped_but_foreign_launch_survives(tmp_
 @pytest.mark.parametrize('normal_exit',[False,True])
 def test_supervisor_second_interrupt_stops_detached_rank_without_stdout_join(tmp_path,normal_exit):
     scripts=Path(__file__).resolve().parents[1]/'scripts'
-    for name in ['v8_supervisor.py','v8_processes.py','v8_probe.py']:shutil.copyfile(scripts/name,tmp_path/name)
+    for name in ['v8_supervisor.py','v8_processes.py','v8_probe.py','v8_control_output.py']:shutil.copyfile(scripts/name,tmp_path/name)
     rank=tmp_path/'cluster_child.py'
     rank.write_text('import signal,time\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\nprint("RANK_READY",flush=True)\nwhile True:time.sleep(.02)\n')
     bootstrap=tmp_path/'v8_bootstrap.py';pidfile=tmp_path/'rank.pid'

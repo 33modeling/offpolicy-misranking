@@ -58,7 +58,8 @@ def test_snapshot_shows_counts_running_task_and_failure(tmp_path):
     assert "멈춤 의심" not in text
 
 
-def test_stall_hint_only_when_silent_and_gpus_idle(tmp_path):
+def test_stall_hint_only_when_silent_and_gpus_idle(tmp_path,monkeypatch):
+    monkeypatch.setattr(status.socket,'gethostname',lambda:'node01')
     now = time.time()
     base = fixture(tmp_path, now)
     log = base / "olmo_math/.multi-node/logs/att1.log"

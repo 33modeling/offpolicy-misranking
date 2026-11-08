@@ -181,6 +181,21 @@ GPU 작업의 자동 제출은 수행하지 않는다.
 cohort를 원래 worker로 나누고 한 GPU 그룹에서 순차 처리한다. 한 Python 프로세스에서
 서로 다른 원본 모듈을 섞지 않는다. 현황 확인 명령은 원본 코드 전환 없이 읽기만 수행한다.
 
+현재 checkout을 선택한 경우도 실행 전 별도의 불변 사본으로 고정한다. 실행 도중
+`git pull`이 되어도 이 worker가 이후 띄우는 child/config/helper는 바뀌지 않는다.
+이미 사용한 사본도 로컬 캐시에 남겨 후속 pull 뒤 같은 큐를 다시 열 때 재사용한다.
+두 cohort의 Python 경로가 다르면 사전 NCCL 검사를 다른 interpreter로 실행하지 않도록
+별도 worker로 나눠 한 GPU 그룹에서 순차 실행한다. 동일 환경이면 기존 자동 배정을 유지한다.
+한 cohort의 원본/Python/메타데이터 오류는 그 cohort에만 표시하며 유효한 나머지는 계속한다.
+일부 실패를 숨기지 않도록 유효한 cohort가 끝난 뒤 전체 종료 코드는 실패로 남긴다.
+
+콘솔 출력을 받는 쪽이 멈춰도 학습·종료가 대기하지 않도록 supervisor는 출력을 로컬
+임시 폴더의 `v8-console-<uid>/<launch>.log`에 보존하고 별도 thread로 전달한다.
+종료 경로는 콘솔 쓰기나 interpreter 최종 flush를 무한 대기하지 않는다. 기존 tag 없는
+worker의 종료 중 새로 생긴 rank도 해당 노드·UID·V8_ROOT 범위에서 다시 찾아 정리한다.
+상태 화면의 GPU 유휴 기반 경고는 같은 hostname의 작업에만 적용한다. 다른 노드의
+GPU 상태를 이 노드의 수치로 추정하지 않으며 FQDN을 생략하지 않는다.
+
 `Loading weights` 출력만으로 학습 정지를 판단하지 않는다. 현재 상태를 바꾸지 않고
 GPU 사용과 이 노드의 현재 attempt 기록·로그를 확인할 때:
 

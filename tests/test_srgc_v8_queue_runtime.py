@@ -85,7 +85,7 @@ def test_different_cohort_pins_remain_separate_without_rebinding(tmp_path,source
 def test_unstarted_default_keeps_both_cohorts_and_does_not_create_queue(tmp_path):
     base=tmp_path/'absent';groups=runtime.selections(REPO,environment(base),[])
     assert len(groups)==1 and groups[0]['cohorts']==['olmo_math','qwen_mbpp']
-    assert groups[0]['script']==REPO/'scripts/srgc_v8_nodes.py' and not base.exists()
+    assert runtime.sha(groups[0]['script'])==runtime.sha(REPO/'scripts/srgc_v8_nodes.py') and not base.exists()
 
 
 def test_existing_python_is_selected_by_recorded_versions_without_installing(tmp_path,monkeypatch):

@@ -75,16 +75,18 @@ def main(argv=None):
         if not env.get('V8_CODE_ROOT'):
             raise ValueError('the original trainer checkout (srgc_rebuttal/srgc.py) was not found next to this launcher '
                              f'({tools}), in its parent folders, under {env.get("USER_VOLUME","/user-volume")} or in a saved '
-                             'locator. Unpack the V8 bundle inside the existing offpolicy-misranking checkout.')
+                             'locator. Run this command from the existing offpolicy-misranking checkout after git pull.')
         if not env.get('V8_RUNNER_ROOT') and '--runner-root' not in argv:
             raise ValueError(f'V8 runtime files are missing from this code copy ({tools}/v8/experiments); '
-                             'unpack the complete V8 bundle into this checkout.')
+                             'run git pull in the existing offpolicy-misranking checkout.')
     if inspect:
         os.execvpe(env['V8_PYTHON'],[env['V8_PYTHON'],str(tools/'scripts/srgc_v8_nodes.py'),*argv],env)
     groups=selections(tools,env,argv)
     # Different historical queue versions cannot share one Python module namespace. Run each
     # original worker separately, in sequence on this GPU group; never relabel either binding.
-    failed=0
+    failed=1 if groups.errors else 0
+    for cohort,error in groups.errors.items():
+        print(f'V8 startup: {cohort} blocked: {error}. Other valid cohorts continue; final exit remains failure.',file=sys.stderr,flush=True)
     for group in groups:
         args=[];index=0
         while index<len(argv):
@@ -99,10 +101,10 @@ def main(argv=None):
         child_env=dict(env,V8_RUNNER_ROOT=str(group['runner']),V8_PYTHON=python)
         child_env.update({'V8_PYTHON_'+c.upper():p for c,p in group['pythons'].items()})
         if group['script']!=tools/'scripts/srgc_v8_nodes.py' or group['runner']!=Path(env['V8_RUNNER_ROOT']):
-            print(f'V8 resume: using exact queue source for {",".join(group["cohorts"])} '
+            print(f'V8 resume: using frozen source for {",".join(group["cohorts"])} '
                   f'(coordinator {group["coordinator_sha256"][:12]}); queue/checkpoints unchanged.',file=sys.stderr,flush=True)
         command=[python,str(group['script']),*([cohort] if cohort!='all' else []),*args]
-        if len(groups)==1:os.execvpe(python,command,child_env)
+        if len(groups)==1 and not groups.errors:os.execvpe(python,command,child_env)
         result=subprocess.run(command,env=child_env)
         if result.returncode<0 or result.returncode==75:return result.returncode
         if result.returncode:failed=result.returncode

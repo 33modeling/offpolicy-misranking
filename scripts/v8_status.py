@@ -64,7 +64,7 @@ def task_label(task):
 def running_detail(directory, queue, job, now):
     task, attempt = job['task'], job['attempts'][-1]
     worker = str(attempt.get('worker') or '?')
-    item = dict(label=task_label(task), node=worker.split('.')[0], started=attempt.get('started_at'))
+    item = dict(label=task_label(task), node=worker.rsplit('.',1)[0], started=attempt.get('started_at'))
     item['elapsed'] = now - item['started'] if item['started'] else None
     rid = task.get('run_id')
     total = task.get('horizon') or task.get('endpoint') or task.get('total_updates')
@@ -110,7 +110,7 @@ def cohort_report(base, cohort, now, gpus_busy):
         lines.append('  진행 중')
         for item in sorted(running, key=lambda x: x['label']):
             warn = ''
-            if item['silent'] is not None and item['silent'] > 1800 and gpus_busy is False:
+            if item['node']==socket.gethostname() and item['silent'] is not None and item['silent'] > 1800 and gpus_busy is False:
                 warn = '  ⚠ 30분 넘게 출력 없음 + 이 노드 GPU 쉬는 중 → 멈춤 의심 (.multi-node/stacks 확인)'
             lines.append(f"   {item['label']:<34} {item['node']:<16} {ago(item['elapsed'])}째  update {item['update']:<9}"
                          f" 출력 {ago(item['silent'])} 전{warn}")

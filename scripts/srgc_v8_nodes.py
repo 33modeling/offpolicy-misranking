@@ -404,6 +404,9 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                             state['phase']={'prepare':'train','freeze':'extension','finalize':'complete'}[action]
                             atomic(pool.root/'state.json',state);action='advance'
                             print(f'[{worker}] {cohort(pool)}: CPU stage finished; phase={state["phase"]}',flush=True)
+                    except BindingMismatch as exc:
+                        # This is now somebody else's queue. Do not write our failure into its state.
+                        give_up(index,pool,'queue identity',exc);progressed=True;continue
                     except Exception as exc:
                         if stop.is_set():return 75
                         if (pool.root/'state.json').exists():pool.fail(f'{type(exc).__name__}: {exc}')
