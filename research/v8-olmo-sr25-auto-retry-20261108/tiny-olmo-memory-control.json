@@ -1,0 +1,23 @@
+{
+  "scope": "CPU-only tiny OLMo control; not H100 capacity, CUDA peak, reward or scientific learning result",
+  "torch": "2.14.1+cpu",
+  "hidden_size": 16,
+  "layers": 2,
+  "seed": 17,
+  "trainable": "q_proj only, frozen embeddings; no PEFT package",
+  "baseline_unique_saved_nonparameter_storage_bytes": 31360,
+  "repaired_unique_saved_nonparameter_storage_bytes": 4288,
+  "values_bitwise_equal": true,
+  "gradients_bitwise_equal": true,
+  "runtime_repair": {
+    "protocol": "olmo-zero-dropout-recomputation-v1",
+    "activation_checkpointing": true,
+    "use_reentrant": false,
+    "generation_last_logit": true,
+    "response_count_changed": false,
+    "generation_microbatch_changed": false,
+    "logprob_microbatch_changed": false,
+    "attention_kernel_changed": false
+  },
+  "helper_sha256": "ad2bf06944055f27de4e6789282370cd002356db26b1969d3cd618cea2af3254"
+}

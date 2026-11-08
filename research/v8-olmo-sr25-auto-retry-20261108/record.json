@@ -1,0 +1,108 @@
+{
+  "source_commit": "9c1e31c5962b0cfac68d664c7e15b11664cd59b9",
+  "user_reports": [
+    "야한번 fail된거 복구 안하냐",
+    "olmo math cuda oom 에러 계속 나고 fail나면 알아서 복구해야될거 아니야 qwen은 문제 없는데 olmo math만 왜 문제가 있냐고 sr25가 하나도 지금 동작 안하고 있다고",
+    "근본적인 원인 찾아서 고쳐놔"
+  ],
+  "hypothesis": "Two distinct source deficiencies: same-controller task failures remained opt-in retries, leaving SR25 excluded after one error; OLMo logprob forward retained full decoder activations while Qwen already recomputed them with non-reentrant checkpointing in a scoped training mode. Cache cleanup cannot free activations still needed for backward. The exact live CUDA allocation/operation remains unobserved.",
+  "source_evidence": {
+    "olmo": "scripts/frozen_srgc/pre_20261004/torch_backend.py:_logps_batch checkpoints only head chunks; constructor sets eval and decoder checkpointing absent",
+    "qwen": "scripts/srgc_qwen35_memory.py:QwenBackend enables decoder checkpointing and scopes model.train(True) for logps; also has separate generation microbatching",
+    "retry": "scripts/srgc_v8_nodes.py retry_requested defaultFalse; same-controller tasks excluded by default until explicit request; before fixture reproduces both after-launch and before-join failure"
+  },
+  "fixes": [
+    "V11 applies OLMo decoder activation recomputation only after proving zero dropout; model mode restored even on errors. Conditional logits_to_keep=1 preserves eight-response sampling batch/seed/token cap/attention. Qwen model memory path unchanged. Stage/failed-generation context added to original exception notes.",
+    "Default worker admission enables bounded task retry and the existing shared retry marker. Same-controller task faults retry after60 seconds below total3 counted-failure cap. Interrupted/node-local faults are refunded. Aggregate task exhaustion clears only when eligible jobs remain; structural/input/setup/identity errors are not cleared.",
+    "Original backend tensor-lifetime/host snapshot repairs retained. Latest checkpoint/optimizer/RNG/rewards and every failed attempt preserved. No new queue, batch/response reduction, attention switch, checkpoint deletion or scientific reward rewrite."
+  ],
+  "controls": {
+    "model": "Actual random2-layer OLMo3ForCausalLM CPU float32,48-vocab/16-hidden/32-intermediate; q_proj trainable and embeddings frozen; no PEFT package and no7B/H100 model",
+    "data": "Fixed short token sequences and controlled binary reward vector for code tests; eight sampled responses under fixed seed29; no dataset transformation",
+    "seeds": [
+      17,
+      29
+    ],
+    "updates": "One real CPU GRPO/AdamW update compared before/after; zero H100 updates, zero measured scientific training or held-out rewards",
+    "metrics": "Exact logprob/gradient/generated token/RNG/parameter/optimizer equality; unique saved nonparameter CPU storage observed by autograd hooks; queue retry eligibility/history/checkpoint bytes and multiprocess leases",
+    "cpu_memory_control": {
+      "scope": "CPU-only tiny OLMo control; not H100 capacity, CUDA peak, reward or scientific learning result",
+      "torch": "2.14.1+cpu",
+      "hidden_size": 16,
+      "layers": 2,
+      "seed": 17,
+      "trainable": "q_proj only, frozen embeddings; no PEFT package",
+      "baseline_unique_saved_nonparameter_storage_bytes": 31360,
+      "repaired_unique_saved_nonparameter_storage_bytes": 4288,
+      "values_bitwise_equal": true,
+      "gradients_bitwise_equal": true,
+      "runtime_repair": {
+        "protocol": "olmo-zero-dropout-recomputation-v1",
+        "activation_checkpointing": true,
+        "use_reentrant": false,
+        "generation_last_logit": true,
+        "response_count_changed": false,
+        "generation_microbatch_changed": false,
+        "logprob_microbatch_changed": false,
+        "attention_kernel_changed": false
+      },
+      "helper_sha256": "ad2bf06944055f27de4e6789282370cd002356db26b1969d3cd618cea2af3254"
+    }
+  },
+  "evidence": {
+    "all-interrupted.xml": {
+      "tests": 52,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "all.xml": {
+      "tests": 323,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "archive.xml": {
+      "tests": 65,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "final-memory.xml": {
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "fixed-interrupted.xml": {
+      "tests": 43,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "olmo-before.xml": {
+      "tests": 3,
+      "failures": 2,
+      "errors": 0,
+      "skipped": 0
+    },
+    "retry-before.xml": {
+      "tests": 2,
+      "failures": 2,
+      "errors": 0,
+      "skipped": 0
+    },
+    "retry-fixed.xml": {
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "failures": "retry-before2 fail reproduces one-failure exclusion. olmo-before2 fail/1 generation control pass shows absent checkpoint mode (not a measured H100 OOM). fixed-interrupted43 passes and all-interrupted52 passes were deliberately interrupted when a scheduling fixture inherited the real60s cooldown; fixtures now explicitly use0 delay while production remains60. Raw partial test output is retained, not reported as a complete suite.",
+  "original_trainer_files": 30,
+  "original_trainer_sha256_unchanged": true,
+  "checkpoint_provenance": "Controller never replaces the run latest.pt/retained snapshots or original model/config/input identities. Runner still loads latest.pt including optimizer/RNG, else verifies the original parent. Failed attempt and reward histories remain. Intermediate held-out points remain unmeasured if not run.",
+  "scientific_limits": "CPU storage31360→4288 is a tiny-model saved-storage control, not CUDA peak memory or a7B saving estimate. Exact CPU equality does not establish BF16/CUDA identity, capacity or SR25 progress. Runtime receipt explicitly versions recomputation; retain it with cost records. Recompute cost is part of actual measured backward/phase accounting.",
+  "remote_status": "No H100 connection/mounted run volume or original CUDA OOM trace. User clarified On5 / SR25 zero; requested exact allocation and last operation asynchronously, response pending. Cannot assert the live root cause or actual SR25 optimizer update is fixed. Git pull alone does not hot-replace already-frozen running workers."
+}

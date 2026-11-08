@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="3" time="2.446" timestamp="2026-11-08T20:31:43.763492+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_olmo_memory" name="test_checkpointed_real_olmo_preserves_outputs_gradients_rng_and_reduces_saved_activation_storage" time="2.356"><failure message="AssertionError: OLMo decoder activation checkpointing was not enabled&#10;assert False&#10; +  where False = Olmo3ForCausalLM(\n  (model): Olmo3Model(\n    (embed_tokens): Embedding(48, 16, padding_idx=0)\n    (layers): ModuleList...=1e-05)\n    (rotary_emb): Olmo3RotaryEmbedding()\n  )\n  (lm_head): Linear(in_features=16, out_features=48, bias=False)\n).is_gradient_checkpointing&#10; +    where Olmo3ForCausalLM(\n  (model): Olmo3Model(\n    (embed_tokens): Embedding(48, 16, padding_idx=0)\n    (layers): ModuleList...=1e-05)\n    (rotary_emb): Olmo3RotaryEmbedding()\n  )\n  (lm_head): Linear(in_features=16, out_features=48, bias=False)\n) = &lt;srgc_rebuttal.torch_backend.TorchBackend object at 0x7ffb5fc577d0&gt;.model">tmp_path = PosixPath('/dev/shm/v8-olmo-before-20261108/test_checkpointed_real_olmo_pr0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7ffb7e79ccb0&gt;
+
+    def test_checkpointed_real_olmo_preserves_outputs_gradients_rng_and_reduces_saved_activation_storage(tmp_path,monkeypatch):
+        import torch
+        before=tiny_backend();after=tiny_backend()
+        expected,expected_gradients,baseline_storage=gradients_and_saved_storage(before)
+        monkeypatch.setenv('SRGC_PROGRESS_DIR',str(tmp_path));module=entry(monkeypatch)
+        module.repair_context(types.SimpleNamespace(backend=after))
+&gt;       assert after.model.is_gradient_checkpointing,'OLMo decoder activation checkpointing was not enabled'
+E       AssertionError: OLMo decoder activation checkpointing was not enabled
+E       assert False
+E        +  where False = Olmo3ForCausalLM(\n  (model): Olmo3Model(\n    (embed_tokens): Embedding(48, 16, padding_idx=0)\n    (layers): ModuleList...=1e-05)\n    (rotary_emb): Olmo3RotaryEmbedding()\n  )\n  (lm_head): Linear(in_features=16, out_features=48, bias=False)\n).is_gradient_checkpointing
+E        +    where Olmo3ForCausalLM(\n  (model): Olmo3Model(\n    (embed_tokens): Embedding(48, 16, padding_idx=0)\n    (layers): ModuleList...=1e-05)\n    (rotary_emb): Olmo3RotaryEmbedding()\n  )\n  (lm_head): Linear(in_features=16, out_features=48, bias=False)\n) = &lt;srgc_rebuttal.torch_backend.TorchBackend object at 0x7ffb5fc577d0&gt;.model
+
+tests/test_srgc_v8_olmo_memory.py:58: AssertionError</failure></testcase><testcase classname="tests.test_srgc_v8_olmo_memory" name="test_generation_keeps_all_eight_answers_tokens_rng_and_eval_mode" time="0.031" /><testcase classname="tests.test_srgc_v8_olmo_memory" name="test_checkpoint_mode_restored_on_failure_and_nonzero_dropout_rejected" time="0.005"><failure message="assert False is True&#10; +  where False = Olmo3ForCausalLM(\n  (model): Olmo3Model(\n    (embed_tokens): Embedding(48, 16, padding_idx=0)\n    (layers): ModuleList...=1e-05)\n    (rotary_emb): Olmo3RotaryEmbedding()\n  )\n  (lm_head): Linear(in_features=16, out_features=48, bias=False)\n).training&#10; +    where Olmo3ForCausalLM(\n  (model): Olmo3Model(\n    (embed_tokens): Embedding(48, 16, padding_idx=0)\n    (layers): ModuleList...=1e-05)\n    (rotary_emb): Olmo3RotaryEmbedding()\n  )\n  (lm_head): Linear(in_features=16, out_features=48, bias=False)\n) = &lt;srgc_rebuttal.torch_backend.TorchBackend object at 0x7ffb5bbebf20&gt;.model">tmp_path = PosixPath('/dev/shm/v8-olmo-before-20261108/test_checkpoint_mode_restored_0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7ffb5fdd8f20&gt;
+
+    def test_checkpoint_mode_restored_on_failure_and_nonzero_dropout_rejected(tmp_path,monkeypatch):
+        module=entry(monkeypatch);backend=tiny_backend();monkeypatch.setenv('SRGC_PROGRESS_DIR',str(tmp_path))
+        def broken(*args):
+            assert backend.model.training is True
+            raise RuntimeError('injected logprob failure')
+        backend._logps_batch=broken;module.repair_context(types.SimpleNamespace(backend=backend))
+&gt;       with pytest.raises(RuntimeError,match='injected logprob'):backend._logps_batch([])
+                                                                  ^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_srgc_v8_olmo_memory.py:86: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = ([],)
+
+    def broken(*args):
+&gt;       assert backend.model.training is True
+E       assert False is True
+E        +  where False = Olmo3ForCausalLM(\n  (model): Olmo3Model(\n    (embed_tokens): Embedding(48, 16, padding_idx=0)\n    (layers): ModuleList...=1e-05)\n    (rotary_emb): Olmo3RotaryEmbedding()\n  )\n  (lm_head): Linear(in_features=16, out_features=48, bias=False)\n).training
+E        +    where Olmo3ForCausalLM(\n  (model): Olmo3Model(\n    (embed_tokens): Embedding(48, 16, padding_idx=0)\n    (layers): ModuleList...=1e-05)\n    (rotary_emb): Olmo3RotaryEmbedding()\n  )\n  (lm_head): Linear(in_features=16, out_features=48, bias=False)\n) = &lt;srgc_rebuttal.torch_backend.TorchBackend object at 0x7ffb5bbebf20&gt;.model
+
+tests/test_srgc_v8_olmo_memory.py:83: AssertionError</failure></testcase></testsuite></testsuites>

@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="2" time="0.062" timestamp="2026-11-08T20:29:58.411422+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_default_retry" name="test_default_launch_retries_same_controller_failure_with_checkpoint_and_history[False]" time="0.004"><failure message="AssertionError: same-controller failure was left excluded by default&#10;assert 'failed' == 'done'&#10;  &#10;  - done&#10;  + failed">tmp_path = PosixPath('/dev/shm/v8-auto-before-20261108/test_default_launch_retries_sa0')
+already_failed = False
+
+    @pytest.mark.parametrize('already_failed',[False,True])
+    def test_default_launch_retries_same_controller_failure_with_checkpoint_and_history(tmp_path,already_failed):
+        stop=threading.Event();calls=[]
+        pool=nodes.Pool(tmp_path/'olmo_math/.multi-node',{'cohort':'olmo_math'})
+        pool.initialize();state=pool.queue_state();state['phase']='train';nodes.atomic(pool.root/'state.json',state)
+        checkpoint=tmp_path/'latest.pt';checkpoint.write_bytes(b'update25 optimizer RNG training rewards')
+        task=dict(kind='train',run_id='sr25',method_id='bank_sr_t025',config_hash='fixture',
+                  training_seed=5,horizon=275,parent={'path':str(checkpoint)})
+        key=pool.register(task,'train');path=pool.root/'jobs'/(key+'.json')
+        if already_failed:
+            job=nodes.read(path);job['state']='failed'
+            job['attempts']=[dict(id='failed-before-join',outcome='failed',exit_code=1,ended_at=0,
+                                 controller_sha256=pool.controller_sha256,controller_policy=nodes.DISPATCH_POLICY)]
+            nodes.atomic(path,job)
+            pool.fail('1 task(s) failed; no independent ready/running work remains.')
+        class Runtime:
+            def verify_node(self):pass
+            def plan(self,phase):return [task],True
+            def native_busy(self,task):return False
+            def ready(self,task):return True
+            def done(self,task):return bool(calls and calls[-1]=='success')
+            def execute(self,task,*args):
+                assert checkpoint.read_bytes()==b'update25 optimizer RNG training rewards'
+                if not already_failed and not calls:calls.append('failure');return 1
+                calls.append('success');stop.set();return 0
+        nodes.worker_loop(pool,Runtime(),'plain-node',stop,poll=.001,retry_delay=0)
+        job=nodes.read(path)
+&gt;       assert job['state']=='done','same-controller failure was left excluded by default'
+E       AssertionError: same-controller failure was left excluded by default
+E       assert 'failed' == 'done'
+E         
+E         - done
+E         + failed
+
+tests/test_srgc_v8_default_retry.py:36: AssertionError</failure></testcase><testcase classname="tests.test_srgc_v8_default_retry" name="test_default_launch_retries_same_controller_failure_with_checkpoint_and_history[True]" time="0.002"><failure message="AssertionError: same-controller failure was left excluded by default&#10;assert 'failed' == 'done'&#10;  &#10;  - done&#10;  + failed">tmp_path = PosixPath('/dev/shm/v8-auto-before-20261108/test_default_launch_retries_sa1')
+already_failed = True
+
+    @pytest.mark.parametrize('already_failed',[False,True])
+    def test_default_launch_retries_same_controller_failure_with_checkpoint_and_history(tmp_path,already_failed):
+        stop=threading.Event();calls=[]
+        pool=nodes.Pool(tmp_path/'olmo_math/.multi-node',{'cohort':'olmo_math'})
+        pool.initialize();state=pool.queue_state();state['phase']='train';nodes.atomic(pool.root/'state.json',state)
+        checkpoint=tmp_path/'latest.pt';checkpoint.write_bytes(b'update25 optimizer RNG training rewards')
+        task=dict(kind='train',run_id='sr25',method_id='bank_sr_t025',config_hash='fixture',
+                  training_seed=5,horizon=275,parent={'path':str(checkpoint)})
+        key=pool.register(task,'train');path=pool.root/'jobs'/(key+'.json')
+        if already_failed:
+            job=nodes.read(path);job['state']='failed'
+            job['attempts']=[dict(id='failed-before-join',outcome='failed',exit_code=1,ended_at=0,
+                                 controller_sha256=pool.controller_sha256,controller_policy=nodes.DISPATCH_POLICY)]
+            nodes.atomic(path,job)
+            pool.fail('1 task(s) failed; no independent ready/running work remains.')
+        class Runtime:
+            def verify_node(self):pass
+            def plan(self,phase):return [task],True
+            def native_busy(self,task):return False
+            def ready(self,task):return True
+            def done(self,task):return bool(calls and calls[-1]=='success')
+            def execute(self,task,*args):
+                assert checkpoint.read_bytes()==b'update25 optimizer RNG training rewards'
+                if not already_failed and not calls:calls.append('failure');return 1
+                calls.append('success');stop.set();return 0
+        nodes.worker_loop(pool,Runtime(),'plain-node',stop,poll=.001,retry_delay=0)
+        job=nodes.read(path)
+&gt;       assert job['state']=='done','same-controller failure was left excluded by default'
+E       AssertionError: same-controller failure was left excluded by default
+E       assert 'failed' == 'done'
+E         
+E         - done
+E         + failed
+
+tests/test_srgc_v8_default_retry.py:36: AssertionError</failure></testcase></testsuite></testsuites>
