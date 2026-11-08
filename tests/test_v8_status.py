@@ -217,3 +217,28 @@ def test_simple_view_also_puts_summary_at_the_bottom(tmp_path):
     assert text.index("seed  ") < text.index("V8 olmo_math · ") < text.index("done 1 · running 1")
     assert text.rstrip().splitlines()[-2].startswith("done 1 · running 1")
     assert text.rstrip().splitlines()[-1].startswith("workers: ")
+
+
+
+def test_clean_view_is_compact_with_summary_last(tmp_path):
+    """'status 좀 보기 좋게 정리하라고': short columns, one symbol per cell, summary at the bottom."""
+    now = time.time()
+    base = fixture(tmp_path, now)
+    q = base / "olmo_math" / ".multi-node"
+    write(q / "progress" / "att1" / "rank-0.json", {"stage": "generation", "updated": now - 5,
+                                                   "question_index": 3, "questions_total": 40, "response_tokens": 812})
+    text = status.render_clean([base], now=now, gpus=[("0", 97, 61000)], host="node01", width=120)
+    lines = text.rstrip().splitlines()
+    assert lines[0].startswith("━━ OLMo MATH (olmo_math)")
+    assert "seed  On" in text and "▶37" in text
+    assert "▶ s5 On" in text and "37/275" in text and "answering 3/40, 812 tok (5s ago)" in text
+    assert "needs attention" in text and "CUDA out of memory" in text
+    assert lines[-4].startswith("OLMo MATH  training ") and "1/4 done (25%)  running 1  ready 0  waiting 1  failed 1  updates 37/275" in lines[-4]
+    assert lines[-3].startswith("Qwen MBPP  not started")
+    assert lines[-2].startswith("workers ") and lines[-1].startswith("this node  node01: ▶ s5 On")
+    assert all(len(line) <= 120 for line in lines)
+
+
+def test_short_arm_names():
+    assert status.short_arm("on_monitored") == "On"
+    assert status.short_arm("bank_sr_t025") == "SR25" and status.short_arm("bank_uniform_t050") == "U50"

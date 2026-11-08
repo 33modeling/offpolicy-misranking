@@ -17,10 +17,10 @@ def run(args, tmp_path):
 def test_status_word_shows_table(tmp_path):
     out = run(["status"], tmp_path)
     assert out.returncode == 0, out.stderr
-    assert "V8 olmo_math · " in out.stdout and "V8 qwen_mbpp · " in out.stdout
+    assert "V8 status · " in out.stdout and "OLMo MATH" in out.stdout and "Qwen MBPP" in out.stdout
     assert "status.json" not in out.stdout + out.stderr
     out = run(["olmo_math", "status"], tmp_path)
-    assert out.returncode == 0 and "V8 olmo_math · " in out.stdout and "V8 qwen_mbpp" not in out.stdout
+    assert out.returncode == 0 and "OLMo MATH" in out.stdout and "Qwen MBPP" not in out.stdout
 
 
 def test_unknown_word_gets_usage_not_traceback(tmp_path):
@@ -58,8 +58,8 @@ def test_run_srgc_words_and_option_values_are_forwarded_intact(tmp_path):
 def test_mode_words(tmp_path):
     for args in (["math", "status"], ["mbpp", "status"]):
         out = run(args, tmp_path)
-        assert out.returncode == 0 and "V8 " in out.stdout
-    assert "V8 qwen_mbpp" not in run(["math", "status"], tmp_path).stdout
+        assert out.returncode == 0 and "V8 status · " in out.stdout
+    assert "Qwen MBPP" not in run(["math", "status"], tmp_path).stdout
     for args in (["status", "status"], ["math", "mbpp"], ["results"]):
         out = run(args, tmp_path)
         assert out.returncode == 2 and "usage:" in out.stderr and "Traceback" not in out.stderr

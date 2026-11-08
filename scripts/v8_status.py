@@ -513,9 +513,212 @@ def render_srgc(live, base, cohort, now, host):
     return summary_at_bottom(text, demand)
 
 
+# ---- Clean view (default) ------------------------------------------------------------------------
+# One compact block per cohort: short column names, one symbol per cell, one line per running task
+# and per problem, one line for all nodes; the summary (counts, workers, this node) is at the bottom.
+
+LEGEND = "✓ done   ▶n running (updates done)   ○ ready   · waiting   ✗ failed   ⏸ interrupted   ? no heartbeat"
+COHORT_LABEL = {'olmo_math': 'OLMo MATH', 'qwen_mbpp': 'Qwen MBPP'}
+PHASE_LABEL = {'prepare': 'prepare', 'train': 'training', 'freeze': 'budget freeze', 'extension': 'budget extension',
+               'evaluation': 'evaluation', 'finalize': 'analysis', 'complete': 'complete'}
+STAGE_SHORT = {'generation_start': 'answering', 'generation': 'answering', 'generation_finished': 'answers done',
+               'generation_oom_retry': 'answering (OOM retry)', 'rollout': 'checking answers',
+               'gradient_scoring': 'scoring questions', 'policy_update': 'optimizer step', 'update': 'update done',
+               'model_ready': 'model loaded', 'checkpoint_load': 'loading checkpoint', 'checkpoint_save': 'saving checkpoint',
+               'selection': 'selecting questions', 'training': 'training step', 'preparation': 'preparing',
+               'startup': 'starting', 'cache_generation': 'building reward cache', 'cache_refresh': 'refreshing cache',
+               'cache_export': 'saving cache', 'evaluation': 'evaluating'}
+
+
+def short_arm(arm):
+    arm = str(arm)
+    if arm in ('on_monitored', 'on', 'on_policy'):
+        return 'On'
+    m = re.fullmatch(r'bank_(sr|uniform|random)_t0*(\d+)', arm)
+    if m:
+        return {'sr': 'SR', 'uniform': 'U', 'random': 'R'}[m.group(1)] + m.group(2)
+    return arm.replace('bank_', '')[:10]
+
+
+def symbol(row):
+    status = row['status']
+    if status == 'done':
+        return '✓'
+    if status == 'running':
+        return f"▶{row['done']}" if row['done'] is not None else '▶'
+    if status == 'pending':
+        return '○' if row.get('ready') else '·'
+    return {'failed': '✗', 'interrupted': '⏸', 'unconfirmed': '?', 'stopped': '?'}.get(status, '?')
+
+
+def short_progress(row, now):
+    events = row.get('_events') or []
+    if not events:
+        return None
+    rank, stage, details, age = min(events, key=lambda e: e[3])
+    text = STAGE_SHORT.get(stage, stage.replace('_', ' '))
+    if details.get('question_index') and details.get('questions_total'):
+        text += f" {details['question_index']}/{details['questions_total']}"
+    if details.get('response_tokens') is not None:
+        text += f", {details['response_tokens']} tok"
+    return f"{text} ({age_text(age)} ago)"
+
+
+def clip(line, width):
+    return line if len(line) <= width else line[:max(10, width - 1)] + '…'
+
+
+def clean_block(base, cohort, now, host, width):
+    queue = Path(base) / cohort / '.multi-node'
+    label = COHORT_LABEL.get(cohort, cohort)
+    if not queue.exists():
+        return [], f"{label:<10} not started", None
+    state, rows = collect(base, cohort, now)
+    trained = {r.get('run_id'): r['arm'] for r in rows if r.get('kind') == 'train' and r.get('phase') != 'extension'}
+    train_cols, seeds, cells, ext, ev = [], [], {}, {}, {}
+    for r in rows:
+        seed = r['seed']
+        if seed not in seeds:
+            seeds.append(seed)
+        if r.get('kind') == 'evaluate':
+            ev.setdefault(seed, []).append(r)
+        elif r.get('phase') == 'extension':
+            ext.setdefault(seed, []).append(r)
+        else:
+            col = short_arm(r['arm'])
+            if col not in train_cols:
+                train_cols.append(col)
+            cells[(seed, col)] = symbol(r)
+    def col_key(c):
+        kind = 0 if c == 'On' else 1 if c.startswith('SR') else 2 if c.startswith('U') else 3
+        num = int(re.sub(r'\D', '', c) or 0)
+        return (kind, num, c)
+    train_cols.sort(key=col_key)
+    seeds.sort(key=lambda x: (not isinstance(x, int), x if isinstance(x, int) else str(x)))
+    def count_cell(items):
+        if not items:
+            return '-'
+        done = sum(i['status'] == 'done' for i in items)
+        bad = sum(i['status'] in ATTENTION for i in items)
+        run = sum(i['status'] == 'running' for i in items)
+        if done == len(items):
+            return '✓'
+        return f"{done}/{len(items)}" + ('✗' if bad else '▶' if run else '')
+    cols = [*train_cols, *(['ext'] if ext else []), *(['eval'] if ev else [])]
+    table = {}
+    for seed in seeds:
+        for c in train_cols:
+            table[(seed, c)] = cells.get((seed, c), '-')
+        if ext:
+            table[(seed, 'ext')] = count_cell(ext.get(seed, []))
+        if ev:
+            table[(seed, 'eval')] = count_cell(ev.get(seed, []))
+    widths = {c: max(len(c), *(len(table[(s, c)]) for s in seeds)) for c in cols} if seeds else {}
+    lines = [f"━━ {label} ({cohort}) " + '━' * max(3, min(width, 100) - len(label) - len(cohort) - 7)]
+    if seeds:
+        lines.append('seed  ' + '  '.join(f'{c:<{widths[c]}}' for c in cols))
+        for seed in seeds:
+            lines.append(f'{seed!s:>4}  ' + '  '.join(f'{table[(seed, c)]:<{widths[c]}}' for c in cols))
+    else:
+        lines.append('  (no tasks yet)')
+    running = [r for r in rows if r['status'] == 'running']
+    if running:
+        lines.append('running')
+        for r in sorted(running, key=lambda r: (str(r['seed']), r['arm'])):
+            name = ('eval ' + short_arm(trained.get(r.get('run_id'), r['arm']))) if r.get('kind') == 'evaluate' else \
+                   short_arm(r['arm']) + (' ext' if r.get('phase') == 'extension' else '')
+            upd = f"{r['done']}/{r['total']}" if r['done'] is not None and r['total'] else 'starting'
+            prog = short_progress(r, now) or (f"log {age_text(r['activity_age'])} ago" if r.get('activity_age') is not None else '')
+            lines.append(clip(f"  ▶ s{r['seed']} {name:<10} {upd:<9} {prog:<40} {r.get('host') or ''}", width))
+    problems = [r for r in rows if r['status'] in ATTENTION]
+    unreadable = access_problems(queue)
+    if state.get('_unreadable_jobs'):
+        unreadable.append(f"{len(state['_unreadable_jobs'])} unreadable job record(s)")
+    if problems or unreadable or state.get('failure'):
+        lines.append('needs attention')
+        if state.get('failure'):
+            lines.append(clip(f"  ✗ queue: {state['failure']}", width))
+        for r in problems:
+            reason = r.get('error') or r['status']
+            lines.append(clip(f"  {symbol(r)} s{r['seed']} {short_arm(r['arm'])}: {reason}", width))
+        for u in unreadable[:3]:
+            lines.append(clip(f"  ! cannot read {u}", width))
+    workers = worker_records(queue, now)
+    live = [w for w in workers if w['status'] != 'stale']
+    stale = len(workers) - len(live)
+    if workers:
+        parts = []
+        for w in sorted(live, key=lambda w: w['worker']):
+            job = next((r for r in rows if r['status'] in ('running', 'unconfirmed') and r.get('worker') == w['worker']), None)
+            what = f"▶ s{job['seed']} {short_arm(job['arm'])}" if job else 'idle'
+            parts.append(f"{w['host']} {what} ({age_text(w['age'])})")
+        if stale:
+            parts.append(f"{stale} without heartbeat >{STALE_SECONDS // 60}m")
+        lines.append(clip('nodes  ' + ' · '.join(parts), width))
+    counts = {k: 0 for k in ('done', 'running', 'ready', 'waiting', 'attention')}
+    for r in rows:
+        key = ('done' if r['status'] == 'done' else 'running' if r['status'] == 'running'
+               else 'attention' if r['status'] in ATTENTION else 'ready' if r.get('ready') else 'waiting')
+        counts[key] += 1
+    phase = PHASE_LABEL.get(state.get('phase'), state.get('phase', 'not started'))
+    total = len(rows)
+    # Training progress in optimizer updates (what 'how far along' means for a run), plus task counts.
+    planned = done_updates = 0
+    for r in rows:
+        if r.get('kind') == 'train' and isinstance(r.get('total'), int):
+            planned += r['total']
+            done_updates += r['total'] if r['status'] == 'done' else (r['done'] or 0)
+    pct = round(100 * counts['done'] / total) if total else 0
+    filled = round(12 * counts['done'] / total) if total else 0
+    bar = '█' * filled + '░' * (12 - filled)
+    summary = (f"{label:<10} {phase:<13} {bar} {counts['done']}/{total} done ({pct}%)  running {counts['running']}  "
+               f"ready {counts['ready']}  waiting {counts['waiting']}  failed {counts['attention']}"
+               + (f"  updates {done_updates:,}/{planned:,}" if planned else ''))
+    wanted = counts['running'] + counts['ready']
+    nodes = (len(live), sum(1 for w in live if any(r.get('worker') == w['worker'] and r['status'] in ('running', 'unconfirmed') for r in rows)))
+    return lines, summary, (nodes, wanted)
+
+
+def render_clean(bases, now=None, gpus=None, host=None, cohorts=COHORTS, width=None):
+    import shutil
+    now = time.time() if now is None else now
+    host = host or socket.gethostname()
+    gpus = gpu_rows() if gpus is None else gpus
+    width = width or max(80, min(shutil.get_terminal_size((120, 40)).columns, 160))
+    out, summaries = [], []
+    active = running_nodes = wanted = 0
+    mine = None
+    for base in bases:
+        for cohort in cohorts:
+            lines, summary, extra = clean_block(base, cohort, now, host, width)
+            if lines:
+                out += [*lines, '']
+            summaries.append(summary)
+            if extra:
+                (a, r), w = extra
+                active, running_nodes, wanted = max(active, a), max(running_nodes, r), wanted + w
+            if mine is None and lines:
+                _, rows = collect(base, cohort, now)
+                job = next((x for x in rows if x['status'] == 'running' and x.get('host') == host), None)
+                if job:
+                    mine = f"▶ s{job['seed']} {short_arm(job['arm'])} ({cohort})"
+    out.append(LEGEND)
+    out.append('─' * min(width, 100))
+    out.append(f"V8 status · {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(now))} · {', '.join(str(b) for b in bases)}")
+    out += summaries
+    more = max(0, wanted - active)
+    out.append(f"workers    {active} active ({running_nodes} running, {active - running_nodes} idle) · work for {wanted} now"
+               + (f" → {more} more 4-GPU node{'s' if more != 1 else ''} could help" if more else ''))
+    gpu_text = ' '.join(f'{i}:{u}%' for i, u, _ in gpus) if gpus else 'unknown'
+    out.append(f"this node  {host}: {mine or 'no V8 task here'} · GPU {gpu_text}")
+    return '\n'.join(clip(line, width) for line in out) + '\n'
+
+
 def render(bases, now=None, gpus=None, host=None, cohorts=COHORTS, style='simple'):
     now = time.time() if now is None else now
     host = host or socket.gethostname()
+    if style == 'clean':
+        return render_clean(bases, now=now, gpus=gpus, host=host, cohorts=cohorts)
     live = original_renderer() if style == 'srgc' else None
     if live is not None:
         return '\n'.join(render_srgc(live, base, cohort, now, host) for base in bases for cohort in cohorts)
@@ -533,18 +736,19 @@ def main(argv=None):
             raise argparse.ArgumentTypeError('cohort must be a simple configured identifier')
         return value
     parser.add_argument('--cohort', action='append', type=cohort_name, help='show only this cohort (repeatable)')
-    parser.add_argument('--simple', action='store_true', help='simplified V8 view instead of the run_srgc.sh status screen')
+    parser.add_argument('--simple', action='store_true', help='older simplified V8 view')
+    parser.add_argument('--classic', action='store_true', help='the original run_srgc.sh status screen layout')
     parser.add_argument('--watch', nargs='?', const=60.0, type=float, default=None, metavar='SECONDS',
                         help='refresh every SECONDS (default 60) until Ctrl-C')
     args = parser.parse_args(argv)
     # An explicit V8_ROOT wins; otherwise the roots of this node's running V8 processes, else the default.
     bases = [Path(os.environ['V8_ROOT'])] if os.environ.get('V8_ROOT') else (active_roots() or [root(os.environ)])
     if args.watch is None:
-        sys.stdout.write(render(bases, cohorts=tuple(args.cohort or COHORTS), style='simple' if args.simple else 'srgc'))
+        sys.stdout.write(render(bases, cohorts=tuple(args.cohort or COHORTS), style='simple' if args.simple else 'srgc' if args.classic else 'clean'))
         return 0
     try:
         while True:
-            sys.stdout.write('\033[H\033[2J' + render(bases, cohorts=tuple(args.cohort or COHORTS), style='simple' if args.simple else 'srgc') + f"\n(refresh every {int(args.watch)}s · Ctrl-C to stop)\n")
+            sys.stdout.write('\033[H\033[2J' + render(bases, cohorts=tuple(args.cohort or COHORTS), style='simple' if args.simple else 'srgc' if args.classic else 'clean') + f"\n(refresh every {int(args.watch)}s · Ctrl-C to stop)\n")
             sys.stdout.flush()
             time.sleep(max(5.0, args.watch))
     except KeyboardInterrupt:
