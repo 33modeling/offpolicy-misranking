@@ -21,6 +21,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from v8_probe import active_roots, last_row, read, root, tail  # noqa: E402
+from srgc_v8_nodes import retry_budget_failures  # same verified recovery boundary as the scheduler
 
 COHORTS = ('olmo_math', 'qwen_mbpp')
 ATTENTION = {'failed', 'interrupted', 'stopped', 'unconfirmed'}
@@ -327,7 +328,8 @@ def failure_story(row, attempt, job, task, directory, state, live_policies, now)
         cause = 'no exit code or error was recorded for this attempt (older record); see its log'
     else:
         cause = f"exit {rc} without an error message in its log or rank error files"
-    used = counted_failures(job)
+    lifetime = counted_failures(job)
+    used = retry_budget_failures(job)
     auto = state.get('automatic_retry_policy') if isinstance(state.get('automatic_retry_policy'), dict) else {}
     limit = auto.get('max_failed_attempts') if isinstance(auto.get('max_failed_attempts'), int) else MAX_ATTEMPTS
     delay = auto.get('retry_delay') if isinstance(auto.get('retry_delay'), (int, float)) else RETRY_DELAY
@@ -352,7 +354,9 @@ def failure_story(row, attempt, job, task, directory, state, live_policies, now)
         nxt = 'work is already complete (a retry resumes from its checkpoint, nothing finished is redone); ' + nxt
     elif not real and rc in (9, -9, 137):
         nxt += f"; if it was host memory (OOM killer), check dmesg on {row.get('host') or 'that node'} first"
-    return dict(failure_cause=cause[:400], failure_next=nxt, failure_real=real, failure_at=at)
+    if lifetime != used:nxt += f'; current verified repair failures {used}, historical failures {lifetime}'
+    return dict(failure_cause=cause[:400], failure_next=nxt, failure_real=real, failure_at=at,
+                failure_budget_used=used,failure_lifetime_count=lifetime)
 
 
 def task_ready(task):

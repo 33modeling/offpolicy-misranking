@@ -29,7 +29,7 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'source-recovery-olmo-memory-auto-retry-v11'
+DISPATCH_POLICY = 'source-recovery-verified-retry-budget-v12'
 TERMINAL = {'completed_horizon', 'completed_budget'}
 PHASES = ('train', 'extension', 'evaluation')
 CORRECTED_PLANNER = 'current-v8-016'  # evaluation planner replaced for pre-V8-016 coordinators
@@ -127,6 +127,29 @@ def counted_failures(job):
     return count
 
 
+def retry_budget_failures(job):
+    """Count this verified repair's failures without erasing historical failures.
+
+    Only a recovery record made after node/input verification can establish a new
+    boundary. Missing or inconsistent metadata conservatively retains the total.
+    """
+    epoch=job.get('retry_epoch') or {}
+    policy=epoch.get('policy');previous=epoch.get('after_attempt')
+    if not policy or not any(row.get('controller_policy')==policy and row.get('previous_attempt')==previous
+                             for row in job.get('recovery_history',[])):
+        return counted_failures(job)
+    attempts=job.get('attempts',[])
+    if previous is None:return counted_failures(job)
+    positions=[i for i,a in enumerate(attempts) if a.get('id')==previous]
+    if len(positions)!=1:return counted_failures(job)
+    return counted_failures({'attempts':attempts[positions[0]+1:]})
+
+
+def aggregate_task_failure(failure):
+    return (isinstance(failure,dict) and failure.get('task') is None and
+            bool(re.match(r'^\d+ task\(s\) failed; no independent ready/running work remains\.',str(failure.get('detail','')))))
+
+
 class QueueReset(Exception):
     """--new-queue replaced the queue directory; the caller must re-acquire control.lock in the new one."""
 
@@ -187,12 +210,13 @@ class Pool:
     def retryable(self,job,now=None,state=None):
         """Retry task faults below the failure limit and after the shared cooldown."""
         if job.get('state')!='failed':return True
-        if not self.retry_requested(state) or counted_failures(job)>=self.max_attempts:return False
-        ended=max([a.get('ended_at') or a.get('started_at') or 0 for a in job.get('attempts',[])] or [0])
+        if not self.retry_requested(state) or retry_budget_failures(job)>=self.max_attempts:return False
+        attempts=job.get('attempts',[]);last=attempts[-1] if attempts else {}
+        ended=last.get('ended_at') or last.get('started_at') or 0
         return (time.time() if now is None else now)>=ended+self.retry_delay
 
     def retry_later(self,job,state=None):
-        return job.get('state')=='failed' and self.retry_requested(state) and counted_failures(job)<self.max_attempts
+        return job.get('state')=='failed' and self.retry_requested(state) and retry_budget_failures(job)<self.max_attempts
 
     def held_leases(self):
         """Jobs whose lease a live worker or its training child still holds."""
@@ -306,13 +330,13 @@ class Pool:
     def enable_automatic_retry(self,worker):
         """Default task recovery after admission; never clear input/setup/identity failures."""
         state=self.queue_state();failure=state.get('failure')
-        policy=dict(policy=DISPATCH_POLICY,max_failed_attempts=self.max_attempts,retry_delay=self.retry_delay)
+        policy=dict(policy=DISPATCH_POLICY,max_failed_attempts=self.max_attempts,retry_delay=self.retry_delay,
+                    retry_count_scope='verified-controller-recovery')
         changed=state.get('automatic_retry_policy')!=policy or not state.get('retry_failed_requested_at')
         state['automatic_retry_policy']=policy
         # Older dispatchers already understand this shared request and cooldown.
         state.setdefault('retry_failed_requested_at',time.time())
-        aggregate=(isinstance(failure,dict) and failure.get('task') is None and
-                   re.match(r'^\d+ task\(s\) failed; no independent ready/running work remains\.',str(failure.get('detail',''))))
+        aggregate=aggregate_task_failure(failure)
         if aggregate and any(job.get('phase')==state['phase'] and self.retry_later(job,state)
                              for job in (read(p) for p in self.root.glob('jobs/*.json'))):
             state.setdefault('failure_history',[]).append(failure);state['failure']=None;changed=True
@@ -327,9 +351,7 @@ class Pool:
         An input/setup failure or a task that already failed on this controller is never cleared here.
         """
         state=self.queue_state();failure=state.get('failure')
-        aggregate=(isinstance(failure,dict) and failure.get('task') is None
-                   and re.match(r'^\d+ task\(s\) failed; no independent ready/running work remains\.',
-                                str(failure.get('detail',''))))
+        aggregate=aggregate_task_failure(failure)
         if failure and not aggregate:return
         recovered=[];resumable=False
         for path in sorted(self.root.glob('jobs/*.json')):
@@ -348,6 +370,9 @@ class Pool:
                     controller_policy=DISPATCH_POLICY,worker=worker,
                     previous_attempt=attempts[-1].get('id') if attempts else None,at=time.time(),
                     reason='verified_node_join_after_controller_update'))
+                job['retry_epoch']=dict(policy=DISPATCH_POLICY,
+                    after_attempt=attempts[-1].get('id') if attempts else None,
+                    previous_failed_attempts=counted_failures(job))
                 job['state']='pending';atomic(path,job);recovered.append(path.stem)
             finally:lease.close()
         if aggregate and (recovered or resumable):
@@ -409,7 +434,8 @@ class Pool:
             # task exit after this node has already joined. Reuse the same
             # validated, task-only conversion; never retry the failed task.
             self.initialize();state=self.queue_state()
-        if state['failure']:return 'failed',None
+        aggregate=aggregate_task_failure(state.get('failure'))
+        if state['failure'] and not aggregate:return 'failed',None
         phase=state['phase']
         if phase=='complete':return 'complete',None
         if phase=='prepare':
@@ -452,8 +478,6 @@ class Pool:
             if not lease.acquire():
                 all_done=False;active=True;continue
             try:
-                if job['state']=='failed' and not self.retryable(job,state=state):
-                    all_done=False;failed.append(path.stem);later=later or self.retry_later(job,state);continue
                 native_busy=runtime.native_busy(job['task'])
                 active=active or native_busy
                 done=False if native_busy else runtime.done(job['task'])
@@ -464,9 +488,16 @@ class Pool:
                 all_done=False
                 if job['state']=='done':raise ValueError('Previously completed output disappeared or became inconsistent: '+path.stem)
                 if native_busy:active=True;continue
+                if job['state']=='failed' and not self.retryable(job,state=state):
+                    failed.append(path.stem);later=later or self.retry_later(job,state);continue
                 if not runtime.ready(job['task']):continue
                 pending.append((path,job))
             finally:lease.close()
+        if aggregate and (all_done or active or later or pending):
+            # Only validated completed/active/eligible work invalidates an old
+            # aggregate exhaustion record. Input/setup failures never reach here.
+            state.setdefault('failure_history',[]).append(state['failure']);state['failure']=None
+            atomic(self.root/'state.json',state)
         if all_done and sealed:
             state['phase']={'train':'freeze','extension':'evaluation','evaluation':'finalize'}[phase]
             atomic(self.root/'state.json',state)
@@ -475,7 +506,7 @@ class Pool:
             state=self.queue_state();state.pop('retry_failed_requested_at',None)
             state['failure']=dict(detail=f'{len(failed)} task(s) failed; no independent ready/running work remains. '
                                   'Failed attempts/checkpoints are preserved. Automatic recovery exhausted or disabled '
-                                  f'(at most {self.max_attempts} counted failures, {self.retry_delay:g}s between attempts).',
+                                  f'(at most {self.max_attempts} failures in this verified repair, {self.retry_delay:g}s between attempts).',
                                   task=None,at=time.time())
             atomic(self.root/'state.json',state)
             return 'failed',None
@@ -509,6 +540,8 @@ class Pool:
             if not lease.acquire():continue
             attempt=dict(id=uuid.uuid4().hex,worker=worker,started_at=time.time(),pid=os.getpid(),
                          controller_sha256=self.controller_sha256,controller_policy=DISPATCH_POLICY)
+            if job.get('retry_epoch'):
+                attempt.update(retry_epoch=dict(job['retry_epoch']),retry_budget_failures_before_start=retry_budget_failures(job))
             if job['state']=='running' and job['attempts']:
                 job['attempts'][-1]['lease_released_without_worker_completion']=time.time()
             if job['state']=='failed':attempt['retry_of_failed_attempts']=counted_failures(job)
@@ -771,7 +804,8 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                             pool.initialize();state=pool.queue_state()
                         action='failed' if state.get('failure') else state['phase']
                         if action in PHASES:action='waiting'
-                        if state['phase'] in PHASES and not state.get('failure'):
+                        if state['phase'] in PHASES and (not state.get('failure') or aggregate_task_failure(state['failure'])):
+                            action='waiting'
                             if getattr(runtime,'independent_startup',False):
                                 scans[index]=TaskScan(pool,runtime,worker,stop,control.fd)
                             else:
