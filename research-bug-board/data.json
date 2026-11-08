@@ -1,13 +1,13 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-08T11:07:25+09:00",
+  "recorded_at": "2026-11-08T11:23:03+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "419072869dc1c9b280c4d3c47e5430b4e97e9d25",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/419072869dc1c9b280c4d3c47e5430b4e97e9d25",
-    "all_available_commits": 1167,
-    "fix_commit_records": 117,
+    "source_commit": "cbd68a4a6c1c45cd21475182a211abfff78eea8d",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/cbd68a4a6c1c45cd21475182a211abfff78eea8d",
+    "all_available_commits": 1169,
+    "fix_commit_records": 118,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
     "first_commit_at": "2026-08-07T05:56:48+09:00",
@@ -23,7 +23,7 @@
       "refs/heads/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:419072869dc1c9b280c4d3c47e5430b4e97e9d25",
+      "refs/heads/master:cbd68a4a6c1c45cd21475182a211abfff78eea8d",
       "refs/remotes/origin/audit/codecheck-20260820:5dd447990296042e334679c85e7672477cd7c5d3",
       "refs/remotes/origin/audit/p1-integrity:5dfda89ec3be2cc4d60f8f0371eeaf00790f6644",
       "refs/remotes/origin/docs/mbpp-budget-incident-20260919:fa1c6897b2b26ef002dd165c94f58702b1f9e1ed",
@@ -32,7 +32,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:419072869dc1c9b280c4d3c47e5430b4e97e9d25"
+      "refs/remotes/origin/master:cbd68a4a6c1c45cd21475182a211abfff78eea8d"
     ]
   },
   "incidents": [
@@ -2907,6 +2907,47 @@
           "code_commit": "419072869dc1c9b280c4d3c47e5430b4e97e9d25",
           "text": "이전 실행기에서 같은 오류를 재현했다. 고정 원본3d0c083의 runtime/config/test를 코드 저장소 v8/experiments에 포함하고 자체 경로를 우선 찾게 수정했다. provenance audit용 역사 CSV6개도 원본 바이트 그대로 포함했다. 현 코드 구성의88검사 통과, upstream102개 중101통과·1skip. 새 archive를 별도 폴더에 풀어 실제 switching.cli inspect-repo import를 검증했다. 실제 H100 학습 성공으로 보고하지 않는다.",
           "url": "https://github.com/33modeling/offpolicy-misranking/tree/419072869dc1c9b280c4d3c47e5430b4e97e9d25/research/v8-runtime-delivery-20261108"
+        }
+      ]
+    },
+    {
+      "id": "V8-018",
+      "title": "V8 원본 코드 검증에서 저장된 엔진과 Qwen 어댑터 해시 누락",
+      "area": "원본 런타임·체크포인트 재사용",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "introduction_commit": null,
+      "cause": "locator가 원본 run의 implementation_sha256을 현재 기본 package digest와만 비교했다. 기존 saved-runtime 선택과 Qwen의 engine+adapter 합성 해시를 적용하지 않았다. prefix 누락과 모델 revision 차이에도 같은 frozen-checkout 문구를 출력했다.",
+      "impact": "이미 있는 검증된 prefix를 시작 단계에서 거부하고 수동 코드 경로 지정을 요구했다.",
+      "attribution": "원고에 있던 V8 locator/child의 검증 연결 누락을 Codex가 코드 저장소에서 수정했다. 기존 trainer와 checkpoint를 수정한 문제가 아니다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "원본 runtime 선택과 합성 identity 수정",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/cbd68a4a6c1c45cd21475182a211abfff78eea8d"
+        },
+        {
+          "kind": "code_test",
+          "label": "96검사·원본 엔진 실제 CPU continuation·legacy API 묶음 검증",
+          "url": "https://github.com/33modeling/offpolicy-misranking/tree/cbd68a4a6c1c45cd21475182a211abfff78eea8d/research/v8-source-compat-20261108"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "user",
+          "type": "reported",
+          "status": "open",
+          "text": "point V8_CODE_ROOT at the frozen checkout that produced... 시작 오류를 전달하고 즉시 수정을 지시했다.",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "보존 package 전체 바이트를 검증하고 실제 archived engine을 모델 생성 전에 선택한다. Qwen은 원래 engine+adapter 합성 해시와 run/prefix 일치를 검증한다.96검사 통과, upstream101통과·1skip. 양쪽 identity 경로에서 실제 archived engine의 CPU ToyBackend25→50 continuation과 production locator5seed 검증을 확인했다. 준비 실패/미시작 큐만 기록 보존 후 재시도하며, 작업이 하나라도 있으면 binding 변경을 거부한다. 실제 H100 진행을 확인한 결과는 아니다.",
+          "evidence_kind": "code_test"
         }
       ]
     }

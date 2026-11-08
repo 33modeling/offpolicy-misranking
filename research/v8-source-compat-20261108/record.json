@@ -79,11 +79,14 @@
       "srgc_rebuttal/torch_state.py": "eda68cecdd6ed5f5312a7b5f5a026d14d86db4f9f329aaf45a825a867c72e2d6",
       "srgc_rebuttal/toy_backend.py": "159a6b72e8923620469600d3acb09bf36fb2eb629cdbee0ca6058a0cfba08272",
       "srgc_rebuttal/verifiers.py": "5062befe4ed5a8e21f6de01a73dca4f1d3544dd033c5d2c846bff391d1148a90"
-    }
+    },
+    "implementation_commit": "cbd68a4a6c1c45cd21475182a211abfff78eea8d",
+    "remote_exact_at_publication": "cbd68a4a6c1c45cd21475182a211abfff78eea8d"
   },
   "provenance": {
     "raw_tests_logs_checkpoints": "/home/kms/reports/rlvr-v8-source-compat-20261108",
     "unmodified_import_baseline": "v8/experiments/UPSTREAM.txt"
   },
-  "limitations": "Unknown original runtime or unavailable/mismatched adapter remains blocked with its precise identity. Actual H100 model progress is not established by CPU tests."
+  "limitations": "Unknown original runtime or unavailable/mismatched adapter remains blocked with its precise identity. Actual H100 model progress is not established by CPU tests.",
+  "bug_incident": "V8-018"
 }

@@ -12382,6 +12382,26 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "cc26be0c925f4f8fa289b9aceae1f7d3ef866ac4",
+      "at": "2026-11-08T11:07:25+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve reported runtime delivery failure and verified fix",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/cc26be0c925f4f8fa289b9aceae1f7d3ef866ac4",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "cbd68a4a6c1c45cd21475182a211abfff78eea8d",
+      "at": "2026-11-08T11:21:26+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Match V8 source identity to saved engines and Qwen adapter",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/cbd68a4a6c1c45cd21475182a211abfff78eea8d",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

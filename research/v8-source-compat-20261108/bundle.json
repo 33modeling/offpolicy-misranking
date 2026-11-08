@@ -1,0 +1,9 @@
+{
+  "code_commit": "cbd68a4a6c1c45cd21475182a211abfff78eea8d",
+  "archive": "/home/kms/Downloads/rlvr-v8-source-fix-cbd68a4.tar.gz",
+  "archive_sha256": "5f8e9cf6193db9380378e824152d6980170f73da2a9817630d8dd8c35f4088a6",
+  "files": 65,
+  "all_file_hashes_verified": true,
+  "legacy_package_api_test": "fresh archive selected actual archived engine using a simulated old code checkout/helper with the former API",
+  "new_GPU_jobs": 0
+}
