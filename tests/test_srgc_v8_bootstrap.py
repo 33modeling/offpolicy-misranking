@@ -138,3 +138,19 @@ def test_shell_launcher_survives_cdpath_and_a_node_without_python3(tmp_path):
     result=subprocess.run(['/bin/sh',str(tools/'scripts/run_v8_nodes.sh')],cwd=tools,env=env,text=True,capture_output=True,timeout=10)
     assert result.returncode==0,result.stderr
     assert json.loads(result.stdout)['python']
+
+
+def test_shell_entries_never_write_bytecode_into_the_code_checkout(tmp_path):
+    """Regression: v8_status.sh imported v8_probe and left scripts/__pycache__ in the checkout."""
+    source=Path(__file__).resolve().parents[1]/'scripts'
+    shells=sorted(p.name for p in source.glob('*v8*.sh'))
+    assert {'run_v8_nodes.sh','v8_status.sh','v8_probe.sh','v8_stop.sh'}<=set(shells)
+    for name in shells:
+        assert 'export PYTHONDONTWRITEBYTECODE=1' in (source/name).read_text(),name
+    copy=tmp_path/'checkout'/'scripts';copy.mkdir(parents=True)
+    for path in source.glob('*.py'):shutil.copyfile(path,copy/path.name)
+    for path in source.glob('*v8*.sh'):shutil.copyfile(path,copy/path.name)
+    env={'PATH':os.environ['PATH'],'GROUP_VOLUME':str(tmp_path/'group'),'CDPATH':str(tmp_path)}
+    for args in (['v8_status.sh'],['v8_probe.sh'],['run_v8_nodes.sh','--status']):
+        subprocess.run(['sh',str(copy/args[0]),*args[1:]],cwd=tmp_path,env=env,capture_output=True,timeout=30)
+    assert not list((tmp_path/'checkout').rglob('__pycache__'))
