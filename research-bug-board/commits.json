@@ -13772,6 +13772,26 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "f766389400d6f831bf6761768c61c495da08d3b5",
+      "at": "2026-11-08T23:04:14+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Bug board: status planned totals (f69c672) and missing planned branch columns (e902db8)",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/f766389400d6f831bf6761768c61c495da08d3b5",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "b7c40be9a5b6888cf220ea1d4e6702a72f9d0da4",
+      "at": "2026-11-09T00:05:01+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Resume interrupted V8 nodes and survive terminal disconnects",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/b7c40be9a5b6888cf220ea1d4e6702a72f9d0da4",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

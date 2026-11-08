@@ -26,7 +26,7 @@
       ]
     },
     "comparison": "Interruption/replacement versus same synthetic seed and configuration without interruption; terminal open/closed; real CUDA/Python fault and SIGSEGV protection; explicit stop regression",
-    "metrics": "exact branch_identity model/optimizer/selector/RNG at50/75; identical per-update metrics for26..75; no duplicate/missing training updates; zero refunded training failures for external signal interruption; retry eligibility159/160 for termination100+delay60",
+    "metrics": "exact branch_identity model/optimizer/selector/RNG at50/75; identical per-update metrics for26..75; no duplicate/missing training updates; zero counted training failures for external signal interruption; retry eligibility159/160 for termination100+delay60",
     "heldout_evaluation": "unmeasured; no evaluation was run in this control; training sample_reward remains explicitly separate",
     "checkpoint_provenance": "cpu-runner-control.zip retains real synthetic seed5 prefixes, resumed/uninterrupted50/75 snapshots, optimizer/RNG, all training histories and attempt records; 46files, SHA manifest verified",
     "frozen_trainer": "all30 original srgc_rebuttal Python SHA256 hashes match preexisting baseline /home/kms/reports/rlvr-v8-nodes-20261108/baseline.json"
@@ -67,6 +67,12 @@
       "failures": 0,
       "errors": 0,
       "skipped": 0
+    },
+    "archive.xml": {
+      "tests": 65,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
     }
   },
   "failures": "before.xml:4 failed/3passed before fix (two SIGHUP cases, signal accounting, missing orphan outcome). checkpoint.xml:15pass/1fail due missing V8_CODE_ROOT in new test setup, not a learner failure. Raw failures retained. fixed.xml17pass, checkpoint-fixed.xml16pass and final all.xml353pass0skip.",
@@ -75,5 +81,52 @@
     "sha256": "2481d94ef671510ce324efe382f0e3f235f75e1bf570c8c04ae5725daef2005a"
   },
   "limitations": "No connected H100/shared-volume production queue. Real node eviction, real OLMo SR25 CUDA OOM and actual production step advancement remain unverified. This resumes work on existing alive/idle or newly joined allocated workers; cannot allocate a cloud VM or recover a destroyed shared volume. Running frozen workers need updated controller on restart; healthy learners must not be reset. No training batch/response/token/attention or reward protocol changes.",
-  "github_actions": "Remain disabled; no web service, paid API, credit purchase or GPU allocation performed."
+  "github_actions": "Remain disabled; no web service, paid API, credit purchase or GPU allocation performed.",
+  "source_commit": "b7c40be9a5b6888cf220ea1d4e6702a72f9d0da4",
+  "bug_board_incidents": [
+    "V8-115",
+    "V8-116"
+  ],
+  "historical_queue_archive": {
+    "through": "b7c40be9a5b6888cf220ea1d4e6702a72f9d0da4",
+    "coordinators": 30,
+    "runners": 7,
+    "files": 444,
+    "sha256": "6da04dd9d3e49681f89d5bca28c114c9ed6f32d296dd2f2a1f3f9160d19f103a",
+    "all_payloads_verified": true,
+    "current_controller_present": true
+  },
+  "frozen_trainer_sha256": {
+    "srgc_rebuttal/__init__.py": "daff68712fd7115469febaaad3c782d020ad450bce6e0f883a0259cadd3a258f",
+    "srgc_rebuttal/admission.py": "befe3a6514875e24a23979b795602b281ef2ea2a9abadb01e19c9977cd7b8024",
+    "srgc_rebuttal/build_cache.py": "91a3776141b2d83eca30dc45ecc1df964b24d43d1f8baa26b8e569e80894672e",
+    "srgc_rebuttal/build_inputs.py": "59a8f3ba3f023a475fb600cc75b2ad5a26eca59c9de611adc2bf89096eef11c9",
+    "srgc_rebuttal/cluster.py": "0aa3a50fb18170a5ee4ca00f36a641ab5e3ac9c5c395cd691324c59e8387d142",
+    "srgc_rebuttal/cluster_queue.py": "960bc8a63c4ecdc3e2ae40131faf637f6e0e4af006007ef4577fe4dcc065153f",
+    "srgc_rebuttal/code_assertions.py": "51b4a2fd02664d0f02b4f154cf18172cc654931404a45515e3423da14f666e76",
+    "srgc_rebuttal/code_check.py": "38f708dcec041d9e2434c52a9b947284938acc3216fd06e99f0f9cd5b606450b",
+    "srgc_rebuttal/cost_ledger.py": "2b878384943e5e24c912884a20b71d31bca0b45e280e666d5caf81147222f5e7",
+    "srgc_rebuttal/cost_report.py": "53ceba5a2753391f46331fbedaf26e210b0d33027ddb4237bbdbf0d07bc60521",
+    "srgc_rebuttal/distributed.py": "222fd71362b442ed6c63afb3c4a2937add9ef7130be010d7b093277c2a21e265",
+    "srgc_rebuttal/existing_runtime.py": "a1702f2907da3decf7f7356fd1c68c933442a460d1fc8360ef1d2dbdcb37c7f4",
+    "srgc_rebuttal/import_pair_inputs.py": "7b5332bdba9476b86d2cbf42fb997a3b865d5547b5fc3ac6575704e8d549429f",
+    "srgc_rebuttal/objectives.py": "1e686c118c79ab5b51c7d6973ae897aaf2bfdde0824470937ef7c30e18293ba4",
+    "srgc_rebuttal/plan.py": "643ed49f1ad74297cfecec8f453a9cf3e737260b960479e6e116e48c9377dc3e",
+    "srgc_rebuttal/plan_dataset.py": "468af80b4f59e9b7f2683eaa724f308fc91872bb1918e65e127e557ee6e992b2",
+    "srgc_rebuttal/prepare_inputs.py": "71f6a8e0f1cc6df586df8bd4bd234b413a5945895d3cdf3ae0446fd9763230e1",
+    "srgc_rebuttal/prepare_rebuttal.py": "f0978d96f418bfd90fd3cd291b977b61f50b6a14d30d876e489fc65ed3073cba",
+    "srgc_rebuttal/progress.py": "d3202b65e9eb53557fb45b6b54f1cce0ae50d196486bd5bc11d0de2e8e19440f",
+    "srgc_rebuttal/reports.py": "97317b77c9f57536a34d421a70d6c57a714ad4184630253f6c41297cf21194bf",
+    "srgc_rebuttal/run_demo.py": "0f69daf7c1f255f1690b5354e40fb56a2a20bc6a11ef39a6666207392697bd7e",
+    "srgc_rebuttal/run_experiment.py": "9f2dc57536fdb5f6f5a7f5016129a6814120089bf8135431d1f8bd4da804e885",
+    "srgc_rebuttal/runtime.py": "518d37beb7c733e1497599bfe0f9131cd1caf7e9cfdea887f20060291f335e10",
+    "srgc_rebuttal/srgc.py": "d2dc8e3b83df63139f06f97574009e03b1f6bf26f47c3013dedf98e1076516e7",
+    "srgc_rebuttal/summarize.py": "0d7179717ede53de7ccebaf9f5e691bd4ea8eb954a5cd8c0803bf077bba31c49",
+    "srgc_rebuttal/timing.py": "82e53cc63751177188fa6da4abdca6dc0567f4ac27524488c643ff863b08efa5",
+    "srgc_rebuttal/torch_backend.py": "94a8d2d98b6312ee584c32674dbfc194a9e95e714b484a5a64b84b3e78631e11",
+    "srgc_rebuttal/torch_state.py": "eda68cecdd6ed5f5312a7b5f5a026d14d86db4f9f329aaf45a825a867c72e2d6",
+    "srgc_rebuttal/toy_backend.py": "159a6b72e8923620469600d3acb09bf36fb2eb629cdbee0ca6058a0cfba08272",
+    "srgc_rebuttal/verifiers.py": "5062befe4ed5a8e21f6de01a73dca4f1d3544dd033c5d2c846bff391d1148a90"
+  },
+  "verification_sequence": "all.xml353pass covers final code; archive.xml65pass after repacking all30 historical coordinators and7 runners/444files. No executable source changes followed all.xml. Terminal/kill/control evidence remains CPU-only."
 }
