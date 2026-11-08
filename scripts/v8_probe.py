@@ -46,7 +46,7 @@ def active_roots(proc=Path('/proc')):
         try:
             if entry.stat().st_uid!=os.getuid():continue
             args=(entry/'cmdline').read_bytes().split(b'\0')
-            if not any(Path(a.decode(errors='replace')).name in ('srgc_v8_nodes.py','cluster_child.py') for a in args if a):continue
+            if not any(Path(a.decode(errors='replace')).name in ('srgc_v8_nodes.py','cluster_child.py','v8_dispatch.py','v8_runtime_worker.py') for a in args if a):continue
             for field in (entry/'environ').read_bytes().split(b'\0'):
                 if field.startswith(b'V8_ROOT='):
                     found.add(field[len(b'V8_ROOT='):].decode(errors='replace'))

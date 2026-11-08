@@ -119,9 +119,11 @@ def test_no_argument_bootstrap_reexecs_queue_pinned_code(tmp_path,source_cache,m
     monkeypatch.setattr(bootstrap.os,'execvpe',intercept)
     argv=['--root',str(base),'olmo_math'] if cohort_after_flags else []
     with pytest.raises(Reexec):bootstrap.main(argv)
-    assert runtime.sha(seen[0][1][1])==coordinator['sha256']
-    assert runtime.runner_identity(seen[0][2]['V8_RUNNER_ROOT'])==runner['runner_sha256']
-    assert seen[0][1].count('olmo_math')==(1 if cohort_after_flags else 0)
+    assert Path(seen[0][1][1]).name=='v8_dispatch.py'
+    plan=json.loads(Path(seen[0][1][2]).read_text())
+    assert runtime.sha(plan['entries'][0]['script'])==coordinator['sha256']
+    assert runtime.runner_identity(plan['entries'][0]['runner'])==runner['runner_sha256']
+    assert plan['argv'].count('olmo_math')==(1 if cohort_after_flags else 0)
     assert snapshot(base)==before
 
 

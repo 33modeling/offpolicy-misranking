@@ -5,7 +5,7 @@ import signal
 import time
 
 TAG='V8_LAUNCH_ID'
-MARKERS={'srgc_v8_nodes.py','cluster_child.py'}
+MARKERS={'srgc_v8_nodes.py','cluster_child.py','v8_dispatch.py','v8_runtime_worker.py'}
 
 
 def table(proc=Path('/proc')):

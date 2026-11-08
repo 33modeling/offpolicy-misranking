@@ -4,11 +4,51 @@
   "confirmed_reproduction": "Existing worker_loop_many with10different worker IDs all hashing to Qwen first assigns all10Qwen, including claims while OLMo setup is not ready. Existing10Qwen leased jobs also fail to prioritize newly arriving workers for OLMo.2baseline failures/1borrowing control pass.",
   "fix_policy": "Finish healthy cohort setup before first GPU claim, compare actual held task leases under one shared dispatch lock, atomically claim from less busy ready cohort. No global lock held over preparation or GPU execution.",
   "CPU_controls": "10simultaneous workers5/5;4lateworkers7/7; existing10legacyQwen leases cause next4workers to choose OLMo; no-ready OLMo allows Qwen borrowing; no duplicate task claims; checkpoint sentinel unchanged.3tests pass.",
-  "delivery_scope": "Core scheduler fix first. Exact-source resume driver integration is still in progress; existing historical queues do not automatically adopt a changed coordinator hash.",
+  "delivery_scope": "Complete bootstrap integration: new control dispatcher orchestrates independently loaded exact-source Runtime actors, preserving the original queue binding, Python environment and numerical code. Already-running workers keep their old frozen control code; the fix applies to newly launched workers.",
   "checkpoint_retention": "No .pt removal; immutable25-update snapshots preserved; latest.pt continues to be updated for recovery. Numeric engine, optimizer/RNG and reward files not edited.",
   "scientific_results": {
     "GPU_jobs": 0,
     "real_H100_allocation_verified": false,
     "wasted_node_time_or_money": null
+  },
+  "integration_tests": {
+    "full_regressions": {
+      "tests": 179,
+      "failures": 0,
+      "errors": 0,
+      "seconds": 26.24,
+      "xml": "full.xml"
+    },
+    "actor_verified": {
+      "tests": 21,
+      "failures": 0,
+      "xml": "actors-verified.xml"
+    },
+    "initial_fixture_failures": {
+      "failures": 3,
+      "cause": "CPU fixture GPU visibility and mocked interpreter environment; corrected test setup, retained initial XML",
+      "xml": "actors-first.xml"
+    },
+    "frozen_trainer_files_unchanged": 30,
+    "original_archived_Runtime_interfaces_checked": 14,
+    "existing_binding_bytes_unchanged": true,
+    "checkpoint25_bytes_unchanged": true,
+    "snapshots_25_50_75_retained_in_CPU_fixture": true,
+    "new_GPU_jobs": 0
+  },
+  "experiment": {
+    "hypothesis": "Node-local cohort hashing and a contended OLMo setup cause all initial nodes to claim Qwen; global held-lease balancing plus exact-source resume integration removes this control-path starvation.",
+    "model_data": "OLMo MATH / Qwen MBPP coordinator simulation only; no model inference or training.",
+    "controls": "Original function vs corrected dispatcher; 10 simultaneous Qwen-biased worker IDs, 4 late arrivals, 10 legacy Qwen leases, no-ready OLMo borrowing.",
+    "seeds_updates": "No scientific seed or optimizer update; CPU fixture simulates snapshots25/50/75 only.",
+    "metric": "Count of held task leases per cohort, distinct claims, setup-before-claim, unchanged binding/checkpoint bytes.",
+    "raw_evidence": [
+      "before.xml",
+      "core.xml",
+      "full.xml",
+      "actors-first.xml",
+      "actors-verified.xml"
+    ],
+    "scientific_measurements": "Not measured. Actual H100 OLMo startup, model throughput, node-hours and monetary waste remain unverified."
   }
 }

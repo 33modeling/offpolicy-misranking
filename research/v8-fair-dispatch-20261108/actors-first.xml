@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="3" skipped="0" tests="21" time="2.616" timestamp="2026-11-08T13:27:34.190706+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_dispatch_runtime" name="test_large_messages_and_transferred_lease_stay_valid_after_sender_closes" time="0.017" /><testcase classname="tests.test_srgc_v8_dispatch_runtime" name="test_existing_cohort_bindings_and_checkpoints_survive_new_dispatcher[False]" time="0.069"><failure message="SystemExit: 2">tmp_path = PosixPath('/dev/shm/v8-fair-actors-kms/test_existing_cohort_bindings_0')
+modules = (&lt;module 'v8_dispatch' from '/home/kms/dev/offpolicy-misranking/scripts/v8_dispatch.py'&gt;, &lt;module 'v8_rpc' from '/home/kms/dev/offpolicy-misranking/scripts/v8_rpc.py'&gt;)
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7163d1387b90&gt;
+partial = False
+
+    @pytest.mark.parametrize('partial',[False,True])
+    def test_existing_cohort_bindings_and_checkpoints_survive_new_dispatcher(tmp_path,modules,monkeypatch,partial):
+        dispatch,rpc=modules;root=tmp_path/'experiments';entries=[];bindings={};checkpoints={}
+        alias=tmp_path/'other-python';alias.symlink_to(sys.executable)
+        for i,cohort in enumerate(('olmo_math','qwen_mbpp')):
+            if partial and i==0:continue
+            source=tmp_path/(cohort+'.py');source.write_text(FAKE.replace('__TAG__',repr('old-'+cohort)))
+            entries.append(dict(cohort=cohort,script=str(source),runner=str(REPO/'v8/experiments'),python=sys.executable if i==0 else str(alias)))
+        plan=dict(root=str(root),gpus=['0','1','2','3'],worker='fixture.1',entries=entries,argv=[],
+                  errors={'olmo_math':'simulated invalid input'} if partial else {})
+        planfile=tmp_path/'plan.json';planfile.write_text(json.dumps(plan))
+        for entry in entries:
+            actor=dispatch.RuntimeProxy(entry,plan,planfile)
+            try:
+                assert actor.error is None
+                pool=dispatch.nodes.Pool(root/entry['cohort']/'.multi-node',actor.binding);pool.initialize()
+                bindings[pool.root/'binding.json']=(pool.root/'binding.json').read_bytes()
+                checkpoint=root/entry['cohort']/'snapshots/step-000025.pt';checkpoint.parent.mkdir(parents=True)
+                checkpoint.write_bytes(b'existing optimizer RNG rewards checkpoint25');checkpoints[checkpoint]=checkpoint.read_bytes()
+            finally:actor.close()
+        monkeypatch.setenv('V8_ROOT',str(root));monkeypatch.setenv('V8_ALLOW_ANY_ROOT','1')
+        monkeypatch.setattr(sys,'argv',['v8_dispatch.py',str(planfile)])
+        inventory=[dict(index=str(i),uuid='CPU-fixture-'+str(i),total_mib=80000,used_mib=0,name='CPU fixture') for i in range(4)]
+        monkeypatch.setattr(dispatch.nodes,'gpu_inventory',lambda _:inventory)
+        monkeypatch.setattr(dispatch.nodes,'gpu_lock_root',lambda:tmp_path/'GPU-leases')
+        monkeypatch.setattr(dispatch.nodes,'GpuGate',lambda _:lambda:(True,None))
+&gt;       assert dispatch.main()==(1 if partial else 0)
+               ^^^^^^^^^^^^^^^
+
+tests/test_srgc_v8_dispatch_runtime.py:106: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+scripts/v8_dispatch.py:98: in main
+    result=nodes.main(args)
+           ^^^^^^^^^^^^^^^^
+scripts/srgc_v8_nodes.py:912: in main
+    if any(not x.strip() for x in gpus) or len(set(gpus))!=len(gpus):parser.error('GPU IDs must be nonempty and distinct')
+                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/argparse.py:2677: in error
+    self.exit(2, _('%(prog)s: error: %(message)s\n') % args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ArgumentParser(prog='v8_dispatch.py', usage=None, description='Shared-filesystem V8 workers: one four-GPU task per nod...r runs a worker command.\n', formatter_class=&lt;class 'argparse.HelpFormatter'&gt;, conflict_handler='error', add_help=True)
+status = 2
+message = 'v8_dispatch.py: error: GPU IDs must be nonempty and distinct\n'
+
+    def exit(self, status=0, message=None):
+        if message:
+            self._print_message(message, _sys.stderr)
+&gt;       _sys.exit(status)
+E       SystemExit: 2
+
+/usr/lib/python3.12/argparse.py:2664: SystemExit</failure></testcase><testcase classname="tests.test_srgc_v8_dispatch_runtime" name="test_existing_cohort_bindings_and_checkpoints_survive_new_dispatcher[True]" time="0.033"><failure message="SystemExit: 2">tmp_path = PosixPath('/dev/shm/v8-fair-actors-kms/test_existing_cohort_bindings_1')
+modules = (&lt;module 'v8_dispatch' from '/home/kms/dev/offpolicy-misranking/scripts/v8_dispatch.py'&gt;, &lt;module 'v8_rpc' from '/home/kms/dev/offpolicy-misranking/scripts/v8_rpc.py'&gt;)
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7163d1391a90&gt;
+partial = True
+
+    @pytest.mark.parametrize('partial',[False,True])
+    def test_existing_cohort_bindings_and_checkpoints_survive_new_dispatcher(tmp_path,modules,monkeypatch,partial):
+        dispatch,rpc=modules;root=tmp_path/'experiments';entries=[];bindings={};checkpoints={}
+        alias=tmp_path/'other-python';alias.symlink_to(sys.executable)
+        for i,cohort in enumerate(('olmo_math','qwen_mbpp')):
+            if partial and i==0:continue
+            source=tmp_path/(cohort+'.py');source.write_text(FAKE.replace('__TAG__',repr('old-'+cohort)))
+            entries.append(dict(cohort=cohort,script=str(source),runner=str(REPO/'v8/experiments'),python=sys.executable if i==0 else str(alias)))
+        plan=dict(root=str(root),gpus=['0','1','2','3'],worker='fixture.1',entries=entries,argv=[],
+                  errors={'olmo_math':'simulated invalid input'} if partial else {})
+        planfile=tmp_path/'plan.json';planfile.write_text(json.dumps(plan))
+        for entry in entries:
+            actor=dispatch.RuntimeProxy(entry,plan,planfile)
+            try:
+                assert actor.error is None
+                pool=dispatch.nodes.Pool(root/entry['cohort']/'.multi-node',actor.binding);pool.initialize()
+                bindings[pool.root/'binding.json']=(pool.root/'binding.json').read_bytes()
+                checkpoint=root/entry['cohort']/'snapshots/step-000025.pt';checkpoint.parent.mkdir(parents=True)
+                checkpoint.write_bytes(b'existing optimizer RNG rewards checkpoint25');checkpoints[checkpoint]=checkpoint.read_bytes()
+            finally:actor.close()
+        monkeypatch.setenv('V8_ROOT',str(root));monkeypatch.setenv('V8_ALLOW_ANY_ROOT','1')
+        monkeypatch.setattr(sys,'argv',['v8_dispatch.py',str(planfile)])
+        inventory=[dict(index=str(i),uuid='CPU-fixture-'+str(i),total_mib=80000,used_mib=0,name='CPU fixture') for i in range(4)]
+        monkeypatch.setattr(dispatch.nodes,'gpu_inventory',lambda _:inventory)
+        monkeypatch.setattr(dispatch.nodes,'gpu_lock_root',lambda:tmp_path/'GPU-leases')
+        monkeypatch.setattr(dispatch.nodes,'GpuGate',lambda _:lambda:(True,None))
+&gt;       assert dispatch.main()==(1 if partial else 0)
+               ^^^^^^^^^^^^^^^
+
+tests/test_srgc_v8_dispatch_runtime.py:106: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+scripts/v8_dispatch.py:98: in main
+    result=nodes.main(args)
+           ^^^^^^^^^^^^^^^^
+scripts/srgc_v8_nodes.py:912: in main
+    if any(not x.strip() for x in gpus) or len(set(gpus))!=len(gpus):parser.error('GPU IDs must be nonempty and distinct')
+                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/argparse.py:2677: in error
+    self.exit(2, _('%(prog)s: error: %(message)s\n') % args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ArgumentParser(prog='v8_dispatch.py', usage=None, description='Shared-filesystem V8 workers: one four-GPU task per nod...r runs a worker command.\n', formatter_class=&lt;class 'argparse.HelpFormatter'&gt;, conflict_handler='error', add_help=True)
+status = 2
+message = 'v8_dispatch.py: error: GPU IDs must be nonempty and distinct\n'
+
+    def exit(self, status=0, message=None):
+        if message:
+            self._print_message(message, _sys.stderr)
+&gt;       _sys.exit(status)
+E       SystemExit: 2
+
+/usr/lib/python3.12/argparse.py:2664: SystemExit</failure></testcase><testcase classname="tests.test_srgc_v8_dispatch_runtime" name="test_actor_uses_real_frozen_runtime_identity_without_loading_models[olmo_math]" time="0.119" /><testcase classname="tests.test_srgc_v8_dispatch_runtime" name="test_actor_uses_real_frozen_runtime_identity_without_loading_models[qwen_mbpp]" time="0.116" /><testcase classname="tests.test_srgc_v8_control_audit" name="test_supervisor_stops_when_console_pipe_is_full" time="0.529" /><testcase classname="tests.test_srgc_v8_control_audit" name="test_stop_command_does_not_wait_for_a_full_console_before_signalling" time="0.376" /><testcase classname="tests.test_srgc_v8_control_audit" name="test_stop_catches_rank_spawned_after_first_snapshot" time="0.318" /><testcase classname="tests.test_srgc_v8_control_audit" name="test_bad_cohort_source_does_not_block_healthy_cohort[unknown_source]" time="0.045" /><testcase classname="tests.test_srgc_v8_control_audit" name="test_bad_cohort_source_does_not_block_healthy_cohort[malformed_identity]" time="0.021" /><testcase classname="tests.test_srgc_v8_control_audit" name="test_bad_cohort_source_does_not_block_healthy_cohort[partial_json]" time="0.021" /><testcase classname="tests.test_srgc_v8_control_audit" name="test_different_python_environments_do_not_share_admission_process" time="0.019"><failure message="KeyError: 'V8_PYTHON'">tmp_path = PosixPath('/dev/shm/v8-fair-actors-kms/test_different_python_environm0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7163d12043e0&gt;
+
+    def test_different_python_environments_do_not_share_admission_process(tmp_path,monkeypatch):
+        from scripts import v8_bootstrap as bootstrap
+        left=tmp_path/'left-python';left.symlink_to(sys.executable)
+        right=tmp_path/'right-python';right.symlink_to(sys.executable)
+        env=dict(V8_ROOT=str(tmp_path/'experiments'),V8_RUNNER_ROOT=str(REPO/'v8/experiments'),
+                 V8_PYTHON_OLMO_MATH=str(left),V8_PYTHON_QWEN_MBPP=str(right))
+        plan=source.selections(REPO,env,[])
+        assert len(plan)==2,'separate Python environments would otherwise run admission under the first cohort interpreter'
+        assert [g['cohorts'] for g in plan]==[['olmo_math'],['qwen_mbpp']]
+        env['V8_CODE_ROOT']=str(REPO)
+        monkeypatch.setattr(bootstrap,'environment',lambda *a,**k:env)
+&gt;       plan=bootstrap_plan(bootstrap,[],monkeypatch)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_srgc_v8_control_audit.py:162: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_srgc_v8_control_audit.py:44: in bootstrap_plan
+    with pytest.raises(Ready):bootstrap.main(argv)
+                              ^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+argv = []
+
+    def main(argv=None):
+        argv=sys.argv[1:] if argv is None else argv
+        tools=Path(__file__).resolve().parents[1]
+        env=environment(tools,os.environ,defer_cohort_errors=True,
+                        warn=lambda m:print('V8 startup warning: '+m,file=sys.stderr,flush=True))
+        inspect=any(arg in ('--status','--help','-h') for arg in argv)
+        if not inspect:
+            if not env.get('V8_CODE_ROOT'):
+                raise ValueError('the original trainer checkout (srgc_rebuttal/srgc.py) was not found next to this launcher '
+                                 f'({tools}), in its parent folders, under {env.get("USER_VOLUME","/user-volume")} or in a saved '
+                                 'locator. Run this command from the existing offpolicy-misranking checkout after git pull.')
+            if not env.get('V8_RUNNER_ROOT') and '--runner-root' not in argv:
+                raise ValueError(f'V8 runtime files are missing from this code copy ({tools}/v8/experiments); '
+                                 'run git pull in the existing offpolicy-misranking checkout.')
+        if inspect:
+            os.execvpe(env['V8_PYTHON'],[env['V8_PYTHON'],str(tools/'scripts/srgc_v8_nodes.py'),*argv],env)
+        groups=selections(tools,env,argv)
+        # Scheduling is a separately versioned control extension. The actor loads the original
+        # Runtime/Python, so an existing queue keeps its exact base binding and numerical source.
+        entries=[]
+        for group in groups:
+            for cohort in group['cohorts']:
+                entries.append(dict(cohort=cohort,script=str(group['script']),runner=str(group['runner']),
+                                    python=group['pythons'][cohort]))
+        control=groups[0]['control']
+        required=('v8_dispatch.py','v8_runtime_worker.py','v8_rpc.py','srgc_v8_nodes.py')
+        if any(not (control/name).is_file() for name in required):
+            raise ValueError('Shared dispatcher files are missing; run git pull in the complete existing checkout')
+        plan=private_cache()/('dispatch-plan-'+uuid.uuid4().hex+'.json')
+        plan.write_text(json.dumps(dict(schema=1,root=env['V8_ROOT'],argv=argv,entries=entries,errors=groups.errors)))
+        child_env=dict(env,V8_RUNNER_ROOT=entries[0]['runner'])
+&gt;       os.execvpe(env['V8_PYTHON'],[env['V8_PYTHON'],str(control/'v8_dispatch.py'),str(plan)],child_env)
+                   ^^^^^^^^^^^^^^^^
+E       KeyError: 'V8_PYTHON'
+
+scripts/v8_bootstrap.py:102: KeyError</failure></testcase><testcase classname="tests.test_srgc_v8_control_audit" name="test_healthy_cohort_runs_but_partial_startup_keeps_failure_exit" time="0.044" /><testcase classname="tests.test_srgc_v8_control_audit" name="test_missing_cohort_interpreter_does_not_block_other_environment" time="0.016" /><testcase classname="tests.test_srgc_v8_control_audit" name="test_git_pull_cannot_change_already_selected_worker_or_child" time="0.046" /><testcase classname="tests.test_srgc_v8_control_audit" name="test_local_idle_gpu_is_not_evidence_that_a_remote_worker_stalled" time="0.006" /><testcase classname="tests.test_srgc_v8_control_audit" name="test_old_worker_does_not_poison_a_queue_with_a_different_binding" time="0.001" /><testcase classname="tests.test_srgc_v8_control_audit" name="test_stale_heartbeat_is_not_proof_that_remote_training_stopped" time="0.001" /><testcase classname="tests.test_srgc_v8_fair_dispatch" name="test_ten_simultaneous_qwen_biased_nodes_and_four_late_nodes_are_balanced" time="0.302" /><testcase classname="tests.test_srgc_v8_fair_dispatch" name="test_new_workers_prefer_olmo_when_ten_legacy_qwen_jobs_hold_leases" time="0.054" /><testcase classname="tests.test_srgc_v8_fair_dispatch" name="test_no_ready_olmo_work_allows_qwen_to_borrow_free_workers" time="0.205" /></testsuite></testsuites>

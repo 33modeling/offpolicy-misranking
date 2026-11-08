@@ -24,8 +24,8 @@ def runner_identity(root):
 
 
 class SelectionPlan(list):
-    def __init__(self,groups,errors):
-        super().__init__(groups);self.errors=errors
+    def __init__(self,groups,errors,root=None):
+        super().__init__(groups);self.errors=errors;self.root=root
 
 
 def private_cache():
@@ -119,6 +119,10 @@ def freeze(choice,tools):
     if helper.is_file():payload['source/scripts/srgc_saved_runtime.py']=helper.read_bytes()
     for path in sorted((parent/'v7/evidence').rglob('*.csv')):
         payload['source/'+str(path.relative_to(parent))]=path.read_bytes()
+    controls=('v8_dispatch.py','v8_runtime_worker.py','v8_rpc.py','srgc_v8_nodes.py')
+    for name in controls:
+        path=Path(tools)/'scripts'/name
+        if path.is_file():payload['control/'+name]=path.read_bytes()
     hashes={p:hashlib.sha256(data).hexdigest() for p,data in sorted(payload.items())}
     metadata=dict(coordinator_sha256=choice['coordinator_sha256'],runner_sha256=choice['runner_sha256'],
                   supports_all=choice['supports_all'],script='coordinator/srgc_v8_nodes.py',runner='source/v8/experiments')
@@ -136,7 +140,7 @@ def freeze(choice,tools):
             finally:
                 if temporary.exists():temporary.unlink()
     cache,_=unpack(archive)
-    return dict(choice,script=cache/'coordinator/srgc_v8_nodes.py',runner=cache/'source/v8/experiments')
+    return dict(choice,script=cache/'coordinator/srgc_v8_nodes.py',runner=cache/'source/v8/experiments',control=cache/'control')
 
 
 def cached_source(binding):
@@ -225,4 +229,4 @@ def selections(tools,env,args):
             group['cohorts'].append(cohort);group['pythons'][cohort]=python
         except (OSError,ValueError,zipfile.BadZipFile) as exc:errors[cohort]=str(exc)
     if not groups:raise ValueError('; '.join(f'{c}: {e}' for c,e in errors.items()))
-    return SelectionPlan(groups.values(),errors)
+    return SelectionPlan(groups.values(),errors,root)

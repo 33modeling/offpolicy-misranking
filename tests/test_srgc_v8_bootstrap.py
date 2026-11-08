@@ -15,6 +15,15 @@ def file(path,text='fixture'):
     path.parent.mkdir(parents=True,exist_ok=True);path.write_text(text);return path
 
 
+def dispatcher_stub(scripts):
+    """Process boundary double: echo the source-selection plan instead of claiming GPUs."""
+    original=(scripts/'srgc_v8_nodes.py').read_text()
+    file(scripts/'v8_dispatch.py',"import json,os,sys\np=json.load(open(sys.argv[1]))\n"
+         "os.environ['V8_RUNNER_ROOT']=p['entries'][0]['runner']\nsys.argv=['fixture',*p['argv']]\n"+original)
+    file(scripts/'v8_runtime_worker.py','# actor stub is not executed in this startup-only fixture\n')
+    file(scripts/'v8_rpc.py','# IPC stub is not executed in this startup-only fixture\n')
+
+
 def layout(tmp_path):
     work=tmp_path/'group/minsoo3.kim/offpolicy-misranking'
     python=work/'.venv-cu126/bin/python';python.parent.mkdir(parents=True);python.symlink_to(sys.executable)
@@ -85,6 +94,7 @@ def test_no_argument_shell_reuses_existing_environment_from_unrelated_directory(
     for name in ['run_v8_nodes.sh','v8_bootstrap.py','v8_queue_runtime.py','v8_supervisor.py','v8_processes.py','v8_probe.py','v8_control_output.py']:
         shutil.copyfile(source/name,scripts/name)
     file(scripts/'srgc_v8_nodes.py',"import json,os,sys;print(json.dumps({'args':sys.argv[1:],'root':os.environ['V8_ROOT'],'code':os.environ['V8_CODE_ROOT'],'runner':os.environ['V8_RUNNER_ROOT']}))")
+    dispatcher_stub(scripts)
     result=subprocess.run(['sh',str(scripts/'run_v8_nodes.sh')],cwd=tmp_path,env=env,text=True,capture_output=True,timeout=5)
     assert result.returncode==0,result.stderr
     actual=json.loads(result.stdout.splitlines()[-1])
@@ -133,6 +143,7 @@ def test_shell_launcher_survives_cdpath_and_a_node_without_python3(tmp_path):
     for name in ['run_v8_nodes.sh','v8_bootstrap.py','v8_queue_runtime.py','v8_supervisor.py','v8_processes.py','v8_probe.py','v8_control_output.py']:
         shutil.copyfile(source/name,scripts/name)
     file(scripts/'srgc_v8_nodes.py',"import json,os,sys;print(json.dumps({'python':sys.executable}))")
+    dispatcher_stub(scripts)
     bindir=tmp_path/'bin';bindir.mkdir()
     for tool in ('dirname','sh','env','ps'):
         found=shutil.which(tool)

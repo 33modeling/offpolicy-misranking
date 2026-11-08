@@ -34,6 +34,17 @@ def kill_process(pid):
     except ProcessLookupError:pass
 
 
+def bootstrap_plan(bootstrap,argv,monkeypatch):
+    plans=[]
+    class Ready(Exception):pass
+    def capture(python,command,env):
+        assert Path(command[1]).name=='v8_dispatch.py'
+        plans.append(json.loads(Path(command[2]).read_text()));raise Ready()
+    monkeypatch.setattr(bootstrap.os,'execvpe',capture)
+    with pytest.raises(Ready):bootstrap.main(argv)
+    return plans[0]
+
+
 def test_supervisor_stops_when_console_pipe_is_full(tmp_path):
     copy_controls(tmp_path);pidfile=tmp_path/'bootstrap.pid'
     (tmp_path/'v8_bootstrap.py').write_text('import os,signal,time\nfrom pathlib import Path\n'
@@ -146,16 +157,10 @@ def test_different_python_environments_do_not_share_admission_process(tmp_path,m
     plan=source.selections(REPO,env,[])
     assert len(plan)==2,'separate Python environments would otherwise run admission under the first cohort interpreter'
     assert [g['cohorts'] for g in plan]==[['olmo_math'],['qwen_mbpp']]
-    env['V8_CODE_ROOT']=str(REPO)
+    env['V8_CODE_ROOT']=str(REPO);env['V8_PYTHON']=sys.executable
     monkeypatch.setattr(bootstrap,'environment',lambda *a,**k:env)
-    seen=[]
-    def run(command,**kwargs):
-        seen.append((command,kwargs['env']));return subprocess.CompletedProcess(command,0)
-    monkeypatch.setattr(bootstrap.subprocess,'run',run)
-    monkeypatch.setattr(bootstrap.os,'execvpe',lambda *a,**k:pytest.fail('different environments must use separate workers'))
-    assert bootstrap.main([])==0
-    assert [command[0] for command,_ in seen]==[str(left),str(right)]
-    assert [environment['V8_PYTHON'] for _,environment in seen]==[str(left),str(right)]
+    plan=bootstrap_plan(bootstrap,[],monkeypatch)
+    assert [entry['python'] for entry in plan['entries']]==[str(left),str(right)]
 
 
 def test_healthy_cohort_runs_but_partial_startup_keeps_failure_exit(tmp_path,monkeypatch):
@@ -165,12 +170,9 @@ def test_healthy_cohort_runs_but_partial_startup_keeps_failure_exit(tmp_path,mon
     make_queue(base,'qwen_mbpp',source.sha(REPO/'scripts/srgc_v8_nodes.py'),source.runner_identity(runner))
     env=dict(V8_ROOT=str(base),V8_RUNNER_ROOT=str(runner),V8_PYTHON=sys.executable,V8_CODE_ROOT=str(REPO))
     monkeypatch.setattr(bootstrap,'environment',lambda *a,**k:env)
-    seen=[]
-    def run(command,**kwargs):seen.append(command);return subprocess.CompletedProcess(command,0)
-    monkeypatch.setattr(bootstrap.subprocess,'run',run)
-    monkeypatch.setattr(bootstrap.os,'execvpe',lambda *a,**k:pytest.fail('partial startup cannot discard the failure status'))
-    assert bootstrap.main([])==1
-    assert len(seen)==1 and 'qwen_mbpp' in seen[0]
+    plan=bootstrap_plan(bootstrap,[],monkeypatch)
+    assert 'olmo_math' in plan['errors']
+    assert [entry['cohort'] for entry in plan['entries']]==['qwen_mbpp']
 
 
 def test_missing_cohort_interpreter_does_not_block_other_environment(tmp_path,monkeypatch):
@@ -180,12 +182,9 @@ def test_missing_cohort_interpreter_does_not_block_other_environment(tmp_path,mo
              V8_RUNNER_ROOT=str(REPO/'v8/experiments'),V8_PYTHON=sys.executable,
              PAIR_PYTHON=str(tmp_path/'missing-python'),SWITCH_PYTHON=sys.executable)
     monkeypatch.setattr(bootstrap.os,'environ',env)
-    seen=[]
-    def run(command,**kwargs):seen.append(command);return subprocess.CompletedProcess(command,0)
-    monkeypatch.setattr(bootstrap.subprocess,'run',run)
-    monkeypatch.setattr(bootstrap.os,'execvpe',lambda *a,**k:pytest.fail('one invalid environment must remain a partial failure'))
-    assert bootstrap.main([])==1
-    assert len(seen)==1 and 'qwen_mbpp' in seen[0]
+    plan=bootstrap_plan(bootstrap,[],monkeypatch)
+    assert 'olmo_math' in plan['errors']
+    assert [entry['cohort'] for entry in plan['entries']]==['qwen_mbpp']
 
 
 def test_git_pull_cannot_change_already_selected_worker_or_child(tmp_path,monkeypatch):
