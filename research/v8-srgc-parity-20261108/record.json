@@ -105,6 +105,13 @@
     "tests_passed": 75,
     "failures": 0,
     "evidence": "rolling-legacy.xml",
-    "real_H100_status": "still unverified"
+    "real_H100_status": "still unverified",
+    "source_commit": "8bfe5a966a01921ab1a68a5890b0d4e9c714e307",
+    "exact_resume_archive": {
+      "coordinators": 18,
+      "runners": 6,
+      "tests_passed": 14,
+      "evidence": "rolling-archive.xml"
+    }
   }
 }
