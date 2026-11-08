@@ -3927,6 +3927,14 @@
         "status": "remote_verification_pending",
         "text": "사용자 추가 보고: 아직도 olmo는 시작 안해. 원시 H100 status/log/stack은 아직 미수신이다. 추가 CPU 재현으로 공통 잠금을 잡은 원본 작업 검사와 동기 노드 검증이 다른 cohort를 막는 V8-045를 확인했다. 실제 OLMo 시작 확인으로 간주하지 않는다.",
         "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "user",
+        "type": "remote_failure_report",
+        "status": "remote_verification_pending",
+        "text": "추가 사용자 보고: --retry-failed 를 무조건 넣으라고? / 그냥 새노드 받아서 할거니까 정신차리고 고쳐놔 / olmo 할당이 안된다고. 새 노드 기본 실행이 구 실패 상태 때문에 OLMo를 건너뛰는 V8-046을 CPU 재현·수정했다. 원격 H100 로그가 없어 실제 할당 성공으로 합산하지 않는다.",
+        "evidence_kind": "user_report"
       }
     ]
   },
@@ -4262,6 +4270,15 @@
         "status": "remote_verification_pending",
         "text": "코드8bfe5a9 원격push 확인. 실제 사용자 H100에서 MBPP5개 외 OLMo가 추가 학습을 시작했는지는 아직 관찰하지 못했으며 성공으로 집계하지 않는다.",
         "evidence_kind": "limitation"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "user / Codex",
+        "type": "recovery_policy_correction",
+        "status": "remote_verification_pending",
+        "text": "사용자가 --retry-failed를 기본 명령에 강제하지 말고 새 노드에서 실행하겠다고 명시했다. 이전 수동 재시도 전용 정책을 V8-046에서 보강했다. 검증된 새 노드는 이전 제어기의 실패를 현 복구 정책당 한 번 재개하며 원래 실패·checkpoint를 보존한다. 같은 정책의 실패·입력/설정 오류·살아 있는 lease는 자동 반복하거나 우회하지 않는다. 실제 H100은 여전히 미검증이다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/1a3358ba6c4e0e3e484141acad5a1ba7db4e2e09",
+        "evidence_kind": "source"
       }
     ]
   },
@@ -4432,6 +4449,64 @@
         "type": "remote_verification_pending",
         "status": "remote_verification_pending",
         "text": "수정·증거·실행 원본 묶음을 master에 push하고 exact remote 확인. 실제 H100 OLMo 시작·optimizer update·처리량은 아직 미검증이다. 실행 중인 worker는 고정된 옛 코드를 유지하며 대기/실패 worker 재실행부터 적용된다. 공개 버그 현황판의 배포는 이 소스 push와 별개로 수행하지 않았다.",
+        "evidence_kind": "limitation"
+      }
+    ]
+  },
+  {
+    "id": "V8-046",
+    "title": "수정 후 새 노드의 기본 실행도 이전 failed OLMo를 건너뛰고 수동 retry 옵션을 요구함",
+    "area": "V8 새 노드 재개·기존 실패 작업 복구",
+    "severity": "critical",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "",
+    "cause": "제어기 결함을 수정해도 Pool.initialize는 기본 명령에서 이전 failed job과 전체 task-failure 중단을 그대로 두었다. 사용자에게 --retry-failed를 일괄 제시해 새 노드 한 명령 재개 요구를 충족하지 못했다.",
+    "impact": "사용자는 새 노드를 받을 것이며 OLMo 할당이 여전히 없다고 보고했다. 수정 전 CPU 기본 실행은 오래된 OLMo 실패 작업만 있는 큐에서 실행 진입 없이 exit1. 실제 H100의 전체 원인과 손실시간은 미측정이다.",
+    "attribution": "Codex의 수동 복구 전용 설계와 일괄 명령 안내. 사용자의 새 노드 기본 실행 지시에 따라 제한된 자동 복구를 추가한다. 수치 코드·입력 검증·failed 시도 보존은 유지한다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "옵션 없는 검증 노드 재개와 무한 재시도 방지",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/1a3358ba6c4e0e3e484141acad5a1ba7db4e2e09"
+      },
+      {
+        "kind": "code_test",
+        "label": "수정 전 실패·새 노드/실제 actor/동시 노드/기존 원본 보존 검사",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/0e8b72ab71655e55446990350179cd74c4cbb513/research/v8-new-node-recovery-20261108/record.json"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "user",
+        "type": "reported",
+        "status": "open",
+        "text": "--retry-failed 를 무조건 넣으라고? / 그냥 새노드 받아서 할거니까 정신차리고 고쳐놔 / olmo 할당이 안된다고",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "reproduced",
+        "status": "open",
+        "text": "before.xml: 기본 worker가 이전 제어기에서 모두 실패한 OLMo 큐를 재개하지 못하고 exit1. 입력/체크포인트 삭제나 강제 옵션 없이 실제 실행 진입을 요구하는 검사 실패를 보존했다.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "기본 새 노드는 원래 입력 검증 후 이전 제어기의 failed job을 복구 정책당 한 번 pending으로 연다. controller SHA/policy/worker/이전 attempt를 recovery_history에 추가한다. task-failure 집계 중단만 복구 작업이 있을 때 해제한다. 같은 정책의 새 실패·상태표시만 바뀐 코드·잘못된 입력·held task lease는 재시도하지 않는다. CPU core92·actor/bootstrap56·최종복구31·다른회귀28·archive14 통과(중복 포함이므로 합산하지 않음). 기존Qwen5 lease+새CPU노드12+기존OLMo10실패 재현에서 고유12작업 및 최소5 OLMo 재배정, 기존실패·checkpoint/binding 바이트 보존. 실제 H100 수치가 아니다. 원본 trainer30파일 동일, archive21 coordinator/7runner.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/1a3358ba6c4e0e3e484141acad5a1ba7db4e2e09",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Codex",
+        "type": "remote_verification_pending",
+        "status": "remote_verification_pending",
+        "text": "수정본·검증 원시 기록·원본 런타임 묶음을 master에 push하고 exact remote 확인. 새 노드는 git pull 후 sh scripts/run_v8_nodes.sh 기본 명령 사용. 실제 H100 OLMo 시작·update·처리량은 아직 미확인이다. 공개 버그 현황판 배포와 소스 장부 갱신은 구분한다.",
         "evidence_kind": "limitation"
       }
     ]

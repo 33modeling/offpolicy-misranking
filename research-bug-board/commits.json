@@ -13222,6 +13222,56 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "2220ed40229e0f559985177fb3ebe3ce9e14f5c1",
+      "at": "2026-11-08T15:34:24+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Record cross-cohort task-inspection blockage without claiming remote OLMo recovery",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/2220ed40229e0f559985177fb3ebe3ce9e14f5c1",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "a318f1a72ecc25c2828a68e6e38443a47e463565",
+      "at": "2026-11-08T15:25:18+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Fix v8 coordination audit findings COORD-01..10 (node-local faults, bounded control, clean stop)",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/a318f1a72ecc25c2828a68e6e38443a47e463565",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "f418288156a4633f243691417f1e453be9bf8c0c",
+      "at": "2026-11-08T15:38:06+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 --status: lease files of another account no longer stop the status",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/f418288156a4633f243691417f1e453be9bf8c0c",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "1a3358ba6c4e0e3e484141acad5a1ba7db4e2e09",
+      "at": "2026-11-08T15:47:05+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Resume older failed OLMo work on plain verified node joins without retry flags",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/1a3358ba6c4e0e3e484141acad5a1ba7db4e2e09",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "0e8b72ab71655e55446990350179cd74c4cbb513",
+      "at": "2026-11-08T15:48:36+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve plain-node OLMo recovery reproduction and exact source archive",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/0e8b72ab71655e55446990350179cd74c4cbb513",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }
