@@ -41,6 +41,9 @@ def existing_python(binding,env,cohort,explicit=None,identities=None):
     identities={} if identities is None else identities
     profile='PAIR_PYTHON' if cohort=='olmo_math' else 'SWITCH_PYTHON'
     work=Path(env.get('OM_WORK',Path(env['V8_ROOT']).parent))
+    requested=explicit or env.get('V8_PYTHON_'+cohort.upper()) or env.get(profile) or (env.get('QWEN_PYTHON') if cohort=='qwen_mbpp' else None)
+    if requested and not shutil.which(requested):
+        raise ValueError(f'{cohort}: configured Python is unavailable: {requested}; no replacement was installed')
     candidates=[explicit] if explicit else [env.get('V8_PYTHON_'+cohort.upper()),env.get(profile),
         env.get('QWEN_PYTHON') if cohort=='qwen_mbpp' else None,env.get('V8_PYTHON'),
         str(Path(env.get('VENV_DIR',work/'.venv-cu126'))/'bin/python'),sys.executable,shutil.which('python3')]

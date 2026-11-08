@@ -18,7 +18,7 @@ PATH_VARIABLES=('GROUP_VOLUME','OM_USER','OM_WORK','V8_ROOT','VENV_DIR','V8_CODE
 PYTHON_VARIABLES=('V8_PYTHON','PAIR_PYTHON','SWITCH_PYTHON','QWEN_PYTHON','V8_PYTHON_OLMO_MATH','V8_PYTHON_QWEN_MBPP')
 
 
-def environment(tools,source,*,cwd=None,warn=None):
+def environment(tools,source,*,cwd=None,warn=None,defer_cohort_errors=False):
     # An exported-but-empty path variable means unset, like the shell launchers' ${VAR:-default}.
     env={k:v for k,v in dict(source).items() if v!='' or k not in PATH_VARIABLES}
     tools=Path(tools).resolve();cwd=Path(cwd or Path.cwd())
@@ -32,6 +32,7 @@ def environment(tools,source,*,cwd=None,warn=None):
     for name in PYTHON_VARIABLES:
         # An explicitly configured interpreter must exist; it is never silently replaced.
         if env.get(name) and not shutil.which(env[name]):
+            if defer_cohort_errors and name!='V8_PYTHON':continue
             raise ValueError(f'Existing Python is unavailable: {name}={env[name]}')
     # Fallback for every cohort = the existing SRGC venv (scripts/run_srgc.sh). Cohort-specific
     # PAIR_/SWITCH_/QWEN_PYTHON are applied per cohort by srgc_v8_nodes.cohort_python.
@@ -69,7 +70,8 @@ def environment(tools,source,*,cwd=None,warn=None):
 def main(argv=None):
     argv=sys.argv[1:] if argv is None else argv
     tools=Path(__file__).resolve().parents[1]
-    env=environment(tools,os.environ,warn=lambda m:print('V8 startup warning: '+m,file=sys.stderr,flush=True))
+    env=environment(tools,os.environ,defer_cohort_errors=True,
+                    warn=lambda m:print('V8 startup warning: '+m,file=sys.stderr,flush=True))
     inspect=any(arg in ('--status','--help','-h') for arg in argv)
     if not inspect:
         if not env.get('V8_CODE_ROOT'):

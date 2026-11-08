@@ -173,6 +173,21 @@ def test_healthy_cohort_runs_but_partial_startup_keeps_failure_exit(tmp_path,mon
     assert len(seen)==1 and 'qwen_mbpp' in seen[0]
 
 
+def test_missing_cohort_interpreter_does_not_block_other_environment(tmp_path,monkeypatch):
+    from scripts import v8_bootstrap as bootstrap
+    monkeypatch.setattr(tempfile,'tempdir',str(tmp_path))
+    env=dict(PATH=os.environ['PATH'],TMPDIR=str(tmp_path),V8_ROOT=str(tmp_path/'experiments'),V8_CODE_ROOT=str(REPO),
+             V8_RUNNER_ROOT=str(REPO/'v8/experiments'),V8_PYTHON=sys.executable,
+             PAIR_PYTHON=str(tmp_path/'missing-python'),SWITCH_PYTHON=sys.executable)
+    monkeypatch.setattr(bootstrap.os,'environ',env)
+    seen=[]
+    def run(command,**kwargs):seen.append(command);return subprocess.CompletedProcess(command,0)
+    monkeypatch.setattr(bootstrap.subprocess,'run',run)
+    monkeypatch.setattr(bootstrap.os,'execvpe',lambda *a,**k:pytest.fail('one invalid environment must remain a partial failure'))
+    assert bootstrap.main([])==1
+    assert len(seen)==1 and 'qwen_mbpp' in seen[0]
+
+
 def test_git_pull_cannot_change_already_selected_worker_or_child(tmp_path,monkeypatch):
     monkeypatch.setattr(tempfile,'tempdir',str(tmp_path))
     tools=tmp_path/'checkout';(tools/'scripts').mkdir(parents=True)
@@ -203,8 +218,8 @@ def test_local_idle_gpu_is_not_evidence_that_a_remote_worker_stalled(tmp_path,mo
         attempts=[dict(id='a',worker='remote.cluster.example.123',started_at=now-4000)])))
     (queue/'logs').mkdir();log=queue/'logs/a.log';log.write_text('work started\n');os.utime(log,(now-4000,now-4000))
     monkeypatch.setattr(socket,'gethostname',lambda:'local.cluster.example')
-    output='\n'.join(v8_status.cohort_report(tmp_path,cohort,now,False))
-    assert '멈춤 의심' not in output,'local GPU state was incorrectly attributed to a remote worker'
+    output=v8_status.render([tmp_path],now=now,gpus=[('0',0,0)])
+    assert 'WARNING' not in output,'local GPU state was incorrectly attributed to a remote worker'
     assert 'remote.cluster.example' in output,'FQDN was truncated at the first dot'
 
 
