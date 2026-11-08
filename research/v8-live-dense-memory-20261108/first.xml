@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="9" time="4.493" timestamp="2026-11-08T17:31:43.285971+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_dense_memory" name="test_repaired_real_archived_scorer_releases_previous_prompt_gradients" time="1.382"><failure message="  File &quot;&lt;v8-dense-memory-overlay&gt;&quot;, line 21&#10;    active = [i for i, a in enumerate(advantages) if a != 0]&#10;IndentationError: unexpected indent">tmp_path = PosixPath('/dev/shm/v8-dense-first-20261108/test_repaired_real_archived_sc0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7472d1fdb890&gt;
+
+    def test_repaired_real_archived_scorer_releases_previous_prompt_gradients(tmp_path,monkeypatch):
+        monkeypatch.syspath_prepend(str(ROOT/'scripts'));entry=importlib.import_module('v8_task_entry')
+        monkeypatch.setenv('SRGC_PROGRESS_DIR',str(tmp_path));monkeypatch.setenv('V8_OOM_RETRY_SECONDS','0')
+        b,_=backend();ctx=types.SimpleNamespace(backend=b)
+&gt;       entry.repair_context(ctx)
+
+tests/test_srgc_v8_dense_memory.py:47: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+scripts/v8_task_entry.py:77: in repair_context
+    dense_memory=repair_dense_memory(backend)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+backend = &lt;srgc_rebuttal._legacy_memory_test.TorchBackend object at 0x7472b3de33e0&gt;
+
+    def repair_dense_memory(backend):
+        """Apply only the two audited lifetime edits to the exact saved TorchBackend.
+    
+        Keep its own reward functions, timing decorator, RNG, rank sharding and single
+        gather. Inherited Protected/Qwen overrides still call this same base method.
+        Original files and source bindings remain immutable; receipt the overlay.
+        """
+        for cls in type(backend).__mro__:
+            if '_v8_dense_memory_receipt' in cls.__dict__:return cls._v8_dense_memory_receipt
+            method=cls.__dict__.get('score_gradients')
+            if not callable(method):continue
+            original=inspect.unwrap(method)
+            filename=original.__globals__.get('__file__')
+            if not filename or not Path(filename).is_file():continue
+            digest=hashlib.sha256(Path(filename).read_bytes()).hexdigest()
+            if digest!=LEGACY_DENSE_BACKEND_SHA256:continue
+            source=textwrap.dedent(inspect.getsource(original))
+            edits=(('        accumulated = [None] * len(params)\n',
+                    '        accumulated = [None] * len(params)\n        value = None\n'),
+                   ('        result[prompt_id] = projected\n',
+                    '        del accumulated, gradient, value, sequences\n        result[prompt_id] = projected\n'))
+            for before,after in edits:
+                if source.count(before)!=1:raise RuntimeError('Saved dense scorer differs from audited memory repair')
+                source=source.replace(before,after,1)
+            namespace={}
+            # The function keeps the original live module globals (including progress
+            # instrumentation); exec locals avoid replacing unrelated module symbols.
+&gt;           exec(compile(source,'&lt;v8-dense-memory-overlay&gt;','exec'),original.__globals__,namespace)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E             File "&lt;v8-dense-memory-overlay&gt;", line 21
+E               active = [i for i, a in enumerate(advantages) if a != 0]
+E           IndentationError: unexpected indent
+
+scripts/v8_task_entry.py:58: IndentationError</failure></testcase><testcase classname="tests.test_srgc_v8_dense_memory" name="test_gradient_values_and_rng_match_the_existing_fixed_scorer" time="0.125"><failure message="  File &quot;&lt;v8-dense-memory-overlay&gt;&quot;, line 21&#10;    active = [i for i, a in enumerate(advantages) if a != 0]&#10;IndentationError: unexpected indent">tmp_path = PosixPath('/dev/shm/v8-dense-first-20261108/test_gradient_values_and_rng_m0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7472b0f4b590&gt;
+
+    def test_gradient_values_and_rng_match_the_existing_fixed_scorer(tmp_path,monkeypatch):
+        torch=pytest.importorskip('torch')
+        from srgc_rebuttal.torch_backend import TorchBackend
+        monkeypatch.syspath_prepend(str(ROOT/'scripts'));entry=importlib.import_module('v8_task_entry')
+        monkeypatch.setenv('SRGC_PROGRESS_DIR',str(tmp_path))
+        reference,_=backend(False)
+        expected=TorchBackend.score_gradients(reference,['q1','q2'],responses=8,group_size=4,seed=17)
+        rng=torch.get_rng_state().clone()
+&gt;       b,_=backend();entry.repair_context(types.SimpleNamespace(backend=b))
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_srgc_v8_dense_memory.py:61: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+scripts/v8_task_entry.py:77: in repair_context
+    dense_memory=repair_dense_memory(backend)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+backend = &lt;srgc_rebuttal._legacy_memory_test.TorchBackend object at 0x7472b3c90290&gt;
+
+    def repair_dense_memory(backend):
+        """Apply only the two audited lifetime edits to the exact saved TorchBackend.
+    
+        Keep its own reward functions, timing decorator, RNG, rank sharding and single
+        gather. Inherited Protected/Qwen overrides still call this same base method.
+        Original files and source bindings remain immutable; receipt the overlay.
+        """
+        for cls in type(backend).__mro__:
+            if '_v8_dense_memory_receipt' in cls.__dict__:return cls._v8_dense_memory_receipt
+            method=cls.__dict__.get('score_gradients')
+            if not callable(method):continue
+            original=inspect.unwrap(method)
+            filename=original.__globals__.get('__file__')
+            if not filename or not Path(filename).is_file():continue
+            digest=hashlib.sha256(Path(filename).read_bytes()).hexdigest()
+            if digest!=LEGACY_DENSE_BACKEND_SHA256:continue
+            source=textwrap.dedent(inspect.getsource(original))
+            edits=(('        accumulated = [None] * len(params)\n',
+                    '        accumulated = [None] * len(params)\n        value = None\n'),
+                   ('        result[prompt_id] = projected\n',
+                    '        del accumulated, gradient, value, sequences\n        result[prompt_id] = projected\n'))
+            for before,after in edits:
+                if source.count(before)!=1:raise RuntimeError('Saved dense scorer differs from audited memory repair')
+                source=source.replace(before,after,1)
+            namespace={}
+            # The function keeps the original live module globals (including progress
+            # instrumentation); exec locals avoid replacing unrelated module symbols.
+&gt;           exec(compile(source,'&lt;v8-dense-memory-overlay&gt;','exec'),original.__globals__,namespace)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E             File "&lt;v8-dense-memory-overlay&gt;", line 21
+E               active = [i for i, a in enumerate(advantages) if a != 0]
+E           IndentationError: unexpected indent
+
+scripts/v8_task_entry.py:58: IndentationError</failure></testcase><testcase classname="tests.test_srgc_v8_legacy_training_guards" name="test_old_context_uses_existing_seed_fallback_for_strict_gold_failure" time="0.927" /><testcase classname="tests.test_srgc_v8_legacy_training_guards" name="test_old_scoring_oom_releases_exception_frame_and_retries_same_call_once" time="0.943" /><testcase classname="tests.test_srgc_v8_legacy_training_guards" name="test_only_one_oom_retry_and_no_retry_of_another_cuda_runtime_error[oom]" time="0.063" /><testcase classname="tests.test_srgc_v8_legacy_training_guards" name="test_only_one_oom_retry_and_no_retry_of_another_cuda_runtime_error[cuda-runtime]" time="0.001" /><testcase classname="tests.test_srgc_v8_legacy_training_guards" name="test_empty_gold_and_custom_reward_are_not_silently_reinterpreted" time="0.002" /><testcase classname="tests.test_srgc_v8_legacy_training_guards" name="test_existing_memory_guard_is_extended_to_train_without_repeating_updates" time="0.001" /><testcase classname="tests.test_srgc_v8_legacy_training_guards" name="test_other_cuda_runtime_error_is_retained_with_context_and_not_silently_fixed" time="0.922" /></testsuite></testsuites>

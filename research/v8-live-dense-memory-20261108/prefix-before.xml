@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="4" skipped="0" tests="5" time="0.068" timestamp="2026-11-08T17:35:04.705259+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_v8_status_checkpoint_start" name="test_loaded_start_is_visible_before_the_first_new_update[0]" time="0.002"><failure message="assert None == 0">tmp_path = PosixPath('/dev/shm/v8-prefix-before-20261108/test_loaded_start_is_visible_b0')
+start = 0
+
+    @pytest.mark.parametrize('start',[0,25,100])
+    def test_loaded_start_is_visible_before_the_first_new_update(tmp_path,start):
+        now=time.time();base=fixture(tmp_path,now)
+        run=base/'olmo_math/runs/traj-5'
+        (run/'attempts/x/updates.jsonl').unlink()
+        write(run/'manifest.json',{'attempts':[{'attempt_id':'x','start_update':start,'start':'fork'}]})
+        _,rows=status.collect(base,'olmo_math',now)
+        row=next(r for r in rows if r['run_id']=='traj-5')
+&gt;       assert row['done']==start
+E       assert None == 0
+
+tests/test_v8_status_checkpoint_start.py:18: AssertionError</failure></testcase><testcase classname="tests.test_v8_status_checkpoint_start" name="test_loaded_start_is_visible_before_the_first_new_update[25]" time="0.001"><failure message="assert None == 25">tmp_path = PosixPath('/dev/shm/v8-prefix-before-20261108/test_loaded_start_is_visible_b1')
+start = 25
+
+    @pytest.mark.parametrize('start',[0,25,100])
+    def test_loaded_start_is_visible_before_the_first_new_update(tmp_path,start):
+        now=time.time();base=fixture(tmp_path,now)
+        run=base/'olmo_math/runs/traj-5'
+        (run/'attempts/x/updates.jsonl').unlink()
+        write(run/'manifest.json',{'attempts':[{'attempt_id':'x','start_update':start,'start':'fork'}]})
+        _,rows=status.collect(base,'olmo_math',now)
+        row=next(r for r in rows if r['run_id']=='traj-5')
+&gt;       assert row['done']==start
+E       assert None == 25
+
+tests/test_v8_status_checkpoint_start.py:18: AssertionError</failure></testcase><testcase classname="tests.test_v8_status_checkpoint_start" name="test_loaded_start_is_visible_before_the_first_new_update[100]" time="0.001"><failure message="assert None == 100">tmp_path = PosixPath('/dev/shm/v8-prefix-before-20261108/test_loaded_start_is_visible_b2')
+start = 100
+
+    @pytest.mark.parametrize('start',[0,25,100])
+    def test_loaded_start_is_visible_before_the_first_new_update(tmp_path,start):
+        now=time.time();base=fixture(tmp_path,now)
+        run=base/'olmo_math/runs/traj-5'
+        (run/'attempts/x/updates.jsonl').unlink()
+        write(run/'manifest.json',{'attempts':[{'attempt_id':'x','start_update':start,'start':'fork'}]})
+        _,rows=status.collect(base,'olmo_math',now)
+        row=next(r for r in rows if r['run_id']=='traj-5')
+&gt;       assert row['done']==start
+E       assert None == 100
+
+tests/test_v8_status_checkpoint_start.py:18: AssertionError</failure></testcase><testcase classname="tests.test_v8_status_checkpoint_start" name="test_parent_description_alone_does_not_prove_checkpoint_was_loaded" time="0.003"><failure message="AssertionError: assert ('0/275' not in '━━ OLMo MAT...en 40s ago\n'&#10;  &#10;  '0/275' is contained here:&#10;      updates 0/275&#10;  ?           +++++&#10;    Qwen MBPP  not started&#10;    this node  node01: ▶ s5 On (olmo_math) · GPU unknown&#10;    nodes      1 host · 1 running · 0 DEAD...&#10;  &#10;  ...Full output truncated (3 lines hidden), use '-vv' to show)">tmp_path = PosixPath('/dev/shm/v8-prefix-before-20261108/test_parent_description_alone_0')
+
+    def test_parent_description_alone_does_not_prove_checkpoint_was_loaded(tmp_path):
+        now=time.time();base=fixture(tmp_path,now)
+        run=base/'olmo_math/runs/traj-5';(run/'attempts/x/updates.jsonl').unlink()
+        path=base/'olmo_math/.multi-node/jobs/b.json';job=json.loads(path.read_text())
+        job['task']['parent']={'kind':'prefix','completed_update':25,'path':'not-loaded.pt'};write(path,job)
+        _,rows=status.collect(base,'olmo_math',now)
+        assert next(r for r in rows if r['run_id']=='traj-5')['done'] is None
+        text=status.render_clean([base],now=now,gpus=[],host='node01',width=180)
+&gt;       assert '0/275' not in text and '?/275' in text
+E       AssertionError: assert ('0/275' not in '━━ OLMo MAT...en 40s ago\n'
+E         
+E         '0/275' is contained here:
+E             updates 0/275
+E         ?           +++++
+E           Qwen MBPP  not started
+E           this node  node01: ▶ s5 On (olmo_math) · GPU unknown
+E           nodes      1 host · 1 running · 0 DEAD...
+E         
+E         ...Full output truncated (3 lines hidden), use '-vv' to show)
+
+tests/test_v8_status_checkpoint_start.py:31: AssertionError</failure></testcase><testcase classname="tests.test_v8_status_checkpoint_start" name="test_completed_new_update_takes_precedence_over_the_loaded_start" time="0.001" /></testsuite></testsuites>

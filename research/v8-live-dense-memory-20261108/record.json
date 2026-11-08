@@ -1,0 +1,87 @@
+{
+  "source_commit": "d9ad4421873afe77f487bf13bd1e36b8bdc33d32",
+  "user_reports": [
+    "아까 말해준 에러 그대로라고. cuda oom",
+    "olmo math 왜 멈춰 있고 왜 node는 다 idle이야",
+    "기존거 안쓰는거네 olmo math 말이야 0/275",
+    "25/275 부터 시작해야지",
+    "idle이냐고 전부다 진행하게 해야지"
+  ],
+  "hypothesis": "V9 frees only unreachable rollout/cache tensors. The real archived dense scorer still holds prior-prompt accumulated/gradient/value/sequences while generating the next prompt; GPU optimizer deepcopy also allocates a second optimizer snapshot. Status ignores the runner-confirmed loaded start_update and fabricates zero until a new update is written.",
+  "actual_source": "scripts/frozen_srgc/pre_20261004/torch_backend.py SHA256 c73ee5e60288791bedbc790147fc88903ba6f3429d48b2ab626774b334f4f3fc; same saved backend selected for known original prefix runtimes",
+  "fixes": [
+    "Guard by whole archived backend SHA; apply exactly the canonical scorer lifetime edits in memory, preserve original live globals/timing and no extra collectives; do not modify original source files.",
+    "Copy trainable/optimizer tensors directly to independent CPU storage; preserve snapshot keys, values and custom subclass snapshot overrides.",
+    "Policy v10 allows verified new workers to recover earlier-controller failures once without --retry-failed; no live lease theft or checkpoint reset.",
+    "Status uses manifest attempt.start_update written after validated actual checkpoint load. Before verified load show ?/275 rather than fabricated zero. Existing update37 overrides loaded start25."
+  ],
+  "controls": {
+    "model": "Actual archived TorchBackend with a CPU linear model, frozen weight dense scoring and trainable adapter; no real H100",
+    "data": "Two synthetic questions,8 responses, group size4; additional9-question four-rank sharding simulation and zero advantages",
+    "seeds": [
+      17
+    ],
+    "optimizer_updates": "One CPU AdamW update for state capture/restore; no scientific training experiment",
+    "metrics": "Weakref liveness at next rollout; exact projected arrays/RNG; independent snapshot storage and round-trip values; one gather, rank/order, protected subclass and actual loaded-start visibility",
+    "numerical_results": "No H100 training rewards or held-out evaluation values measured. Code tests only."
+  },
+  "verification": {
+    "all.xml": {
+      "tests": 302,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "archive.xml": {
+      "tests": 65,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "before.xml": {
+      "tests": 2,
+      "failures": 2,
+      "errors": 0,
+      "skipped": 0
+    },
+    "extended.xml": {
+      "tests": 52,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1
+    },
+    "first.xml": {
+      "tests": 9,
+      "failures": 2,
+      "errors": 0,
+      "skipped": 0
+    },
+    "fixed.xml": {
+      "tests": 16,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "prefix-before.xml": {
+      "tests": 5,
+      "failures": 4,
+      "errors": 0,
+      "skipped": 0
+    },
+    "prefix-fixed.xml": {
+      "tests": 34,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "failures": "before.xml: real archived scorer retains dense buffers and injected allocator guard fails twice. first.xml: unpublished local overlay prototype had2 indentation errors; corrected before source push. prefix-before.xml:4 real reader/display regressions reproduced and1 existing-update control passed. These raw failures remain retained.",
+  "original_trainer": {
+    "files": 30,
+    "all_sha256_unchanged": true
+  },
+  "checkpoint_provenance": "Original source/inputs/checkpoints, optimizer/RNG, reward logs and prior failed attempts retained. No batch, response count, token limit, attention kernel, comparison arm or cohort matrix change.",
+  "interpretation": "answering8/9 is local question8 of9, not8 completed updates. Core model/dataset pairs remain OLMo-3 7B/MATH and Qwen3.5 9B/MBPP; do not infer independent model or data effects from their score difference.",
+  "idle_audit": "Current scheduler tests cover failed-task isolation, independent OLMo/Qwen startup, shared-claim-lock scope and checkpoint-ready branches. This audit did not reproduce an additional scheduler defect. Actual idle-node worker policy/failure/parent readiness is unavailable and cannot be inferred from CPU tests.",
+  "limitations": "No H100 connection/mounted run volume; actual OOM phase/allocation/traceback and current queue not observed. Latest repair not hot-applied to already-running frozen workers. Persistent true capacity overflow and the incomplete RegisterCUDA/SymIntArrayRef report remain unverified/open; do not claim all nodes active or OLMo updates advancing."
+}
