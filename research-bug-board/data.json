@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-08T18:23:47+09:00",
+  "recorded_at": "2026-11-08T18:37:21+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "8e79e58abd5aaa315c9324eaa28047ea1023f684",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/8e79e58abd5aaa315c9324eaa28047ea1023f684",
-    "all_available_commits": 1286,
+    "source_commit": "0648f8a767acdbc8eddf152de22b54195c50814f",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/0648f8a767acdbc8eddf152de22b54195c50814f",
+    "all_available_commits": 1288,
     "fix_commit_records": 137,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
@@ -27,6 +27,7 @@
       "refs/heads/bugboard-audit:61a7b68fc2c31bb5b09772852abc860f5ec168e2",
       "refs/heads/bugboard-status2:612312f955ddd7cefe220e90a85696139108c8a5",
       "refs/heads/bugboard-status3:d8d4b024a693301ed78d924375b68fdd81d7dd35",
+      "refs/heads/bugboard-status4:0648f8a767acdbc8eddf152de22b54195c50814f",
       "refs/heads/bugboard2:b7432d1cbb1f6cdd2cd044f23cd8ffaf25a57560",
       "refs/heads/bugboard3:b101cd9069dcc6ce920f42a1242174b83b9e6010",
       "refs/heads/docs/mbpp-budget-incident-20260919:fa1c6897b2b26ef002dd165c94f58702b1f9e1ed",
@@ -36,7 +37,7 @@
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hang-fix-20261108:f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:8e79e58abd5aaa315c9324eaa28047ea1023f684",
+      "refs/heads/master:916001589314b08687b043153b6ff1524e927412",
       "refs/heads/v8-coord-fixes-20261108:377c256e55f80c64b484d82ef812064ed9e7c8a3",
       "refs/heads/v8-modes:6821c9c09292662008eb4f933c74bae7490358ed",
       "refs/heads/v8-nodes:3adf26925b2b1c1bf572cf0e68f75b26bbae3ddc",
@@ -52,6 +53,7 @@
       "refs/heads/v8-status-node-view:21b58c03963e32a327ade081419acb508d0fcf5a",
       "refs/heads/v8-status-nodes2:1e47050b470a5eef8a9ca86fac577e06d3bb5abc",
       "refs/heads/v8-status-progress:7fa90b7f51fc50939a8cc53b9c115abe22bda381",
+      "refs/heads/v8-status-robust:0648f8a767acdbc8eddf152de22b54195c50814f",
       "refs/heads/v8-status-sort:9ddc003b613459a8c0df462513743dd2400212d7",
       "refs/heads/v8-status-srgc:d8aa1ed1b99e16dbfb099d49a8f29c4b4add82ac",
       "refs/heads/v8-status2:21b071d2f2478b1f72a2c237368395cc2ebd179a",
@@ -65,7 +67,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:8e79e58abd5aaa315c9324eaa28047ea1023f684"
+      "refs/remotes/origin/master:0648f8a767acdbc8eddf152de22b54195c50814f"
     ]
   },
   "incidents": [
@@ -7111,6 +7113,80 @@
           "status": "remote_verification_pending",
           "text": "소스수정은push확인했지만실제H100의worker정책·대기열·MATH재개·OOM해결은미확인이다. 사용자노드의5개현상을해결했다고닫지않는다.",
           "evidence_kind": "limitation"
+        }
+      ]
+    },
+    {
+      "id": "V8-103",
+      "title": "V8 status v1.0.16 이 정상 노드를 DEAD(✗)로 표시하고 needs attention 이 갱신되지 않는 것처럼 보임",
+      "area": "V8 실행·재개·상태 감사",
+      "severity": "high",
+      "first_reported": "2026-11-08",
+      "introduction_commit": "",
+      "cause": "a870f59 는 작업이 걸린 worker 의 heartbeat 가 60초 넘게 없고 작업 lease 잠금이 '풀린 것처럼' 보이면 DEAD 로 셌다. 다른 노드가 잡은 잠금은 그 노드 커널에 있어 이 노드에서는 풀린 것처럼 보일 수 있고, 공유 저장소에서 다른 노드의 heartbeat 파일은 최대 1분쯤 늦게 읽히며 노드 시계도 다르다. 그래서 정상 노드에 ✗ 가 붙었다. 또 needs attention 은 화면 위쪽 실험 블록 안에 있어 --watch 에서 화면 밖으로 밀렸고, 화면 지우기가 스크롤 기록을 남겨 위로 올리면 예전 화면이 보였다.",
+      "impact": "사용자 보고 'status 이상해 정상인게 엑스표시나와', 'needs attention 이거 업데이트가 안되는거 같음'. 정상 노드를 다시 띄우거나 멀쩡한 작업을 실패로 오해할 수 있었다.",
+      "attribution": "Claude 의 상태 화면 결함. 같은 날 수정. 이미 게시된 커밋 행을 바꾸지 않으려고 introduction_commit 은 비움.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "수정 커밋 0648f8a",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/0648f8a"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "사용자",
+          "type": "reported",
+          "status": "open",
+          "text": "사용자 보고 'status 이상해 정상인게 엑스표시나와', 'needs attention 이거 업데이트가 안되는거 같음'. 정상 노드를 다시 띄우거나 멀쩡한 작업을 실패로 오해할 수 있었다.",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "잠금 확인은 '잡혀 있음 = 살아 있음' 증거로만 사용. DEAD 는 작업이 걸려 있고 heartbeat 3분 넘게 없을 때(잠금이 보이게 잡혀 있으면 10분). 작업 없는 worker 생존 90초, 다른 실험 쪽 busy 판정은 2분 넘는 침묵. ✗ 는 실패에만, 중단은 ⏸ 로 따로 셈. needs attention 은 맨 아래 요약 밑으로 옮기고 몇 분 전·시도 번호·다음 단계 표시, --watch 는 스크롤 기록도 지움. 회귀 시험: 잠금이 풀린 것처럼 보이고 heartbeat 5–150초인 실행 작업 4개가 모두 running(✗ 없음), needs attention 위치·문구.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/0648f8a",
+          "evidence_kind": "code_test"
+        }
+      ]
+    },
+    {
+      "id": "V8-104",
+      "title": "V8 status 가 숫자 worker id 나 attempt_id 없는 run 기록 하나 때문에 화면 전체가 죽음",
+      "area": "V8 실행·재개·상태 감사",
+      "severity": "medium",
+      "first_reported": "2026-11-08",
+      "introduction_commit": "",
+      "cause": "작업 기록의 worker 를 문자열로 가정해 .startswith 를 불렀고, run manifest 의 마지막 attempt 에 attempt_id 가 있다고 가정했다.",
+      "impact": "v1.0.16 전체 점검(원본 체크아웃 있음)에서 시험용 큐 모양 하나로 v8_status·sh status 가 AttributeError/KeyError 로 종료.",
+      "attribution": "Claude 의 상태 화면 결함. 같은 날 수정. 이미 게시된 커밋 행을 바꾸지 않으려고 introduction_commit 은 비움.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "수정 커밋 0648f8a",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/0648f8a"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "reproduced",
+          "status": "open",
+          "text": "v1.0.16 전체 점검(원본 체크아웃 있음)에서 시험용 큐 모양 하나로 v8_status·sh status 가 AttributeError/KeyError 로 종료.",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-08",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "worker id 는 표시용으로 문자열화(heartbeat 파일 찾기는 원래 값), manifest·attempts 형식 검사, 작업 기록마다 예외를 잡아 '읽을 수 없는 기록'으로 표시. 회귀 시험: 숫자 worker·attempt_id 없는 manifest·dict 가 아닌 task·None attempt 로 세 가지 화면 모두 렌더.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/0648f8a",
+          "evidence_kind": "code_test"
         }
       ]
     }

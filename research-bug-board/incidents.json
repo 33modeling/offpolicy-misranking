@@ -7043,5 +7043,79 @@
         "evidence_kind": "limitation"
       }
     ]
+  },
+  {
+    "id": "V8-103",
+    "title": "V8 status v1.0.16 이 정상 노드를 DEAD(✗)로 표시하고 needs attention 이 갱신되지 않는 것처럼 보임",
+    "area": "V8 실행·재개·상태 감사",
+    "severity": "high",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "",
+    "cause": "a870f59 는 작업이 걸린 worker 의 heartbeat 가 60초 넘게 없고 작업 lease 잠금이 '풀린 것처럼' 보이면 DEAD 로 셌다. 다른 노드가 잡은 잠금은 그 노드 커널에 있어 이 노드에서는 풀린 것처럼 보일 수 있고, 공유 저장소에서 다른 노드의 heartbeat 파일은 최대 1분쯤 늦게 읽히며 노드 시계도 다르다. 그래서 정상 노드에 ✗ 가 붙었다. 또 needs attention 은 화면 위쪽 실험 블록 안에 있어 --watch 에서 화면 밖으로 밀렸고, 화면 지우기가 스크롤 기록을 남겨 위로 올리면 예전 화면이 보였다.",
+    "impact": "사용자 보고 'status 이상해 정상인게 엑스표시나와', 'needs attention 이거 업데이트가 안되는거 같음'. 정상 노드를 다시 띄우거나 멀쩡한 작업을 실패로 오해할 수 있었다.",
+    "attribution": "Claude 의 상태 화면 결함. 같은 날 수정. 이미 게시된 커밋 행을 바꾸지 않으려고 introduction_commit 은 비움.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "수정 커밋 0648f8a",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/0648f8a"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "사용자",
+        "type": "reported",
+        "status": "open",
+        "text": "사용자 보고 'status 이상해 정상인게 엑스표시나와', 'needs attention 이거 업데이트가 안되는거 같음'. 정상 노드를 다시 띄우거나 멀쩡한 작업을 실패로 오해할 수 있었다.",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "잠금 확인은 '잡혀 있음 = 살아 있음' 증거로만 사용. DEAD 는 작업이 걸려 있고 heartbeat 3분 넘게 없을 때(잠금이 보이게 잡혀 있으면 10분). 작업 없는 worker 생존 90초, 다른 실험 쪽 busy 판정은 2분 넘는 침묵. ✗ 는 실패에만, 중단은 ⏸ 로 따로 셈. needs attention 은 맨 아래 요약 밑으로 옮기고 몇 분 전·시도 번호·다음 단계 표시, --watch 는 스크롤 기록도 지움. 회귀 시험: 잠금이 풀린 것처럼 보이고 heartbeat 5–150초인 실행 작업 4개가 모두 running(✗ 없음), needs attention 위치·문구.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/0648f8a",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "V8-104",
+    "title": "V8 status 가 숫자 worker id 나 attempt_id 없는 run 기록 하나 때문에 화면 전체가 죽음",
+    "area": "V8 실행·재개·상태 감사",
+    "severity": "medium",
+    "first_reported": "2026-11-08",
+    "introduction_commit": "",
+    "cause": "작업 기록의 worker 를 문자열로 가정해 .startswith 를 불렀고, run manifest 의 마지막 attempt 에 attempt_id 가 있다고 가정했다.",
+    "impact": "v1.0.16 전체 점검(원본 체크아웃 있음)에서 시험용 큐 모양 하나로 v8_status·sh status 가 AttributeError/KeyError 로 종료.",
+    "attribution": "Claude 의 상태 화면 결함. 같은 날 수정. 이미 게시된 커밋 행을 바꾸지 않으려고 introduction_commit 은 비움.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "수정 커밋 0648f8a",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/0648f8a"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "reproduced",
+        "status": "open",
+        "text": "v1.0.16 전체 점검(원본 체크아웃 있음)에서 시험용 큐 모양 하나로 v8_status·sh status 가 AttributeError/KeyError 로 종료.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-08",
+        "actor": "Claude",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "worker id 는 표시용으로 문자열화(heartbeat 파일 찾기는 원래 값), manifest·attempts 형식 검사, 작업 기록마다 예외를 잡아 '읽을 수 없는 기록'으로 표시. 회귀 시험: 숫자 worker·attempt_id 없는 manifest·dict 가 아닌 task·None attempt 로 세 가지 화면 모두 렌더.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/0648f8a",
+        "evidence_kind": "code_test"
+      }
+    ]
   }
 ]

@@ -13572,6 +13572,26 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "916001589314b08687b043153b6ff1524e927412",
+      "at": "2026-11-08T18:24:05+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Keep 17 unresolved or remotely unverified V8 incidents visible with recovery defect",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/916001589314b08687b043153b6ff1524e927412",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "0648f8a767acdbc8eddf152de22b54195c50814f",
+      "at": "2026-11-08T18:36:20+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: no false DEAD/✗ on healthy nodes; needs attention at the bottom; odd records never crash",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/0648f8a767acdbc8eddf152de22b54195c50814f",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }
