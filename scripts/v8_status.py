@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from v8_probe import active_roots, last_row, read, root, tail  # noqa: E402
 from srgc_v8_nodes import retry_budget_failures  # same verified recovery boundary as the scheduler
 
-COHORTS = ('olmo_math', 'qwen_mbpp', 'olmo_mbpp')
+COHORTS = ('olmo_math', 'qwen_mbpp', 'olmo_mbpp', 'qwen_math')   # user 11-09: 'olmo mbpp qwen math 추가해'
 ATTENTION = {'failed', 'interrupted', 'stopped', 'unconfirmed'}
 STALE_SECONDS = 180  # workers heartbeat every 10 s while a child runs (srgc_v8_nodes.Runtime.process)
 # Clean view liveness (user: 'idle 아닌데 자꾸 idle 이래 이미 삭제한 노드인데', 'status 업데이트 더 빠르게'):
@@ -714,8 +714,8 @@ LEGEND_TABLE = ("train/ext/eval = tasks done/all planned (ext = budget extension
                 "intr = interrupted, reruns · stuck = marked running but no live node runs it (DEAD node or no worker) · "
                 "other = unknown job state")
 LEGEND = "✓ done  ▶n running (n updates)  ○ ready  · waiting  ✗ failed  ! no training error  ⏸ interrupted  ? no heartbeat"
-COHORT_LABEL = {'olmo_math': 'OLMo MATH', 'qwen_mbpp': 'Qwen MBPP', 'olmo_mbpp': 'OLMo MBPP'}
-COHORT_SHORT = {'OLMo MATH': 'OLMo', 'Qwen MBPP': 'Qwen', 'OLMo MBPP': 'OLMo-MBPP'}
+COHORT_LABEL = {'olmo_math': 'OLMo MATH', 'qwen_mbpp': 'Qwen MBPP', 'olmo_mbpp': 'OLMo MBPP', 'qwen_math': 'Qwen MATH'}
+COHORT_SHORT = {}   # four experiments: 'OLMo'/'Qwen' alone would be ambiguous, so the node table shows the full name
 COLOR = False   # set by main() only when stdout is a terminal (never in logs, pipes or tests)
 STYLE = {'ok': '32', 'run': '1;32', 'bad': '1;31', 'warn': '33', 'dim': '2', 'head': '1', 'info': '36'}
 
@@ -1274,7 +1274,7 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
                 _, rows = collect(base, cohort, now)
                 job = next((x for x in rows if x['status'] == 'running' and x.get('host') == host), None)
                 if job:
-                    mine = f"▶ s{job['seed']} {short_arm(job['arm'])} ({COHORT_SHORT.get(COHORT_LABEL.get(cohort, cohort), cohort)})"
+                    mine = f"▶ s{job['seed']} {short_arm(job['arm'])} ({COHORT_SHORT.get(COHORT_LABEL.get(cohort, cohort), COHORT_LABEL.get(cohort, cohort))})"
     out.append(paint(clip(LEGEND, width), 'dim'))
     import textwrap
     for part in textwrap.wrap(LEGEND_TABLE, max(60, width - 2)):

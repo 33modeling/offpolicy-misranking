@@ -246,7 +246,7 @@ def test_clean_view_is_compact_with_summary_last(tmp_path):
     row = next(line for line in bottom.splitlines() if line.startswith(" ▶ node01"))
     for cell in (" running ", " OLMo ", " s5 On ", " 37/275 ", "answering 3/40, 812 tok (5s ago)"):
         assert cell in row, (cell, row)
-    assert lines[-1] == " this node  node01 · GPU 97% · ▶ s5 On (OLMo)"
+    assert lines[-1] == " this node  node01 · GPU 97% · ▶ s5 On (OLMo MATH)"
     assert all(len(line) <= 160 for line in lines)
 
 
@@ -667,3 +667,19 @@ def test_seed_table_draws_every_planned_branch_before_its_job_exists(tmp_path, m
         write(q / "plans" / f"{phase}.json", {"sealed": True, "tasks": []})
     sealed = status.render_clean([base], now=now, gpus=[], host="viewer", width=200).split("Qwen MBPP ·")[0]
     assert next(line for line in sealed.splitlines() if line.startswith(" seed")).split()[:3] == ["seed", "On", "U"]
+
+
+
+def test_default_screen_lists_all_four_experiments(tmp_path):
+    """'v8 status 에 olmo mbpp qwen math 추가해': OLMo MATH, Qwen MBPP, OLMo MBPP, Qwen MATH, in that order."""
+    now = time.time()
+    base = tmp_path / "v8"
+    for cohort in ("olmo_mbpp", "qwen_math"):
+        write(base / cohort / ".multi-node" / "state.json", {"phase": "train", "failure": None})
+        (base / cohort / ".multi-node" / "jobs").mkdir(parents=True)
+    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
+    assert status.COHORTS == ("olmo_math", "qwen_mbpp", "olmo_mbpp", "qwen_math")
+    summary = [line.split("  ")[0].strip() for line in text.split("━━ V8 status · ")[1].splitlines()
+               if line.startswith((" OLMo", " Qwen"))]
+    assert summary == ["OLMo MATH", "Qwen MBPP", "OLMo MBPP", "Qwen MATH"]
+    assert "OLMo MBPP · training" in text and "Qwen MATH · training" in text
