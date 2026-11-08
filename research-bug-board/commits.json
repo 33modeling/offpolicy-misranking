@@ -13702,6 +13702,66 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "ef0cac0c64c2a4e97324634e523472b107c77bec",
+      "at": "2026-11-08T22:01:49+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Bug board: status summary numbers did not add up (fixed 212a099)",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/ef0cac0c64c2a4e97324634e523472b107c77bec",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "f69c67227ccdab354ad1e61fe148d77a56bce10e",
+      "at": "2026-11-08T22:17:33+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: show how many cells each phase must fill in total",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/f69c67227ccdab354ad1e61fe148d77a56bce10e",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "d930ad1e22d27258b08a24449a5f3b409bf9fc2e",
+      "at": "2026-11-08T22:54:42+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve repair retry budgets and adopt verified completed tasks before failure caps",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/d930ad1e22d27258b08a24449a5f3b409bf9fc2e",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "e902db8a5e5a317c9aa5c26fdd9294f3a1f50c03",
+      "at": "2026-11-08T22:53:39+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: seed table draws every planned branch (SR25..SR250, U) and seed",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/e902db8a5e5a317c9aa5c26fdd9294f3a1f50c03",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "2850c965513d89ddc43a8631616e816f1bb28ae1",
+      "at": "2026-11-08T22:54:42+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Merge current status grid with verified retry recovery fixes",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/2850c965513d89ddc43a8631616e816f1bb28ae1",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "5212fd4518dcfefe01b1ed9f346b1557fdf61ceb",
+      "at": "2026-11-08T22:57:14+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve idle/retry failures, final controls and all historical queue sources",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/5212fd4518dcfefe01b1ed9f346b1557fdf61ceb",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }
