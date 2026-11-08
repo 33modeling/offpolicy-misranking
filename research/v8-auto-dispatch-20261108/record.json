@@ -1,0 +1,143 @@
+{
+  "kind": "single-command multi-cohort worker and automatic node allocation; software verification",
+  "user_instruction": "야 그리고2개 명령어 분리하지 말고1개로 만들어. 알아서 자동배치되게 하고; 지금 빨리 수정해",
+  "hypothesis": "Identical workers can share ready jobs from both independent cohort queues without fixed node shares, while keeping each cohort budget, inputs, checkpoints and phase barriers independent.",
+  "source": {
+    "repository": "https://github.com/33modeling/offpolicy-misranking",
+    "branch": "master",
+    "baseline_commit": "79c9a64e050bf4d8fe6acb1ee59ec83a0fbb326f",
+    "files_sha256": {
+      "scripts/srgc_v8_nodes.py": "c8386614f78a4d891597aaaf29e18d7760847d0a7b6a1d406c10aac359f8c214",
+      "scripts/run_v8_nodes.sh": "9315eb86baa99cbb83d98ac637f6512f8b55f458acc11de9dfc85d0548f8f497",
+      "tests/test_srgc_v8_nodes.py": "53e0d715d73d6e9712f8abd7029960dab50164e8d86725e7595c1db8a455062d",
+      "docs/V8_MULTINODE_H100.md": "377effa0669ab4f7ecdda67112308cae10175babf2c21f6c7123c8b9b348cd11"
+    },
+    "paper_runner_commit": "3d0c08336950d2697dc66cbe3570a230e449f33b",
+    "frozen_trainer_changed_files": 0
+  },
+  "implementation": {
+    "command": "sh \"$EXPORT_CODE_ROOT/scripts/run_v8_nodes.sh\"",
+    "default_cohorts": [
+      "olmo_math",
+      "qwen_mbpp"
+    ],
+    "dispatch": "work-conserving round-robin across ready cohort queues; no per-model node quota; one child GPU job per worker",
+    "waiting": "busy/dependency-blocked/completed cohort does not reserve otherwise usable workers",
+    "failure": "failed GPU task stops dispatch for that cohort, preserves failure/attempts, healthy cohort continues; final worker exit is nonzero if either failed; preflight exceptions remain visible",
+    "identity": "per-cohort exact source/config/input/trainer binding and actual selected child interpreter package versions",
+    "environments": "OLMo uses optional V8_PYTHON_OLMO_MATH/PAIR_PYTHON; Qwen uses optional V8_PYTHON_QWEN_MBPP/SWITCH_PYTHON; fallback common Python",
+    "recovery": "same job/checkpoint IDs and existing full recovery state; strict queue binding rejects unverified coordinator upgrades; no automatic existing-queue migration"
+  },
+  "data_model_transformation": {
+    "data": "generated toy features/answers only; actual V8 planner/runner/evaluator",
+    "model": "CPU ToyBackend for both cohort identities; no real OLMo/Qwen model trained",
+    "transformation": "none",
+    "seeds": [
+      5,
+      6,
+      7
+    ],
+    "updates": {
+      "prefix": 25,
+      "matched": 75,
+      "safety_cap": 100
+    },
+    "controls": [
+      "single cohort prior suite",
+      "one worker automatically completes both cohorts",
+      "blocked first cohort/ready second cohort",
+      "failed cohort/healthy cohort",
+      "three workers automatically move between actual V8 CPU cohorts",
+      "per-seed100/70/40 question-set evaluation identities",
+      "canonical budget endpoint hash coverage",
+      "node/GPU locks shared across cohorts"
+    ]
+  },
+  "metric_definitions": {
+    "task": "Unique actual task identity in coordinator attempt/execution records; stage-dependent count, not scientific measurement",
+    "overlap": "For each worker, no overlap in recorded task attempt start/end intervals across either cohort",
+    "heldout": "Integer per-question final evaluation counts separately recorded from training-batch rewards; omitted intermediate held-out remains unmeasured",
+    "capacity": "Upper bound from configured training dependency graph, verified using synthetic snapshot metadata; not measured GPU concurrency or recommended allocation"
+  },
+  "software_results": {
+    "targeted_tests_passed": 80,
+    "failed": 0,
+    "skipped": 0,
+    "mixed_integration": {
+      "cohorts": {
+        "olmo_math": {
+          "all_tasks_done": true,
+          "budget_endpoint_changed_run_cases": 10,
+          "budget_selected_checkpoints": 16,
+          "matched_updates": 75,
+          "new_GPU_jobs": 0,
+          "no_duplicate_execution": true,
+          "safety_cap": 100,
+          "scope": "CPU multi-process software integration; not scientific RLVR results",
+          "tasks": 35,
+          "training_seeds": [
+            5,
+            6,
+            7
+          ],
+          "workers": 3
+        },
+        "qwen_mbpp": {
+          "all_tasks_done": true,
+          "budget_endpoint_changed_run_cases": 14,
+          "budget_selected_checkpoints": 16,
+          "matched_updates": 75,
+          "new_GPU_jobs": 0,
+          "no_duplicate_execution": true,
+          "safety_cap": 100,
+          "scope": "CPU multi-process software integration; not scientific RLVR results",
+          "tasks": 36,
+          "training_seeds": [
+            5,
+            6,
+            7
+          ],
+          "workers": 3
+        }
+      },
+      "new_GPU_jobs": 0,
+      "no_duplicate_execution": true,
+      "no_overlapping_jobs_per_worker": true,
+      "scope": "CPU multi-cohort software verification, not scientific RLVR measurements",
+      "total_tasks": 71,
+      "workers": 3
+    },
+    "first_suite_tests_passed": 79
+  },
+  "training_parallel_capacity": {
+    "olmo_math": 55,
+    "qwen_mbpp": 55,
+    "total": 110,
+    "GPUs_per_job": 4,
+    "total_GPUs_at_training_graph_upper_bound": 440,
+    "initial_ready_per_cohort": 10,
+    "derivation": "Each of5seeds has10SR branches and either one active On trajectory or its dependent Uniform branch. On and its Uniform successor cannot overlap. Phase barriers separate training/extension/evaluation.",
+    "qualification": "This is a theoretical training graph bound. Initial prefixes expose10jobs per cohort; later checkpoint readiness and actual job durations limit concurrency. Evaluation count depends on selected checkpoint identities and deduplication, so it is not claimed to equal this training bound."
+  },
+  "scientific_results": {
+    "new_GPU_jobs": 0,
+    "new_RLVR_measurements": 0,
+    "actual_H100_concurrency": "not measured",
+    "speedup": "not measured",
+    "cross_node_filesystem_locks": "not tested on allocated nodes"
+  },
+  "provenance": {
+    "raw_reports": "verification/raw-test-reports.json",
+    "raw_integration": "/home/kms/reports/rlvr-v8-auto-nodes-20261108/final/test_real_v8_three_workers_aut0",
+    "checkpoint_and_log_hashes": "verification/raw-integration-manifest.json",
+    "metadata": "verification/cpu-metadata.json",
+    "source_runtime": "research/v8-multinode-20261108/verification/runner-source.json",
+    "prior_failures": "Earlier scheduler and budget-coverage failures remain in research/v8-multinode-20261108/ and research/v8-budget-endpoint-20261108/"
+  },
+  "reproducibility": "CUDA_VISIBLE_DEVICES= V8_NODES_TEST_RUNTIME=/path/to/v8/experiments V8_HISTORY_TEST_RUNTIME=/path/to/v8/experiments python3 -m pytest --noconftest -q tests/test_srgc_v8_nodes.py tests/test_srgc_v8_history.py",
+  "limitations": [
+    "Existing queue bindings are immutable for compatibility; stop old worker versions before changing tools and do not rewrite metadata by hand.",
+    "Same shared V8_ROOT with cross-node POSIX flock and consistent pinned code/environment required.",
+    "No node purchase/allocation or actual GPU execution was performed."
+  ]
+}

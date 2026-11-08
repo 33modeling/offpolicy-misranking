@@ -1,0 +1,44 @@
+{
+  "cohorts": {
+    "olmo_math": {
+      "all_tasks_done": true,
+      "budget_endpoint_changed_run_cases": 10,
+      "budget_selected_checkpoints": 16,
+      "matched_updates": 75,
+      "new_GPU_jobs": 0,
+      "no_duplicate_execution": true,
+      "safety_cap": 100,
+      "scope": "CPU multi-process software integration; not scientific RLVR results",
+      "tasks": 35,
+      "training_seeds": [
+        5,
+        6,
+        7
+      ],
+      "workers": 3
+    },
+    "qwen_mbpp": {
+      "all_tasks_done": true,
+      "budget_endpoint_changed_run_cases": 14,
+      "budget_selected_checkpoints": 16,
+      "matched_updates": 75,
+      "new_GPU_jobs": 0,
+      "no_duplicate_execution": true,
+      "safety_cap": 100,
+      "scope": "CPU multi-process software integration; not scientific RLVR results",
+      "tasks": 36,
+      "training_seeds": [
+        5,
+        6,
+        7
+      ],
+      "workers": 3
+    }
+  },
+  "new_GPU_jobs": 0,
+  "no_duplicate_execution": true,
+  "no_overlapping_jobs_per_worker": true,
+  "scope": "CPU multi-cohort software verification, not scientific RLVR measurements",
+  "total_tasks": 71,
+  "workers": 3
+}

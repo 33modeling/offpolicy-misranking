@@ -363,7 +363,7 @@ while True:time.sleep(.01)
     assert b'ready' in (tmp_path/'child.log').read_bytes()
 
 
-@pytest.mark.parametrize('cohort',['olmo_math','qwen_mbpp'])
+@pytest.mark.parametrize('cohort',['olmo_math','qwen_mbpp','all'])
 def test_cli_rejects_overlapping_gpu_group_without_starting_a_model(tmp_path,cohort):
     import socket,tempfile
     runner=os.environ.get('V8_NODES_TEST_RUNTIME')
@@ -391,16 +391,90 @@ def test_cli_status_is_read_only_and_needs_no_gpu_or_runner(tmp_path):
     assert not root.exists()
 
 
+def test_default_command_reports_both_cohorts_without_starting_anything(tmp_path):
+    root=tmp_path/'not-created'
+    result=subprocess.run([sys.executable,nodes.__file__,'--root',str(root),'--status'],
+                          text=True,capture_output=True,timeout=5)
+    assert result.returncode==0,result.stderr
+    assert json.loads(result.stdout)=={'olmo_math':{'phase':'not_started'},'qwen_mbpp':{'phase':'not_started'}}
+    assert not root.exists()
+
+
+def test_shell_entrypoint_defaults_to_both_cohorts_without_python_overrides(tmp_path):
+    env={k:v for k,v in os.environ.items() if k not in ('V8_PYTHON','PAIR_PYTHON','SWITCH_PYTHON')}
+    result=subprocess.run(['sh',str(Path(nodes.__file__).with_name('run_v8_nodes.sh')),
+                           '--root',str(tmp_path/'not-created'),'--status'],env=env,text=True,capture_output=True,timeout=5)
+    assert result.returncode==0,result.stderr
+    assert set(json.loads(result.stdout))=={'olmo_math','qwen_mbpp'}
+    assert not (tmp_path/'not-created').exists()
+
+
+def test_automatic_cohorts_keep_their_existing_python_environments(monkeypatch):
+    monkeypatch.setenv('PAIR_PYTHON','/fixture/olmo/python')
+    monkeypatch.setenv('SWITCH_PYTHON','/fixture/qwen/python')
+    assert nodes.cohort_python('olmo_math','fallback')=='/fixture/olmo/python'
+    assert nodes.cohort_python('qwen_mbpp','fallback')=='/fixture/qwen/python'
+    monkeypatch.setenv('V8_PYTHON_QWEN_MBPP','/fixture/explicit-qwen/python')
+    assert nodes.cohort_python('qwen_mbpp','fallback')=='/fixture/explicit-qwen/python'
+    monkeypatch.delenv('PAIR_PYTHON')
+    assert nodes.cohort_python('olmo_math','fallback')=='fallback'
+
+
+def run_mixed_fake(root,worker,stop,blocked=False,failed=False):
+    pairs=[]
+    for cohort in ('a','b'):
+        runtime=FakeRuntime(Path(root)/cohort/'runtime',fail='branch0' if failed and cohort=='a' else None)
+        runtime.binding['cohort']=cohort
+        if blocked and cohort=='a':runtime.ready=lambda _:False
+        pairs.append((nodes.Pool(Path(root)/cohort/'queue',runtime.binding),runtime))
+    rc=nodes.worker_loop_many(pairs,worker,stop,poll=.003)
+    nodes.atomic(Path(root)/(worker+'-exit.json'),{'exit_code':rc})
+
+
+def test_single_worker_automatically_finishes_both_cohorts(tmp_path):
+    run_mixed_fake(tmp_path,'n',threading.Event())
+    assert nodes.read(tmp_path/'n-exit.json')['exit_code']==0
+    for cohort in ('a','b'):
+        assert nodes.read(tmp_path/cohort/'queue/state.json')['phase']=='complete'
+        assert len(list((tmp_path/cohort/'runtime').glob('start-*')))==7
+
+
+def test_blocked_cohort_does_not_leave_worker_idle_while_other_has_work(tmp_path):
+    ctx=mp.get_context('fork');stop=ctx.Event()
+    process=ctx.Process(target=run_mixed_fake,args=(tmp_path,'n',stop),kwargs={'blocked':True})
+    process.start()
+    try:
+        end=time.monotonic()+10
+        while time.monotonic()<end:
+            state=tmp_path/'b/queue/state.json'
+            if state.exists() and nodes.read(state)['phase']=='complete':break
+            time.sleep(.02)
+        else:pytest.fail('ready cohort did not finish while first cohort was blocked')
+    finally:
+        stop.set();process.join(5)
+        if process.is_alive():process.terminate();process.join();pytest.fail('mixed worker did not stop')
+    assert not list((tmp_path/'a/runtime').glob('start-*'))
+    assert nodes.read(tmp_path/'n-exit.json')['exit_code']==75
+
+
+def test_failed_cohort_retains_failure_while_healthy_cohort_finishes(tmp_path):
+    run_mixed_fake(tmp_path,'n',threading.Event(),failed=True)
+    assert nodes.read(tmp_path/'n-exit.json')['exit_code']==1
+    assert nodes.read(tmp_path/'a/queue/state.json')['failure']
+    assert nodes.read(tmp_path/'a/queue/state.json')['phase']!='complete'
+    assert nodes.read(tmp_path/'b/queue/state.json')['phase']=='complete'
+
+
 class ToyRuntime(nodes.Runtime):
     """Actual v8 planner, runner and evaluator with its own CPU ToyBackend."""
-    def __init__(self,runner,root):
-        super().__init__(runner,root,'olmo_math',sys.executable,['0','1','2','3'])
+    def __init__(self,runner,root,cohort='olmo_math'):
+        super().__init__(runner,root,cohort,sys.executable,['0','1','2','3'])
         from switching import backends,coderepo,smoke,spec
         from switching.engine import make_engine_class
         self.backends,self.smoke=backends,smoke
         self.srgc=coderepo.srgc();self.PE=make_engine_class(self.srgc)
         self.feat,self.ans,self.data=backends.toy_problem(0)
-        self.cfg=spec.resolve('olmo_math',role='smoke',extra={'seeds':{'training':[5,6,7]},
+        self.cfg=spec.resolve(cohort,role='smoke',extra={'seeds':{'training':[5,6,7]},
              'model':{'repository':'synthetic CPU ToyBackend','revision':'fixture'},
              'training':{'matched_update_endpoint':75,'hard_safety_update_cap':100},
              'bank':{'core_grid':[50],'extended_grid':[25]}})
@@ -468,7 +542,11 @@ def test_real_v8_cpu_three_worker_branch_bank(tmp_path,monkeypatch):
         process.join(60)
         if process.is_alive():process.terminate();process.join();pytest.fail('real V8 CPU worker did not finish')
     assert [nodes.read(tmp_path/(f'node{i}-exit.json'))['exit_code'] for i in range(3)]==[0,0,0]
-    root=tmp_path/'olmo_math';queue=root/'.multi-node'
+    nodes.atomic(tmp_path/'integration-summary.json',verify_toy_complete(runner,tmp_path,'olmo_math',monkeypatch))
+
+
+def verify_toy_complete(runner,tmp_path,cohort,monkeypatch):
+    root=tmp_path/cohort;queue=root/'.multi-node'
     assert nodes.read(queue/'state.json')['phase']=='complete'
     jobs=[nodes.read(path) for path in queue.glob('jobs/*.json')]
     executions=[nodes.read(path) for path in (root/'executed').glob('*.json')]
@@ -483,14 +561,14 @@ def test_real_v8_cpu_three_worker_branch_bank(tmp_path,monkeypatch):
     assert len({job['task']['question_ids_hash'] for job in jobs if job['phase']=='evaluation'})==3
     assert (root/'frozen/budget.json').exists() and (root/'software-finalized.json').exists()
     monkeypatch.setenv('V8_CODE_ROOT',os.environ.get('V8_CODE_ROOT',str(Path(__file__).resolve().parents[1])))
-    cfg=ToyRuntime(runner,tmp_path).cfg
+    cfg=ToyRuntime(runner,tmp_path,cohort).cfg
     from switching.bank import SeedBank
     budget=nodes.read(root/'frozen/budget.json')['value']
     evaluated={(job['task']['run_id'],job['task']['completed_update']):job['task']['snapshot_sha256']
                for job in jobs if job['phase']=='evaluation'}
     moved=[];selected=set()
     for seed in [5,6,7]:
-        bank=SeedBank(root,cfg,'olmo_math',seed,'rebuttal_bank',evals={})
+        bank=SeedBank(root,cfg,cohort,seed,'rebuttal_bank',evals={})
         for row in bank.policy_rows(budget=budget):
             if row.get('budget_status')!='selected':continue
             tau=row['switch_update']
@@ -501,7 +579,78 @@ def test_real_v8_cpu_three_worker_branch_bank(tmp_path,monkeypatch):
             assert evaluated.get(key)==choice['snapshot_hash']
             if choice['run_id']!=row['run_id']:moved.append(key)
     assert moved,'CPU fixture must select at least one extension or pre-switch trajectory endpoint'
-    nodes.atomic(tmp_path/'integration-summary.json',dict(scope='CPU multi-process software integration; not scientific RLVR results',
+    return dict(scope='CPU multi-process software integration; not scientific RLVR results',
                  workers=3,training_seeds=[5,6,7],matched_updates=75,safety_cap=100,tasks=len(jobs),
                  no_duplicate_execution=True,all_tasks_done=True,new_GPU_jobs=0,
-                 budget_selected_checkpoints=len(selected),budget_endpoint_changed_run_cases=len(moved)))
+                 budget_selected_checkpoints=len(selected),budget_endpoint_changed_run_cases=len(moved))
+
+
+def toy_mixed_worker(runner,root,worker):
+    os.environ['CUDA_VISIBLE_DEVICES']='';os.environ['V8_FSYNC']='0'
+    os.environ.setdefault('V8_CODE_ROOT',str(Path(__file__).resolve().parents[1]))
+    pairs=[]
+    for cohort in ('olmo_math','qwen_mbpp'):
+        runtime=ToyRuntime(runner,root,cohort)
+        pairs.append((nodes.Pool(runtime.root/'.multi-node',runtime.binding),runtime))
+    try:rc=nodes.worker_loop_many(pairs,worker,threading.Event(),poll=.015)
+    except Exception:
+        import traceback
+        traceback.print_exc();rc=99
+    nodes.atomic(Path(root)/(worker+'-exit.json'),{'exit_code':rc})
+
+
+def test_real_v8_three_workers_automatically_share_both_cohorts(tmp_path,monkeypatch):
+    runner=os.environ.get('V8_NODES_TEST_RUNTIME')
+    if not runner:pytest.skip('V8 runtime source required for mixed-cohort integration')
+    ctx=mp.get_context('fork')
+    processes=[ctx.Process(target=toy_mixed_worker,args=(runner,tmp_path,'node'+str(i))) for i in range(3)]
+    for process in processes:process.start()
+    for process in processes:
+        process.join(60)
+        if process.is_alive():process.terminate();process.join();pytest.fail('mixed V8 CPU worker did not finish')
+    assert [nodes.read(tmp_path/(f'node{i}-exit.json'))['exit_code'] for i in range(3)]==[0,0,0]
+    summaries={cohort:verify_toy_complete(runner,tmp_path,cohort,monkeypatch) for cohort in ('olmo_math','qwen_mbpp')}
+    owners={cohort:{nodes.read(p)['worker'] for p in (tmp_path/cohort/'executed').glob('*.json')} for cohort in summaries}
+    assert owners['olmo_math']&owners['qwen_mbpp'],'workers must move between cohorts without fixed node shares'
+    attempts={}
+    for cohort in summaries:
+        for path in (tmp_path/cohort/'.multi-node/jobs').glob('*.json'):
+            for attempt in nodes.read(path)['attempts']:
+                attempts.setdefault(attempt['worker'],[]).append((attempt['started_at'],attempt['ended_at']))
+    for rows in attempts.values():
+        rows.sort()
+        assert all(a[1]<=b[0] for a,b in zip(rows,rows[1:])), 'one worker must not overlap GPU jobs across cohorts'
+    nodes.atomic(tmp_path/'integration-summary.json',dict(scope='CPU multi-cohort software verification, not scientific RLVR measurements',
+                 cohorts=summaries,total_tasks=sum(s['tasks'] for s in summaries.values()),workers=3,
+                 no_overlapping_jobs_per_worker=True,no_duplicate_execution=True,new_GPU_jobs=0))
+
+
+@pytest.mark.parametrize('cohort',['olmo_math','qwen_mbpp'])
+def test_current_training_graph_has_55_ready_jobs_after_branch_parents_exist(tmp_path,cohort):
+    runner=os.environ.get('V8_NODES_TEST_RUNTIME')
+    if not runner:pytest.skip('V8 runtime source required for graph capacity verification')
+    sys.path.insert(0,runner)
+    from switching import matrix,spec
+    cfg=spec.resolve(cohort,role='rebuttal_bank')
+    class Locator:
+        interval=25
+        def prefix(self,seed):
+            path=tmp_path/f'prefix-{seed}.pt';path.write_text('synthetic dependency fixture; not a model')
+            return dict(kind='prefix',path=str(path),sha256=nodes.digest(seed),completed_update=25,run_id=None)
+    loc=Locator();trajectories,_=matrix.build_stage('bank-trajectory',cfg,loc,tmp_path)
+    assert len(trajectories)==5
+    for task in trajectories:
+        root=tmp_path/'runs'/task['run_id'];root.mkdir(parents=True)
+        nodes.atomic(root/'manifest.json',dict(status='active'))
+        rows=[]
+        for update in range(50,275,25):
+            path=root/f'step-{update}.pt';path.write_text('synthetic dependency fixture; not a model')
+            rows.append(dict(completed_update=update,path=path.name,sha256=nodes.digest([task['run_id'],update]),
+                             identity={'state_hash':nodes.digest(update)}))
+        (root/'snapshots.jsonl').write_text(''.join(nodes.canonical(row)+'\n' for row in rows))
+    tasks=list(trajectories)
+    for stage in ('bank-branches','bank-extended','destination'):
+        found,_=matrix.build_stage(stage,cfg,loc,tmp_path);tasks+=found
+    unique={nodes.task_key(t):t for t in tasks}
+    assert len(unique)==55
+    assert all(nodes.Runtime.ready(None,t) for t in unique.values())

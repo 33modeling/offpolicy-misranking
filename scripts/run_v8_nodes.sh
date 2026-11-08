@@ -1,7 +1,8 @@
 #!/bin/sh
 # Run from the pinned paper checkout on EVERY allocated 4xH100 node.
-# Example: sh "$EXPORT_CODE_ROOT/scripts/run_v8_nodes.sh" olmo_math
+# One command on every node: automatically shares OLMo MATH and Qwen MBPP.
+# Example: sh "$EXPORT_CODE_ROOT/scripts/run_v8_nodes.sh"
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
-: "${V8_PYTHON:?set V8_PYTHON to the existing H100 environment python}"
-exec "$V8_PYTHON" "$HERE/srgc_v8_nodes.py" "$@"
+CONTROL_PYTHON=${V8_PYTHON:-${PAIR_PYTHON:-${SWITCH_PYTHON:-python3}}}
+exec "$CONTROL_PYTHON" "$HERE/srgc_v8_nodes.py" "$@"

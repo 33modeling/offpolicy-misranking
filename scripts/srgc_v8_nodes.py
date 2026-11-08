@@ -2,7 +2,7 @@
 """Shared-filesystem V8 workers: one four-GPU task per node, dynamic DAG dispatch.
 
 Run the same command on each allocated node (no cross-node DDP rendezvous):
-  python scripts/srgc_v8_nodes.py olmo_math --runner-root /path/to/v8/experiments
+  python scripts/srgc_v8_nodes.py --runner-root /path/to/v8/experiments
 
 V8_ROOT must be the same shared path on every node. V8_CODE_ROOT remains the
 frozen trainer checkout. No web service, paid model API or cluster allocator is
@@ -14,7 +14,6 @@ import argparse
 from contextlib import contextmanager
 import fcntl
 import hashlib
-import importlib.metadata
 import json
 import math
 import os
@@ -244,40 +243,49 @@ class Pool:
 
 
 def worker_loop(pool,runtime,worker,stop,*,poll=3,device_fds=(),retry=False):
-    initialized=False;last_report=0
-    heartbeat_path=pool.root/'workers'/(digest(worker)+'.json')
-    def heartbeat(task=None):
-        atomic(heartbeat_path,dict(worker=worker,pid=os.getpid(),at=time.time(),task=task))
-    runtime.heartbeat=heartbeat
+    return worker_loop_many([(pool,runtime)],worker,stop,poll=poll,device_fds=device_fds,retry=retry)
+
+
+def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False):
+    """One GPU group takes the next ready job from any cohort, without fixed shares."""
+    if not pairs:raise ValueError('At least one cohort is required')
+    initialized=set();terminal={};last_report=0
+    cursor=int(digest(worker)[:8],16)%len(pairs)
+    for pool,runtime in pairs:
+        def heartbeat(task=None,pool=pool):
+            atomic(pool.root/'workers'/(digest(worker)+'.json'),
+                   dict(worker=worker,pid=os.getpid(),at=time.time(),task=task))
+        runtime.heartbeat=heartbeat
     while not stop.is_set():
-        claimed=None;action='waiting'
-        with pool.control() as control:
-            if control is not None:
-                if not initialized:
-                    # A mismatched joining node must not poison healthy workers.
-                    runtime.verify_node();pool.initialize(retry=retry);initialized=True
-                try:
-                    action,claimed=pool.tick(runtime,worker,stop)
-                    if action in ('prepare','freeze','finalize'):
-                        runtime.barrier(action,control.fd,stop,device_fds)
+        progressed=False;dispatched=False
+        for index in [(cursor+i)%len(pairs) for i in range(len(pairs))]:
+            if index in terminal:continue
+            pool,runtime=pairs[index];claimed=None;action='waiting'
+            with pool.control() as control:
+                if control is not None:
+                    if index not in initialized:
+                        # A mismatched joining node must not poison healthy workers.
+                        runtime.verify_node();pool.initialize(retry=retry);initialized.add(index)
+                    try:
+                        action,claimed=pool.tick(runtime,worker,stop)
+                        if action in ('prepare','freeze','finalize'):
+                            runtime.barrier(action,control.fd,stop,device_fds)
+                            if stop.is_set():return 75
+                            state=read(pool.root/'state.json')
+                            state['actions'].append(dict(action=action,worker=worker,at=time.time()))
+                            state['phase']={'prepare':'train','freeze':'extension','finalize':'complete'}[action]
+                            atomic(pool.root/'state.json',state);action='advance'
+                    except Exception as exc:
                         if stop.is_set():return 75
-                        state=read(pool.root/'state.json')
-                        state['actions'].append(dict(action=action,worker=worker,at=time.time()))
-                        state['phase']={'prepare':'train','freeze':'extension','finalize':'complete'}[action]
-                        atomic(pool.root/'state.json',state)
-                        action='advance'
-                except Exception as exc:
-                    if stop.is_set():return 75
-                    if (pool.root/'state.json').exists():pool.fail(f'{type(exc).__name__}: {exc}')
-                    raise
-        heartbeat(claimed[2].get('run_id') if claimed else None)
-        if time.monotonic()-last_report>=60:
-            print(f'[{worker}] '+canonical(pool.status()),flush=True);last_report=time.monotonic()
-        if action=='complete':return 0
-        if action=='failed':return 1
-        if claimed:
-            lease,key,task,attempt=claimed
-            print(f'[{worker}] {task["kind"]} {task.get("method_id",task.get("task_id"))} seed={task.get("training_seed")}',flush=True)
+                        if (pool.root/'state.json').exists():pool.fail(f'{type(exc).__name__}: {exc}')
+                        raise
+            runtime.heartbeat(claimed[2].get('run_id') if claimed else None)
+            if action in ('complete','failed'):
+                terminal[index]=action;progressed=True;continue
+            if action=='advance':progressed=True
+            if not claimed:continue
+            lease,key,task,attempt=claimed;cursor=(index+1)%len(pairs)
+            print(f'[{worker}] {pool.binding["cohort"]} {task["kind"]} {task.get("method_id",task.get("task_id"))} seed={task.get("training_seed")}',flush=True)
             try:
                 try:
                     rc=75 if stop.is_set() else runtime.execute(task,pool.root/'tasks'/(key+'.json'),lease.fd,stop,device_fds,attempt)
@@ -289,10 +297,31 @@ def worker_loop(pool,runtime,worker,stop,*,poll=3,device_fds=(),retry=False):
                             pool.finish(key,rc,runtime,stop);break
                     time.sleep(min(poll,.2))
             finally:lease.close()
-            continue
-        if action=='advance':continue
-        stop.wait(poll)
+            dispatched=True;break
+        if time.monotonic()-last_report>=60:
+            print(f'[{worker}] '+canonical({p.binding['cohort']:p.status() for p,_ in pairs}),flush=True)
+            last_report=time.monotonic()
+        if len(terminal)==len(pairs):return 1 if 'failed' in terminal.values() else 0
+        if not dispatched and not progressed:stop.wait(poll)
     return 75
+
+
+def python_identity(executable):
+    code="""import importlib.metadata,json,sys
+packages={}
+for name in ('torch','transformers','peft','numpy','math-verify'):
+ try:packages[name]=importlib.metadata.version(name)
+ except importlib.metadata.PackageNotFoundError:packages[name]=None
+print(json.dumps({'python_version':sys.version,'packages':packages}))
+"""
+    result=subprocess.run([executable,'-c',code],text=True,capture_output=True,timeout=30)
+    if result.returncode:raise ValueError('Cannot inspect cohort Python: '+executable+': '+result.stderr.strip())
+    return json.loads(result.stdout)
+
+
+def cohort_python(cohort,fallback):
+    profile={'olmo_math':'PAIR_PYTHON','qwen_mbpp':'SWITCH_PYTHON'}.get(cohort,'')
+    return os.environ.get('V8_PYTHON_'+cohort.upper()) or os.environ.get(profile) or fallback
 
 
 class Runtime:
@@ -308,11 +337,8 @@ class Runtime:
         if len(gpus)!=self.cfg['runtime']['world_size']:raise ValueError('GPU count must match the frozen runtime world_size')
         files=sorted(list((self.runner/'switching').glob('*.py'))+list((self.runner/'configs').rglob('*.json'))+
                      [self.runner/'cluster_child.py',self.runner/'run_h100.sh'])
-        packages={}
-        for name in ('torch','transformers','peft','numpy','math-verify'):
-            try:packages[name]=importlib.metadata.version(name)
-            except importlib.metadata.PackageNotFoundError:packages[name]=None
-        self.binding=dict(schema=SCHEMA,cohort=cohort,root=str(self.root),python_version=sys.version,packages=packages,
+        environment_identity=python_identity(python)
+        self.binding=dict(schema=SCHEMA,cohort=cohort,root=str(self.root),**environment_identity,
                           coordinator_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                           runner_sha256={str(p.relative_to(self.runner)):hashlib.sha256(p.read_bytes()).hexdigest() for p in files},
                           config_sha256=spec.config_hash(self.cfg),trainer_sha256=coderepo.implementation_digest(),world_size=len(gpus))
@@ -502,10 +528,10 @@ class Runtime:
 
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('cohort')
+    parser.add_argument('cohort',nargs='?',default='all',help='default: automatically share both olmo_math and qwen_mbpp')
     parser.add_argument('--runner-root',type=Path,default=os.environ.get('V8_RUNNER_ROOT',str(Path.cwd()/'v8/experiments')))
     parser.add_argument('--root',type=Path,default=os.environ.get('V8_ROOT'))
-    parser.add_argument('--python',default=os.environ.get('V8_PYTHON'))
+    parser.add_argument('--python',default=os.environ.get('V8_PYTHON',sys.executable),help='fallback Python; cohort-specific environments take priority')
     parser.add_argument('--gpus',default=os.environ.get('CUDA_VISIBLE_DEVICES','0,1,2,3'))
     parser.add_argument('--poll-seconds',type=float,default=3)
     parser.add_argument('--retry-failed',action='store_true')
@@ -513,14 +539,17 @@ def main(argv=None):
     args=parser.parse_args(argv)
     if args.root is None:parser.error('V8_ROOT or --root is required (shared by all nodes)')
     if not re.fullmatch(r'[A-Za-z0-9_-]+',args.cohort):parser.error('cohort must be a simple configured identifier')
-    queue=Path(args.root).resolve()/args.cohort/'.multi-node'
+    cohorts=('olmo_math','qwen_mbpp') if args.cohort=='all' else (args.cohort,)
     if args.status:
-        print(json.dumps(Pool(queue,{}).status() if queue.exists() else {'phase':'not_started'},indent=2));return 0
+        statuses={}
+        for cohort in cohorts:
+            queue=Path(args.root).resolve()/cohort/'.multi-node'
+            statuses[cohort]=Pool(queue,{}).status() if queue.exists() else {'phase':'not_started'}
+        print(json.dumps(statuses if args.cohort=='all' else statuses[args.cohort],indent=2));return 0
     if not args.python:parser.error('V8_PYTHON or --python is required')
     if not args.poll_seconds>0:parser.error('poll-seconds must be positive')
     gpus=[gpu.strip() for gpu in args.gpus.split(',')]
     if any(not x.strip() for x in gpus) or len(set(gpus))!=len(gpus):parser.error('GPU IDs must be nonempty and distinct')
-    runtime=Runtime(args.runner_root,args.root,args.cohort,args.python,gpus)
     group=Path(os.environ.get('GROUP_VOLUME','/group-volume')).resolve()
     if not os.environ.get('V8_ALLOW_ANY_ROOT') and not Path(args.root).resolve().is_relative_to(group):
         parser.error('V8_ROOT must be on the shared group volume')
@@ -534,8 +563,12 @@ def main(argv=None):
             locks.append(lock)
         for signum in (signal.SIGINT,signal.SIGTERM):
             previous[signum]=signal.signal(signum,lambda *_:stop.set())
-        return worker_loop(Pool(queue,runtime.binding),runtime,socket.gethostname()+'.'+str(os.getpid()),stop,
-                           poll=args.poll_seconds,device_fds=tuple(lock.fd for lock in locks),retry=args.retry_failed)
+        pairs=[]
+        for cohort in cohorts:
+            runtime=Runtime(args.runner_root,args.root,cohort,cohort_python(cohort,args.python),gpus)
+            pairs.append((Pool(runtime.root/'.multi-node',runtime.binding),runtime))
+        return worker_loop_many(pairs,socket.gethostname()+'.'+str(os.getpid()),stop,
+                                poll=args.poll_seconds,device_fds=tuple(lock.fd for lock in locks),retry=args.retry_failed)
     finally:
         for signum,handler in previous.items():signal.signal(signum,handler)
         for lock in reversed(locks):lock.close()
