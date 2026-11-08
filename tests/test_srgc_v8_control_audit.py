@@ -242,3 +242,20 @@ def test_old_worker_does_not_poison_a_queue_with_a_different_binding(tmp_path):
     assert nodes.worker_loop(pool,Idle(),'old-worker',threading.Event(),poll=.001)==1
     assert nodes.read(pool.root/'binding.json')==updated
     assert nodes.read(pool.root/'state.json')['failure'] is None,'old worker wrote its mismatch into the new queue'
+
+
+def test_stale_heartbeat_is_not_proof_that_remote_training_stopped(tmp_path):
+    from scripts import v8_status
+    import hashlib
+    now=time.time();cohort='olmo_math';queue=tmp_path/cohort/'.multi-node';(queue/'jobs').mkdir(parents=True)
+    (queue/'state.json').write_text('{"phase":"train"}')
+    worker='remote.cluster.example.123'
+    (queue/'jobs/a.json').write_text(json.dumps(dict(state='running',task=dict(kind='train',run_id='r',horizon=275),
+        attempts=[dict(id='a',worker=worker,started_at=now-4000)])))
+    (queue/'workers').mkdir();key=hashlib.sha256(json.dumps(worker).encode()).hexdigest()
+    (queue/'workers'/(key+'.json')).write_text(json.dumps(dict(worker=worker,at=now-900)))
+    (queue/'logs').mkdir();log=queue/'logs/a.log';log.write_text('PROGRESS stage=policy_update\n');os.utime(log,(now-1,now-1))
+    _,rows=v8_status.collect(tmp_path,cohort,now)
+    assert rows[0]['status']=='unconfirmed','stale heartbeat alone was labelled as a stopped learner'
+    text=v8_status.render([tmp_path],now=now,gpus=[('0',95,60000)],host='local.cluster.example')
+    assert 'next worker resumes it' not in text

@@ -80,12 +80,13 @@ def test_age_text():
     assert status.age_text(5) == "5s" and status.age_text(600) == "10 min" and status.age_text(None) == "?"
 
 
-def test_running_job_whose_worker_stopped_is_not_shown_as_running(tmp_path):
-    """Regression: after Ctrl-C/kill the job file still says running; the view must not report live work."""
+def test_stale_heartbeat_is_not_shown_as_confirmed_running(tmp_path):
+    """The view must distinguish uncertain activity from both confirmed live work and stopped ranks."""
     now = time.time()
     base = fixture(tmp_path, now)
     key = hashlib.sha256(json.dumps("node01.gpu0123").encode()).hexdigest()
     write(base / "olmo_math" / ".multi-node" / "workers" / (key + ".json"), {"worker": "node01.gpu0123", "at": now - 900})
     text = status.render([base], now=now, gpus=[], host="node01")
     assert "running now:" not in text
-    assert "worker node01.gpu0123 not seen for" in text and "next worker resumes it" in text
+    assert "worker node01.gpu0123 heartbeat age" in text and "process liveness unverified" in text
+    assert "task activity unconfirmed" in text and "next worker resumes it" not in text

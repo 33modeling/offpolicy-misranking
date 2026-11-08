@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from v8_probe import active_roots, last_row, read, root, tail  # noqa: E402
 
 COHORTS = ('olmo_math', 'qwen_mbpp')
-ATTENTION = {'failed', 'interrupted', 'stopped'}
+ATTENTION = {'failed', 'interrupted', 'stopped', 'unconfirmed'}
 STALE_SECONDS = 180  # workers heartbeat every 10 s while a child runs (srgc_v8_nodes.Runtime.process)
 
 
@@ -92,10 +92,11 @@ def collect(base, cohort, now):
         if row['status'] == 'running' and attempt.get('worker'):
             seen = worker_seen(queue, attempt['worker'], now)
             if seen is None or seen > STALE_SECONDS:
-                # The job file still says running, but its worker stopped (Ctrl-C, killed, node lost).
-                row['status'] = 'stopped'
-                row['error'] = (f"worker {attempt['worker']} not seen for {age_text(seen)}" if seen is not None
-                                else f"worker {attempt['worker']} has no heartbeat") + '; the next worker resumes it'
+                # Admission, long I/O or a lost worker can all stop heartbeats. This is not proof
+                # that ranks/leases are gone, especially on a remote host with fresh work logs.
+                row['status'] = 'unconfirmed'
+                row['error'] = (f"worker {attempt['worker']} heartbeat age {age_text(seen)}" if seen is not None
+                                else f"worker {attempt['worker']} has no heartbeat") + '; process liveness unverified'
         if attempt.get('id'):
             log = queue / 'logs' / (str(attempt['id']) + '.log')
             row['log'] = str(log)
@@ -157,7 +158,9 @@ def this_node_lines(rows, gpus, host):
         what = f"running {row['task']}" + (f" · {row['done']}/{row['total']} done" if row['done'] is not None and row['total'] else '')
         line = f"this node ({host}): {what}" + (f" · log {age_text(row['log_age'])} ago" if row.get('log_age') is not None else '')
     else:
-        line = f"this node ({host}): NOT running a task of this queue"
+        uncertain=[r for r in rows if r['status']=='unconfirmed' and r.get('host')==host]
+        line = (f"this node ({host}): task activity unconfirmed" if uncertain
+                else f"this node ({host}): no recorded running task of this queue")
     lines = [line]
     if gpus:
         lines.append('gpu memory used: ' + ' '.join(f'{i}:{m}MiB' for i, _, m in gpus)
