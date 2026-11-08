@@ -47,6 +47,8 @@ def worker_seen(queue, worker, now):
 def age_text(seconds):
     if seconds is None:
         return '?'
+    if seconds >= 5400:
+        return f"{int(seconds // 3600)}h{int(seconds % 3600 // 60):02d}m"
     return f"{seconds / 60:.0f} min" if seconds >= 120 else f"{max(0, seconds):.0f}s"
 
 
@@ -572,8 +574,24 @@ def render_srgc(live, base, cohort, now, host):
 # One compact block per cohort: short column names, one symbol per cell, one line per running task
 # and per problem, one line for all nodes; the summary (counts, workers, this node) is at the bottom.
 
+LEGEND_TABLE = "intr = interrupted (reruns automatically) · dead = task on a dead node"
 LEGEND = "✓ done   ▶n running (updates done)   ○ ready   · waiting   ✗ failed   ⏸ interrupted   ? no heartbeat"
 COHORT_LABEL = {'olmo_math': 'OLMo MATH', 'qwen_mbpp': 'Qwen MBPP'}
+COHORT_SHORT = {'OLMo MATH': 'OLMo', 'Qwen MBPP': 'Qwen'}
+COLOR = False   # set by main() only when stdout is a terminal (never in logs, pipes or tests)
+STYLE = {'ok': '32', 'run': '1;32', 'bad': '1;31', 'warn': '33', 'dim': '2', 'head': '1', 'info': '36'}
+
+
+def paint(text, style):
+    return f"\033[{STYLE[style]}m{text}\033[0m" if COLOR and style and text.strip() else text
+
+
+def mark_style(mark):
+    mark = mark.strip()
+    if not mark or mark == '-':
+        return 'dim'
+    return {'✓': 'ok', '✗': 'bad', '?': 'warn', '⏸': 'warn', '○': None, '·': 'dim'}.get(mark[0], 'run' if mark[0] == '▶' else
+           'bad' if '✗' in mark else 'warn' if ('?' in mark or '⏸' in mark) else 'run' if '▶' in mark else None)
 PHASE_LABEL = {'prepare': 'prepare', 'train': 'training', 'freeze': 'budget freeze', 'extension': 'budget extension',
                'evaluation': 'evaluation', 'finalize': 'analysis', 'complete': 'complete'}
 STAGE_SHORT = {'generation_start': 'answering', 'generation': 'answering', 'generation_finished': 'answers done',
@@ -627,7 +645,7 @@ def clean_block(base, cohort, now, host, width):
     queue = Path(base) / cohort / '.multi-node'
     label = COHORT_LABEL.get(cohort, cohort)
     if not queue.exists():
-        return [], f"{label:<10} not started", None, []
+        return [], f"{label:<10} not started", None, [], dict(label=label, phase='not started', total=0)
     state, rows = collect(base, cohort, now)
     trained = {r.get('run_id'): r['arm'] for r in rows if r.get('kind') == 'train' and r.get('phase') != 'extension'}
     train_cols, seeds, cells, ext, ev = [], [], {}, {}, {}
@@ -653,6 +671,10 @@ def clean_block(base, cohort, now, host, width):
     def count_cell(items):
         if not items:
             return '-'
+        if len(items) == 1:
+            return symbol(items[0])
+        if all(i['status'] == 'pending' for i in items):
+            return '○' if any(i.get('ready') for i in items) else '·'
         done = sum(i['status'] == 'done' for i in items)
         run = sum(i['status'] == 'running' for i in items)
         if done == len(items):
@@ -671,11 +693,21 @@ def clean_block(base, cohort, now, host, width):
         if ev:
             table[(seed, 'eval')] = count_cell(ev.get(seed, []))
     widths = {c: max(len(c), *(len(table[(s, c)]) for s in seeds)) for c in cols} if seeds else {}
-    lines = [f"━━ {label} ({cohort}) " + '━' * max(3, min(width, 100) - len(label) - len(cohort) - 7)]
+    phase_text = PHASE_LABEL.get(state.get('phase'), state.get('phase', 'not started'))
+    title = f"{label} · {phase_text} "
+    lines = [paint(title, 'head') + paint('─' * max(3, min(width, 100) - len(title)), 'dim')]
+    def row_text(first, cells, header=False):
+        plain, coloured = [first], [paint(first, 'dim') if header else first]
+        for i, c in enumerate(cols):
+            if c in ('ext', 'eval') and (i == 0 or cols[i - 1] not in ('ext', 'eval')):
+                plain.append('│'); coloured.append(paint('│', 'dim'))
+            cell = f'{cells[c]:<{widths[c]}}'
+            plain.append(cell); coloured.append(paint(cell, 'dim' if header else mark_style(cells[c])))
+        return clip('  '.join(plain), width) if len('  '.join(plain)) > width else '  '.join(coloured)
     if seeds:
-        lines.append('seed  ' + '  '.join(f'{c:<{widths[c]}}' for c in cols))
+        lines.append(row_text(' seed', {c: c for c in cols}, header=True))
         for seed in seeds:
-            lines.append(f'{seed!s:>4}  ' + '  '.join(f'{table[(seed, c)]:<{widths[c]}}' for c in cols))
+            lines.append(row_text(f'{seed!s:>5}', {c: table[(seed, c)] for c in cols}))
     else:
         lines.append('  (no tasks yet)')
     problems = [r for r in rows if r['status'] in ATTENTION]
@@ -735,7 +767,10 @@ def clean_block(base, cohort, now, host, width):
                + (f"  updates {done_updates:,}/{planned:,}" if planned else ''))
     wanted = counts['running'] + counts['ready']
     nodes = (len(live), sum(1 for w in live if any(r.get('worker') == w['worker'] and r['status'] in ('running', 'unconfirmed') for r in rows)))
-    return lines, summary, (nodes, wanted), attention
+    stats = dict(label=label, phase=phase, done=counts['done'], total=total, pct=pct, running=counts['running'],
+                 ready=counts['ready'], waiting=counts['waiting'], failed=counts['attention'],
+                 interrupted=counts['interrupted'], dead=counts['dead'], updates=(done_updates, planned))
+    return lines, summary, (nodes, wanted), attention, stats
 
 
 def lease_held(queue, key):
@@ -904,8 +939,8 @@ def node_table(bases, cohorts, now, this_host=None):
                     if local_alive:
                         doing = f"process {pid} still alive here but silent: hung? kill {pid}, rerun same command"
                     else:
-                        doing = (f"no heartbeat {age_text(r.get('beat_age'))}" if r.get('beat_age') is not None else 'never sent a heartbeat') + \
-                                ': node down or hung? restart that node (same command); its task then resumes'
+                        doing = ('down or hung → restart it (same command)' if r.get('beat_age') is not None
+                                 else 'never sent a heartbeat → restart it (same command)')
                     row.update(state='DEAD', doing=doing)
                 out.append(row)
             continue
@@ -928,11 +963,11 @@ def node_table(bases, cohorts, now, this_host=None):
                 doing = f"CPU stage {PHASE_LABEL.get(info[cohort]['phase'], info[cohort]['phase'])}" + \
                         (f", log {age_text(log)} ago" if log is not None else '')
             else:
-                doing = f"checking / claiming tasks ({age_text(age)})"
+                doing = f"checking/claiming tasks ({age_text(age)})"
             out.append(dict(base, state='busy', experiment=label, doing=doing))
             continue
         ready = sum(info[c]['ready'] for c in live if c in info)
-        doing = (f"idle while {ready} task{'s are' if ready != 1 else ' is'} ready: GPU busy or setup wait? see its console"
+        doing = (f"idle while {ready} task{'s are' if ready != 1 else ' is'} ready (GPU busy? see its console)"
                  if ready else 'waiting for work')
         if silent:
             doing += ' · not serving ' + ', '.join(COHORT_LABEL.get(c, c) for c in silent) + ' (gave up? see its console)'
@@ -955,63 +990,114 @@ def render_clean(bases, now=None, gpus=None, host=None, cohorts=COHORTS, width=N
 
 
 def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
-    out, summaries, attention = [], [], []
-    active = running_nodes = wanted = 0
+    out, stats, attention = [], [], []
+    wanted = 0
     mine = None
     for base in bases:
         for cohort in cohorts:
-            lines, summary, extra, problems = clean_block(base, cohort, now, host, width)
+            lines, _summary, extra, problems, stat = clean_block(base, cohort, now, host, width)
             attention += problems
+            stats.append(stat)
             if lines:
                 out += [*lines, '']
-            summaries.append(summary)
             if extra:
-                (a, r), w = extra
-                active, running_nodes, wanted = max(active, a), max(running_nodes, r), wanted + w
+                wanted += extra[1]
             if mine is None and lines:
                 _, rows = collect(base, cohort, now)
                 job = next((x for x in rows if x['status'] == 'running' and x.get('host') == host), None)
                 if job:
-                    mine = f"▶ s{job['seed']} {short_arm(job['arm'])} ({cohort})"
-    out.append(LEGEND)
-    out.append('─' * min(width, 100))
-    out.append(f"V8 status · {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(now))} · {', '.join(str(b) for b in bases)}")
-    out += summaries
+                    mine = f"▶ s{job['seed']} {short_arm(job['arm'])} ({COHORT_SHORT.get(COHORT_LABEL.get(cohort, cohort), cohort)})"
+    out.append(paint(LEGEND, 'dim'))
+    out.append(paint(LEGEND_TABLE, 'dim'))
+    stamp = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(now))
+    head = f"━━ V8 status · {stamp} "
+    out.append(paint(head + '━' * max(3, min(width, 100) - len(head)), 'head'))
+    out.append(paint('   ' + ', '.join(str(b) for b in bases), 'dim'))
+
+    # 1. one aligned row per experiment
+    cols = ('phase', 'progress', 'done', 'running', 'ready', 'waiting', 'failed', 'interrupted', 'on dead node', 'updates')
+    table = []
+    for st in stats:
+        if not st.get('total'):
+            table.append(dict(name=st['label'], phase=st.get('phase', 'not started')))
+            continue
+        filled = round(12 * st['done'] / st['total'])
+        done_u, planned = st['updates']
+        table.append(dict(name=st['label'], phase=st['phase'], progress=f"{'█' * filled}{'░' * (12 - filled)} {st['pct']:>3}%",
+                          done=f"{st['done']}/{st['total']}", running=st['running'], ready=st['ready'], waiting=st['waiting'],
+                          failed=st['failed'], interrupted=st['interrupted'], **{'on dead node': st['dead']},
+                          updates=f"{done_u:,}/{planned:,}" if planned else '-'))
+    used = [c for c in cols if c in ('phase', 'progress', 'done', 'running', 'updates')
+            or any(isinstance(r.get(c), int) and r.get(c) for r in table)]
+    def cell(r, c):
+        v = r.get(c, '')
+        return '-' if v == 0 else str(v)
+    title = {'running': 'run', 'waiting': 'wait', 'failed': 'fail', 'interrupted': 'intr', 'on dead node': 'dead'}
+    name_w = max(10, *(len(r['name']) for r in table)) if table else 10
+    w = {c: max(len(title.get(c, c)), *(len(cell(r, c)) for r in table)) for c in used}
+    right = {'done', 'running', 'ready', 'waiting', 'failed', 'interrupted', 'on dead node', 'updates'}
+    fmt = lambda c, v: f"{v:>{w[c]}}" if c in right else f"{v:<{w[c]}}"
+    out.append(paint(' ' + ' ' * name_w + '  ' + '  '.join(fmt(c, title.get(c, c)) for c in used), 'dim'))
+    for r in table:
+        parts = [paint(f" {r['name']:<{name_w}}", 'head')]
+        for c in used:
+            v = fmt(c, cell(r, c))
+            style = ('bad' if c in ('failed', 'on dead node') and v.strip() not in ('-', '') else
+                     'warn' if c == 'interrupted' and v.strip() not in ('-', '') else
+                     'run' if c == 'running' and v.strip() not in ('-', '') else
+                     'ok' if c == 'progress' else 'dim' if v.strip() in ('-', '') else None)
+            parts.append(paint(v, style))
+        out.append('  '.join(parts))
+
+    # 2. problems, newest failures first
     if attention:
-        out.append(f"needs attention ({len(attention)})")
-        out += attention[:10]
+        out.append('')
+        out.append(paint(f" needs attention ({len(attention)})", 'head'))
+        for line in attention[:10]:
+            mark = line.strip()[:1]
+            out.append(paint(clip(line, width), 'bad' if mark == '✗' else 'warn' if mark in '?⏸!' else None))
         if len(attention) > 10:
-            out.append(f"  … {len(attention) - 10} more")
-    gpu_text = ' '.join(f'{i}:{u}%' for i, u, _ in gpus) if gpus else 'unknown'
-    out.append(f"this node  {host}: {mine or 'no V8 task here'} · GPU {gpu_text}")
+            out.append(paint(f"   … {len(attention) - 10} more", 'dim'))
+
+    # 3. what every node is doing
+    out.append('')
     table = node_table(bases, cohorts, now, host)
     shown = table if all_nodes else [r for r in table if r['state'] not in ('gone', 'finished')]
+    order = ('running', 'busy', 'starting', 'idle', 'DEAD', 'gone', 'finished')
+    per = {k: sorted({(r['host'], r['pid']) for r in table if r['state'] == k}) for k in order}
+    alive = sum(len(per[k]) for k in ('running', 'busy', 'starting', 'idle'))
     if table:
-        order = ('running', 'busy', 'starting', 'idle', 'DEAD', 'gone', 'finished')
-        per = {k: sorted({(r['host'], r['pid']) for r in table if r['state'] == k}) for k in order}
-        alive = len(per['running']) + len(per['busy']) + len(per['starting']) + len(per['idle'])
         hosts = len({r['host'] for r in table if r['state'] not in ('gone', 'finished')})
         hidden = [f"{len(per[k])} {k}" for k in ('gone', 'finished') if per[k]]
+        counts = ' · '.join(f"{len(per[k])} {k}" for k in ('running', 'busy', 'starting', 'idle') if per[k]) or '0 running'
+        line = paint(f" nodes ({hosts} host{'s' if hosts != 1 else ''})", 'head') + f"  {counts}"
+        line += '  ' + (paint(f"✗ {len(per['DEAD'])} DEAD: {', '.join(h for h, _ in per['DEAD'])}", 'bad') if per['DEAD']
+                        else paint('0 DEAD', 'dim'))
+        out.append(line)
         more = max(0, wanted - alive)
-        out.append(f"nodes      {hosts} host{'s' if hosts != 1 else ''} · "
-                   + ' · '.join(f"{len(per[k])} {k}" for k in ('running', 'busy', 'starting', 'idle', 'DEAD') if per[k] or k in ('running', 'DEAD'))
-                   + (f"   DEAD: {', '.join(h for h, _ in per['DEAD'])}" if per['DEAD'] else '')
-                   + (f"   ({', '.join(hidden)} not shown; --all-nodes)" if hidden and not all_nodes else ''))
-        out.append(f"           tasks that can run now: {wanted} · alive workers: {alive}"
-                   + (f" → {more} more 4-GPU node{'s' if more != 1 else ''} would help" if more else ''))
+        out.append(paint(f"   tasks that can run now {wanted} · alive workers {alive}", 'dim') +
+                   (paint(f"  → {more} more 4-GPU node{'s' if more != 1 else ''} would help", 'info') if more else '') +
+                   (paint(f"   ({', '.join(hidden)} not shown; --all-nodes)", 'dim') if hidden and not all_nodes else ''))
         if shown:
-            cols = (('host', 'host'), ('gpus', 'gpus'), ('state', 'state'), ('experiment', 'experiment'), ('task', 'task'),
-                    ('updates', 'updates'), ('took', 'running for'), ('beat', 'heartbeat'))
-            w = {k: max(len(title), *(len(str(r[k])) for r in shown)) for k, title in cols}
-            out.append('   ' + '  '.join(f"{title:<{w[k]}}" for k, title in cols) + '  now')
-            for r in shown:
-                mark = '✗' if r['state'] == 'DEAD' else '▶' if r['state'] == 'running' else ' '
-                out.append(f" {mark} " + '  '.join(f"{str(r[k]):<{w[k]}}" for k, _ in cols) + f"  {r['doing']}")
+            ncols = (('host', 'host'), ('gpus', 'gpus'), ('state', 'state'), ('experiment', 'exp'), ('task', 'task'),
+                     ('updates', 'updates'), ('took', 'time'), ('beat', 'beat'))
+            rows = [dict(r, experiment=COHORT_SHORT.get(r['experiment'], r['experiment']),
+                         beat=r['beat'].replace(' ago', '')) for r in shown]
+            nw = {k: max(len(t), *(len(str(r[k])) for r in rows)) for k, t in ncols}
+            out.append(paint('   ' + '  '.join(f"{t:<{nw[k]}}" for k, t in ncols) + '  now', 'dim'))
+            for r in rows:
+                mark = '✗' if r['state'] == 'DEAD' else '▶' if r['state'] == 'running' else '·' if r['state'] == 'busy' else ' '
+                text = clip(f" {mark} " + '  '.join(f"{str(r[k]):<{nw[k]}}" for k, _ in ncols) + f"  {r['doing']}", width)
+                out.append(paint(text, {'DEAD': 'bad', 'busy': 'warn', 'starting': 'info', 'idle': 'dim'}.get(r['state'])))
             if per['DEAD']:
-                out.append("   DEAD = task assigned and no heartbeat for over 3 min (or lock held but silent over 10 min)")
+                out.append(paint("   DEAD = task assigned and no heartbeat for over 3 min (or lock held but silent over 10 min)", 'dim'))
     else:
-        out.append("nodes      no worker has started yet" + (f" · tasks that can run now: {wanted}" if wanted else ''))
-    return '\n'.join(clip(line, width) for line in out) + '\n'
+        out.append(paint(' nodes', 'head') + '  no worker has started yet' + (f" · tasks that can run now {wanted}" if wanted else ''))
+
+    # 4. this node
+    gpu_text = ' '.join(f'{u}%' for i, u, _ in gpus) if gpus else 'unknown'
+    out.append(paint(' this node', 'head') + f"  {host} · GPU {gpu_text} · " + (paint(mine, 'run') if mine else paint('no V8 task here', 'dim')))
+    return '\n'.join(out) + '\n'
 
 
 def render(bases, now=None, gpus=None, host=None, cohorts=COHORTS, style='simple', all_nodes=False):
@@ -1042,6 +1128,8 @@ def main(argv=None):
     parser.add_argument('--watch', nargs='?', const=3.0, type=float, default=None, metavar='SECONDS',
                         help='refresh every SECONDS (default 3) until Ctrl-C')
     args = parser.parse_args(argv)
+    global COLOR
+    COLOR = sys.stdout.isatty() and not os.environ.get('NO_COLOR') and os.environ.get('TERM') != 'dumb'
     # An explicit V8_ROOT wins; otherwise the roots of this node's running V8 processes, else the default.
     bases = [Path(os.environ['V8_ROOT'])] if os.environ.get('V8_ROOT') else (active_roots() or [root(os.environ)])
     if args.watch is None:

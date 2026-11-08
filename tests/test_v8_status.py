@@ -229,18 +229,22 @@ def test_clean_view_is_compact_with_summary_last(tmp_path):
                                                    "question_index": 3, "questions_total": 40, "response_tokens": 812})
     text = status.render_clean([base], now=now, gpus=[("0", 97, 61000)], host="node01", width=160)
     lines = text.rstrip().splitlines()
-    assert lines[0].startswith("━━ OLMo MATH (olmo_math)")
+    norm = lambda line: ' '.join(line.split())
+    assert lines[0].startswith("OLMo MATH · training ─")
     assert "seed  On" in text and "▶37" in text
-    assert "needs attention" in text and "CUDA out of memory" in text
-    bottom = lines[[i for i, line in enumerate(lines) if line.startswith("V8 status · ")][0]:]
-    assert bottom[1].startswith("OLMo MATH  training ") and "1/4 done (25%)  running 1  ready 0  waiting 1  failed 1  updates 37/275" in bottom[1]
-    assert bottom[2].startswith("Qwen MBPP  not started")
-    assert bottom[3] == "needs attention (1)" and bottom[4].startswith("  ✗ OLMo MATH s6 eval eval-final failed")
-    assert bottom[5].startswith("this node  node01: ▶ s5 On")
-    assert bottom[6].startswith("nodes      1 host · 1 running · 0 DEAD")
-    row = next(line for line in bottom if line.startswith(" ▶ node01"))
-    for cell in (" running ", " OLMo MATH ", " s5 On ", " 37/275 ", "answering 3/40, 812 tok (5s ago)"):
+    top, bottom = text.split("━━ V8 status · ")
+    assert "needs attention" not in top
+    summary = next(norm(line) for line in bottom.splitlines() if line.startswith(" OLMo MATH "))
+    assert summary.startswith("OLMo MATH training") and " 25% 1/4 " in summary and summary.endswith("37/275")
+    header = next(norm(line) for line in bottom.splitlines() if norm(line).startswith("phase progress"))
+    assert header == "phase progress done run wait fail updates"
+    assert norm(next(line for line in bottom.splitlines() if line.startswith(" Qwen MBPP"))) == "Qwen MBPP not started"
+    assert " needs attention (1)" in bottom and "  ✗ OLMo MATH s6 eval eval-final failed" in bottom
+    assert " nodes (1 host)  1 running  0 DEAD" in bottom
+    row = next(line for line in bottom.splitlines() if line.startswith(" ▶ node01"))
+    for cell in (" running ", " OLMo ", " s5 On ", " 37/275 ", "answering 3/40, 812 tok (5s ago)"):
         assert cell in row, (cell, row)
+    assert lines[-1] == " this node  node01 · GPU 97% · ▶ s5 On (OLMo)"
     assert all(len(line) <= 160 for line in lines)
 
 
@@ -288,22 +292,22 @@ def test_node_table_one_row_per_worker_with_what_it_does(tmp_path):
     finally:
         os.close(fd)
     bottom = text.split("V8 status · ")[1].splitlines()
-    head = next(line for line in bottom if line.startswith("nodes "))
-    assert "6 hosts · 3 running · 1 starting · 1 idle · 2 DEAD" in head and "DEAD: h100-a03, h100-a04" in head
-    assert "(1 gone not shown; --all-nodes)" in head
-    rows = [line for line in bottom if line[:3] in (" ▶ ", " ✗ ", "   ") and " h100-" in line[:12]]
-    assert [r.split()[1] if r[1] in "▶✗" else r.split()[0] for r in rows] == \
+    head = next(line for line in bottom if line.startswith(" nodes ("))
+    assert head.startswith(" nodes (6 hosts)  3 running · 1 starting · 1 idle  ✗ 2 DEAD: h100-a03, h100-a04")
+    assert "(1 gone not shown; --all-nodes)" in bottom[bottom.index(head) + 1]
+    rows = [line for line in bottom if line[:3] in (" ▶ ", " ✗ ", " · ", "   ") and " h100-" in line[:12]]
+    assert [r.split()[1] if r[1] in "▶✗·" else r.split()[0] for r in rows] == \
         ["h100-a01", "h100-a02", "h100-b10", "h100-b10", "h100-b11", "h100-a03", "h100-a04"]   # running, starting, idle, DEAD
     by = {}
     for r in rows:
-        by.setdefault(r.split()[1] if r[1] in "▶✗" else r.split()[0], []).append(r)
+        by.setdefault(r.split()[1] if r[1] in "▶✗·" else r.split()[0], []).append(r)
     a2 = by["h100-a02"][0]
-    assert a2.startswith(" ▶ ") and " 0-3 " in a2 and " OLMo MATH " in a2 and " s6 SR25 " in a2 and " 3h02m " in a2 \
+    assert a2.startswith(" ▶ ") and " 0-3 " in a2 and " OLMo " in a2 and " s6 SR25 " in a2 and " 3h02m " in a2 \
         and "scoring questions (20s ago)" in a2
-    assert by["h100-a03"][0].startswith(" ✗ ") and "node down or hung? restart that node" in by["h100-a03"][0]
+    assert by["h100-a03"][0].startswith(" ✗ ") and "down or hung → restart it" in by["h100-a03"][0]
     assert "lock still held" in by["h100-a04"][0]
     b10 = by["h100-b10"]
-    assert " 0-3 or 4-7 " in b10[0] and " Qwen MBPP " in b10[0] and " s7 On " in b10[0] and " 40m " in b10[0]
+    assert " 0-3 or 4-7 " in b10[0] and " Qwen " in b10[0] and " s7 On " in b10[0] and " 40m " in b10[0]
     assert " starting " in b10[1] and "loading runtime / checking node" in b10[1]
     assert " idle " in by["h100-b11"][0] and "waiting for work" in by["h100-b11"][0]
     assert "h100-b12" not in by and not any(" gone " in r for r in rows)   # 'gone 보기 싫어': gone workers are only counted
@@ -343,7 +347,7 @@ def two_cohort_base(tmp_path, now, olmo_phase="train"):
 
 def node_rows(text):
     bottom = text.split("V8 status · ")[1].splitlines()
-    return [line for line in bottom if line[:3] in (" ▶ ", " ✗ ", "   ") and " h-" in line[:10]]
+    return [line for line in bottom if line[:3] in (" ▶ ", " ✗ ", " · ", "   ") and " h-" in line[:10]]
 
 
 def test_removed_node_disappears_within_90_seconds(tmp_path):
@@ -368,12 +372,13 @@ def test_busy_in_other_cohort_is_not_idle(tmp_path):
     worker_beat(m, "h-cpu.1", 2, None, now); worker_beat(q, "h-cpu.1", 150, None, now)
     log = q / "logs" / "cpu-freeze-abc.log"; log.parent.mkdir(parents=True); log.write_text("x\n"); os.utime(log, (now - 2, now - 2))
     rows = node_rows(status.render_clean([base], now=now, gpus=[], host="viewer", width=200))
-    assert len(rows) == 1 and " busy " in rows[0] and " OLMo MATH " in rows[0] and "CPU stage budget freeze, log 2s ago" in rows[0]
+    assert len(rows) == 1 and rows[0].startswith(" · ") and " busy " in rows[0] and " OLMo " in rows[0] \
+        and "CPU stage budget freeze, log 2s ago" in rows[0]
     base2, q2, m2 = two_cohort_base(tmp_path / "b", now)
     worker_beat(m2, "h-scan.1", 2, None, now); worker_beat(q2, "h-scan.1", 150, None, now)
     worker_beat(m2, "h-short.2", 2, None, now); worker_beat(q2, "h-short.2", 60, None, now)   # short scan / stale read
     rows = node_rows(status.render_clean([base2], now=now, gpus=[], host="viewer", width=200))
-    assert " busy " in rows[0] and " h-scan " in rows[0] and "checking / claiming tasks (2 min)" in rows[0]
+    assert " busy " in rows[0] and " h-scan " in rows[0] and "checking/claiming tasks (2 min)" in rows[0]
     assert " idle " in rows[1] and " h-short " in rows[1]
     base3, q3, m3 = two_cohort_base(tmp_path / "c", now)
     worker_beat(m3, "h-gave.1", 2, None, now); worker_beat(q3, "h-gave.1", 1000, None, now)
@@ -395,13 +400,14 @@ def test_assigned_task_uses_the_lease_lock_not_heartbeat_age(tmp_path):
     fd = os.open(q / "leases" / "held.lock", os.O_CREAT | os.O_RDWR); fcntl.flock(fd, fcntl.LOCK_EX)
     try:
         text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
+        stats = status.clean_block(base, "olmo_math", now, "viewer", 220)[4]   # while the lock is still held
     finally:
         os.close(fd)
     by = {next(w for w in r.split() if w.startswith("h-")): r for r in node_rows(text)}
     assert " running " in by["h-load"] and "no heartbeat 4 min, task lock held" in by["h-load"]
     assert " running " in by["h-blip"] and not by["h-blip"].startswith(" ✗ ")   # 'free' lock + 2 min: not DEAD
-    assert by["h-gone"].startswith(" ✗ ") and " DEAD " in by["h-gone"] and "no heartbeat 3 min" in by["h-gone"]
-    assert "running 2" in text and "on dead node 1" in text
+    assert by["h-gone"].startswith(" ✗ ") and " DEAD " in by["h-gone"] and " 3 min " in by["h-gone"] and "down or hung" in by["h-gone"]
+    assert stats["running"] == 2 and stats["dead"] == 1
 
 
 def test_idle_with_ready_work_says_so(tmp_path):
@@ -474,11 +480,12 @@ def test_healthy_nodes_never_get_an_x_and_attention_is_at_the_bottom(tmp_path):
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
     rows = node_rows(text)
     assert len(rows) == 4 and all(r.startswith(" ▶ ") and " running " in r for r in rows), rows
-    assert "on dead node" not in text and "· 0 DEAD" in text
+    stats = status.clean_block(base, "olmo_math", now, "viewer", 200)[4]
+    assert stats["running"] == 4 and stats["dead"] == 0 and "on dead node" not in text and "  0 DEAD" in text
     top, bottom = text.split("V8 status · ")
-    assert "needs attention" not in top and "needs attention (2)" in bottom
+    assert "needs attention" not in top and " needs attention (2)" in bottom
     lines = bottom.splitlines()
-    i = lines.index("needs attention (2)")
+    i = lines.index(" needs attention (2)")
     assert lines[i + 1].startswith("  ✗ OLMo MATH s9 SR50 failed ") and "(attempt 1): task exit=1" in lines[i + 1]
     assert lines[i + 2].startswith("  ⏸ OLMo MATH s8 On interrupted 5 min ago: reruns automatically")
-    assert "failed 1" in bottom and "interrupted 1" in bottom
+    assert stats["failed"] == 1 and stats["interrupted"] == 1
