@@ -1,0 +1,3 @@
+Previous launcher source7a80c65, isolated exported scripts without runtime; no model/GPU start.
+exit=2
+V8 startup: V8 runtime not found beside the launcher; use the complete offline bundle.

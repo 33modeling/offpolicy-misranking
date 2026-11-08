@@ -1,0 +1,12 @@
+{
+  "cohort_id": "olmo_mbpp", "priority": "secondary", "dataset": "mbpp", "confirmatory": true,
+  "model": {"repository": "allenai/Olmo-3-1025-7B", "revision": "a81bae42db3975be1671e27b9c9a56da1a9f980f",
+            "adapter": "LoRA r16 alpha32 q_proj,v_proj dropout0", "thinking_mode": "olmo_rlzero_code prompt"},
+  "runtime": {"profile": "olmo", "world_size": 4, "gpu_type": "H100", "source_plan": "auto:mbpp",
+              "python_env_var": "SWITCH_PYTHON",
+              "plan_candidates": ["srgc_rebuttal/experiments/mbpp_pair_seeds.json", "srgc_rebuttal/experiments/mbpp_seeds.json"]},
+  "seeds": {"training": [5, 6, 7, 8, 9]},
+  "cost_basis": {"unit": "GPU-hours on 4xH100", "sr_update": 0.0768, "on_training_update": 0.0788, "on_refresh": 0.653,
+                 "srgc_check_extra": 0.24, "evaluation_final": null, "cache_build": null, "prefix": null,
+                 "sources": ["OLMo MATH basis reused as a planning proxy only (rebuttal plan v2 §5.2: 'MBPP training cost similar'); replace with profile output"]}
+}

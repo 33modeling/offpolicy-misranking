@@ -23,8 +23,8 @@ MBPP 양쪽의 준비된 작업을 확인하고, 한 번에4GPU 작업 하나를
 
 원래 trainer는 기존 `V8_CODE_ROOT`/`OM_CODE_ROOT`, 저장된 locator의 원본 코드 경로,
 현재 저장소·상위 저장소 및 기존 user-volume 위치에서 찾는다. 기존 run의 구현 해시와
-prefix 해시는 원래 검증 경로에서 확인한다. runtime은 오프라인 묶음에 포함된
-`v8/experiments`나 기존 v8 checkout에서 찾는다. source는 paper commit
+prefix 해시는 원래 검증 경로에서 확인한다. runtime은 이제 이 코드 저장소의 `v8/experiments`에 함께 포함된다. 그 사본을
+우선 사용하며 별도 원고 저장소나 수동 runtime 경로를 요구하지 않는다. source는 paper commit
 `3d0c08336950d2697dc66cbe3570a230e449f33b` 그대로다.
 
 공유 결과 경로는 기존 `V8_ROOT`, 또는 같은 작업 폴더의 `v8/`를 쓴다. exporter는

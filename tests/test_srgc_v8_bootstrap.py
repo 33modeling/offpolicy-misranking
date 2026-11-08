@@ -24,6 +24,8 @@ def layout(tmp_path):
     tools.mkdir(parents=True)
     file(bundle/'v8/experiments/cluster_child.py')
     file(bundle/'v8/experiments/configs/base.json','{}')
+    file(bundle/'v8/experiments/run_h100.sh')
+    file(bundle/'v8/experiments/switching/cli.py')
     env=dict(GROUP_VOLUME=str(tmp_path/'group'),USER_VOLUME=str(tmp_path/'user'),PATH=os.environ['PATH'])
     return work,trainer,bundle,tools,env
 
@@ -83,3 +85,16 @@ def test_no_argument_shell_reuses_existing_environment_from_unrelated_directory(
     result=subprocess.run(['sh',str(scripts/'run_v8_nodes.sh')],cwd=tmp_path,env=env,text=True,capture_output=True,timeout=5)
     assert result.returncode==0,result.stderr
     assert json.loads(result.stdout)==dict(args=[],root=str(work/'v8'),code=str(trainer),runner=str(bundle/'v8/experiments'))
+
+
+def test_actual_code_checkout_contains_and_loads_its_runtime_without_a_paper_checkout(tmp_path):
+    tools=Path(__file__).resolve().parents[1]
+    expected=tools/'v8/experiments'
+    for name in ('cluster_child.py','run_h100.sh','switching/cli.py','configs/base.json'):
+        assert (expected/name).is_file(), 'the code checkout must ship its runtime, not require a second repository'
+    env=environment(tools,{'PATH':os.environ['PATH'],'GROUP_VOLUME':str(tmp_path/'group')},cwd=tmp_path)
+    assert env['V8_RUNNER_ROOT']==str(expected)
+    result=subprocess.run([env['V8_PYTHON'],'-m','switching.cli','inspect-repo'],cwd=expected,
+                          env=env,text=True,capture_output=True,timeout=10)
+    assert result.returncode==0,result.stderr
+    assert json.loads(result.stdout)['code_root']==str(tools)

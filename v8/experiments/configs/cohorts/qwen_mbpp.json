@@ -1,0 +1,15 @@
+{
+  "cohort_id": "qwen_mbpp", "priority": "replication", "dataset": "mbpp", "confirmatory": true,
+  "model": {"repository": "Qwen/Qwen3.5-9B", "revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+            "adapter": "LoRA q_proj,v_proj,in_proj_qkv,in_proj_z,in_proj_b,in_proj_a (scripts/srgc_qwen35.py)",
+            "thinking_mode": "per configs/qwen35_9b_grpo.json"},
+  "runtime": {"profile": "qwen", "world_size": 4, "gpu_type": "H100", "source_plan": "qwen:mbpp",
+              "python_env_var": "SWITCH_PYTHON",
+              "plan_candidates": ["$SRGC_QWEN_ROOT/experiments/qwen35-9b-mbpp.json (default $OM_WORK/srgc-rebuttal/qwen35-9b-v2)"]},
+  "seeds": {"training": [5, 6, 7, 8, 9]},
+  "cost_basis": {"unit": "GPU-hours on 4xH100 (recorded device-hours)",
+                 "sr_update": 0.3166, "on_training_update": 0.3456, "on_refresh": 5.65, "srgc_check_extra": 2.31,
+                 "evaluation_final": 15.5, "cache_build": 18.0, "prefix": 11.8,
+                 "sources": ["v7/evidence/2026-10-19/qwen-mbpp-gpu-times.md (SR >=79.16 GPU-h/250 updates; On refresh 5.65, Switch check 7.96 GPU-h; complete cache invocations 18.0-18.4 GPU-h)",
+                             "v7/evidence/2026-10-19/qwen-mbpp-gpu-times.csv (evaluation_gpu_hours 12.4-18.5 per endpoint; prefix 11.2-12.4)"]}
+}

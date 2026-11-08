@@ -1,0 +1,30 @@
+{
+  "cohort_id": "llama_math",
+  "priority": "audit_only",
+  "dataset": "math",
+  "confirmatory": false,
+  "notes": "Not auto-included as a confirmatory cohort until E0 provenance passes (plan Code \u00a71.3).",
+  "model": {
+    "repository": "configured Llama (see v7 Table 6, identity unresolved)",
+    "revision": null
+  },
+  "runtime": {
+    "profile": "llama",
+    "world_size": 4,
+    "gpu_type": "H100",
+    "source_plan": "llama:math"
+  },
+  "seeds": {
+    "training": [
+      5,
+      6,
+      7,
+      8,
+      9
+    ]
+  },
+  "cost_basis": {
+    "unit": "GPU-hours",
+    "sources": []
+  }
+}

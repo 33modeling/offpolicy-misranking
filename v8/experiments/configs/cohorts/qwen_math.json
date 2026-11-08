@@ -1,0 +1,9 @@
+{
+  "cohort_id": "qwen_math", "priority": "secondary", "dataset": "math", "confirmatory": true,
+  "model": {"repository": "Qwen/Qwen3.5-9B", "revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a"},
+  "runtime": {"profile": "qwen", "world_size": 4, "gpu_type": "H100", "source_plan": "qwen:math", "python_env_var": "PAIR_PYTHON"},
+  "seeds": {"training": [5, 6, 7, 8, 9]},
+  "cost_basis": {"unit": "GPU-hours on 4xH100", "sr_update": null, "on_training_update": null, "on_refresh": null,
+                 "srgc_check_extra": null, "evaluation_final": null, "cache_build": 16.5, "prefix": 14.4,
+                 "sources": ["v7/evidence/2026-10-16/qwen-math-gpu-times.csv"]}
+}

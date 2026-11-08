@@ -37,10 +37,10 @@ def environment(tools,source,*,cwd=None):
             if (root/'srgc_rebuttal/srgc.py').is_file():
                 env['V8_CODE_ROOT']=str(root.resolve());break
     if not env.get('V8_RUNNER_ROOT'):
-        candidates=[tools.parent/'v8/experiments',tools/'v8/experiments',cwd/'v8/experiments',
+        candidates=[tools/'v8/experiments',tools.parent/'v8/experiments',cwd/'v8/experiments',
                     tools.parent/'rlvr-v8/v8/experiments',tools.parent/'offpolicy-misranking-paper-v2/v8/experiments']
         for root in candidates:
-            if (root/'cluster_child.py').is_file() and (root/'configs/base.json').is_file():
+            if all((root/name).is_file() for name in ('cluster_child.py','run_h100.sh','switching/cli.py','configs/base.json')):
                 env['V8_RUNNER_ROOT']=str(root.resolve());break
     return env
 
@@ -53,7 +53,7 @@ def main(argv=None):
     if not inspect:
         if not env.get('V8_CODE_ROOT'):raise ValueError('Existing trainer checkout was not found in the SRGC environment or source receipts.')
         if not env.get('V8_RUNNER_ROOT') and '--runner-root' not in argv:
-            raise ValueError('V8 runtime not found beside the launcher; use the complete offline bundle.')
+            raise ValueError('V8 runtime files are missing from this code copy (v8/experiments).')
     os.execvpe(env['V8_PYTHON'],[env['V8_PYTHON'],str(tools/'scripts/srgc_v8_nodes.py'),*argv],env)
 
 

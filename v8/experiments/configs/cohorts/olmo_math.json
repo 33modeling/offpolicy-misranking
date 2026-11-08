@@ -1,0 +1,16 @@
+{
+  "cohort_id": "olmo_math", "priority": "primary", "dataset": "math", "confirmatory": true,
+  "model": {"repository": "allenai/Olmo-3-1025-7B", "revision": "a81bae42db3975be1671e27b9c9a56da1a9f980f",
+            "adapter": "LoRA r16 alpha32 q_proj,v_proj dropout0", "thinking_mode": "olmo_rlzero_math prompt"},
+  "runtime": {"profile": "olmo", "world_size": 4, "gpu_type": "H100", "source_plan": "auto:math",
+              "python_env_var": "PAIR_PYTHON",
+              "plan_candidates": ["srgc_rebuttal/experiments/pair_seeds.json", "srgc_rebuttal/experiments/additional_seeds.json"]},
+  "seeds": {"training": [5, 6, 7, 8, 9]},
+  "cost_basis": {
+    "unit": "GPU-hours on 4xH100 (recorded device-hours)",
+    "sr_update": 0.0768, "on_training_update": 0.0788, "on_refresh": 0.653, "srgc_check_extra": 0.24,
+    "evaluation_final": null, "cache_build": null, "prefix": null,
+    "sources": ["v7/PAPER_EN.txt Fig.4 (seeds 3/4, 250 updates: SR 19.20, On training 19.69 + scoring 6.53, Switch 21.74 GPU-h)",
+                "v7/evidence/2026-10-01/math-selection-components.md (seeds 5-9 candidate side: On 6.19 GPU-h/10 rounds, Switch 1.72 GPU-h/2 rounds)"]
+  }
+}

@@ -1,0 +1,6 @@
+seed,random_percent,sr_percent,on_policy_percent,switch_percent,switch_decision,switch_after_update,first_sr_update,initial_candidate_success_percent
+5,92.8,92.2,93.2,93.0,switched,175,176,90.8
+6,93.0,93.7,92.4,92.3,switched,150,151,90.7
+7,92.6,93.2,93.5,93.5,never_switched,,,91.2
+8,92.7,93.5,93.3,92.7,switched,50,51,90.9
+9,93.0,93.0,92.8,93.3,switched,50,51,90.6

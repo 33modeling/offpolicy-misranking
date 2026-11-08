@@ -1,0 +1,42 @@
+{
+  "kind": "fix missing V8 runtime in the executable code checkout",
+  "user_error": "V8 startup: V8 runtime not found beside the launcher",
+  "hypothesis": "A self-contained code checkout must include its actual runtime and relative audit inputs, rather than assume a second manuscript checkout or parent directory.",
+  "source": {
+    "baseline": "7a80c65532249d288b0c931c6658a9e9ead1a5f4",
+    "imported_runtime_commit": "3d0c08336950d2697dc66cbe3570a230e449f33b",
+    "all_imported_source_unmodified": "v8/experiments/UPSTREAM.txt SHA256 records",
+    "frozen_trainer_files_unchanged": 30
+  },
+  "fix": "Imported unchanged runtime/configs/tests into v8/experiments and six historical reference CSVs needed by its audit. Bootstrap selects own checkout runtime first and checks all required entry modules. No manuscript repository or trainer/checkpoint changes.",
+  "tests": {
+    "startup_coordinator_history": 88,
+    "upstream_total": 102,
+    "upstream_passed": 101,
+    "upstream_skipped": 1,
+    "new_GPU_jobs": 0
+  },
+  "failures_retained": [
+    "previous-error.txt reproduces exact user startup error using former standalone scripts without runtime.",
+    "Initial upstream test audit expected20OLMo reference cells but saw0 because historical reference CSVs were absent. Added the exact pinned upstream six CSVs; source test/runner behavior unchanged. Full old trace is in the tool transcript; this record summarizes it."
+  ],
+  "data_model_transformation": {
+    "data": "temporary startup fixtures plus unchanged historical reference CSVs, which are not new results",
+    "model": "CPU ToyBackend software tests; no real model training",
+    "transformation": "none",
+    "seeds": "existing CPU tests5/6/7",
+    "updates": "CPU fixture prefix25/H75/safety100; history interruption60/resume100"
+  },
+  "scientific_results": {
+    "new_GPU_jobs": 0,
+    "new_RLVR_results": 0,
+    "H100_startup": "not observed in this environment"
+  },
+  "provenance": {
+    "raw_reports": "/home/kms/reports/rlvr-v8-runtime-delivery-20261108",
+    "raw_logs_checkpoints": "/home/kms/reports/rlvr-v8-runtime-delivery-20261108/final",
+    "copied_runtime_hashes": "v8/experiments/UPSTREAM.txt"
+  },
+  "command": "sh scripts/run_v8_nodes.sh",
+  "limitations": "Existing model/venv/source checkpoint identity must still validate; this fixes runtime delivery, not every possible later runtime failure."
+}
