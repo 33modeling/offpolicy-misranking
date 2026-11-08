@@ -21,7 +21,7 @@ def table(proc=Path('/proc')):
             env={}
             for item in (entry/'environ').read_bytes().split(b'\0'):
                 key,sep,value=item.partition(b'=')
-                if sep and key in (b'V8_ROOT',TAG.encode()):env[key.decode()]=value.decode(errors='replace')
+                if sep and key in (b'V8_ROOT',b'SRGC_PROGRESS_DIR',TAG.encode()):env[key.decode()]=value.decode(errors='replace')
             rows[int(entry.name)]=dict(ppid=int(fields[1]),start=fields[19],state=fields[0],env=env,
                                       v8=any(Path(a.decode(errors='replace')).name in MARKERS for a in args if a))
         except (OSError,ValueError,IndexError):continue

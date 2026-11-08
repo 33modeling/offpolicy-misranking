@@ -24,5 +24,7 @@
   "failure_retention": "first.xml retained locally: old test fixture omitted new supervisor dependencies. Fixture corrected; source launch archive includes these dependencies.",
   "limitations": "Linux uninterruptible kernel I/O can remain pending after SIGKILL; tools report remaining PIDs rather than claiming GPUs released. No checkpoint/lock/queue record is deleted. New supervisor requires restarting that launch; standalone stop/probe can act on the currently running version.",
   "command": "sh scripts/v8_stop.sh",
-  "new_start": "sh scripts/run_v8_nodes.sh"
+  "new_start": "sh scripts/run_v8_nodes.sh",
+  "verification_scope_correction": "Original18tests and unchanged-coordinator/child assertion describe919a2b2 only. Integrated source881c9a6 also contains Claude launch/admission/verifier changes f6b1b53/f1bb211; their actual H100 effectiveness is not verified here.",
+  "integration_followup": "Supervisor reads the active launch-tagged rank SRGC_PROGRESS_DIR, including new per-attempt overrides; foreign launch records excluded.31targeted CPU tests passed after integration. Frozen30trainerfiles remain baseline-identical."
 }

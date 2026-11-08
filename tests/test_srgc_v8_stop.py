@@ -30,6 +30,21 @@ def test_reused_pid_and_unrelated_process_are_never_signalled():
     assert not seen
 
 
+def test_supervisor_reads_current_attempt_progress_and_excludes_other_launch(tmp_path,monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]/'scripts'))
+    from scripts import v8_supervisor as supervisor
+    current=tmp_path/'attempt';current.mkdir()
+    foreign=tmp_path/'other';foreign.mkdir()
+    (current/'rank-0.json').write_text(json.dumps(dict(stage='policy_update',updated=time.time())))
+    (foreign/'rank-0.json').write_text(json.dumps(dict(stage='foreign',updated=time.time())))
+    ours=row(1,'a',tag='ours');ours['env']['SRGC_PROGRESS_DIR']=str(current)
+    other=row(1,'b',tag='other');other['env']['SRGC_PROGRESS_DIR']=str(foreign)
+    events=supervisor.work_events({10:ours,20:other},'ours',tmp_path/'fallback')
+    assert len(events)==1 and 'policy_update' in events[0] and 'foreign' not in events[0]
+    # Older coordinator inherits the supervisor's directory instead of making an attempt directory.
+    assert supervisor.work_events({},'ours',current)==events
+
+
 def test_detached_rank_ignoring_term_is_stopped_but_foreign_launch_survives(tmp_path):
     script=tmp_path/'cluster_child.py'
     script.write_text('import signal,time\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\nprint("READY",flush=True)\nwhile True:time.sleep(.02)\n')

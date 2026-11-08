@@ -10,7 +10,20 @@ import time
 import uuid
 
 from v8_processes import TAG,select,stop,table
-from v8_probe import read,root,snapshot
+from v8_probe import read,root
+
+
+def work_events(rows,launch,fallback):
+    """Read the active launch's actual per-attempt directory, never another launch's progress."""
+    directories={Path(row['env']['SRGC_PROGRESS_DIR']) for row in rows.values()
+                 if row['env'].get(TAG)==launch and row['env'].get('SRGC_PROGRESS_DIR')}
+    parts=[]
+    for directory in sorted(directories or {Path(fallback)}):
+        for rank in range(4):
+            event=read(directory/f'rank-{rank}.json')
+            if isinstance(event,dict) and isinstance(event.get('updated'),(int,float)):
+                parts.append(f'rank{rank}={event.get("stage","?")} event_age={time.time()-event["updated"]:.0f}s')
+    return parts
 
 
 def main():
@@ -28,10 +41,7 @@ def main():
     previous={sig:signal.signal(sig,interrupt) for sig in (signal.SIGINT,signal.SIGTERM,signal.SIGHUP)}
     def report():
         while not finished.wait(15):
-            parts=[]
-            for rank in range(4):
-                event=read(progress/f'rank-{rank}.json')
-                if event:parts.append(f'rank{rank}={event.get("stage","?")} event_age={time.time()-event.get("updated",time.time()):.0f}s')
+            parts=work_events(table(),launch,progress)
             print('[v8 status] '+(' | '.join(parts) if parts else 'startup: no rank work event recorded yet'),flush=True)
     try:
         if stopped.is_set():return 128+received[0]

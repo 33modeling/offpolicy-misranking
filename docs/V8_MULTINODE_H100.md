@@ -120,8 +120,9 @@ sh scripts/run_v8_nodes.sh --status
 worker는60초마다 현황을 출력한다. 자식 출력은 터미널과 각 cohort 로그에 남긴다.
 노드마다 같은 GPU 그룹에서 worker 하나를 실행한다.
 
-Ctrl-C/SIGTERM은 자식 실행기에 전달된다. 체크포인트 저장을 기다린 뒤 같은 명령으로
-재개한다. 실제 실패 원인을 고친 뒤에는 같은 명령에 `--retry-failed`를 붙인다.
+Ctrl-C/SIGTERM은 자식 실행기에 전달된다. 종료 유예는10초이며 강제 종료되면 마지막으로
+저장된 체크포인트에서 같은 명령으로 재개한다. 종료 직전 업데이트의 저장은 보장하지 않는다.
+실제 실패 원인을 고친 뒤에는 같은 명령에 `--retry-failed`를 붙인다.
 기존 시도·실패를 지우지 않고, 시간 추정만으로 lease를 빼앗지 않는다.
 
 큐·시도·로그는 `$V8_ROOT/<cohort>/.multi-node/`, 학습 결과는 각 `runs/`에 남는다.
@@ -168,6 +169,8 @@ Ctrl-C는 즉시 정리를 요청한다. 자식 출력 pipe의 EOF를 기다리�
 않는다.15초마다 rank가 실제 기록한 rollout/gradient_scoring/policy_update 단계와
 기록 나이를 출력한다. 이 출력은 완료 update나 checkpoint 저장 확인과 구별한다.
 
-이 변경은 wrapper·진단·종료 경로만 바꾼다. coordinator 본체·수치 실행기·원본 kernel은
-동일하므로 새 supervisor를 쓰기 위해 학습 기록을 초기화하거나 binding을 바꾸지 않는다.
+종료 supervisor 자체는 wrapper·진단·종료 경로만 바꾸며 기존 큐의 identity를 바꾸지 않는다.
+현재 master에는 별도의 child 실행 환경·NCCL 사전 검사·verifier fallback 수정도 포함된다.
+따라서 전체 묶음의 child/coordinator가 이전 묶음과 동일하다고 취급하지 않는다.
+업데이트를 하나라도 기록한 큐는 runtime identity가 다르면 자동 변경을 거부한다.
 모델 로딩에서 실제로 멈췄는지에 대한 원격 원인은 로그/노드 관측 전에는 미확인이다.
