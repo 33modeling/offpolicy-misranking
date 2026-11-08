@@ -296,7 +296,7 @@ def toy(out_root, *, bank_seeds=(5, 6, 7), dev_seeds=None, test_seeds=None, fast
     an["replay_on_original_switch_logs"] = censor_demo
     an["split_overlap_real_bundles"] = overlap
     an["seed_registry_choice"] = chosen
-    an["physical_expenditure"] = physical_gpu_seconds(all_events(out_root))
+    an["physical_expenditure"] = physical_gpu_seconds(all_events(out_root), starts=all_starts(out_root))
     atomic_write_json(out_root / "analysis" / "analysis.json", an)
     (out_root / "analysis" / "report.md").write_text(report.markdown({k: an[k] for k in (
         "primary_rebuttal", "primary_test", "status_counts", "e3", "e9", "e10")}))
@@ -312,6 +312,17 @@ def all_events(out_root):
     for p in (Path(out_root) / "evaluations" / "events").glob("*.jsonl"):
         ev.extend(read_jsonl(p))
     return ev
+
+
+def all_starts(out_root):
+    """Durable phase starts (runs/*/attempts/*/phase-starts.jsonl, evaluations/phase-starts/*.jsonl)."""
+    from .common import read_jsonl
+    starts = []
+    for p in Path(out_root).rglob("phase-starts.jsonl"):
+        starts.extend(read_jsonl(p))
+    for p in (Path(out_root) / "evaluations" / "phase-starts").glob("*.jsonl"):
+        starts.extend(read_jsonl(p))
+    return starts
 
 
 def analyze_all(out_root, cfg, bank_rows, test_rows, bank_seeds, test_seeds, data, *, evals):

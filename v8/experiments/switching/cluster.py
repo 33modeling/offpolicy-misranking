@@ -321,8 +321,13 @@ def cmd_analyze(args):
     events = []
     for p in [*sorted(root.glob("runs/*/attempts/*/events.jsonl")), *sorted(root.glob("evaluations/events/*.jsonl"))]:
         events += read_jsonl(p)
-    phys = physical_gpu_seconds(events)
-    an["physical_expenditure"] = {k: phys[k] for k in ("gpu_seconds", "known_lower_bound_gpu_seconds", "complete")} | {
+    starts = []  # durable phase starts: work killed mid-phase is unknown cost, never zero
+    for p in [*sorted(root.glob("runs/*/attempts/*/phase-starts.jsonl")),
+              *sorted(root.glob("evaluations/phase-starts/*.jsonl"))]:
+        starts += read_jsonl(p)
+    phys = physical_gpu_seconds(events, starts=starts)
+    an["physical_expenditure"] = {k: phys[k] for k in ("gpu_seconds", "known_lower_bound_gpu_seconds", "complete",
+                                                       "killed_phase_starts")} | {
         "missing_events": len(phys["missing_event_ids"]), "scope": "every recorded attempt, branch and evaluation"}
     an["pareto"] = analyze.pareto_plot(rows, root / "analysis" / "pareto_bank.png", title=args.cohort)
     atomic_write_json(root / "analysis" / "analysis.json", an)
@@ -356,9 +361,15 @@ def cmd_prepare_seeds(args):
             path = root / "inputs" / f"seed-{seed}.json"
             atomic_write_json(path, b)
             loc["seeds"][str(seed)] = {k: src[k] for k in ("plan_path", "plan_sha256", "model", "model_revision",
-                                                          "run_implementation_sha256", "implementation_matches_code_root")
+                                                          "run_implementation_sha256", "implementation_matches_code_root",
+                                                          "runtime_selection")
                                        if k in src}
-            loc["seeds"][str(seed)].update(input_bundle=str(path), role=role, folder=None)
+            # The child re-verifies runtime_selection; the archived engine is activated from the source
+            # seed's prefix receipt and the attention kernel is inherited from its prefix checkpoint, so a
+            # fresh seed runs the bank seeds' exact engine/kernel instead of the live one / eager.
+            loc["seeds"][str(seed)].update(input_bundle=str(path), role=role, folder=None,
+                                           runtime_source_seed=source_seed,
+                                           attention_prefix_path=src.get("prefix_path"))
     loc["seed_roles"] = chosen
     atomic_write_json(loc_path, loc)
     print(json.dumps({"seed_roles": chosen, "source_seed": source_seed}, indent=2))

@@ -197,19 +197,23 @@ class EngineParity(unittest.TestCase):
             self.assertTrue(all(r["selector"] == "uniform" for r in post))
 
     def test_cache_refresh_failure_retains_previous(self):
+        """Rank-symmetric failures after generation (commit/validation) keep the previous cache and retry."""
+        from switching.cache import CacheStore
+        from helpers import tmpdir
         m = method("sr_early_refreshed_k050")
-        be = self.backend()
+        store = CacheStore(tmpdir() / "caches")
         calls = {"n": 0}
-        original = be.evaluate
+        original = store.commit
 
-        def flaky(ids, **kw):
+        def flaky(*args, **kw):
             calls["n"] += 1
             if calls["n"] <= 2:
-                raise RuntimeError("injected refresh failure")
-            return original(ids, **kw)
-        be.evaluate = flaky
-        e = self.PE(be, self.data["candidate_ids"], self.data["ranking_validation_ids"], self.data["cached_rewards"],
-                    method=m, policy=build_policy(m["policy"]), config=self.cfg)
+                raise RuntimeError("injected commit failure")
+            return original(*args, **kw)
+        store.commit = flaky
+        e = self.PE(self.backend(), self.data["candidate_ids"], self.data["ranking_validation_ids"],
+                    self.data["cached_rewards"], method=m, policy=build_policy(m["policy"]), config=self.cfg,
+                    cache_store=store, run_id="r")
         e.load_state_dict(self.prefix, fork_arm=fork_arm_for(m))
         initial = e.sr_ranked_ids
         e.run_until(76)
@@ -218,6 +222,51 @@ class EngineParity(unittest.TestCase):
         e.run_until(126)
         self.assertEqual(e.cache_log[-1]["event"], "committed")  # next boundary 125 succeeds
         self.assertEqual(e.cache_state["source_policy_update"], 125)
+
+    def test_cache_refresh_generation_fault_propagates(self):
+        """RT-01: a rank-local generation fault must end the process (a per-rank catch/retry leaves the other
+        ranks inside the evaluation collective: deadlock until the NCCL timeout)."""
+        m = method("sr_early_refreshed_k050")
+        be = self.backend()
+
+        def oom(ids, **kw):
+            raise RuntimeError("CUDA out of memory (injected on this rank)")
+        be.evaluate = oom
+        e = self.PE(be, self.data["candidate_ids"], self.data["ranking_validation_ids"], self.data["cached_rewards"],
+                    method=m, policy=build_policy(m["policy"]), config=self.cfg)
+        e.load_state_dict(self.prefix, fork_arm=fork_arm_for(m))
+        with self.assertRaisesRegex(RuntimeError, "out of memory"):
+            e.run_until(76)
+        self.assertEqual(e.cache_log, [])
+
+    def test_cache_commit_runs_through_primary(self):
+        """RT-11: only rank 0 commits a refreshed cache (every rank used to write it)."""
+        from switching.cache import CacheStore
+        from helpers import tmpdir
+        m = method("sr_early_refreshed_k050")
+        store = CacheStore(tmpdir() / "caches")
+        state = {"inside": False, "commits": [], "primary_calls": 0}
+        original = store.commit
+
+        def commit(*args, **kw):
+            state["commits"].append(state["inside"])
+            return original(*args, **kw)
+        store.commit = commit
+
+        def primary(fn):
+            state["primary_calls"] += 1
+            state["inside"] = True
+            try:
+                return fn()
+            finally:
+                state["inside"] = False
+        e = self.PE(self.backend(), self.data["candidate_ids"], self.data["ranking_validation_ids"],
+                    self.data["cached_rewards"], method=m, policy=build_policy(m["policy"]), config=self.cfg,
+                    cache_store=store, run_id="r", primary=primary)
+        e.load_state_dict(self.prefix, fork_arm=fork_arm_for(m))
+        e.run_until(76)
+        self.assertEqual(state["commits"], [True])
+        self.assertEqual(e.cache_log[-1]["event"], "committed")
 
 
 if __name__ == "__main__":
