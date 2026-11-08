@@ -10,7 +10,7 @@ import threading
 import time
 import uuid
 
-from v8_processes import TAG,select,stop,table
+from v8_processes import TAG,select,progress_every,stop,stop_grace,table
 from v8_probe import read,root,snapshot,tail
 from v8_control_output import emit,run_control
 from v8_progress_text import describe
@@ -55,6 +55,13 @@ def before_model_work(rows,launch,base,console,host=None):
     recent=[line.strip() for line in tail(console,8192) if line.strip() and 'known_task_counts' not in line]
     if recent:lines.append('LATEST LAUNCHER OUTPUT: '+recent[-1][:1200])
     return lines or ['No task/progress evidence is readable for this launch; current execution phase is unknown.']
+
+
+def describe_processes(remaining):
+    kinds={}
+    for row in remaining.values():kinds[row.get('kind') or 'control']=kinds.get(row.get('kind') or 'control',0)+1
+    names={'task':'training/evaluation','cpu':'CPU stage','control':'dispatcher/actor'}
+    return ', '.join(f'{count} {names.get(kind,kind)}' for kind,count in sorted(kinds.items()))
 
 
 def main():
@@ -106,8 +113,17 @@ def main():
         threading.Thread(target=report,daemon=True).start()
         while child.poll() is None:
             if stopped.wait(.1):
-                emit('[v8 stop] stopping this launch; grace10s, second Ctrl-C requests immediate cleanup')
-                remaining=stop(select(table(),tag=launch),tag=launch,grace=10,force=force)
+                grace=stop_grace()
+                emit(f'[v8 stop] stopping this launch: SIGTERM sent; waiting up to {grace:g}s (V8_STOP_WAIT_SECONDS) '
+                     'for a running task to stop at its next safe point, record exit 75 and exit (resumable from its '
+                     'last saved update; a rank blocked in a collective is ended by the child watchdog). '
+                     'Press Ctrl-C again to kill everything immediately.')
+                def waiting(remaining,elapsed):
+                    events=work_events(table(),launch,progress)
+                    emit(f'[v8 stop] still waiting {elapsed:.0f}/{grace:g}s for {describe_processes(remaining)} process(es) to '
+                         'reach a safe update boundary'+(f'; {" | ".join(events)}' if events else '')+
+                         '; Ctrl-C again kills now')
+                remaining=stop(select(table(),tag=launch),tag=launch,grace=grace,force=force,progress=waiting,every=progress_every())
                 if remaining:emit('[v8 stop] processes still in kernel wait: '+str(remaining),error=True)
                 return 128+received[0]
         # No stdout pipe join: descendants cannot trap the controller in read().

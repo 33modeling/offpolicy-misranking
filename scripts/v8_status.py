@@ -267,6 +267,25 @@ def cell(row):
     return status.replace('_', ' ')
 
 
+def column(row):
+    """Grid column: a budget extension keeps its branch's method_id and every evaluation has no method_id,
+    so they get their own columns instead of overwriting the training cell."""
+    if row.get('phase') == 'evaluation' or row['arm'] == 'evaluate':
+        return 'eval'
+    return row['arm'] + ' ext' if row.get('phase') == 'extension' else row['arm']
+
+
+def grid_cell(rows):
+    """One task: its state. Several tasks in one cell: counts per state, problems first."""
+    if len(rows) == 1:
+        return cell(rows[0])
+    counts = {}
+    for row in rows:
+        counts[cell(row).split(' ')[0]] = counts.get(cell(row).split(' ')[0], 0) + 1
+    order = sorted(counts, key=lambda name: (name in ('done', 'running', 'ready', 'waiting'), name))
+    return ','.join(f'{counts[name]} {name}' for name in order)
+
+
 def running_detail(row):
     parts = []
     if row['done'] is not None:
@@ -339,9 +358,14 @@ def render_cohort(base, cohort, now, gpus, host):
     if rows:
         arms, seeds = [], []
         for row in rows:
-            arms += [row['arm']] if row['arm'] not in arms else []
+            row['column'] = column(row)
+            arms += [row['column']] if row['column'] not in arms else []
             seeds += [row['seed']] if row['seed'] not in seeds else []
-        table = {(r['seed'], r['arm']): cell(r) for r in rows}
+        arms.sort(key=lambda name: (name == 'eval', name.endswith(' ext')))  # training, extensions, evaluations
+        groups = {}
+        for row in rows:
+            groups.setdefault((row['seed'], row['column']), []).append(row)
+        table = {key: grid_cell(group) for key, group in groups.items()}
         widths = {arm: max(len(arm), *(len(table.get((seed, arm), '-')) for seed in seeds)) for arm in arms}
         lines.append('seed  ' + '  '.join(f'{arm:<{widths[arm]}}' for arm in arms))
         for seed in seeds:
@@ -479,7 +503,12 @@ def render(bases, now=None, gpus=None, host=None, cohorts=COHORTS, style='simple
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--cohort', action='append', choices=COHORTS, help='show only this cohort (repeatable)')
+    def cohort_name(value):
+        # run_v8_nodes.sh accepts every configured cohort (configs/cohorts/<name>.json), not only the default two.
+        if not re.fullmatch(r'[A-Za-z0-9_-]+', value):
+            raise argparse.ArgumentTypeError('cohort must be a simple configured identifier')
+        return value
+    parser.add_argument('--cohort', action='append', type=cohort_name, help='show only this cohort (repeatable)')
     parser.add_argument('--simple', action='store_true', help='simplified V8 view instead of the run_srgc.sh status screen')
     parser.add_argument('--watch', nargs='?', const=60.0, type=float, default=None, metavar='SECONDS',
                         help='refresh every SECONDS (default 60) until Ctrl-C')
