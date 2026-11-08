@@ -856,6 +856,15 @@ def clean_block(base, cohort, now, host, width):
     state, rows = collect(base, cohort, now)
     trained = {r.get('run_id'): r['arm'] for r in rows if r.get('kind') == 'train' and r.get('phase') != 'extension'}
     train_cols, seeds, cells, ext, ev = [], [], {}, {}, {}
+    # Draw every planned cell, not only jobs that exist: a branch job is created only once its parent
+    # snapshot is saved, extension/evaluation jobs only when their phase is planned.
+    cfg = runner_config(cohort)
+    cfg_seeds = [x for x in (((cfg or {}).get('seeds') or {}).get('training') or []) if isinstance(x, int)]
+    bank = (cfg or {}).get('bank') or {}
+    grid = sorted({x for x in (bank.get('core_grid') or []) + (bank.get('extended_grid') or []) if isinstance(x, int)})
+    job_seeds = {r['seed'] for r in rows if isinstance(r.get('seed'), int)}
+    use_plan = bool(cfg_seeds and grid and job_seeds <= set(cfg_seeds))
+    u_tau = {}
     for r in rows:
         seed = r['seed']
         if seed not in seeds:
@@ -866,6 +875,8 @@ def clean_block(base, cohort, now, host, width):
             ext.setdefault(seed, []).append(r)
         else:
             col = short_arm(r['arm'])
+            if use_plan and re.fullmatch(r'U\d+', col):
+                u_tau[seed] = int(col[1:]); col = 'U'      # Uniform destination: one column, tau differs per seed
             if col not in train_cols:
                 train_cols.append(col)
             cells[(seed, col)] = symbol(r)
@@ -874,10 +885,18 @@ def clean_block(base, cohort, now, host, width):
         num = int(re.sub(r'\D', '', c) or 0)
         return (kind, num, c)
     train_cols.sort(key=col_key)
+    sealed = {ph: (queue / 'plans' / f'{ph}.json').is_file() for ph in ('train', 'extension', 'evaluation')}
+    if use_plan and not sealed['train']:     # once sealed, the queue's own jobs are the complete grid
+        planned_cols = ['On', *(f'SR{t}' for t in grid), 'U']
+        train_cols = planned_cols + [c for c in train_cols if c not in planned_cols]
+        seeds = list(dict.fromkeys([*cfg_seeds, *seeds]))
     seeds.sort(key=lambda x: (not isinstance(x, int), x if isinstance(x, int) else str(x)))
-    def count_cell(items):
+    missing = {'train': '-' if sealed['train'] or not use_plan else '·',
+               'ext': '-' if sealed['extension'] or not use_plan else '·',
+               'eval': '-' if sealed['evaluation'] or not use_plan else '·'}
+    def count_cell(items, kind='ext'):
         if not items:
-            return '-'
+            return missing[kind]
         if len(items) == 1:
             return symbol(items[0])
         if all(i['status'] == 'pending' for i in items):
@@ -890,15 +909,15 @@ def clean_block(base, cohort, now, host, width):
                 '?' if any(i['status'] in ('unconfirmed', 'stopped') for i in items) else
                 '⏸' if any(i['status'] == 'interrupted' for i in items) else '')
         return f"{done}/{len(items)}" + mark
-    cols = [*train_cols, *(['ext'] if ext else []), *(['eval'] if ev else [])]
+    cols = [*train_cols, *(['ext'] if ext or use_plan else []), *(['eval'] if ev or use_plan else [])]
     table = {}
     for seed in seeds:
         for c in train_cols:
-            table[(seed, c)] = cells.get((seed, c), '-')
-        if ext:
-            table[(seed, 'ext')] = count_cell(ext.get(seed, []))
-        if ev:
-            table[(seed, 'eval')] = count_cell(ev.get(seed, []))
+            table[(seed, c)] = cells.get((seed, c), missing['train'])
+        if ext or use_plan:
+            table[(seed, 'ext')] = count_cell(ext.get(seed, []), 'ext')
+        if ev or use_plan:
+            table[(seed, 'eval')] = count_cell(ev.get(seed, []), 'eval')
     widths = {c: max(len(c), *(len(table[(s, c)]) for s in seeds)) for c in cols} if seeds else {}
     phase_text = PHASE_LABEL.get(state.get('phase'), state.get('phase', 'not started'))
     title = f"{label} · {phase_text} "
@@ -915,6 +934,11 @@ def clean_block(base, cohort, now, host, width):
         lines.append(row_text(' seed', {c: c for c in cols}, header=True))
         for seed in seeds:
             lines.append(row_text(f'{seed!s:>5}', {c: table[(seed, c)] for c in cols}))
+        if use_plan:
+            known = ' · '.join(f"s{k} @{v}" for k, v in sorted(u_tau.items()))
+            lines.append(paint(clip(f"   · = not created yet (a branch appears when its parent snapshot is saved) · U = Uniform at the "
+                                    f"seed's switch point" + (f": {known}" if known else ' (known when that On trajectory is done)'),
+                                    width), 'dim'))
     else:
         lines.append('  (no tasks yet)')
     problems = [r for r in rows if r['status'] in ATTENTION]
