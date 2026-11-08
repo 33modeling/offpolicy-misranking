@@ -103,6 +103,15 @@ class Pool:
             yield lock if lock.acquire() else None
         finally:lock.close()
 
+    def held_leases(self):
+        """Jobs whose lease another live worker still holds."""
+        held=[]
+        for path in sorted((self.root/'leases').glob('*.lock')):
+            lease=Lock(path)
+            if lease.acquire():lease.close()
+            else:held.append(path.stem)
+        return held
+
     def initialize(self,retry=False):
         path=self.root/'binding.json'
         if path.exists():
@@ -119,6 +128,16 @@ class Pool:
                     state['failure_history'].append(state['failure']);state['failure']=None
                     state['actions'].append(dict(action='retry_failed_setup_with_verified_source',at=time.time()))
                     atomic(path,self.binding);atomic(state_path,state)
+                elif (old.get('trainer_sha256') and old.get('config_sha256')
+                        and all(old.get(k)==self.binding.get(k) for k in stable)
+                        and not completed_training(self.root.parent) and not self.held_leases()):
+                    # Same science (trainer/config/python/packages) but newer launcher code, and no task has
+                    # finished a single update (e.g. the 11-08 'Loading weights: 100%' stall). The old queue is
+                    # never rewritten: it is kept as .multi-node.superseded-<time> and a fresh queue starts.
+                    kept=self.root.with_name(self.root.name+'.superseded-'+time.strftime('%Y%m%dT%H%M%S'))
+                    os.replace(self.root,kept);self.root.mkdir(parents=True)
+                    atomic(path,self.binding)
+                    print(f'[v8] earlier queue had no completed update; kept it as {kept.name} and started a new queue with this code',flush=True)
                 else:
                     raise ValueError('Worker/runner/config/trainer identity differs from this queue; use the same pinned code on all nodes.')
         else:atomic(path,self.binding)
@@ -337,6 +356,32 @@ def cohort_python(cohort,fallback):
     return os.environ.get('V8_PYTHON_'+cohort.upper()) or os.environ.get(profile) or fallback
 
 
+def completed_training(cohort_root):
+    """True once any v8 run has durably recorded a completed update (then the queue code is frozen)."""
+    runs=Path(cohort_root)/'runs'
+    if not runs.is_dir():return False
+    for log in runs.rglob('updates.jsonl'):
+        try:
+            if log.stat().st_size>0:return True
+        except OSError:return True
+    return False
+
+
+def gpu_utilisation(gpus):
+    """'97%,96%,98%,95%' for the worker's GPUs, or 'unknown' (nvidia-smi missing/slow)."""
+    try:
+        out=subprocess.run(['nvidia-smi','--query-gpu=index,utilization.gpu,memory.used','--format=csv,noheader,nounits'],
+                           capture_output=True,text=True,timeout=10).stdout
+    except (OSError,subprocess.SubprocessError):
+        return 'unknown'
+    rows={}
+    for line in out.splitlines():
+        parts=[x.strip() for x in line.split(',')]
+        if len(parts)==3:rows[parts[0]]=f'{parts[1]}%/{parts[2]}MiB'
+    picked=[rows.get(str(g)) for g in gpus]
+    return ','.join(x for x in picked if x) or 'unknown'
+
+
 class Runtime:
     def __init__(self,runner,root,cohort,python,gpus):
         self.runner=Path(runner).resolve();self.root=Path(root).resolve()/cohort
@@ -360,6 +405,16 @@ class Runtime:
                               TOKENIZERS_PARALLELISM='false')
         self.environment.setdefault('HF_ENDPOINT','https://hf-mirror.com')
         self.environment.setdefault('PYTORCH_CUDA_ALLOC_CONF','expandable_segments:True')
+        # Same child environment as the seed 5-9 SRGC workers (srgc_rebuttal/cluster.py child_environment).
+        for name in ('OMP_NUM_THREADS','MKL_NUM_THREADS','OPENBLAS_NUM_THREADS','OPENBLAS_DEFAULT_NUM_THREADS',
+                     'GOTO_NUM_THREADS','BLIS_NUM_THREADS','VECLIB_MAXIMUM_THREADS','NUMEXPR_NUM_THREADS',
+                     'NUMEXPR_MAX_THREADS','OMP_THREAD_LIMIT','RAYON_NUM_THREADS'):
+            self.environment[name]='1'
+        self.environment.setdefault('TORCH_NCCL_ASYNC_ERROR_HANDLING','1')
+        self.environment.setdefault('NCCL_DEBUG','WARN')
+        code=Path(os.environ['V8_CODE_ROOT']).resolve()
+        self.environment['PYTHONPATH']=os.pathsep.join(filter(None,(str(code),str(code/'src'),self.environment.get('PYTHONPATH'))))
+        self.admitted=None
 
     def input_identity(self):
         loc=read(self.root/'locator.json');records={}
@@ -504,39 +559,92 @@ class Runtime:
             raise ValueError('Existing evaluation question set/counts disagree')
         return True
 
+    def admit(self,device_fds):
+        """Once per worker: the seed runs' four-GPU NCCL admission (fabric fallbacks, local model path)."""
+        if self.admitted is not None:return self.admitted
+        code=Path(os.environ['V8_CODE_ROOT']).resolve()
+        if str(code) not in sys.path:sys.path.insert(0,str(code))
+        try:
+            from srgc_rebuttal.admission import admit
+            from srgc_rebuttal.cluster import run_child
+            from srgc_rebuttal.plan import load_plan
+        except ImportError as exc:
+            print(f'[v8] WARN NCCL admission unavailable in V8_CODE_ROOT ({exc}); launching without it',flush=True)
+            self.admitted={};return self.admitted
+        plan=None
+        if self.cfg['runtime'].get('profile')!='qwen':
+            loc=read(self.root/'locator.json');first=loc['seeds'][str(self.cfg['seeds']['training'][0])]
+            plan=load_plan(Path(first['plan_path']))
+        environment=dict(self.environment,CUDA_VISIBLE_DEVICES=','.join(self.gpus))
+        before=dict(environment)
+        directory=self.root/'.multi-node'/'admission'/f"{socket.gethostname()}-{'-'.join(self.gpus)}-{uuid.uuid4().hex[:8]}"
+        directory.parent.mkdir(parents=True,exist_ok=True)
+        print(f'[v8] {time.strftime("%H:%M:%S")} four-GPU NCCL admission on GPUs {",".join(self.gpus)} (log {directory}/preflight.log)',flush=True)
+        try:
+            report=admit(directory,environment,run_child,pass_fds=tuple(device_fds),plan=plan)
+        except Exception as exc:
+            raise RuntimeError(f'NCCL admission failed on GPUs {",".join(self.gpus)}: {exc}. Inspect {directory}/preflight.log') from exc
+        added={k:v for k,v in environment.items() if before.get(k)!=v and k!='CUDA_VISIBLE_DEVICES'}
+        self.environment.update(added)
+        print(f'[v8] admission passed; overrides {sorted(added)}',flush=True)
+        self.admitted=report;return report
+
     def execute(self,task,matrix,fd,stop,device_fds,attempt):
         self.verify_node()
+        self.admit(device_fds)
         command=[self.python,'-m','torch.distributed.run','--standalone',f'--nproc_per_node={len(self.gpus)}','--max_restarts=0',
                  str(self.runner/'cluster_child.py'),'--cohort',self.cohort,'--matrix',str(matrix),
                  '--task',task.get('task_id') or task['run_id']]
-        return self.process(command,self.root/'.multi-node'/'logs'/(attempt['id']+'.log'),[fd,*device_fds],stop)
+        progress=self.root/'.multi-node'/'progress'/attempt['id']
+        return self.process(command,self.root/'.multi-node'/'logs'/(attempt['id']+'.log'),[fd,*device_fds],stop,
+                            extra={'SRGC_PROGRESS_DIR':str(progress)},label=task.get('task_id') or task['run_id'])
 
-    def process(self,command,log,fds,stop,*,cpu=False):
+    def process(self,command,log,fds,stop,*,cpu=False,extra=None,label=None):
+        """Child output goes straight to its log file (a stalled terminal can no longer block the child);
+        a separate thread relays the file to this terminal, and every V8_STATUS_SECONDS (60) a status line
+        shows elapsed time, time since the child last wrote, GPU utilisation and the last log line."""
         log.parent.mkdir(parents=True,exist_ok=True)
-        environment=dict(self.environment,CUDA_VISIBLE_DEVICES='' if cpu else ','.join(self.gpus))
+        environment=dict(self.environment,CUDA_VISIBLE_DEVICES='' if cpu else ','.join(self.gpus),**(extra or {}))
+        if extra and extra.get('SRGC_PROGRESS_DIR'):Path(extra['SRGC_PROGRESS_DIR']).mkdir(parents=True,exist_ok=True)
+        interval=float(os.environ.get('V8_STATUS_SECONDS','60'))
         with log.open('ab') as handle:
-            process=subprocess.Popen(command,env=environment,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
+            offset=handle.tell()
+            process=subprocess.Popen(command,env=environment,stdin=subprocess.DEVNULL,stdout=handle,stderr=subprocess.STDOUT,
                                      pass_fds=tuple(fds),start_new_session=True)
-            def copy():
+        done=threading.Event();seen={'last':b'','changed':time.monotonic(),'size':offset}
+        def relay():
+            with log.open('rb') as reader:
+                reader.seek(offset)
                 while True:
-                    block=process.stdout.read1(65536)
-                    if not block:break
-                    handle.write(block);handle.flush()
-                    try:
-                        stream=getattr(sys.stdout,'buffer',None)
-                        if stream is None:sys.stdout.write(block.decode(errors='replace'));sys.stdout.flush()
-                        else:stream.write(block);stream.flush()
-                    except (BrokenPipeError,OSError):pass
-            thread=threading.Thread(target=copy,daemon=True);thread.start();sent=False;last_heartbeat=0
-            while process.poll() is None:
-                if time.monotonic()-last_heartbeat>=10:
-                    if hasattr(self,'heartbeat'):self.heartbeat('child:'+str(process.pid))
-                    last_heartbeat=time.monotonic()
-                if stop.wait(.25) and not sent:
-                    try:os.killpg(process.pid,signal.SIGTERM)
-                    except ProcessLookupError:pass
-                    sent=True
-            thread.join();return process.returncode
+                    block=reader.read(65536)
+                    if block:
+                        seen['changed']=time.monotonic();seen['size']+=len(block)
+                        lines=[x for x in block.splitlines() if x.strip()]
+                        if lines:seen['last']=lines[-1][-200:]
+                        try:
+                            stream=getattr(sys.stdout,'buffer',None)
+                            if stream is None:sys.stdout.write(block.decode(errors='replace'));sys.stdout.flush()
+                            else:stream.write(block);stream.flush()
+                        except (BrokenPipeError,OSError):pass
+                    elif done.is_set():break
+                    else:time.sleep(.5)
+        thread=threading.Thread(target=relay,daemon=True);thread.start()
+        sent=False;last_heartbeat=0;started=time.monotonic();last_status=started
+        while process.poll() is None:
+            now=time.monotonic()
+            if now-last_heartbeat>=10:
+                if hasattr(self,'heartbeat'):self.heartbeat('child:'+str(process.pid))
+                last_heartbeat=now
+            if not cpu and interval>0 and now-last_status>=interval:
+                last_status=now
+                print(f"[v8 {time.strftime('%H:%M:%S')}] {label or 'task'} running {int(now-started)//60}m; "
+                      f"last output {int(now-seen['changed'])}s ago; GPU {gpu_utilisation(self.gpus)}; "
+                      f"last: {seen['last'].decode(errors='replace')}",flush=True)
+            if stop.wait(.25) and not sent:
+                try:os.killpg(process.pid,signal.SIGTERM)
+                except ProcessLookupError:pass
+                sent=True
+        done.set();thread.join(timeout=10);return process.returncode
 
 
 def main(argv=None):
