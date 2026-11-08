@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""V8 run status in plain Korean (read-only: no locks, signals, Torch or queue edits).
+"""V8 queue status in the same layout as `sh scripts/run_srgc.sh <dataset> status` (read-only).
 
-    sh scripts/v8_status.sh            # one snapshot
+    sh scripts/v8_status.sh            # one snapshot of olmo_math and qwen_mbpp
     sh scripts/v8_status.sh --watch    # refresh every 60 s until Ctrl-C (--watch 30 for 30 s)
 
-Shows, per cohort: phase, task counts, every running task (node, elapsed, update n/N,
-seconds since its log last changed, last log line), failures, and this node's GPU use.
+No locks, signals, Torch imports or queue writes.
 """
 from __future__ import annotations
 
 import argparse
 import os
 from pathlib import Path
+import re
 import socket
 import subprocess
 import sys
@@ -20,136 +20,191 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from v8_probe import active_roots, last_row, read, root, tail  # noqa: E402
 
-PHASES = {'not_started': '시작 전', 'prepare': '준비', 'train': '학습', 'freeze': '예산 고정',
-          'extension': '예산 연장', 'evaluation': '평가', 'finalize': '집계', 'complete': '완료'}
-STATES = (('done', '완료'), ('running', '진행'), ('pending', '대기'), ('failed', '실패'), ('interrupted', '중단'))
 COHORTS = ('olmo_math', 'qwen_mbpp')
+ATTENTION = {'failed', 'interrupted'}
 
 
-def ago(seconds):
+def age_text(seconds):
     if seconds is None:
         return '?'
-    seconds = int(max(0, seconds))
-    if seconds < 90:
-        return f'{seconds}초'
-    if seconds < 5400:
-        return f'{seconds // 60}분'
-    return f'{seconds // 3600}시간 {seconds % 3600 // 60}분'
+    return f"{seconds / 60:.0f} min" if seconds >= 120 else f"{max(0, seconds):.0f}s"
 
 
 def gpu_rows(run=subprocess.run):
+    """[(index, util %, MiB used)] from nvidia-smi, or None when unavailable."""
     try:
-        out = run(['nvidia-smi', '--query-gpu=index,utilization.gpu,memory.used',
-                   '--format=csv,noheader,nounits'], capture_output=True, text=True, timeout=8).stdout
+        out = run(['nvidia-smi', '--query-gpu=index,utilization.gpu,memory.used', '--format=csv,noheader,nounits'],
+                  capture_output=True, text=True, timeout=20).stdout
     except (OSError, subprocess.SubprocessError):
         return None
     rows = []
     for line in out.splitlines():
         parts = [x.strip() for x in line.split(',')]
-        if len(parts) == 3 and parts[1].isdigit():
-            rows.append((parts[0], int(parts[1]), int(parts[2]) if parts[2].isdigit() else 0))
+        if len(parts) == 3 and parts[1].isdigit() and parts[2].isdigit():
+            rows.append((parts[0], int(parts[1]), int(parts[2])))
     return rows
 
 
-def task_label(task):
-    stage = task.get('stage') or task.get('kind') or 'task'
-    bits = [str(stage)]
-    if task.get('method_id'):
-        bits.append(str(task['method_id']))
-    if task.get('training_seed') is not None:
-        bits.append(f"seed {task['training_seed']}")
-    return ' '.join(bits)
+def last_error_line(lines):
+    for line in reversed(lines):
+        stripped = line.strip()
+        if re.search(r"(Error|Exception|error:|out of memory|Killed|Traceback)", stripped) and not stripped.startswith("File "):
+            return stripped[:200]
+    return None
 
 
-def running_detail(directory, queue, job, now):
-    task, attempt = job['task'], job['attempts'][-1]
-    worker = str(attempt.get('worker') or '?')
-    item = dict(label=task_label(task), node=worker.rsplit('.',1)[0], started=attempt.get('started_at'))
-    item['elapsed'] = now - item['started'] if item['started'] else None
-    rid = task.get('run_id')
-    total = task.get('horizon') or task.get('endpoint') or task.get('total_updates')
-    done = None
-    if rid:
-        manifest = read(directory / 'runs' / rid / 'manifest.json')
-        if manifest and manifest.get('attempts'):
-            row = last_row(directory / 'runs' / rid / 'attempts' / manifest['attempts'][-1]['attempt_id'] / 'updates.jsonl')
-            done = row.get('completed_updates') if row else None
-    item['update'] = f"{done if done is not None else '-'}/{total if total else '?'}"
-    log = queue / 'logs' / (str(attempt.get('id')) + '.log')
-    try:
-        item['silent'] = now - log.stat().st_mtime
-    except OSError:
-        item['silent'] = None
-    lines = [x for x in tail(log, 16384) if x.strip()]
-    item['last'] = lines[-1].strip()[:160] if lines else '(아직 출력 없음)'
-    return item
-
-
-def cohort_report(base, cohort, now, gpus_busy):
+def collect(base, cohort, now):
     directory = Path(base) / cohort
     queue = directory / '.multi-node'
     state = read(queue / 'state.json') or {}
-    phase = state.get('phase', 'not_started')
-    counts = {key: 0 for key, _ in STATES}
-    running, failed = [], []
+    rows = []
     for path in sorted((queue / 'jobs').glob('*.json')):
         job = read(path)
         if not job:
             continue
-        counts[job.get('state')] = counts.get(job.get('state'), 0) + 1
-        if job.get('state') == 'running' and job.get('attempts'):
-            running.append(running_detail(directory, queue, job, now))
-        elif job.get('state') == 'failed':
-            last = (job.get('attempts') or [{}])[-1]
-            failed.append((task_label(job['task']), str(last.get('error') or last.get('exit') or job.get('error') or '')[:160]))
-    lines = [f"━ {cohort}  단계: {PHASES.get(phase, phase)}  "
-             + ' · '.join(f'{name} {counts.get(key, 0)}' for key, name in STATES)]
-    if state.get('failure'):
-        lines.append(f"  ⚠ 큐 실패: {str(state['failure'])[:200]}")
-    if running:
-        lines.append('  진행 중')
-        for item in sorted(running, key=lambda x: x['label']):
-            warn = ''
-            if item['node']==socket.gethostname() and item['silent'] is not None and item['silent'] > 1800 and gpus_busy is False:
-                warn = '  ⚠ 30분 넘게 출력 없음 + 이 노드 GPU 쉬는 중 → 멈춤 의심 (.multi-node/stacks 확인)'
-            lines.append(f"   {item['label']:<34} {item['node']:<16} {ago(item['elapsed'])}째  update {item['update']:<9}"
-                         f" 출력 {ago(item['silent'])} 전{warn}")
-            lines.append(f"     └ {item['last']}")
-    for label, reason in failed:
-        lines.append(f"  실패  {label}: {reason}")
-    if phase == 'not_started' and not (queue / 'jobs').exists():
-        lines.append('  (이 경로에 큐가 아직 없어요)')
+        task = job.get('task') or {}
+        attempts = job.get('attempts') or []
+        attempt = attempts[-1] if attempts else {}
+        row = dict(task=str(task.get('task_id') or task.get('run_id') or path.stem),
+                   arm=str(task.get('method_id') or task.get('stage') or task.get('kind') or '-'),
+                   seed=task.get('training_seed', '-'), status=job.get('state', 'pending'),
+                   total=task.get('horizon') or task.get('endpoint') or task.get('total_updates'),
+                   attempt=len(attempts), host=str(attempt.get('worker') or '').rsplit('.', 1)[0] or None, done=None)
+        rid = task.get('run_id')
+        if rid:
+            manifest = read(directory / 'runs' / rid / 'manifest.json')
+            if manifest and manifest.get('attempts'):
+                last = last_row(directory / 'runs' / rid / 'attempts' / manifest['attempts'][-1]['attempt_id'] / 'updates.jsonl')
+                row['done'] = last.get('completed_updates') if last else None
+            result = read(directory / 'runs' / rid / 'evaluation.json') or read(directory / 'runs' / rid / 'eval.json')
+            if result and isinstance(result.get('reward_fraction'), (int, float)):
+                row['reward_percent'] = 100 * result['reward_fraction']
+        if attempt.get('id'):
+            log = queue / 'logs' / (str(attempt['id']) + '.log')
+            row['log'] = str(log)
+            try:
+                row['log_age'] = now - log.stat().st_mtime
+            except OSError:
+                row['log_age'] = None
+            lines = [x for x in tail(log, 32768) if x.strip()]
+            row['last_line'] = lines[-1].strip()[:160] if lines else None
+            row['error'] = last_error_line(lines) or (str(attempt.get('error'))[:200] if attempt.get('error') else None)
+        rows.append(row)
+    return state, rows
+
+
+def cell(row):
+    status, total = row['status'], row['total']
+    if status == 'done':
+        reward = row.get('reward_percent')
+        return 'done' if reward is None else f'done {reward:.1f}%'
+    if status == 'running':
+        return f"running {row['done']}/{total}" if row['done'] is not None and total else 'running'
+    if status == 'pending':
+        return 'waiting'
+    return status.replace('_', ' ')
+
+
+def running_detail(row):
+    parts = []
+    if row['done'] is not None:
+        parts.append(f"{row['done']}/{row['total'] or '?'} done")
+    if row.get('log_age') is not None:
+        parts.append(f"log {age_text(row['log_age'])} ago")
+    if row.get('host'):
+        parts.append(f"node {row['host']}")
+    if row.get('last_line'):
+        parts.append(f"last: {row['last_line']}")
+    return ' · '.join(parts) or 'starting'
+
+
+def attention_detail(row):
+    parts = [row['status'].replace('_', ' ')]
+    if row.get('error'):
+        parts.append(f"last error: {row['error']}")
+    if row.get('attempt'):
+        parts.append(f"{row['attempt']} attempt{'s' if row['attempt'] != 1 else ''}")
+    if row['done'] is not None:
+        parts.append(f"last step {row['done']}/{row['total'] or '?'}")
+    if row.get('host'):
+        parts.append(f"node {row['host']}")
+    if row.get('log'):
+        parts.append(f"log {row['log']}")
+    return ' · '.join(parts)
+
+
+def this_node_lines(rows, gpus, host):
+    mine = [r for r in rows if r['status'] == 'running' and r.get('host') == host]
+    if mine:
+        row = mine[0]
+        what = f"running {row['task']}" + (f" · {row['done']}/{row['total']} done" if row['done'] is not None and row['total'] else '')
+        line = f"this node ({host}): {what}" + (f" · log {age_text(row['log_age'])} ago" if row.get('log_age') is not None else '')
+    else:
+        line = f"this node ({host}): NOT running a task of this queue"
+    lines = [line]
+    if gpus:
+        lines.append('gpu memory used: ' + ' '.join(f'{i}:{m}MiB' for i, _, m in gpus)
+                     + ' · util ' + ' '.join(f'{i}:{u}%' for i, u, _ in gpus))
     return lines
 
 
-def render(bases, now=None, gpus=None):
+def render_cohort(base, cohort, now, gpus, host):
+    state, rows = collect(base, cohort, now)
+    generated = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(now))
+    phase = state.get('phase', 'not started')
+    lines = [f"V8 {cohort} · {generated} · phase {phase}", str(Path(base) / cohort), *this_node_lines(rows, gpus, host), '']
+    if state.get('failure'):
+        lines.append(f"ERROR queue: {str(state['failure'])[:300]}")
+    counts = {'done': 0, 'running': 0, 'waiting': 0, 'attention': 0}
+    for row in rows:
+        key = ('done' if row['status'] == 'done' else 'running' if row['status'] == 'running'
+               else 'attention' if row['status'] in ATTENTION else 'waiting')
+        counts[key] += 1
+    summary = ' · '.join(f'{name} {count}' for name, count in counts.items() if count)
+    lines += [summary.replace('attention', 'needs attention') or 'no tasks', '']
+    if rows:
+        arms, seeds = [], []
+        for row in rows:
+            arms += [row['arm']] if row['arm'] not in arms else []
+            seeds += [row['seed']] if row['seed'] not in seeds else []
+        table = {(r['seed'], r['arm']): cell(r) for r in rows}
+        widths = {arm: max(len(arm), *(len(table.get((seed, arm), '-')) for seed in seeds)) for arm in arms}
+        lines.append('seed  ' + '  '.join(f'{arm:<{widths[arm]}}' for arm in arms))
+        for seed in seeds:
+            lines.append(f'{seed!s:>4}  ' + '  '.join(f"{table.get((seed, arm), '-'):<{widths[arm]}}" for arm in arms))
+    running = [r for r in rows if r['status'] == 'running']
+    if running:
+        lines += ['', 'running now:'] + [f"  {r['task']:<16} {running_detail(r)}" for r in running]
+    attention = [r for r in rows if r['status'] in ATTENTION]
+    if attention:
+        lines += ['', 'needs attention:'] + [f"  {r['task']:<16} {attention_detail(r)}" for r in attention]
+    idle = gpus is not None and not any(u >= 10 for _, u, _ in gpus)
+    for r in running:
+        if r.get('host') == host and idle and (r.get('log_age') or 0) > 1800:
+            lines.append(f"WARNING {r['task']}: no log output for {age_text(r['log_age'])} and this node's GPUs are idle "
+                         f"(stack dumps: {Path(base) / cohort / '.multi-node' / 'stacks'})")
+    return '\n'.join(lines) + '\n'
+
+
+def render(bases, now=None, gpus=None, host=None):
     now = time.time() if now is None else now
     gpus = gpu_rows() if gpus is None else gpus
-    busy = None if gpus is None else any(util >= 10 for _, util, _ in gpus)
-    out = [f"V8 현황 {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(now))}  host={socket.gethostname()}"]
-    for base in bases:
-        out.append(f"V8_ROOT={base}")
-        for cohort in COHORTS:
-            out += cohort_report(base, cohort, now, busy)
-    if gpus is None:
-        out.append('이 노드 GPU: 확인 불가 (nvidia-smi 없음)')
-    elif gpus:
-        out.append('이 노드 GPU: ' + ' | '.join(f'{i}: {u}% {m // 1024}G' for i, u, m in gpus))
-    return '\n'.join(out)
+    host = host or socket.gethostname()
+    return '\n'.join(render_cohort(base, cohort, now, gpus, host) for base in bases for cohort in COHORTS)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--watch', nargs='?', const=60.0, type=float, default=None, metavar='초',
-                        help='새로 고침 간격(기본 60초). Ctrl-C 로 끝냄')
+    parser.add_argument('--watch', nargs='?', const=60.0, type=float, default=None, metavar='SECONDS',
+                        help='refresh every SECONDS (default 60) until Ctrl-C')
     args = parser.parse_args(argv)
     bases = active_roots() or [root(os.environ)]
     if args.watch is None:
-        print(render(bases), flush=True)
+        sys.stdout.write(render(bases))
         return 0
     try:
         while True:
-            sys.stdout.write('\033[H\033[2J' + render(bases) + f"\n\n{int(args.watch)}초마다 새로 고침 · Ctrl-C 로 끝내기\n")
+            sys.stdout.write('\033[H\033[2J' + render(bases) + f"\n(refresh every {int(args.watch)}s · Ctrl-C to stop)\n")
             sys.stdout.flush()
             time.sleep(max(5.0, args.watch))
     except KeyboardInterrupt:
