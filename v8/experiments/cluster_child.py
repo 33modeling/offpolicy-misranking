@@ -162,12 +162,13 @@ def main():
         attention = os.environ.get("V8_ATTENTION", "eager")
         if seed_loc.get("prefix_path"):
             prefix_state = torch.load(seed_loc["prefix_path"], map_location="cpu", weights_only=False)
-            try:
-                from scripts.srgc_step_checkpoints import saved_attention
-                attention = saved_attention(prefix_state)  # every branch inherits its prefix's kernel
-            except Exception:  # noqa: BLE001
-                pass
+            # Every branch inherits its prefix's attention kernel; a failed import must not silently fall
+            # back to eager for sdpa prefixes, so errors propagate.
+            from scripts.srgc_step_checkpoints import saved_attention
+            attention = saved_attention(prefix_state)
             del prefix_state
+            if rank == 0:
+                print(f"V8 {_stamp()} attention={attention} (from prefix checkpoint)", flush=True)
         ctx_holder = {}
         def on_meter_event(event):
             if rank == 0 and isinstance(event, dict) and event.get("phase"):

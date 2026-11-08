@@ -190,3 +190,55 @@ def test_child_diagnostics_file(monkeypatch, tmp_path):
     import faulthandler
     faulthandler.disable()
     handle.close()
+
+
+def _queue(tmp_path, binding):
+    root = tmp_path / "olmo_math" / ".multi-node"
+    root.mkdir(parents=True)
+    pool = nodes.Pool(root, binding)
+    pool.initialize()
+    return root
+
+
+STABLE = dict(schema=1, cohort="olmo_math", root="/r", config_sha256="c", trainer_sha256="t", world_size=4,
+              python_version="3.10", packages={})
+
+
+def test_rebind_allowed_when_no_update_completed(tmp_path, capsys):
+    root = _queue(tmp_path, dict(STABLE, coordinator_sha256="old", runner_sha256={"a": "1"}))
+    (root / "state.json").write_text('{"phase": "train", "failure": null, "actions": [], "failure_history": []}')
+    attempt = tmp_path / "olmo_math" / "runs" / "trajectory-5" / "attempts" / "x"
+    attempt.mkdir(parents=True)
+    (attempt / "updates.jsonl").write_text("")
+    nodes.Pool(root, dict(STABLE, coordinator_sha256="new", runner_sha256={"a": "2"})).initialize()
+    assert nodes.read(root / "binding.json")["coordinator_sha256"] == "new"
+    kept = list(root.parent.glob(".multi-node.superseded-*"))
+    assert len(kept) == 1 and nodes.read(kept[0] / "binding.json")["coordinator_sha256"] == "old"
+    assert nodes.read(kept[0] / "state.json")["phase"] == "train"
+    assert "kept it as" in capsys.readouterr().out
+
+
+def test_rebind_refused_after_a_completed_update(tmp_path):
+    root = _queue(tmp_path, dict(STABLE, coordinator_sha256="old", runner_sha256={}))
+    attempt = tmp_path / "olmo_math" / "runs" / "trajectory-5" / "attempts" / "x"
+    attempt.mkdir(parents=True)
+    (attempt / "updates.jsonl").write_text('{"completed_updates": 26}\n')
+    with pytest.raises(ValueError, match="identity differs"):
+        nodes.Pool(root, dict(STABLE, coordinator_sha256="new", runner_sha256={})).initialize()
+
+
+def test_rebind_refused_when_science_changes(tmp_path):
+    root = _queue(tmp_path, dict(STABLE, coordinator_sha256="old"))
+    with pytest.raises(ValueError, match="identity differs"):
+        nodes.Pool(root, dict(STABLE, coordinator_sha256="new", trainer_sha256="other")).initialize()
+
+
+def test_supersede_refused_while_a_lease_is_held(tmp_path):
+    root = _queue(tmp_path, dict(STABLE, coordinator_sha256="old"))
+    held = nodes.Lock(root / "leases" / "job.lock")
+    assert held.acquire()
+    try:
+        with pytest.raises(ValueError, match="identity differs"):
+            nodes.Pool(root, dict(STABLE, coordinator_sha256="new")).initialize()
+    finally:
+        held.close()
