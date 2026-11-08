@@ -45,7 +45,7 @@ def test_idle_worker_rejoins_math_after_another_node_recovers_its_failure(tmp_pa
     saved=tmp_path/'checkpoint-25.pt';saved.write_bytes(b'original optimizer RNG rewards')
     timer=threading.Timer(1.5,stop.set);timer.start()
     try:
-        nodes.worker_loop_many(pairs,'waiting-node',stop,poll=.002)
+        nodes.worker_loop_many(pairs,'waiting-node',stop,poll=.002,automatic_retry=False)
     finally:stop.set();timer.cancel();timer.join()
     assert recovered,'external recovery fixture did not execute'
     assert saved.read_bytes()==b'original optimizer RNG rewards'

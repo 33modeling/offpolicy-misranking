@@ -102,8 +102,8 @@ def test_five_legacy_qwen_jobs_do_not_leave_all_new_nodes_idle_after_a_task_fail
             if cohort=='qwen_mbpp' and task['method_id']=='on_monitored':
                 held=nodes.Lock(pool.root/'leases'/(key+'.lock'));assert held.acquire();legacy.append(held)
         key=nodes.task_key(failed);job=nodes.read(pool.root/'jobs'/(key+'.json'))
-        job['state']='failed';job['attempts']=[dict(id='current-failure',exit_code=1,
-                                                 controller_sha256=pool.controller_sha256)]
+        job['state']='failed';job['attempts']=[dict(id='current-failure-'+str(i),exit_code=1,
+                                                 controller_sha256=pool.controller_sha256) for i in range(nodes.MAX_ATTEMPTS)]
         nodes.atomic(pool.root/'jobs'/(key+'.json'),job);failed_runs.add(failed['run_id'])
         pool.fail('task exit=1; output verified=False',key)
     try:

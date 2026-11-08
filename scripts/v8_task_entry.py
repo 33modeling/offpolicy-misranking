@@ -11,6 +11,7 @@ from pathlib import Path
 import sys
 import time
 import textwrap
+from contextlib import contextmanager
 
 from v8_generation_probe import install
 
@@ -71,11 +72,63 @@ def repair_dense_memory(backend):
     return None
 
 
+def repair_olmo_memory(backend):
+    """Recompute zero-dropout OLMo decoder activations; keep its draw/batch protocol."""
+    if getattr(backend,'_v8_olmo_memory',None):return backend._v8_olmo_memory
+    model=getattr(backend,'model',None)
+    if model is None:return None
+    base=model.get_base_model() if hasattr(model,'get_base_model') else model
+    if getattr(getattr(base,'config',None),'model_type',None)!='olmo3':return None
+    import torch
+    if (getattr(base.config,'attention_dropout',0)!=0 or any(
+            isinstance(m,torch.nn.Dropout) and m.p!=0 for m in model.modules())):
+        raise ValueError('OLMo activation recomputation requires zero dropout to preserve the experiment')
+    logps=getattr(backend,'_logps_batch',None)
+    if not callable(logps):raise ValueError('OLMo backend is missing the expected log-probability function')
+    base.gradient_checkpointing_enable(gradient_checkpointing_kwargs={'use_reentrant':False})
+    stage=backend.cost_meter.stage
+    @contextmanager
+    def identified_stage(name):
+        try:
+            with stage(name):yield
+        except RuntimeError as exc:
+            if hasattr(exc,'add_note'):exc.add_note(f'OLMo memory context: stage={name}; activation checkpointing enabled')
+            raise
+    backend.cost_meter.stage=identified_stage
+    @functools.wraps(logps)
+    def checkpointed_logps(*args,**kwargs):
+        previous=model.training;model.train(True)
+        try:return logps(*args,**kwargs)
+        finally:model.train(previous)
+    backend._logps_batch=checkpointed_logps
+    last_logits='logits_to_keep' in inspect.signature(base.forward).parameters
+    if last_logits:
+        generate=model.generate
+        @functools.wraps(generate)
+        def last_logit_generate(*args,**kwargs):
+            kwargs.setdefault('logits_to_keep',1)
+            try:return generate(*args,**kwargs)
+            except RuntimeError as exc:
+                if hasattr(exc,'add_note'):
+                    exc.add_note(f'OLMo generation: responses={kwargs.get("num_return_sequences")} '
+                                 f'max_new_tokens={kwargs.get("max_new_tokens")}; original draw batch retained')
+                raise
+        model.generate=last_logit_generate
+    receipt=dict(protocol='olmo-zero-dropout-recomputation-v1',activation_checkpointing=True,
+                 use_reentrant=False,generation_last_logit=last_logits,
+                 response_count_changed=False,generation_microbatch_changed=False,
+                 logprob_microbatch_changed=False,attention_kernel_changed=False)
+    backend._v8_olmo_memory=receipt
+    return receipt
+
+
 def repair_context(ctx):
     """Apply the seed runs' documented verifier/cache protections after saved-source selection."""
     backend=ctx.backend;changes={};verifier=getattr(backend,'verifier',None)
     dense_memory=repair_dense_memory(backend)
     if dense_memory:changes['dense_memory']=dense_memory
+    olmo_memory=repair_olmo_memory(backend)
+    if olmo_memory:changes['olmo_memory']=olmo_memory
     if (getattr(verifier,'__name__',None)=='math_reward'
             and getattr(verifier,'__module__',None) in ('srgc_rebuttal.run_experiment','srgc_rebuttal.verifiers')):
         records=getattr(backend,'records',{})

@@ -29,7 +29,7 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'source-recovery-dense-memory-guards-v10'
+DISPATCH_POLICY = 'source-recovery-olmo-memory-auto-retry-v11'
 TERMINAL = {'completed_horizon', 'completed_budget'}
 PHASES = ('train', 'extension', 'evaluation')
 CORRECTED_PLANNER = 'current-v8-016'  # evaluation planner replaced for pre-V8-016 coordinators
@@ -177,15 +177,15 @@ class Pool:
         self.root=Path(root);self.binding=binding;self.new_queue=new_queue
         self.controller_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
         self.retry_failed=retry_failed;self.max_attempts=max_attempts;self.retry_delay=retry_delay
+        self.automatic_retry=False  # enabled by the node loop only after normal node admission
         self.root.mkdir(parents=True,exist_ok=True)
 
     def retry_requested(self,state=None):
-        """--retry-failed on this worker, or recorded in the queue by a worker started with it: then every node
-        follows the same rule, so plain workers never re-block a queue that is waiting for a retry delay."""
-        return self.retry_failed or bool((state or {}).get('retry_failed_requested_at'))
+        """Default bounded task retries, shared with older workers through the existing queue marker."""
+        return self.automatic_retry or self.retry_failed or bool((state or {}).get('retry_failed_requested_at'))
 
     def retryable(self,job,now=None,state=None):
-        """A failed task is claimed again only with --retry-failed, below --max-attempts and after --retry-delay."""
+        """Retry task faults below the failure limit and after the shared cooldown."""
         if job.get('state')!='failed':return True
         if not self.retry_requested(state) or counted_failures(job)>=self.max_attempts:return False
         ended=max([a.get('ended_at') or a.get('started_at') or 0 for a in job.get('attempts',[])] or [0])
@@ -293,6 +293,7 @@ class Pool:
                 print(f'[v8] {self.binding.get("cohort")}: kept failed task {failure["task"]}; '
                       'independent ready jobs may continue. The failed task was not retried.',flush=True)
         if recover:self.recover_failed(recover,worker)
+        if self.automatic_retry:self.enable_automatic_retry(worker)
         state=read(state_path)
         if retry:
             # Queue-level failures (CPU stage, failed tasks blocking all work) are cleared here. Failed tasks keep
@@ -301,6 +302,23 @@ class Pool:
             if state['failure']:
                 state['failure_history'].append(state['failure']);state['failure']=None
             atomic(state_path,state)
+
+    def enable_automatic_retry(self,worker):
+        """Default task recovery after admission; never clear input/setup/identity failures."""
+        state=self.queue_state();failure=state.get('failure')
+        policy=dict(policy=DISPATCH_POLICY,max_failed_attempts=self.max_attempts,retry_delay=self.retry_delay)
+        changed=state.get('automatic_retry_policy')!=policy or not state.get('retry_failed_requested_at')
+        state['automatic_retry_policy']=policy
+        # Older dispatchers already understand this shared request and cooldown.
+        state.setdefault('retry_failed_requested_at',time.time())
+        aggregate=(isinstance(failure,dict) and failure.get('task') is None and
+                   re.match(r'^\d+ task\(s\) failed; no independent ready/running work remains\.',str(failure.get('detail',''))))
+        if aggregate and any(job.get('phase')==state['phase'] and self.retry_later(job,state)
+                             for job in (read(p) for p in self.root.glob('jobs/*.json'))):
+            state.setdefault('failure_history',[]).append(failure);state['failure']=None;changed=True
+        if changed:
+            state.setdefault('actions',[]).append(dict(action='enable_default_task_retry',worker=worker,at=time.time(),**policy))
+            atomic(self.root/'state.json',state)
 
     def recover_failed(self,controller,worker):
         """After node verification, retry an older controller's failed tasks once per fix.
@@ -456,8 +474,8 @@ class Pool:
         if failed and not pending and not active and not later:
             state=self.queue_state();state.pop('retry_failed_requested_at',None)
             state['failure']=dict(detail=f'{len(failed)} task(s) failed; no independent ready/running work remains. '
-                                  'Failed attempts are preserved; inspect their logs before --retry-failed (each failed '
-                                  f'task is retried at most {self.max_attempts} times, {self.retry_delay:g}s after its failure).',
+                                  'Failed attempts/checkpoints are preserved. Automatic recovery exhausted or disabled '
+                                  f'(at most {self.max_attempts} counted failures, {self.retry_delay:g}s between attempts).',
                                   task=None,at=time.time())
             atomic(self.root/'state.json',state)
             return 'failed',None
@@ -605,7 +623,7 @@ class TaskScan:
 
 
 def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_gate=None,
-                     max_attempts=MAX_ATTEMPTS,retry_delay=RETRY_DELAY):
+                     max_attempts=MAX_ATTEMPTS,retry_delay=RETRY_DELAY,automatic_retry=True):
     """Original actors prepare independently; serialize lease-count comparison and task claim."""
     if not pairs:raise ValueError('At least one cohort is required')
     initialized=set();terminal={};offers={};scans={};last_report=0;reasons={};busy_report=0;setup_report=0
@@ -616,6 +634,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
     controller_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     for pool,runtime in pairs:
         pool.retry_failed=retry;pool.max_attempts=max_attempts;pool.retry_delay=retry_delay
+        pool.automatic_retry=automatic_retry
         runtime.stop_event=stop  # runtime actors report signals through the same stop event
         def heartbeat(task=None,pool=pool):
             atomic(pool.root/'workers'/(digest(worker)+'.json'),
@@ -1305,9 +1324,8 @@ def main(argv=None):
     parser.add_argument('--gpus',default=os.environ.get('CUDA_VISIBLE_DEVICES','0,1,2,3'))
     parser.add_argument('--poll-seconds',type=float,default=3)
     parser.add_argument('--retry-failed',action='store_true',
-                        help='retry failed tasks (at most --max-attempts counted failures, --retry-delay seconds '
-                             'after the last one, as the original SRGC worker); ordinary node joins after a controller '
-                             'update recover older-controller failed tasks once without it')
+                        help='legacy explicit retry request; failed tasks already retry by default under '
+                             '--max-attempts/--retry-delay; does not delete checkpoints or failure history')
     parser.add_argument('--max-attempts',type=int,default=MAX_ATTEMPTS)
     parser.add_argument('--retry-delay',type=float,default=RETRY_DELAY)
     parser.add_argument('--status',action='store_true')

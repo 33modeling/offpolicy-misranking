@@ -76,10 +76,11 @@ class FakeRuntime:
         return 0
 
 
-def run_fake(root,runtime_path,worker,fail=None,no_output=None,overlap_gate=False):
+def run_fake(root,runtime_path,worker,fail=None,no_output=None,overlap_gate=False,max_attempts=nodes.MAX_ATTEMPTS):
     runtime=FakeRuntime(runtime_path,fail=fail,no_output=no_output,overlap_gate=overlap_gate)
     try:
-        rc=nodes.worker_loop(nodes.Pool(root,runtime.binding),runtime,worker,threading.Event(),poll=.003)
+        rc=nodes.worker_loop(nodes.Pool(root,runtime.binding),runtime,worker,threading.Event(),poll=.003,
+                             retry_delay=0,max_attempts=max_attempts)
     except Exception:rc=99
     Path(str(root)+'.'+worker+'.rc').write_text(str(rc))
 
@@ -131,19 +132,17 @@ def test_failed_task_or_success_without_output_never_becomes_complete(tmp_path,m
     assert 'task(s) failed' in state['failure']['detail'] and state['phase']=='train'
     failed=[nodes.read(p) for p in queue.glob('jobs/*.json') if nodes.read(p)['state']=='failed']
     assert [job['task']['run_id'] for job in failed]==['branch0']
-    assert failed[0]['attempts'][-1]['outcome']=='failed' and len(failed[0]['attempts'])==1
+    assert failed[0]['attempts'][-1]['outcome']=='failed' and len(failed[0]['attempts'])==3
     assert all(nodes.read(p)['state']=='done' for p in queue.glob('jobs/*.json') if nodes.read(p)['task']['run_id']!='branch0')
     assert not (runtime/'freeze').exists()
     assert not list(runtime.glob('start-eval*'))
 
 
 def test_failed_task_retry_preserves_failure_and_attempt_history(tmp_path):
-    queue,runtime,rc=launch_workers(tmp_path,fail='branch0')
+    queue,runtime,rc=launch_workers(tmp_path,fail='branch0',max_attempts=1)
     pool=nodes.Pool(queue,FakeRuntime(runtime).binding)
-    # Without --retry-failed the failed task blocks the phase: the worker stops instead of rerunning it.
-    assert nodes.worker_loop(pool,FakeRuntime(runtime),'plain',threading.Event(),poll=.002,retry_delay=0)==1
-    # --retry-failed waits --retry-delay after the failure (original SRGC rule), then retries it once.
-    assert nodes.worker_loop(pool,FakeRuntime(runtime),'retry',threading.Event(),poll=.002,retry=True,retry_delay=0)==0
+    # Plain launch now retries a same-controller task fault; history stays append-only.
+    assert nodes.worker_loop(pool,FakeRuntime(runtime),'plain',threading.Event(),poll=.002,retry_delay=0)==0
     state=nodes.read(queue/'state.json')
     assert state['phase']=='complete' and state['failure'] is None
     failed=next(nodes.read(p) for p in queue.glob('jobs/*.json') if nodes.read(p)['task']['run_id']=='branch0')
@@ -160,7 +159,7 @@ def test_failed_task_is_retried_only_within_max_attempts_and_after_delay(tmp_pat
     assert nodes.worker_loop(pool,runtime,'n',threading.Event(),poll=.002,retry=True,retry_delay=0,max_attempts=2)==1
     job=next(nodes.read(p) for p in queue.glob('jobs/*.json') if nodes.read(p)['task']['run_id']=='branch0')
     assert [a['outcome'] for a in job['attempts']]==['failed','failed']
-    assert 'retried at most 2 times' in nodes.read(queue/'state.json')['failure']['detail']
+    assert 'at most 2 counted failures' in nodes.read(queue/'state.json')['failure']['detail']
     # A long --retry-delay keeps a retryable failure waiting instead of relaunching it immediately.
     later=nodes.Pool(queue,runtime.binding,retry_failed=True,max_attempts=3,retry_delay=3600)
     assert later.retry_later(job) and not later.retryable(job)
@@ -476,7 +475,7 @@ def run_mixed_fake(root,worker,stop,blocked=False,failed=False):
         runtime.binding['cohort']=cohort
         if blocked and cohort=='a':runtime.ready=lambda _:False
         pairs.append((nodes.Pool(Path(root)/cohort/'queue',runtime.binding),runtime))
-    rc=nodes.worker_loop_many(pairs,worker,stop,poll=.003)
+    rc=nodes.worker_loop_many(pairs,worker,stop,poll=.003,retry_delay=0)
     nodes.atomic(Path(root)/(worker+'-exit.json'),{'exit_code':rc})
 
 

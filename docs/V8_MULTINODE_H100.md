@@ -133,7 +133,7 @@ worker는60초마다 현황을 출력한다. 자식 출력은 터미널과 각 c
 정책 버전이 나온다. 표 형식 `status`는 `dispatch current <hash>`(현재 checkout과
 같음), `dispatch different <hash>`(다름), `dispatch unverified`(기록 없음)를 구분한다.
 정책 파일이 디스크에 있다는 것만으로 실행 중인 worker에 적용됐다고 판단하지 않는다.
-현재 배정 정책은 `source-recovery-dense-memory-guards-v10`이다. 작업 검사는 해당 cohort의
+현재 배정 정책은 `source-recovery-olmo-memory-auto-retry-v11`이다. 작업 검사는 해당 cohort의
 control lease만 잡고 별도로 수행한다. 검사 결과가 준비되면 공유 잠금 안에서 현재
 binding·phase·실패 상태·작업 정의·작업 lease를 다시 확인한 뒤 claim한다.
 검사와 claim 사이에 다른 노드가 가져간 작업이나 실패한 작업은 가져오지 않는다.
@@ -145,14 +145,18 @@ binding·phase·실패 상태·작업 정의·작업 lease를 다시 확인한 �
 검증 후 이전 제어 코드에서 실패한 작업을 현재 수정본당 한 번 재개한다. 이전 버전에
 제어 코드 기록이 없던 실패도 한 번만 재개한다. 별도 재시도 옵션은 필요 없다.
 원래 실패 시도와 체크포인트는 보존하고 복구 사유·제어 코드·worker를 별도로 기록한다.
-같은 수정본에서 다시 실패한 작업은 자동 반복하지 않고 다른 seed와 준비된 분기는 계속 배정한다. 실패가 남아 있고 독립적으로 실행할
-작업도 더 없으면 실패로 종료하며 freeze·평가·완료로 넘어가지 않는다. 이전 V8가
+같은 수정본에서 실패해도 기본 명령이60초 후 자동 재시도한다. 총 실패 횟수 기본값은
+3회이며 중단75·노드 자체의 실행 실패는 이 횟수에서 제외한다. 재시도 대기 중에도
+다른 seed와 준비된 분기는 계속 배정한다. 재개는 원래 `latest.pt`가 있으면 그곳에서,
+없으면 검증된 부모 checkpoint에서 한다. 실패 시도·optimizer·RNG·학습 보상은 보존한다.
+상한에 도달한 실패가 남아 있고 독립적으로 실행할 작업도 없으면 실패로 종료하며
+freeze·평가·완료로 넘어가지 않는다. 이전 V8가
 개별 `task exit=...` 실패를 cohort 전체 중단으로 저장한 경우, 같은 failed job이
 존재할 때만 그 중단을 작업 범위로 옮긴다. 원래 실패는 history에 보존하고 작업·시도·
 binding·checkpoint를 고치거나 지우지 않는다. 신원·설정·CPU 준비 오류는 이 방식으로
 해제하지 않는다. 입력·설정 검증을 우회하지 않으며 살아 있는 task lease는 건드리지 않는다.
-`--retry-failed`는 같은 수정본에서 다시 실패한 작업까지 수동으로 재시도할 때 쓰는
-고급 옵션이다. 새 노드의 기본 실행 명령에는 붙이지 않는다.
+`--retry-failed`는 기존 명시적 복구용 호환 옵션이며 일반 실행에 필요 없다.
+자동 복구는 작업 실패에만 적용하며 입력·신원·CPU 준비 오류를 해제하지 않는다.
 
 이미 대기 중인 worker도 다른 검증된 노드가 공유 실패를 복구했는지 다시 확인한다.
 기존에는 MATH의 실패를 한 번 본 worker가 그 판단을 영구 보관해, 공유 대기열이
@@ -188,6 +192,16 @@ scorer overlay SHA와 원본 backend SHA를 위 rank receipt의 `dense_memory`�
 연산 순서·rank별 문제 배분·한 번의 gather·기존 timing wrapper를 유지한다. 응답 수나
 길이·배치·attention을 바꾸지 않는다. CPU 재현과 수치/RNG 일치는 실제 H100 정상화의
 증거가 아니며, 실제 오류 위치와 재개 update는 별도로 확인해야 한다.
+
+V11은 OLMo의 decoder activation checkpointing 누락도 보완한다. Qwen 경로는 이미
+이 보호를 사용하지만 OLMo는 마지막 logits chunk만 checkpoint하고 decoder의 역전파
+활성값은 보관했다. OLMo는 dropout0을 검증하고 logprob forward에서만 training mode와
+non-reentrant checkpointing을 켠 뒤 기존 mode를 복원한다. 생성은 기존8응답 묶음과
+토큰 한도·seed·attention을 유지하고, 지원하는 모델에서는 마지막 위치 logits만
+계산한다. 이때도 생성 microbatch를 나누지 않는다. 기존 Qwen 경로는 변경하지 않는다.
+작은 실제 OLMo CPU 모델의 출력·gradient·생성토큰·RNG 일치 및 저장 활성값 감소를
+검사했다. 이 값은 실제7B H100의 peak 메모리 측정이 아니다. 실제 OOM 원인 확정과
+SR25 update 재개는 별도 확인이 필요하며 다음 CUDA 오류에는 실패 stage도 보존한다.
 
 `answering 8/9`는 가장 최근 기록을 보낸 GPU가 이번 호출에서 맡은 9문제 중 8번째
 문제의 답변을 생성 중이라는 뜻이다. 8개 update 완료나 전체 실험의 8/9 완료가 아니다.
