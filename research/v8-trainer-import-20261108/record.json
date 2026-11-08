@@ -1,0 +1,35 @@
+{
+  "source_commit": "235ded015e9ba281ea62e4f29d1d2f792c0dc7e2",
+  "first_fix": "f4cccb8",
+  "concurrent_runtime_commit": "19a0161",
+  "hypothesis": "The actor is launched from a private frozen control folder. Original Runtime child_environment PYTHONPATH does not also modify the parent actor sys.path; importing the SRGC lifecycle before activation raises ModuleNotFoundError outside the checkout.",
+  "user_report": "no module named srgc_rebutal; user spelling retained; actual reproduced exception is No module named srgc_rebuttal",
+  "attribution": "Codex introduced run_srgc_child in b9cddf8 without activating the selected original trainer import path. Prior tests inside checkout made the package importable and missed the actual cached-script layout.",
+  "tested": {
+    "data": "Fresh private-cache/control with copied actor+RPC, cwd outside checkout, PYTHONPATH removed, only the existing V8_CODE_ROOT supplied",
+    "baseline": "Exactly reproduced ModuleNotFoundError at from srgc_rebuttal.cluster import run_child, before.xml1failure",
+    "fix": "Bootstrap inherits selected root/src in PYTHONPATH, actor activates exactly that original root before imports, and the SRGC subprocess also inherits root/src. Preserve prior user path entries. No package install or guessed fallback trainer.",
+    "controls": "Real original SRGC run_child, CPU subprocess imports original srgc_rebuttal.progress; no torchrun/model/GPU",
+    "seeds_updates": "No experiment seed, model inference, optimizer updates or new scientific values.",
+    "metrics": "Import success, original SRGC child reached, existing lifecycle/actor/source selection regressions; not scientific results"
+  },
+  "verification": {
+    "first_fixed_tests": 52,
+    "merged_tests": 52,
+    "parent_and_child_tests": 25,
+    "archive_tests": 14,
+    "archive_coordinators": 18,
+    "archive_runners": 7,
+    "frozen_trainer_files_unchanged": 30
+  },
+  "source_identity": "Existing binding and original coordinator/numerical runner hashes remain unchanged. Concurrent19a0161 runtime audit changes were merged and original runners remain archived for existing queues.",
+  "checkpoint_provenance": "No checkpoints, optimizer/RNG, rewards, attempts or frozen input records were deleted/reset. Failed task retry remains explicit via --retry-failed; never silently relabel an existing failed attempt.",
+  "limitations": "Reproduced and fixed the actual import failure in a CPU fresh-process layout, not verified actual H100 OLMo training progress or other remote faults. No GPU allocation, server or paid API call.",
+  "evidence": [
+    "before.xml",
+    "fixed.xml",
+    "merged.xml",
+    "parent-and-child.xml",
+    "archive.xml"
+  ]
+}

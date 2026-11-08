@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="0.132" timestamp="2026-11-08T15:07:58.161767+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_srgc_lifecycle" name="test_frozen_actor_outside_checkout_can_import_original_srgc_without_pythonpath" time="0.082"><failure message="AssertionError: Traceback (most recent call last):&#10;    File &quot;/dev/shm/v8-import-before-kms/test_frozen_actor_outside_chec0/private-cache/control/probe.py&quot;, line 5, in &lt;module&gt;&#10;      assert run_srgc_child(r,[sys.executable,'-c','print(&quot;original SRGC child reached&quot;)'],&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/dev/shm/v8-import-before-kms/test_frozen_actor_outside_chec0/private-cache/control/v8_runtime_worker.py&quot;, line 16, in run_srgc_child&#10;      from srgc_rebuttal.cluster import run_child&#10;  ModuleNotFoundError: No module named 'srgc_rebuttal'&#10;  &#10;assert 1 == 0&#10; +  where 1 = CompletedProcess(args=['/usr/bin/python3', '/dev/shm/v8-import-before-kms/test_frozen_actor_outside_chec0/private-cach...srgc_child\n    from srgc_rebuttal.cluster import run_child\nModuleNotFoundError: No module named \'srgc_rebuttal\'\n').returncode">tmp_path = PosixPath('/dev/shm/v8-import-before-kms/test_frozen_actor_outside_chec0')
+
+    def test_frozen_actor_outside_checkout_can_import_original_srgc_without_pythonpath(tmp_path):
+        controls=tmp_path/'private-cache/control';controls.mkdir(parents=True)
+        for name in ('v8_runtime_worker.py','v8_rpc.py'):
+            (controls/name).write_bytes((REPO/'scripts'/name).read_bytes())
+        script=controls/'probe.py'
+        script.write_text('''import os,sys,threading,types
+    from pathlib import Path
+    from v8_runtime_worker import run_srgc_child
+    r=types.SimpleNamespace(cohort='olmo_math',gpus=[],heartbeat=lambda _:None,environment=dict(os.environ))
+    assert run_srgc_child(r,[sys.executable,'-c','print("original SRGC child reached")'],
+     Path(sys.argv[1]),[],threading.Event(),interval=.01)==0
+    ''')
+        env=dict(os.environ,V8_CODE_ROOT=str(REPO),SRGC_PROGRESS_DIR=str(tmp_path/'progress'))
+        env.pop('PYTHONPATH',None)
+        result=subprocess.run([sys.executable,str(script),str(tmp_path/'task.log')],cwd=tmp_path,
+                              env=env,capture_output=True,text=True,timeout=4)
+&gt;       assert result.returncode==0,result.stdout+result.stderr
+E       AssertionError: Traceback (most recent call last):
+E           File "/dev/shm/v8-import-before-kms/test_frozen_actor_outside_chec0/private-cache/control/probe.py", line 5, in &lt;module&gt;
+E             assert run_srgc_child(r,[sys.executable,'-c','print("original SRGC child reached")'],
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/dev/shm/v8-import-before-kms/test_frozen_actor_outside_chec0/private-cache/control/v8_runtime_worker.py", line 16, in run_srgc_child
+E             from srgc_rebuttal.cluster import run_child
+E         ModuleNotFoundError: No module named 'srgc_rebuttal'
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/usr/bin/python3', '/dev/shm/v8-import-before-kms/test_frozen_actor_outside_chec0/private-cach...srgc_child\n    from srgc_rebuttal.cluster import run_child\nModuleNotFoundError: No module named \'srgc_rebuttal\'\n').returncode
+
+tests/test_srgc_v8_srgc_lifecycle.py:66: AssertionError</failure></testcase></testsuite></testsuites>
