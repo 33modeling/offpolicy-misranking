@@ -244,3 +244,23 @@ def test_supersede_refused_while_a_lease_is_held(tmp_path):
             nodes.Pool(root, dict(STABLE, coordinator_sha256="new")).initialize()
     finally:
         held.close()
+
+
+def test_missing_state_json_is_recreated_not_fatal(tmp_path, capsys):
+    pool = nodes.Pool(tmp_path / "q", {"cohort": "olmo_math"})
+    pool.initialize()
+    (pool.root / "state.json").unlink()
+    state = pool.queue_state()
+    assert state["phase"] == "prepare" and (pool.root / "state.json").exists()
+    assert "was missing; recreating it" in capsys.readouterr().out
+    pool.fail("x")  # no FileNotFoundError
+    assert nodes.read(pool.root / "state.json")["failure"]["detail"] == "x"
+
+
+def test_missing_binding_json_stops_worker_with_clear_message(tmp_path):
+    pool = nodes.Pool(tmp_path / "q", {"cohort": "olmo_math"})
+    pool.initialize()
+    (pool.root / "binding.json").unlink()
+    with pytest.raises(nodes.BindingMismatch, match="moved or removed"):
+        with pool.control():
+            pool.tick(None, "w", None)

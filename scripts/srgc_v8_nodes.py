@@ -215,8 +215,18 @@ class Pool:
                     lease.close();job['state']='pending';atomic(file,job)
             atomic(state_path,state)
 
+    def queue_state(self):
+        """state.json, recreated as a fresh 'prepare' record (with a printed note) if it is missing,
+        e.g. a queue folder created by an interrupted start. Never raises FileNotFoundError."""
+        path=self.root/'state.json'
+        if not path.exists():
+            print(f"[v8] {self.binding.get('cohort','?')}: {path} was missing; recreating it (phase prepare). "
+                  "Finished work is kept and re-checked; nothing is deleted.",flush=True)
+            atomic(path,dict(phase='prepare',failure=None,actions=[dict(action='state_recreated',at=time.time())],failure_history=[]))
+        return read(path)
+
     def fail(self,detail,task=None):
-        state=read(self.root/'state.json')
+        state=self.queue_state()
         if not state['failure']:
             state['failure']=dict(detail=detail,task=task,at=time.time())
             atomic(self.root/'state.json',state)
@@ -243,10 +253,13 @@ class Pool:
 
     def tick(self,runtime,worker,stop,claim=True):
         """Called with control lock held. Returns (state, claimed lease/task)."""
+        if not (self.root/'binding.json').exists():
+            raise BindingMismatch(f"{self.binding.get('cohort')}: this queue folder ({self.root}) was moved or removed "
+                                  "while this worker was running; restart this worker (same command).")
         if read(self.root/'binding.json')!=self.binding:
             raise BindingMismatch(f"{self.binding.get('cohort')}: another node replaced this queue's code/Python record "
                                   "while this worker was running; restart this worker with the same bundle as the others.")
-        state=read(self.root/'state.json')
+        state=self.queue_state()
         if state['failure']:return 'failed',None
         phase=state['phase']
         if phase=='complete':return 'complete',None
@@ -399,7 +412,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                             print(f'[{worker}] {cohort(pool)}: CPU stage {action} started',flush=True)
                             runtime.barrier(action,control.fd,stop,device_fds)
                             if stop.is_set():return 75
-                            state=read(pool.root/'state.json')
+                            state=pool.queue_state()
                             state['actions'].append(dict(action=action,worker=worker,at=time.time()))
                             state['phase']={'prepare':'train','freeze':'extension','finalize':'complete'}[action]
                             atomic(pool.root/'state.json',state);action='advance'
@@ -413,7 +426,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                         give_up(index,pool,'stage',exc);progressed=True;continue
             runtime.heartbeat(claimed[2].get('run_id') if claimed else None)
             if action=='failed':
-                state=read(pool.root/'state.json')
+                state=pool.queue_state()
                 reasons[cohort(pool)]=canonical(state.get('failure'))
                 print(f'[{worker}] {cohort(pool)}: queue has a recorded failure: {reasons[cohort(pool)]}. '
                       f'Fix it, then run the same command with --retry-failed.',flush=True)
