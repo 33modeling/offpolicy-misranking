@@ -1,0 +1,49 @@
+{
+  "source_commit": "d347995f65c351c5b4f1d5ba8014c763d40e7e16",
+  "merged_commit": "b768874f6bab5008280abbf69acf8ba9d359e7a2",
+  "hypothesis": "A Runtime.plan/native_busy/done/ready call was performed while holding the global cross-cohort dispatch lock. One stalled original metadata call could stop both cohorts on all new nodes. Per-node verification was also synchronous across cohorts.",
+  "user_report": "아직도 olmo는 시작 안해",
+  "attribution": "Codex introduced the global claim gate around the whole Pool.tick scan in ea68d28. Prior independent-startup tests covered actor construction and CPU preparation, but did not block real actor metadata calls.",
+  "tested": {
+    "data": "Original-runtime CPU actor fixture with plan/verification/readiness/native-lock/output checks blocked until the other cohort enters its actual fixture execute method. Force the blocked cohort first; no model or GPU.",
+    "controls": "Both directions: slow Qwen must allow OLMo execute; slow OLMo must allow Qwen execute. Existing initializers and prepare barriers, exact runtime snapshots, real five-seed DAG, held legacy Qwen leases, checkpoint retention and concurrent claim tests.",
+    "seeds_updates": "Production DAG seeds5-9 are metadata-only fixtures; CPU toy runner retains updates25/50/75. No H100 model updates or new scientific values.",
+    "metrics": "Process completion, actual CPU fixture execute entry, kernel task lease exclusion, preserved binding/task definitions and checkpoint bytes. Not measured training reward/held-out reward/throughput."
+  },
+  "fix": "Inspect each original actor under only its cohort control lease, independently of the other actor. Once inspection finishes, carry an advisory immutable task offer. Re-read binding, phase, failures, task semantics and kernel leases before claim. The cross-cohort gate only compares held leases and claims tasks; it performs no Runtime RPC or numerical/ledger scan.",
+  "checkpoint_provenance": "No checkpoint, optimizer/RNG, reward, failed attempt, frozen scientific input or original Runtime binding was deleted/reset/relabelled. Thirty original srgc_rebuttal file hashes match the retained baseline. Existing coordinator/runner snapshots remain archived.",
+  "limitations": "Actual user H100 status/log/stack has not been received; this reproduced blocker is fixed but its role in the current remote OLMo failure and actual OLMo startup/throughput remain unverified. Existing already-running workers retain their frozen code until rerun. No paid API/model call, allocation, service or listener started.",
+  "evidence": {
+    "before_fixture_error": "before.xml: IndexError in initial test harness argv capture; not the product reproduction.",
+    "before_runtime": "before-runtime.xml:2 timeouts, Qwen plan blocks OLMo and vice versa.",
+    "initial_core": "core.xml:80 passed,2 test-hook failures after splitting inspection/claim,8 skipped due to missing V8_NODES_TEST_RUNTIME. Test hooks updated to target the actual claim and accept inspection keyword; failure evidence preserved.",
+    "fixed_core": "core-with-runtime.xml:95 passed,0 skipped; current runtime supplied.",
+    "offers": "offers.xml:3 passed; concurrent offers cannot claim the same job, stale failure/phase/identity/task changes rejected, no original Runtime calls inside claim.",
+    "archive": {
+      "coordinators": 19,
+      "runners": 7,
+      "files": 433
+    },
+    "remaining_regressions": {
+      "passed": 142,
+      "skipped": [
+        {
+          "test": "tests.test_srgc_v8_generation_probe.test_real_tiny_olmo_outputs_and_rng_match_original",
+          "reason": "Set V8_TINY_TEST_PYTHON to the existing CPU torch/transformers environment"
+        },
+        {
+          "test": "tests.test_srgc_v8_history.test_v8_runtime_interrupt_resume_and_offline_evaluation",
+          "reason": "Set V8_HISTORY_TEST_RUNTIME to v8/experiments for the CPU runner integration"
+        }
+      ],
+      "python": "/home/kms/dev/continual-pair-opd/.venv/bin/python",
+      "note": "No GPU models or scientific measurements. These are disjoint from the95 core tests; archive/source/bootstrap/observer/stop/status tests included."
+    },
+    "retained_and_observer": "retained-and-observer.xml:2 passed after supplying the existing CPU interpreter/runtime paths. Random tiny OLMo output tensors and final RNG match; CPU history interruption/resume and offline-evaluation export verified. These are not pretrained H100 learning measurements."
+  },
+  "verification_total": {
+    "unique_passed": 239,
+    "remaining_skipped": 0,
+    "scope": "95 core +142 other regressions +2 previously optional checks"
+  }
+}

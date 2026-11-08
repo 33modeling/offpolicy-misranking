@@ -8,12 +8,12 @@ sh scripts/run_v8_nodes.sh
 
 별도 모델명이나 노드별 역할을 지정하지 않는다. 한 worker가 OLMo MATH와 Qwen
 MBPP 양쪽의 준비된 작업을 확인하고, 한 번에4GPU 작업 하나를 실행한다. 각 cohort의
-원본 Runtime 초기화와 CPU 준비는 독립적으로 진행한다. Qwen의 준비가 끝나지 않아도
+원본 Runtime 초기화·노드 검증·CPU 준비·작업 목록 검사는 독립적으로 진행한다. Qwen의 준비가 끝나지 않아도
 검증·준비가 끝난 OLMo는 시작할 수 있고, 반대 방향도 같다. 공유 잠금 안에서 실제 점유 중인 작업 lease를
 세고 적게 배정된 cohort부터 새 작업을 가져온다. 기존 Qwen 작업10개가 실행 중이면
 추가 worker는 준비된 OLMo 작업을 우선한다. 한쪽이 체크포인트를 기다리거나 완료되면
 다른 쪽의 준비된 작업을 가져온다. 공유 잠금은 배정 판단·작업 claim 동안만 잡으며,
-모델 로딩·학습·준비 작업 중에는 잡지 않는다. 모델별 고정 노드 할당이나 GPU 분할은
+원본 Runtime의 작업 목록·체크포인트·완료 여부 검사와 모델 로딩·학습·준비 중에는 잡지 않는다. 모델별 고정 노드 할당이나 GPU 분할은
 하지 않는다.
 
 ## 기존 환경 자동 사용
@@ -133,8 +133,11 @@ worker는60초마다 현황을 출력한다. 자식 출력은 터미널과 각 c
 정책 버전이 나온다. 표 형식 `status`는 `dispatch current <hash>`(현재 checkout과
 같음), `dispatch different <hash>`(다름), `dispatch unverified`(기록 없음)를 구분한다.
 정책 파일이 디스크에 있다는 것만으로 실행 중인 worker에 적용됐다고 판단하지 않는다.
-현재 배정 정책은 `independent-cohort-task-failures-v4`다. 유휴 worker는 배정 전에 모든 작업을
-중복 검사하지 않으며, 그 노드의 입력 검증을 통과한 뒤에만 claim할 수 있다.
+현재 배정 정책은 `independent-cohort-task-scans-v5`다. 작업 검사는 해당 cohort의
+control lease만 잡고 별도로 수행한다. 검사 결과가 준비되면 공유 잠금 안에서 현재
+binding·phase·실패 상태·작업 정의·작업 lease를 다시 확인한 뒤 claim한다.
+검사와 claim 사이에 다른 노드가 가져간 작업이나 실패한 작업은 가져오지 않는다.
+노드 입력 검증도 다른 cohort의 시작을 막지 않으며 검증을 통과한 노드만 claim할 수 있다.
 원본 Runtime 초기화에는120초 제한을 두고, 한 cohort가 초기화에 응답하지 않으면
 오류를 표시하고 다른 cohort를 계속한다. 학습 실행 시간에는 이 초기화 제한을 적용하지 않는다.
 
