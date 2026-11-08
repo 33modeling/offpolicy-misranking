@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="0.064" timestamp="2026-11-08T22:52:48.344060+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_retry_debug" name="test_cooldown_uses_the_last_attempt_instead_of_an_older_nodes_future_timestamp" time="0.001"><failure message="AssertionError: older-node clock skew incorrectly extends the current retry cooldown&#10;assert False&#10; +  where False = retryable({'state': 'failed', 'attempts': [{'id': 'old', 'outcome': 'failed', 'ended_at': 10000}, {'id': 'new', 'outcome': 'fail...r', 'after_attempt': 'old'}, 'recovery_history': [{'controller_policy': 'verified-repair', 'previous_attempt': 'old'}]}, now=160)&#10; +    where retryable = &lt;scripts.srgc_v8_nodes.Pool object at 0x707832cc9700&gt;.retryable">tmp_path = PosixPath('/dev/shm/v8-idle-clock-before-20261108/test_cooldown_uses_the_last_at0')
+
+    def test_cooldown_uses_the_last_attempt_instead_of_an_older_nodes_future_timestamp(tmp_path):
+        pool,runtime,task,key,saved=prepared(tmp_path);pool.retry_delay=60
+        job=dict(state='failed',attempts=[dict(id='old',outcome='failed',ended_at=10000),
+                                        dict(id='new',outcome='failed',ended_at=100)],
+                 retry_epoch=dict(policy='verified-repair',after_attempt='old'),
+                 recovery_history=[dict(controller_policy='verified-repair',previous_attempt='old')])
+        assert not pool.retryable(job,now=159)
+&gt;       assert pool.retryable(job,now=160),'older-node clock skew incorrectly extends the current retry cooldown'
+E       AssertionError: older-node clock skew incorrectly extends the current retry cooldown
+E       assert False
+E        +  where False = retryable({'state': 'failed', 'attempts': [{'id': 'old', 'outcome': 'failed', 'ended_at': 10000}, {'id': 'new', 'outcome': 'fail...r', 'after_attempt': 'old'}, 'recovery_history': [{'controller_policy': 'verified-repair', 'previous_attempt': 'old'}]}, now=160)
+E        +    where retryable = &lt;scripts.srgc_v8_nodes.Pool object at 0x707832cc9700&gt;.retryable
+
+tests/test_srgc_v8_retry_debug.py:123: AssertionError</failure></testcase></testsuite></testsuites>

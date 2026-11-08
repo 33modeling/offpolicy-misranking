@@ -1,0 +1,82 @@
+{
+  "source_commit": "2850c965513d89ddc43a8631616e816f1bb28ae1",
+  "implementation_commit": "d930ad1",
+  "user_reports": [
+    "야 note가 왜 idle이 많아?",
+    "디버깅해"
+  ],
+  "hypotheses": [
+    "Old broken-source failures were counted against a newly verified repair, so one new failure after5 old failures exhausted the nominal3-attempt limit.",
+    "Failed/exhausted labels were checked before the original Runtime.done/native_busy validators. A strongly matching completed manifest or an actual native execution lock could be ignored, causing needless aggregate failure/idle.",
+    "Cooldown used the maximum timestamp from every historical attempt. An older node clock in the future could postpone the current retry beyond60 seconds and disagree with status."
+  ],
+  "fixes": [
+    "V12 writes a validated recovery boundary retry_epoch together with recovery_history under the task lease. Lifetime attempts remain; only subsequent failures consume this repair budget. Same-policy new nodes/status hashes cannot reset it. Missing/unmatched boundary metadata falls back to the lifetime count.",
+    "Original native execution lock and Runtime.done checks run before failure eligibility. Valid completed outputs are adopted without another GPU launch; attempt evidence remains unchanged. Aggregate-only exhaustion can be reinspected and cleared only for verified completed/active/eligible work; structural input/setup/identity faults remain blocking.",
+    "Use last attempt ended_at/started_at for cooldown. Status imports the same retry_budget_failures function and shows current repair and historical counts separately."
+  ],
+  "controls": {
+    "model": "No model/GPU inference; real Pool, native file locks and original Runtime.done metadata validator",
+    "data": "One seed5 SR25 task, endpoint275, matching/mismatched completion manifests and opaque checkpoint byte sentinel; not real model weights or reward data",
+    "seeds": [
+      5
+    ],
+    "updates": "0 optimizer updates; no scientific reward/evaluation/throughput measurements",
+    "metrics": "Claim/adoption outcome; five original failures retained plus three bounded repair failures; same-policy rejoin cannot renew budget; wrong config/active native lock preserve ownership; retry at159/160 after last failure100 despite old timestamp10000; reader/dispatcher budget agreement",
+    "checkpoint_provenance": "Original trainer30 hashes unchanged. Original checkpoint/optimizer/RNG/reward sentinel and all eight failed attempts retained. No original run input/model/checkpoint files accessed on H100."
+  },
+  "evidence": {
+    "all.xml": {
+      "tests": 335,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "archive.xml": {
+      "tests": 65,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "before.xml": {
+      "tests": 4,
+      "failures": 4,
+      "errors": 0,
+      "skipped": 0
+    },
+    "clock-before.xml": {
+      "tests": 1,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0
+    },
+    "extended.xml": {
+      "tests": 103,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 8
+    },
+    "final.xml": {
+      "tests": 117,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "fixed.xml": {
+      "tests": 17,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "merged.xml": {
+      "tests": 48,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "verification_sequence": "all.xml335 pass was before the final one-line last-attempt cooldown adjustment. final.xml117 pass tests the final cooldown, recovery, source/node/reader paths; merged.xml48 pass follows peer planned-grid merge. archive.xml65 pass validates the newly packed29 coordinator/7 runner/443 file archive. extended.xml95pass8skip omitted optional runtime envs; final uses those envs and has no skips.",
+  "failures": "before.xml4 fail reproduces quota leakage, valid-completion adoption with/without aggregate failure, and a native-lock case. clock-before.xml1 fail reproduces historical future timestamp holding the current retry. All raw failures are retained.",
+  "limitations": "No remote H100 connection/queue/worker policy/logs available. These are CPU-reproduced control defects, not proof of the user idle cause or OLMo CUDA OOM resolution. Existing frozen worker processes need the new controller on restart. No model attention/batch/response/token/reward protocol change; original Runtime output identity validation remains mandatory.",
+  "github_actions": "Repository Actions setting remains disabled as requested; source pushes do not reenable Actions."
+}

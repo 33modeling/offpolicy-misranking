@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="4" skipped="0" tests="4" time="0.072" timestamp="2026-11-08T22:48:31.812558+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_retry_debug" name="test_old_source_failures_do_not_exhaust_the_verified_repair_budget" time="0.003"><failure message="AssertionError: old broken-source attempts consumed the new repair retry budget&#10;assert False == (0 &lt; 2)&#10; +  where False = retryable({'attempts': [{'controller_policy': 'older-runtime-policy', 'controller_sha256': 'older-source', 'ended_at': 0, 'exit_...80bee6005c113dc4a32944be2c13bba91b35602fd604333070bbf', 'previous_attempt': 'failure-4', ...}], 'state': 'failed', ...})&#10; +    where retryable = &lt;scripts.srgc_v8_nodes.Pool object at 0x774cfa8c1e50&gt;.retryable">tmp_path = PosixPath('/dev/shm/v8-idle-debug-before-20261108/test_old_source_failures_do_no0')
+
+    def test_old_source_failures_do_not_exhaust_the_verified_repair_budget(tmp_path):
+        pool,runtime,task,key,saved=prepared(tmp_path)
+        path=failed(pool,key,5,'older-runtime-policy')
+        pool.fail('1 task(s) failed; no independent ready/running work remains.')
+        pool.initialize(worker='new-node',recover=pool.controller_sha256)
+        stop=threading.Event()
+        for i in range(3):
+            action,claim=pool.tick(runtime,'node-'+str(i),stop)
+            assert action=='claimed';lease,claimed_key,*_=claim
+            assert claimed_key==key
+            pool.finish(key,1,runtime,stop);lease.close()
+            job=nodes.read(path)
+&gt;           assert pool.retryable(job)==(i&lt;2),'old broken-source attempts consumed the new repair retry budget'
+E           AssertionError: old broken-source attempts consumed the new repair retry budget
+E           assert False == (0 &lt; 2)
+E            +  where False = retryable({'attempts': [{'controller_policy': 'older-runtime-policy', 'controller_sha256': 'older-source', 'ended_at': 0, 'exit_...80bee6005c113dc4a32944be2c13bba91b35602fd604333070bbf', 'previous_attempt': 'failure-4', ...}], 'state': 'failed', ...})
+E            +    where retryable = &lt;scripts.srgc_v8_nodes.Pool object at 0x774cfa8c1e50&gt;.retryable
+
+tests/test_srgc_v8_retry_debug.py:45: AssertionError</failure></testcase><testcase classname="tests.test_srgc_v8_retry_debug" name="test_actual_runtime_verified_completion_is_adopted_even_after_retry_exhaustion[False]" time="0.003"><failure message="AssertionError: valid completed output was skipped because of its failed label&#10;assert 'failed' == 'done'&#10;  &#10;  - done&#10;  + failed">tmp_path = PosixPath('/dev/shm/v8-idle-debug-before-20261108/test_actual_runtime_verified_c0')
+aggregate = False
+
+    @pytest.mark.parametrize('aggregate',[False,True])
+    def test_actual_runtime_verified_completion_is_adopted_even_after_retry_exhaustion(tmp_path,aggregate):
+        pool,runtime,task,key,saved=prepared(tmp_path)
+        path=failed(pool,key,3,nodes.DISPATCH_POLICY)
+        job=nodes.read(path)
+        for attempt in job['attempts']:attempt['controller_sha256']=pool.controller_sha256
+        nodes.atomic(path,job)
+        directory=runtime.root/'runs'/task['run_id'];directory.mkdir(parents=True)
+        nodes.atomic(directory/'manifest.json',{k:task[k] for k in ('run_id','method_id','training_seed','cohort_id','role','config_hash')} |
+                     dict(status='completed_horizon',completed_updates=275))
+        if aggregate:pool.fail('1 task(s) failed; no independent ready/running work remains.')
+        stop=threading.Event();launched=[]
+        runtime.execute=lambda *args:launched.append(True)
+        runtime.barrier=lambda *args:stop.set()
+        nodes.worker_loop(pool,runtime,'verified-node',stop,poll=.001,retry_delay=0)
+        assert not launched,'complete task was needlessly trained again'
+&gt;       assert nodes.read(path)['state']=='done','valid completed output was skipped because of its failed label'
+E       AssertionError: valid completed output was skipped because of its failed label
+E       assert 'failed' == 'done'
+E         
+E         - done
+E         + failed
+
+tests/test_srgc_v8_retry_debug.py:66: AssertionError</failure></testcase><testcase classname="tests.test_srgc_v8_retry_debug" name="test_actual_runtime_verified_completion_is_adopted_even_after_retry_exhaustion[True]" time="0.002"><failure message="AssertionError: valid completed output was skipped because of its failed label&#10;assert 'failed' == 'done'&#10;  &#10;  - done&#10;  + failed">tmp_path = PosixPath('/dev/shm/v8-idle-debug-before-20261108/test_actual_runtime_verified_c1')
+aggregate = True
+
+    @pytest.mark.parametrize('aggregate',[False,True])
+    def test_actual_runtime_verified_completion_is_adopted_even_after_retry_exhaustion(tmp_path,aggregate):
+        pool,runtime,task,key,saved=prepared(tmp_path)
+        path=failed(pool,key,3,nodes.DISPATCH_POLICY)
+        job=nodes.read(path)
+        for attempt in job['attempts']:attempt['controller_sha256']=pool.controller_sha256
+        nodes.atomic(path,job)
+        directory=runtime.root/'runs'/task['run_id'];directory.mkdir(parents=True)
+        nodes.atomic(directory/'manifest.json',{k:task[k] for k in ('run_id','method_id','training_seed','cohort_id','role','config_hash')} |
+                     dict(status='completed_horizon',completed_updates=275))
+        if aggregate:pool.fail('1 task(s) failed; no independent ready/running work remains.')
+        stop=threading.Event();launched=[]
+        runtime.execute=lambda *args:launched.append(True)
+        runtime.barrier=lambda *args:stop.set()
+        nodes.worker_loop(pool,runtime,'verified-node',stop,poll=.001,retry_delay=0)
+        assert not launched,'complete task was needlessly trained again'
+&gt;       assert nodes.read(path)['state']=='done','valid completed output was skipped because of its failed label'
+E       AssertionError: valid completed output was skipped because of its failed label
+E       assert 'failed' == 'done'
+E         
+E         - done
+E         + failed
+
+tests/test_srgc_v8_retry_debug.py:66: AssertionError</failure></testcase><testcase classname="tests.test_srgc_v8_retry_debug" name="test_native_execution_lock_is_respected_despite_an_exhausted_failed_label" time="0.001"><failure message="AssertionError: assert ('failed' == 'waiting'&#10;  &#10;  - waiting&#10;  + failed)">tmp_path = PosixPath('/dev/shm/v8-idle-debug-before-20261108/test_native_execution_lock_is_0')
+
+    def test_native_execution_lock_is_respected_despite_an_exhausted_failed_label(tmp_path):
+        pool,runtime,task,key,saved=prepared(tmp_path);failed(pool,key,3,nodes.DISPATCH_POLICY)
+        lock=nodes.Lock(runtime.root/'runs'/task['run_id']/'.execution.lock');assert lock.acquire()
+        try:
+            action,_=pool.tick(runtime,'idle-node',threading.Event())
+&gt;           assert action=='waiting' and pool.queue_state()['failure'] is None
+E           AssertionError: assert ('failed' == 'waiting'
+E             
+E             - waiting
+E             + failed)
+
+tests/test_srgc_v8_retry_debug.py:76: AssertionError</failure></testcase></testsuite></testsuites>
