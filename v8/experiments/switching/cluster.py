@@ -117,6 +117,11 @@ class ClusterLocator:
                     return p
         raise LookupError(f"seed {seed}: no prefix yet (run stage `prefix` first)")
 
+    def role_seeds(self, role):
+        """Seeds assigned by prepare-seeds (registry choice); None if prepare-seeds has not run."""
+        seeds = (self.loc.get("seed_roles") or {}).get(role)
+        return [int(s) for s in seeds] if seeds else None
+
     def completed_runs(self, seed, role):
         from .smoke import Locator
         return Locator.completed_runs(self, seed, role)  # same scan of <cohort>/runs
@@ -203,11 +208,14 @@ def cmd_freeze_budget(args):
     from .freeze import freeze_budget, write_frozen_budget
     root = v8_root(args) / args.cohort
     cfg = spec.resolve(args.cohort, role="rebuttal_bank")
+    if not (root / "frozen" / "budget.json").exists() and list((root / "evaluations").glob("*.json")):
+        raise SystemExit("evaluation records exist before the budget freeze; B can no longer be certified "
+                         "outcome-independent (freeze-budget must run before eval-final)")
     rows = []
     for seed in cfg["seeds"]["training"]:
         rows += SeedBank(root, cfg, args.cohort, seed, "rebuttal_bank", evals={},
                          prefix_cost=prefix_cost_from_receipts(root, seed)).policy_rows()
-    b = freeze_budget(rows, files_read=[str(root / "runs")])
+    b = freeze_budget(rows, files_read=[str(root / "runs")], expected_seeds=cfg["seeds"]["training"])
     b["gpu_type"], b["gpu_count"] = cfg["runtime"]["gpu_type"], cfg["runtime"]["world_size"]
     b, how = write_frozen_budget(root / "frozen" / "budget.json", b)
     print(json.dumps({"status": how, **b}, indent=2))
@@ -281,18 +289,41 @@ def cmd_analyze(args):
     cfg = spec.resolve(args.cohort, role="rebuttal_bank")
     rows = read_json(root / "analysis" / "policy_outcomes_bank.json")
     seeds = cfg["seeds"]["training"]
-    an = {"status": "from recorded outputs", "primary_rebuttal": analyze.loso_contrast(rows, seeds, taus=cfg["bank"]["core_grid"]),
+    core = cfg["bank"]["core_grid"]
+    budget_path = root / "frozen" / "budget.json"
+    budget = read_json(budget_path) if budget_path.exists() else None
+    B = "budget_reward_fraction"
+    an = {"status": "from recorded outputs",
+          "endpoints": {"matched_update": cfg["training"]["matched_update_endpoint"],
+                        "budget": None if budget is None else {k: budget.get(k) for k in ("value", "unit", "scope", "n_seeds")}},
+          "primary_rebuttal": analyze.loso_contrast(rows, seeds, taus=core),
+          "primary_rebuttal_budget": analyze.loso_contrast(rows, seeds, taus=core, key=B),
           "primary_rebuttal_extended": analyze.loso_contrast(rows, seeds),
-          "secondary": analyze.secondary(rows, seeds), "status_counts": analyze.status_counts(rows),
+          "secondary": analyze.secondary(rows, seeds), "secondary_budget": analyze.secondary(rows, seeds, key=B),
+          "status_counts": analyze.status_counts(rows),
+          "budget_status_counts": analyze.status_counts([dict(r, status=r.get("budget_status")) for r in rows]),
           "e3": analyze.e3_destination(rows, seeds), "e4": analyze.e4_rules(rows)}
     test = root / "analysis" / "policy_outcomes_test.json"
     if test.exists():
         tr = read_json(test)
-        ts = sorted({r["seed"] for r in tr})
-        t = analyze.by_policy(tr)
+        frozen_seeds = (read_json(root / "locator.json").get("seed_roles") or {}).get("test") \
+            if (root / "locator.json").exists() else None
+        ts = sorted(set(frozen_seeds or []) | {r["seed"] for r in tr})  # assigned seeds without runs stay visible
+        t, tb = analyze.by_policy(tr), analyze.by_policy(tr, B)
         an["primary_test"] = analyze.paired(t.get("srgc_current", {}), t.get("fixed_sr_tuned", {}), ts,
-                                            label="srgc_current - fixed_sr_tuned")
+                                            label="srgc_current - fixed_sr_tuned (matched update)")
+        an["primary_test_budget"] = analyze.paired(tb.get("srgc_current", {}), tb.get("fixed_sr_tuned", {}), ts,
+                                                   label="srgc_current - fixed_sr_tuned (frozen budget)")
         an["secondary_test"] = analyze.secondary(tr, ts)
+        an["secondary_test_budget"] = analyze.secondary(tr, ts, key=B)
+    from .common import read_jsonl
+    from .ledger import physical_gpu_seconds
+    events = []
+    for p in [*sorted(root.glob("runs/*/attempts/*/events.jsonl")), *sorted(root.glob("evaluations/events/*.jsonl"))]:
+        events += read_jsonl(p)
+    phys = physical_gpu_seconds(events)
+    an["physical_expenditure"] = {k: phys[k] for k in ("gpu_seconds", "known_lower_bound_gpu_seconds", "complete")} | {
+        "missing_events": len(phys["missing_event_ids"]), "scope": "every recorded attempt, branch and evaluation"}
     an["pareto"] = analyze.pareto_plot(rows, root / "analysis" / "pareto_bank.png", title=args.cohort)
     atomic_write_json(root / "analysis" / "analysis.json", an)
     (root / "analysis" / "report.md").write_text(report.markdown(an))

@@ -86,25 +86,76 @@ def trajectory_task(cfg, locator, seed, role):
 
 
 def monitored_observations(out_root, run_id):
-    """D at each check from the trajectory; complete through the last check if the run completed."""
+    """D at each check from the trajectory; complete through the last check if the run completed.
+
+    In flight (no signals.jsonl yet) only the surviving lineage is read: a check at boundary u belongs to
+    the attempt that owns update u (attempt i owns [start_i, start_{i+1})). Different values for one check
+    are an error, never resolved by file order.
+    """
     rdir = Path(out_root) / "runs" / run_id
     rows = read_jsonl(rdir / "signals.jsonl")
     if not rows:  # in-flight: read attempt logs
+        m = manifest(out_root, run_id) or {}
+        order = [(a["attempt_id"], int(a["start_update"])) for a in m.get("attempts", [])
+                 if a.get("start_update") is not None]
+
+        def owner(u):
+            own = None
+            for a, start in order:
+                if start <= u:
+                    own = a
+            return own
         for p in sorted((rdir / "attempts").glob("*/updates.jsonl")):
             for u in read_jsonl(p):
-                rows.extend(u.get("signals") or [])
+                rows.extend(dict(s, _attempt=p.parent.name) for s in u.get("signals") or [])
+        if order:
+            rows = [r for r in rows if owner(int(r["completed_update"])) == r["_attempt"]]
     obs = {}
     for r in rows:
         if r.get("signal_definition_version") and r["signal_name"] == "srgc_d":
-            obs[int(r["completed_update"])] = r["value"] if r.get("valid", True) else None
+            step = int(r["completed_update"])
+            value = r["value"] if r.get("valid", True) else None
+            if step in obs and obs[step] != value:
+                raise ValueError(f"{run_id}: conflicting D at completed_update {step}: {obs[step]!r} vs {value!r}")
+            obs[step] = value
     return sorted(obs.items())
+
+
+FRESH_ROLES = ("development", "test")
+
+
+def inspected_seeds():
+    """Training seeds whose RLVR switching outcomes were already inspected (seeds.KNOWN, any cohort)."""
+    from .seeds import KNOWN
+    return sorted({s for k in KNOWN if k["inspected"] for s in k["seeds"]})
+
+
+def resolve_seeds(cfg, locator, role, seeds):
+    """Seeds of a stage. Prospective roles never fall back to the cohort's (inspected) seed list."""
+    if role not in FRESH_ROLES:
+        return list(seeds or cfg["seeds"]["training"])
+    roles = getattr(locator, "role_seeds", lambda r: None)
+    if not seeds:
+        seeds = roles(role)
+        if not seeds:
+            raise ValueError(f"role {role}: no seeds; run prepare-seeds (locator seed_roles) or pass --seeds")
+    seeds = [int(s) for s in seeds]
+    if role == "test":
+        reused = sorted(set(seeds) & set(inspected_seeds()))
+        if reused:
+            raise ValueError(f"role test: seeds {reused} were already inspected and cannot be fresh test seeds")
+    other = roles("development" if role == "test" else "test") or []
+    overlap = sorted(set(seeds) & {int(s) for s in other})
+    if overlap:
+        raise ValueError(f"role {role}: seeds {overlap} are assigned to the other prospective role")
+    return seeds
 
 
 def build_stage(stage, cfg, locator, out_root, *, role="rebuttal_bank", seeds=None, frozen=None,
                 budget=None, prospective_methods=None):
     t = cfg["training"]
     H = t["matched_update_endpoint"]
-    seeds = seeds or cfg["seeds"]["training"]
+    seeds = resolve_seeds(cfg, locator, role, seeds)
     tasks, notes = [], []
     for seed in seeds:
         traj = trajectory_task(cfg, locator, seed, role) if stage != "prefix" else None

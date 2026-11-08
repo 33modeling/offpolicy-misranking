@@ -62,6 +62,9 @@ def make_engine_class(srgc):
             super().__init__(backend, candidate_ids, validation_ids, cached_rewards, arm=BASE_ARM[initial],
                              config=config)
             self.method, self.policy = method, policy or NeverPolicy()
+            if getattr(self.policy, "policy_id", None) == "bidirectional":
+                raise ValueError("bidirectional (E8) switching is not supported by the v8 engine: it measures D only "
+                                 "before the transition; use the code repo switch_repeat arm (run_h100.sh e8)")
             self.monitor = bool(monitor)
             self.phase, self.destination = initial, method.get("destination")
             self.entry_update = None
@@ -174,7 +177,7 @@ def make_engine_class(srgc):
             for attempt in range(1, attempts + 1):
                 try:
                     if meter is not None:
-                        with meter.phase("cache_generation", t, self.backend.gpu_count):
+                        with meter.phase("cache_refresh", t, self.backend.gpu_count):  # not the initial cache (cache_build)
                             means = dict(self.backend.evaluate(self.candidates, responses=c.responses,
                                          seed=stream_seed(c.seed, t, "sr-cache-refresh")))
                     else:

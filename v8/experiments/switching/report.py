@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import re
+
 BANNED = ("universally better", "statistically equivalent", "end-to-end savings", "all seeds improve",
           "verified across four backbones", "significantly better", "proves")
 
 
+SIGNIFICANCE = re.compile(r"\bsignifican|\bp\s*[<=≤]\s*0?\.\d", re.IGNORECASE)
+
+
 def guard(text: str, *, costs_partial: bool, any_loss: bool, equivalence_procedure: bool = False) -> str:
     low = text.lower()
+    hit = SIGNIFICANCE.search(text)
+    if hit:
+        raise ValueError(f"unsupported claim phrase in report: {hit.group(0)!r} (no pre-registered significance test)")
     for phrase in BANNED:
         if phrase in low:
             if phrase == "statistically equivalent" and equivalence_procedure:
@@ -23,7 +31,8 @@ def guard(text: str, *, costs_partial: bool, any_loss: bool, equivalence_procedu
 def primary_sentence(contrast: dict, *, budget, unit, scope_components, missing_summary, costs_partial):
     if contrast.get("n_training_seeds", 0) == 0 or contrast.get("mean_delta_pp") is None:
         return "Primary contrast not available: no complete paired seeds (" + missing_summary + ")."
-    ci = ("CI withheld: " + contrast["interval_method"]) if contrast.get("ci_low") is None else (
+    ci = ("CI withheld: " + (contrast.get("interval_method") or
+                             f"not computed (n={contrast['n_training_seeds']})")) if contrast.get("ci_low") is None else (
         f"{int(100 * contrast.get('confidence', 0.95))}% CI: {contrast['ci_low']:.2f}, {contrast['ci_high']:.2f}")
     text = (f"At budget {budget} {unit}, SR-GC switching differs from the comparison schedule by "
             f"{contrast['mean_delta_pp']:+.2f} percentage points ({ci}; {contrast['n_training_seeds']} training seeds; "

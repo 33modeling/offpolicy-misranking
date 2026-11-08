@@ -189,14 +189,15 @@ def physical_gpu_seconds(events):
             "gpus": sorted(per_gpu)}
 
 
-def component_totals(events, *, min_update=None, max_update=None, include_selection_at=None):
+def component_totals(events, *, min_update=None, max_update=None, include_selection_at=None, keep=None):
     """Sum exclusive costs by component for events in an update window.
 
     Selection at boundary u is charged with checkpoint u; training with checkpoint u
     is update u+1. Window semantics: updates (min_update, max_update], plus the
     selection phase at `include_selection_at` (the triggering check).
     Phase events with stage sub-events are split by stage; otherwise the whole
-    phase goes to its component.
+    phase goes to its component. `keep(component, update)` False drops that cost (e.g. SR-GC checks a
+    sparser-cadence policy never runs); a dropped stage is still subtracted from its parent phase.
     """
     by_parent = {}
     for e in events:
@@ -218,19 +219,29 @@ def component_totals(events, *, min_update=None, max_update=None, include_select
                             "status": e.get("measurement_status")})
             continue
         children = by_parent.get(e["event_id"], [])
+        kept = (lambda comp: True) if keep is None else (lambda comp: keep(comp, u))
         if children:
             attributed = 0.0
             for c in children:
                 if c.get("gpu_seconds") is None:
                     continue
-                totals[c["component"]] = totals.get(c["component"], 0.0) + c["gpu_seconds"]
                 attributed += c["gpu_seconds"]
+                if kept(c["component"]):
+                    totals[c["component"]] = totals.get(c["component"], 0.0) + c["gpu_seconds"]
             rest = max(0.0, e["gpu_seconds"] - attributed)
-            if rest:
+            if rest and kept(e["component"]):
                 totals[e["component"]] = totals.get(e["component"], 0.0) + rest
-        else:
+        elif kept(e["component"]):
             totals[e["component"]] = totals.get(e["component"], 0.0) + e["gpu_seconds"]
     return totals, missing
+
+
+def check_schedule_filter(first, interval):
+    """keep() for component_totals: SR-GC comparison cost only at the policy's own check boundaries."""
+    def keep(component, update):
+        return component != "sr_comparison" or update is None or (
+            update >= first and (update - first) % interval == 0)
+    return keep
 
 
 # Which components each method family requires (algorithm-required).
@@ -239,7 +250,8 @@ REQUIRED = {
     "fixed_sr": {"on_selection", "training", "sr_preparation", "cache_build", "prefix"},
     "sr_early": {"training", "sr_preparation", "cache_build", "prefix"},
     "uniform_early": {"training", "prefix"},
-    "srgc": {"on_selection", "sr_comparison", "training", "sr_preparation", "cache_build", "prefix"},
+    # cache_refresh: only srgc_current_refreshed_k* runs record it (refresh after the transition)
+    "srgc": {"on_selection", "sr_comparison", "training", "sr_preparation", "cache_build", "cache_refresh", "prefix"},
     "srgc_uniform_destination": {"on_selection", "sr_comparison", "training", "cache_build", "prefix"},
     "plateau_sr": {"on_selection", "cheap_signal", "training", "sr_preparation", "cache_build", "prefix"},
     "sampled_time_sr": {"on_selection", "training", "sr_preparation", "cache_build", "prefix"},

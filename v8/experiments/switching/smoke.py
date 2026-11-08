@@ -49,7 +49,7 @@ class Locator:
         for m in sorted((self.out_root / "runs").glob("*/manifest.json")):
             man = read_json(m)
             if (man["training_seed"], man["role"], man["cohort_id"]) == (seed, role, self.cfg["cohort_id"]) and \
-                    man["status"] in ("completed_horizon",) and man["method_id"].startswith("bank_sr_") and \
+                    man["status"] in ("completed_horizon",) and man["method_id"].startswith(("bank_sr_", "bank_uniform_")) and \
                     not man["task"]["method"].get("extension_of"):
                 out.append({**man["task"], "status": man["status"]})
         return out
@@ -57,8 +57,11 @@ class Locator:
     def cost_offset(self, run):
         bank = SeedBank(self.out_root, self.cfg, self.cfg["cohort_id"], run["training_seed"], run["role"])
         tau = run["parent"]["completed_update"]
-        branch = bank.branches.get(("sr", tau))
-        return bank.composed("fixed_sr", tau, branch, include_check=False,
+        dest = "uniform" if run["method_id"].startswith("bank_uniform_") else "sr"
+        branch = bank.branches.get((dest, tau))
+        if branch is None or branch["run_id"] != run["run_id"]:
+            return None  # not a branch of this seed's trajectory: unknown parent cost
+        return bank.composed("fixed_uniform" if dest == "uniform" else "fixed_sr", tau, branch, include_check=False,
                              upto=self.cfg["training"]["matched_update_endpoint"])["continuation_algorithm"]
 
 
@@ -218,13 +221,13 @@ def toy(out_root, *, bank_seeds=(5, 6, 7), dev_seeds=None, test_seeds=None, fast
     plateau = select_dev(pl_rows, candidates=[0.0, 0.005, 0.01], key="eps", tie_tolerance_pp=tol)
     rf_rows = [dict(r, k=int(r["policy_id"][-3:])) for r in dev_rows if r["policy_id"].startswith("sr_early_refreshed_k")]
     refresh = select_dev(rf_rows, candidates=[50, 100], key="k", tie_tolerance_pp=tol)
-    sr_rows = [dict(r, status="triggered" if r["switch_update"] is not None else "not_triggered")
-               for r in dev_rows if r["policy_id"] == "srgc_current"]
-    dist = tau_distribution(sr_rows)
+    dist = tau_distribution([r for r in dev_rows if r["policy_id"] == "srgc_current"])
     tuning = frozen_tuning(cohort=cfg["cohort_id"], dev_seeds=dev_seeds,
                            dev_eval_hash=sha256_json(sorted(data["dev_evaluation_ids"])), fixed=fixed, plateau=plateau,
                            refresh=refresh, tau_distribution=dist, dev_run_ids=dev_ids,
-                           code_identity=coderepo.identity(), config_hash=spec.config_hash(cfg))
+                           code_identity=coderepo.identity(), config_hash=spec.config_hash(cfg),
+                           test_runs_seen=sorted(p.parent.name for p in (out_root / "runs").glob("*/manifest.json")
+                                                 if read_json(p)["role"] == "test"))
     write_once_json(out_root / "frozen" / "frozen_tuning.json", tuning)
     schedules = sample_schedules(dist, test_seeds, draws=cfg["e9"]["draws_per_seed"])
     write_once_json(out_root / "frozen" / "sampled_schedules.json", schedules)
