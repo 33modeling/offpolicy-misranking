@@ -72,8 +72,12 @@ class Ledger:
     KEY = ("run_id", "attempt_id", "event_id")
 
     def __init__(self, path, *, run_id, attempt_id, gpu_type=None, host=None, measurement_status="measured",
-                 gpu_ids=None, stage_split=True):
+                 gpu_ids=None, stage_split=True, starts_path=None):
         self.log = JsonlLog(path, self.KEY)
+        # Durable phase starts (plan Code 6.6: interrupted attempt cost stays in actual expenditure).
+        # Kept apart from the interval events so every consumer of events.jsonl is unchanged; a start
+        # without a finished/interrupted event of the same id is work killed mid-phase (SIGKILL).
+        self.starts = JsonlLog(starts_path, self.KEY) if starts_path is not None else None
         self.run_id, self.attempt_id = run_id, attempt_id
         self.gpu_type, self.host = gpu_type, host or socket.gethostname()
         self.measurement_status = measurement_status
@@ -106,6 +110,16 @@ class Ledger:
     def on_meter_event(self, event: dict):
         if event["state"] == "started":
             self._open[event["id"]] = (time.monotonic_ns(), time.time_ns(), event)
+            if self.starts is not None:
+                phase, component = METER_PHASES.get(event["phase"], ("other", "startup"))
+                gpu_count = int(event.get("gpu_count") or 0)
+                self.starts.append({
+                    "event_id": event["id"], "run_id": self.run_id, "attempt_id": self.attempt_id,
+                    "state": "started", "phase": phase, "source_phase": event["phase"], "component": component,
+                    "completed_update": event.get("checkpoint"), "start_monotonic_ns": self._open[event["id"]][0],
+                    "start_epoch_ns": self._open[event["id"]][1], "gpu_count": gpu_count, "host": self.host,
+                    "gpu_type": self.gpu_type, "gpu_ids": self.gpu_ids if self.gpu_ids is not None else
+                    [f"{self.host}:{i}" for i in range(gpu_count)]})
             return
         started = self._open.pop(event["id"], None)
         end_ns = time.monotonic_ns()
@@ -154,13 +168,22 @@ def union_seconds(intervals):
     return total
 
 
-def physical_gpu_seconds(events):
+def unfinished_starts(events, starts):
+    """Durable phase starts with no finished or interrupted event of the same id (killed mid-phase)."""
+    ended = {(e["run_id"], e["attempt_id"], e["event_id"]) for e in events}
+    return [s for s in starts or [] if (s["run_id"], s["attempt_id"], s["event_id"]) not in ended]
+
+
+def physical_gpu_seconds(events, starts=None):
     """Union per GPU of interval events, summed across GPUs; dedupe by event_id.
 
     Exclusive-stage sub-events are attributions inside an interval and are not added.
     Interval events lacking timestamps contribute their gpu_seconds once (flagged).
+    `starts` (Ledger durable phase starts): a start that never finished is unknown cost, never zero.
     """
     per_gpu, untimed, missing, seen = {}, 0.0, [], set()
+    killed = unfinished_starts(events, starts)
+    missing.extend(s["event_id"] for s in killed)
     for e in events:
         key = (e["run_id"], e["attempt_id"], e["event_id"])
         if key in seen or e.get("attribution") == "exclusive_stage":
@@ -186,7 +209,7 @@ def physical_gpu_seconds(events):
     complete = not missing
     return {"gpu_seconds": known if complete else None, "known_lower_bound_gpu_seconds": known,
             "untimed_gpu_seconds": untimed, "missing_event_ids": missing, "complete": complete,
-            "gpus": sorted(per_gpu)}
+            "killed_phase_starts": len(killed), "gpus": sorted(per_gpu)}
 
 
 def component_totals(events, *, min_update=None, max_update=None, include_selection_at=None, keep=None):

@@ -90,7 +90,7 @@ sh v8/experiments/harvest.sh                            # 결과 전체를 파�
 ```
 
 GPU stage는 비어 있는 4×H100 노드마다 같은 명령을 실행하면 된다. task마다 lease를 잡아 중복 실행이 없고, 끝난 task는
-건너뛰며, 중단된 task는 마지막으로 저장된 update에서 이어 간다(Ctrl-C → 안전 경계에서 저장 후 exit 75). 로그는 화면에 그대로
+건너뛰며, 중단된 task는 마지막으로 저장된 update에서 이어 간다(latest.pt 는 update 마다 저장된다. Ctrl-C·정지 신호는 진행 중 update 를 버리고 manifest 를 interrupted 로 남긴 뒤 exit 75. torchrun 은 75 를 1 로 바꾸므로 child 가 `$V8_EXIT_FILE` 에 쓴 exit 기록을 읽는다). 로그는 화면에 그대로
 나오고 `$V8_ROOT/<cohort>/logs/`에도 남는다. 결과 위치: `/group-volume/minsoo3.kim/offpolicy-misranking/v8/<cohort>/`
 (`runs/`, `evaluations/`, `frozen/`, `analysis/`), E0는 `v8/audit/<cohort>/`. user volume에는 코드만 둔다.
 

@@ -57,7 +57,7 @@ def make_engine_class(srgc):
 
     class PolicyEngine(Engine):
         def __init__(self, backend, candidate_ids, validation_ids, cached_rewards, *, method, policy=None,
-                     config, monitor=False, cache_store=None, cache_context=None, run_id=None):
+                     config, monitor=False, cache_store=None, cache_context=None, run_id=None, primary=None):
             initial = method.get("initial_selector", "on_policy")
             super().__init__(backend, candidate_ids, validation_ids, cached_rewards, arm=BASE_ARM[initial],
                              config=config)
@@ -72,6 +72,8 @@ def make_engine_class(srgc):
             self.stats = TrainingRewardStats()
             self.signal_log, self.decision_log, self.cache_log = [], [], []
             self.cache_store, self.cache_context, self.run_id = cache_store, cache_context or {}, run_id
+            # rank-0 file writes (cache commit) inside the update; every rank calls it at the same point
+            self.primary = primary or (lambda fn: fn())
             self.cache_state = {"version": "initial", "source_policy_update": 0, "cache_id": None}
             self._check_step, self._stash, self._sr_tail = None, {}, None
             c = config
@@ -174,15 +176,17 @@ def make_engine_class(srgc):
             c = self.config
             meter = getattr(self.backend, "cost_meter", None)
             attempts = int(cp.get("max_attempts", 1))
+            # Generation is outside the retry: a rank-local fault there (CUDA OOM, verifier error) leaves the
+            # other ranks inside the evaluation collective, so a per-rank catch/retry would deadlock them.
+            # It propagates and ends every rank; only the rank-symmetric steps below may be retried.
+            seed = stream_seed(c.seed, t, "sr-cache-refresh")
+            if meter is not None:
+                with meter.phase("cache_refresh", t, self.backend.gpu_count):  # not the initial cache (cache_build)
+                    means = dict(self.backend.evaluate(self.candidates, responses=c.responses, seed=seed))
+            else:
+                means = dict(self.backend.evaluate(self.candidates, responses=c.responses, seed=seed))
             for attempt in range(1, attempts + 1):
                 try:
-                    if meter is not None:
-                        with meter.phase("cache_refresh", t, self.backend.gpu_count):  # not the initial cache (cache_build)
-                            means = dict(self.backend.evaluate(self.candidates, responses=c.responses,
-                                         seed=stream_seed(c.seed, t, "sr-cache-refresh")))
-                    else:
-                        means = dict(self.backend.evaluate(self.candidates, responses=c.responses,
-                                     seed=stream_seed(c.seed, t, "sr-cache-refresh")))
                     rewards = rewards_from_means(means, c.responses)
                     ranked = cached_sr_set(self.candidates, rewards, len(self.candidates), c.seed, c.responses)
                     key = None
@@ -193,7 +197,9 @@ def make_engine_class(srgc):
                                          generation_spec=self.cache_context.get("generation_spec"),
                                          verifier_hash=self.cache_context.get("verifier_hash"),
                                          responses=c.responses, rng_spec=f"stream_seed(seed,{t},'sr-cache-refresh')")
-                        self.cache_store.commit(info, rewards, self.candidates, source_policy_update=t)
+                        # rank 0 commits; a commit error reaches every rank through primary (symmetric)
+                        self.primary(lambda: self.cache_store.commit(info, rewards, self.candidates,
+                                                                     source_policy_update=t))
                         key = info["key"]
                     self.sr_ranked_ids = tuple(ranked)
                     self.cache_state = {"version": f"refresh@{t}", "source_policy_update": t, "cache_id": key}

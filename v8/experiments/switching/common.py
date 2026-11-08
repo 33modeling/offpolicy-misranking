@@ -113,26 +113,71 @@ def finite_or_none(value):
     return value if math.isfinite(value) else None
 
 
+def _split_lines(text):
+    """(complete lines, unterminated tail or None). Appends always end in a newline, so a tail without
+    one is a torn final write (crash or SIGKILL mid-append) or an append still in flight."""
+    if not text or text.endswith("\n"):
+        return text.splitlines(), None
+    head, _, tail = text.rpartition("\n")
+    return head.splitlines() if head else [], tail
+
+
+def _tail_record(tail):
+    """A complete JSON object whose newline was lost is still a record; a torn fragment is not."""
+    if tail is None or not tail.strip():
+        return None
+    try:
+        row = json.loads(tail)
+    except json.JSONDecodeError:
+        return None
+    return row if isinstance(row, dict) else None
+
+
 class JsonlLog:
     """Append-only JSONL with a uniqueness key.
 
     Re-sending a record with the same key and identical payload is a no-op;
     the same key with different content raises, because silently keeping either
-    copy could hide a nondeterministic restart.
+    copy could hide a nondeterministic restart. A torn final line (process killed
+    mid-append) is not a record: it is moved aside to <name>.torn-<id> before the
+    next append, so one killed attempt never blocks every later resume. Damage
+    before the last line still raises.
     """
 
     def __init__(self, path, key_fields):
         self.path = Path(path)
         self.key_fields = tuple(key_fields)
         self._seen = {}
+        self._tail = None
         if self.path.exists():
-            for line in self.path.read_text().splitlines():
-                if line.strip():
-                    row = json.loads(line)
-                    self._seen[self._key(row)] = sha256_json(row)
+            lines, tail = _split_lines(self.path.read_text())
+            rows = [json.loads(line) for line in lines if line.strip()]
+            record = _tail_record(tail)
+            if record is not None:
+                rows.append(record)
+            if tail is not None:
+                self._tail = record is not None
+            for row in rows:
+                self._seen[self._key(row)] = sha256_json(row)
 
     def _key(self, row):
         return tuple(json.dumps(row.get(k), sort_keys=True) for k in self.key_fields)
+
+    def _repair_tail(self):
+        complete, self._tail = self._tail, None
+        data = self.path.read_bytes()
+        if not data or data.endswith(b"\n"):
+            return
+        if complete:
+            _append_bytes(self.path, b"\n")
+            return
+        cut = data.rfind(b"\n") + 1
+        aside = self.path.with_name(f"{self.path.name}.torn-{uuid.uuid4().hex[:12]}")
+        atomic_write_bytes(aside, data[cut:])
+        os.truncate(self.path, cut)
+        import sys
+        print(f"[v8] {self.path}: torn final line ({len(data) - cut} bytes, killed mid-append) moved to {aside.name}",
+              file=sys.stderr, flush=True)
 
     def append(self, row) -> bool:
         row = json.loads(canonical_json(row))
@@ -142,23 +187,41 @@ class JsonlLog:
                 raise ValueError(f"{self.path}: conflicting record for key {key}")
             return False
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.path, "a") as handle:
-            handle.write(canonical_json(row) + "\n")
-            _sync(handle)
+        if self._tail is not None:
+            self._repair_tail()
+        _append_bytes(self.path, (canonical_json(row) + "\n").encode())
         self._seen[key] = digest
         return True
 
     def rows(self):
-        if not self.path.exists():
-            return []
-        return [json.loads(line) for line in self.path.read_text().splitlines() if line.strip()]
+        return read_jsonl(self.path)
+
+
+def _append_bytes(path, data: bytes):
+    """One O_APPEND write of the complete line (no buffered partial writes), then fsync."""
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o666)
+    try:
+        view = memoryview(data)
+        while view:
+            view = view[os.write(fd, view):]
+        if FSYNC:
+            os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def read_jsonl(path):
+    """Records of a JSONL file. A torn final line (killed mid-append, or an append in flight) is skipped;
+    damage before the last line raises."""
     path = Path(path)
     if not path.exists():
         return []
-    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    lines, tail = _split_lines(path.read_text())
+    rows = [json.loads(line) for line in lines if line.strip()]
+    record = _tail_record(tail)
+    if record is not None:
+        rows.append(record)
+    return rows
 
 
 class Busy(RuntimeError):
