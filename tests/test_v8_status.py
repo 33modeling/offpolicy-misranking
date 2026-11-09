@@ -231,7 +231,7 @@ def test_clean_view_is_compact_with_summary_last(tmp_path):
     lines = text.rstrip().splitlines()
     norm = lambda line: ' '.join(line.split())
     assert lines[0].startswith("OLMo MATH · training ─")
-    assert "seed  On" in text and "▶37" in text
+    assert "train  On" in text and "▶37" in text
     top, bottom = text.split("━━ V8 status · ")
     assert "needs attention" not in top
     summary = next(norm(line) for line in bottom.splitlines() if line.startswith(" OLMo MATH "))
@@ -656,17 +656,21 @@ def test_seed_table_draws_every_planned_branch_before_its_job_exists(tmp_path, m
           "training_seed": 6, "run_id": "u6", "horizon": 275, "parent": {"completed_update": "150"}}, "attempts": []})
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
     block = text.split("Qwen MBPP ·")[0]
-    header = next(line for line in block.splitlines() if line.startswith(" seed"))
-    assert header.split() == ["seed", "On", "SR25", "SR50", "SR75", "SR100", "SR125", "SR150", "SR175", "SR200", "SR225",
-                              "SR250", "U", "│", "ext", "eval"]
-    rows = {line.split()[0]: line.split() for line in block.splitlines() if line.strip()[:1].isdigit()}
+    lines = block.splitlines()
+    i_train = next(i for i, line in enumerate(lines) if line.startswith(" train"))
+    i_later = next(i for i, line in enumerate(lines) if line.startswith(" ex·ev"))
+    assert lines[i_train].split() == ["train", "On", "SR25", "SR50", "SR75", "SR100", "SR125", "SR150", "SR175", "SR200", "SR225",
+                                      "SR250", "U"]
+    rows = {line.split()[0]: line.split() for line in lines[i_train + 1:i_later]}
     assert sorted(rows) == ["5", "6", "7", "8", "9"]
-    assert rows["5"][1] == "▶" and rows["5"][2:12] == ["·"] * 10 and rows["9"][1:] == ["·"] * 12 + ["│", "·", "·"]
+    assert rows["5"][1] == "▶" and rows["5"][2:12] == ["·"] * 10 and rows["9"][1:] == ["·"] * 12
     assert rows["6"][12] == "✓" and "U = Uniform at the seed's switch point: s6 @150" in block
+    later = {line.split()[0]: line.split() for line in lines[i_later + 1:i_later + 6]}
+    assert later["9"] == ["9", "-", "·"] + ["·", "·"] * 11      # On is never extended; nothing else exists yet
     for phase in ("train", "extension", "evaluation"):
         write(q / "plans" / f"{phase}.json", {"sealed": True, "tasks": []})
     sealed = status.render_clean([base], now=now, gpus=[], host="viewer", width=200).split("Qwen MBPP ·")[0]
-    assert next(line for line in sealed.splitlines() if line.startswith(" seed")).split()[:3] == ["seed", "On", "U"]
+    assert next(line for line in sealed.splitlines() if line.startswith(" train")).split()[:3] == ["train", "On", "U"]
 
 
 
@@ -683,3 +687,28 @@ def test_default_screen_lists_all_four_experiments(tmp_path):
                if line.startswith((" OLMo", " Qwen"))]
     assert summary == ["OLMo MATH", "OLMo MBPP", "Qwen MATH", "Qwen MBPP"]
     assert "OLMo MBPP · training" in text and "Qwen MATH · training" in text
+
+
+
+def test_extension_and_evaluation_are_shown_per_branch_and_named_by_run(tmp_path):
+    """'status ext eval 도 노드 표시해 현황': each branch's budget extension and evaluations get their own cell, and an
+    evaluation job is named by the run it scores ('s5 eval SR25 ext@400'), in the node table too."""
+    now = time.time()
+    base, q, m = two_cohort_base(tmp_path, now)
+    def job(key, state, task, phase, attempts=None):
+        write(q / "jobs" / f"{key}.json", {"state": state, "phase": phase, "task": task, "attempts": attempts or []})
+    job("t25", "done", {"kind": "train", "method_id": "bank_sr_t025", "training_seed": 5, "run_id": "olmo_math.rebuttal_bank.s5.bank_sr_t025.aa11", "horizon": 275}, "train")
+    job("x25", "done", {"kind": "train", "method_id": "bank_sr_t025", "training_seed": 5, "run_id": "olmo_math.rebuttal_bank.s5.bank_sr_t025.bb22", "horizon": 400}, "extension")
+    job("e1", "done", {"kind": "evaluate", "training_seed": 5, "run_id": "olmo_math.rebuttal_bank.s5.bank_sr_t025.aa11", "completed_update": 275}, "evaluation")
+    job("e2", "running", {"kind": "evaluate", "training_seed": 5, "run_id": "olmo_math.rebuttal_bank.s5.bank_sr_t025.bb22", "completed_update": 400},
+        "evaluation", [{"id": "ea", "worker": "h-ev.1", "started_at": now - 600}])
+    worker_beat(q, "h-ev.1", 2, "child:1", now)
+    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
+    lines = text.splitlines()
+    i = next(k for k, line in enumerate(lines) if line.startswith(" ex·ev"))
+    header = lines[i].split()
+    seed5 = lines[i + 1].split()
+    sr25 = header.index("SR25")
+    assert seed5[0] == "5" and seed5[1 + 2 * (sr25 - 1)] == "✓" and seed5[2 + 2 * (sr25 - 1)] == "1/2▶"
+    node = next(line for line in lines if line.startswith(" ▶ h-ev"))
+    assert " s5 eval SR25 ext@400 " in node

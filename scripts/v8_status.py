@@ -164,7 +164,7 @@ def _collect(base, cohort, now):
                        arm=str(task.get('method_id') or task.get('stage') or task.get('kind') or '-'),
                        seed=task.get('training_seed', '-'), status=job.get('state', 'pending'),
                        total=task.get('horizon') or task.get('endpoint') or task.get('total_updates'),
-                       attempt=len(attempts), started=attempt.get('started_at'), ended=attempt.get('ended_at'), run_id=task.get('run_id'), kind=task.get('kind'), phase=job.get('phase'), host=shown_worker.rsplit('.', 1)[0] if shown_worker else None, worker=shown_worker, done=None)
+                       attempt=len(attempts), started=attempt.get('started_at'), ended=attempt.get('ended_at'), update=task.get('completed_update'), run_id=task.get('run_id'), kind=task.get('kind'), phase=job.get('phase'), host=shown_worker.rsplit('.', 1)[0] if shown_worker else None, worker=shown_worker, done=None)
             parent = task.get('parent') if isinstance(task.get('parent'), dict) else {}
             start = exit_code(parent.get('completed_update'))   # int parse; branches/extensions start here
             row['start'] = start if isinstance(start, int) and start >= 0 else 0
@@ -851,6 +851,36 @@ def cells_text(done, plan):
     return f"{done}/?"
 
 
+def branch_column(arm):
+    """Seed-table column of a training arm: On, SR<tau>, or U (the Uniform destination; tau differs per seed)."""
+    col = short_arm(arm)
+    return 'U' if re.fullmatch(r'U\d+', col) else col
+
+
+def run_branches(rows):
+    """run_id -> (column, is_extension) for every training and extension job of a queue."""
+    return {r['run_id']: (branch_column(r['arm']), r.get('phase') == 'extension')
+            for r in rows if r.get('kind') != 'evaluate' and r.get('run_id')}
+
+
+def eval_branch(r, runs):
+    """(column, is_extension) of the run an evaluation job scores: from the queue's own training/extension
+    jobs, else from the run id (<cohort>.<role>.s<seed>.<method>.<hash>)."""
+    if r.get('run_id') in runs:
+        return runs[r['run_id']]
+    m = re.search(r'\.s\d+\.([A-Za-z0-9_]+)\.[0-9a-f]+$', str(r.get('run_id') or ''))
+    return (branch_column(m.group(1)), False) if m else ('?', False)
+
+
+def task_name(r, runs):
+    """'s5 SR25', 's5 SR25 ext', 's5 eval SR25@275', 's5 eval SR25 ext@400'."""
+    if r.get('kind') == 'evaluate':
+        col, is_ext = eval_branch(r, runs)
+        update = f"@{r['update']}" if r.get('update') not in (None, '') else ''
+        return f"s{r['seed']} eval {col}{' ext' if is_ext else ''}{update}"
+    return f"s{r['seed']} {short_arm(r['arm'])}" + (' ext' if r.get('phase') == 'extension' else '')
+
+
 def clean_block(base, cohort, now, host, width):
     queue = Path(base) / cohort / '.multi-node'
     label = COHORT_LABEL.get(cohort, cohort)
@@ -868,14 +898,15 @@ def clean_block(base, cohort, now, host, width):
     job_seeds = {r['seed'] for r in rows if isinstance(r.get('seed'), int)}
     use_plan = bool(cfg_seeds and grid and job_seeds <= set(cfg_seeds))
     u_tau = {}
+    runs = run_branches(rows)
     for r in rows:
         seed = r['seed']
         if seed not in seeds:
             seeds.append(seed)
         if r.get('kind') == 'evaluate':
-            ev.setdefault(seed, []).append(r)
+            ev.setdefault((seed, eval_branch(r, runs)[0]), []).append(r)
         elif r.get('phase') == 'extension':
-            ext.setdefault(seed, []).append(r)
+            ext.setdefault((seed, branch_column(r['arm'])), []).append(r)
         else:
             col = short_arm(r['arm'])
             if use_plan and re.fullmatch(r'U\d+', col):
@@ -912,33 +943,47 @@ def clean_block(base, cohort, now, host, width):
                 '?' if any(i['status'] in ('unconfirmed', 'stopped') for i in items) else
                 '⏸' if any(i['status'] == 'interrupted' for i in items) else '')
         return f"{done}/{len(items)}" + mark
-    cols = [*train_cols, *(['ext'] if ext or use_plan else []), *(['eval'] if ev or use_plan else [])]
-    table = {}
+    cols = list(train_cols)
+    for c in sorted({c for _, c in ext} | {c for _, c in ev}, key=col_key):
+        if c not in cols:
+            cols.append(c)
+    table, later = {}, {}
+    show_later = bool(ext or ev or use_plan)
     for seed in seeds:
-        for c in train_cols:
+        for c in cols:
             table[(seed, c)] = cells.get((seed, c), missing['train'])
-        if ext or use_plan:
-            table[(seed, 'ext')] = count_cell(ext.get(seed, []), 'ext')
-        if ev or use_plan:
-            table[(seed, 'eval')] = count_cell(ev.get(seed, []), 'eval')
-    widths = {c: max(len(c), *(len(table[(s, c)]) for s in seeds)) for c in cols} if seeds else {}
+            # second table: '<extension> <evaluations>' of the same branch; On is never extended
+            e = '-' if c == 'On' else count_cell(ext.get((seed, c), []), 'ext')
+            later[(seed, c)] = f"{e} {count_cell(ev.get((seed, c), []), 'eval')}"
+    widths = ({c: max(len(c), *(len(table[(s, c)]) for s in seeds), *((len(later[(s, c)]) for s in seeds) if show_later else []))
+               for c in cols} if seeds else {})
     phase_text = PHASE_LABEL.get(state.get('phase'), state.get('phase', 'not started'))
     title = f"{label} · {phase_text} "
     lines = [paint(title, 'head') + paint('─' * max(3, min(width, 100) - len(title)), 'dim')]
-    def row_text(first, cells, header=False):
+    def row_text(first, cells, header=False, pair=False):
         plain, coloured = [first], [paint(first, 'dim') if header else first]
-        for i, c in enumerate(cols):
-            if c in ('ext', 'eval') and (i == 0 or cols[i - 1] not in ('ext', 'eval')):
-                plain.append('│'); coloured.append(paint('│', 'dim'))
+        for c in cols:
             cell = f'{cells[c]:<{widths[c]}}'
-            plain.append(cell); coloured.append(paint(cell, 'dim' if header else mark_style(cells[c])))
+            plain.append(cell)
+            if header:
+                coloured.append(paint(cell, 'dim'))
+            elif pair:      # '<ext> <eval>': colour each half by its own state
+                e, _, v = cells[c].partition(' ')
+                coloured.append(paint(e, mark_style(e)) + ' ' + paint(v, mark_style(v)) + ' ' * (widths[c] - len(cells[c])))
+            else:
+                coloured.append(paint(cell, mark_style(cells[c])))
         return clip('  '.join(plain), width) if len('  '.join(plain)) > width else '  '.join(coloured)
     if seeds:
-        lines.append(row_text(' seed', {c: c for c in cols}, header=True))
+        lines.append(row_text(' train', {c: c for c in cols}, header=True))
         for seed in seeds:
-            lines.append(row_text(f'{seed!s:>5}', {c: table[(seed, c)] for c in cols}))
+            lines.append(row_text(f'{seed!s:>6}', {c: table[(seed, c)] for c in cols}))
+        if show_later:
+            lines.append(row_text(' ex·ev', {c: c for c in cols}, header=True))
+            for seed in seeds:
+                lines.append(row_text(f'{seed!s:>6}', {c: later[(seed, c)] for c in cols}, pair=True))
         if use_plan:
             known = ' · '.join(f"s{k} @{v}" for k, v in sorted(u_tau.items()))
+            lines.append(paint(clip("   ex·ev cell = <budget extension> <evaluations of that branch, done/all> · On is never extended", width), 'dim'))
             lines.append(paint(clip(f"   · = not created yet (a branch appears when its parent snapshot is saved) · U = Uniform at the "
                                     f"seed's switch point" + (f": {known}" if known else ' (known when that On trajectory is done)'),
                                     width), 'dim'))
@@ -964,8 +1009,7 @@ def clean_block(base, cohort, now, host, width):
             return 0 if r.get('failure_real', True) else 1
         return {'unconfirmed': 2, 'stopped': 2, 'interrupted': 3}.get(r['status'], 4)
     for r in sorted(problems, key=lambda r: (rank(r), -stamp(r))):
-        name = f"s{r['seed']} " + ('eval ' if r.get('kind') == 'evaluate' else '') + short_arm(r['arm']) + \
-               (' ext' if r.get('phase') == 'extension' else '')
+        name = task_name(r, runs)
         if r['status'] == 'failed':
             real = r.get('failure_real', True)
             where = f" on {r['host']}" if r.get('host') else ''
@@ -1146,7 +1190,7 @@ def node_table(bases, cohorts, now, this_host=None):
     DEAD     task assigned, lock free and no heartbeat >60 s, or lock held and no heartbeat >10 min
     gone     no heartbeat >30 s, nothing assigned            finished  same after its queue completed"""
     this_host = this_host or socket.gethostname()
-    nodes, queues, info = {}, [], {}
+    nodes, queues, info, runs_by_cohort = {}, [], {}, {}
     def entry(worker, host):
         return nodes.setdefault(worker, dict(worker=worker, host=host, beats={}, jobs=[], complete=True))
     for base in bases:
@@ -1156,6 +1200,7 @@ def node_table(bases, cohorts, now, this_host=None):
                 continue
             queues.append(queue)
             state, rows = collect(base, cohort, now)
+            runs_by_cohort[cohort] = run_branches(rows)
             phase = state.get('phase')
             info[cohort] = dict(phase=phase, open=phase != 'complete' and not state.get('failure'), queue=queue,
                                 ready=sum(1 for r in rows if r['status'] == 'pending' and r.get('ready')))
@@ -1188,8 +1233,7 @@ def node_table(bases, cohorts, now, this_host=None):
         base = dict(host=e['host'], pid=pid, gpus=gpus, beat=beat, experiment='-', task='-', updates='-', took='-')
         if e['jobs']:
             for cohort, r in e['jobs']:
-                task = f"s{r['seed']} " + ('eval ' if r.get('kind') == 'evaluate' else '') + short_arm(r['arm']) + \
-                       (' ext' if r.get('phase') == 'extension' else '')
+                task = task_name(r, runs_by_cohort.get(cohort, {}))
                 updates = f"{r['done']}/{r['total']}" if r['done'] is not None and r['total'] else \
                           ('?/' + str(r['total']) if r['total'] and r.get('kind') != 'evaluate' else '-')
                 took = span(now - r['started']) if isinstance(r.get('started'), (int, float)) else '-'
@@ -1279,7 +1323,7 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
                 _, rows = collect(base, cohort, now)
                 job = next((x for x in rows if x['status'] == 'running' and x.get('host') == host), None)
                 if job:
-                    mine = f"▶ s{job['seed']} {short_arm(job['arm'])} ({COHORT_SHORT.get(COHORT_LABEL.get(cohort, cohort), COHORT_LABEL.get(cohort, cohort))})"
+                    mine = f"▶ {task_name(job, run_branches(rows))} ({COHORT_SHORT.get(COHORT_LABEL.get(cohort, cohort), COHORT_LABEL.get(cohort, cohort))})"
     out.append(paint(clip(LEGEND, width), 'dim'))
     import textwrap
     for part in textwrap.wrap(LEGEND_TABLE, max(60, width - 2)):
