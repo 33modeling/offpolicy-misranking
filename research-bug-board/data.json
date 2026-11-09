@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-09T10:23:39+09:00",
+  "recorded_at": "2026-11-09T10:23:59+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
     "source_commit": "87b2d30a29a905ea76cfe46dd16653308f02f375",
@@ -7965,6 +7965,14 @@
           "text": "最終370 CPU回帰0失敗/0skip。最初の369pass/1failと修正後stop30passを保持。元34 coordinator・7 runner・448ファイルの全SHA、元30 trainerの同一性、四cohortのprimary結果が初extより前に保存されること、旧binding/計画/失敗/生存leaseの保持を確認。実H100は未接続。",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/87b2d30a29a905ea76cfe46dd16653308f02f375",
           "evidence_kind": "code_test_and_limitation"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "verification_summary_ko",
+          "status": "remote_verification_pending",
+          "text": "직전 검증 기록의 한국어 정리: 최종 CPU 검사370개가 모두 통과했다. 첫 전체 검사369통과·1실패와 수정 후 중단 검사30개 원문을 보존했다. 원본 실행기34개·runtime7개·448파일의 SHA와 원본 trainer30파일 보존을 확인했다. 네 조합의 기본 결과가 첫 ext보다 먼저 저장됐고 기존 binding·계획·실패·살아 있는 lease를 보존했다. 실제 H100 적용은 아직 확인하지 못했다.",
+          "evidence_kind": "code_test_and_limitation"
         }
       ]
     },
@@ -8018,6 +8026,14 @@
           "status": "remote_verification_pending",
           "text": "最終370 CPU回帰0失敗/0skip。最初の369pass/1failと修正後stop30passを保持。元34 coordinator・7 runner・448ファイルの全SHA、元30 trainerの同一性、四cohortのprimary結果が初extより前に保存されること、旧binding/計画/失敗/生存leaseの保持を確認。実H100は未接続。",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/87b2d30a29a905ea76cfe46dd16653308f02f375",
+          "evidence_kind": "code_test_and_limitation"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "verification_summary_ko",
+          "status": "remote_verification_pending",
+          "text": "직전 검증 기록의 한국어 정리: 최종 CPU 검사370개가 모두 통과했다. 첫 전체 검사369통과·1실패와 수정 후 중단 검사30개 원문을 보존했다. 원본 실행기34개·runtime7개·448파일의 SHA와 원본 trainer30파일 보존을 확인했다. 네 조합의 기본 결과가 첫 ext보다 먼저 저장됐고 기존 binding·계획·실패·살아 있는 lease를 보존했다. 실제 H100 적용은 아직 확인하지 못했다.",
           "evidence_kind": "code_test_and_limitation"
         }
       ]
