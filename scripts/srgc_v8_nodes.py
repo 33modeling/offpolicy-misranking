@@ -31,9 +31,13 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'node-native-fault-quarantine-v24'
+DISPATCH_POLICY = 'native-crash-retry-other-host-v25'
 EVAL_NATIVE_RECOVERY = 'evaluation-sigsegv-recovery-v1'
 NODE_NATIVE_FAILURE_LIMIT = 2
+# A task that died of a native signal (SIGSEGV etc.) is retried from its last checkpoint on a host where it has
+# not crashed (user 11-10: 'failed로 된거 복구 되는거지? ... 디버깅 계속 해보고 수정해'). Repeated crashes on one
+# GPU node (V8-144) say nothing about the task; crashes on this many different hosts point at the task itself.
+TASK_NATIVE_HOST_LIMIT = 2
 TERMINAL = {'completed_horizon', 'completed_budget'}
 PHASES = ('train', 'primary_evaluation', 'extension', 'evaluation')
 CPU_PHASES = ('prepare', 'freeze', 'primary_finalize', 'finalize')
@@ -146,9 +150,55 @@ def retry_budget_failures(job):
 
     Historical retry_epoch records stay intact as evidence, but no longer grant
     another failure budget. Genuine node loss/intentional stops are still refunded.
+    Native crashes count once per host (v25): relaunches on one crashing node are one node fault.
     """
     recovery=evaluation_recovery_attempts(job)
-    return counted_failures(dict(attempts=recovery)) if recovery is not None else counted_failures(job)
+    if recovery is not None:return counted_failures(dict(attempts=recovery))
+    attempts=[a for a in job.get('attempts',[]) if isinstance(a,dict)]
+    other=[a for a in attempts if not fatal_native_failure(dict(attempts=[a]))]
+    return counted_failures(dict(attempts=other))+native_crash_count(job)
+
+
+def attempt_host(attempt):
+    """The attempt's host (recorded since v25), else from the worker id '<host>.<pid>'."""
+    if attempt.get('host'):return str(attempt['host'])
+    worker=str(attempt.get('worker') or '')
+    return worker.rsplit('.',1)[0] if '.' in worker else worker
+
+
+def native_crash_count(job):
+    """Native crashes that use the retry budget: each attempt with a recorded host (v25 never sends a retry back
+    to a crash host), and once per host for older records (repeated relaunches on one node, V8-136/V8-144)."""
+    recorded=0;legacy=set()
+    for index,attempt in enumerate(job.get('attempts',[])):
+        if not (isinstance(attempt,dict) and fatal_native_failure(dict(attempts=[attempt]))):continue
+        if attempt.get('host'):recorded+=1
+        else:legacy.add(attempt_host(attempt) or f'unknown-node-{attempt.get("id") or index}')
+    return recorded+len(legacy)
+
+
+def native_crash_places(job):
+    """(host, GPU set or None) of each native crash of this task, each once, in order. The GPU set is recorded
+    since v25 (the quarantine unit of node_native_identity); None means unknown, i.e. any GPU set of that host.
+    A crash without a recorded worker counts on its own (its node is unknown)."""
+    places=[]
+    for index,attempt in enumerate(job.get('attempts',[])):
+        if isinstance(attempt,dict) and fatal_native_failure(dict(attempts=[attempt])):
+            host=attempt_host(attempt) or f'unknown-node-{attempt.get("id") or index}'
+            gpus=tuple(str(g) for g in attempt.get('gpus') or ()) if attempt.get('host') else ()
+            place=(host,gpus or None)
+            if place not in places:places.append(place)
+    return places
+
+
+def native_crash_hosts(job):
+    """Readable names of the places a task crashed natively ('host' or 'host GPU 0,1,2,3')."""
+    return [host+(' GPU '+','.join(gpus) if gpus else '') for host,gpus in native_crash_places(job)]
+
+
+def crashed_here(job,place):
+    host,gpus=place
+    return any(h==host and (not g or not gpus or tuple(g)==tuple(gpus)) for h,g in native_crash_places(job))
 
 
 def evaluation_recovery_attempts(job):
@@ -164,11 +214,15 @@ def evaluation_recovery_attempts(job):
     return attempts[index+1:]
 
 
-def native_failure_blocks(job):
+def native_failure_blocks(job,place=None):
+    """Where a native crash stops a task: on the GPU set (host, GPUs) where it already crashed natively
+    (place given), and everywhere once it crashed TASK_NATIVE_HOST_LIMIT times on different places. Without
+    `place` this is the queue-wide answer: False means another node may still resume it from its checkpoint."""
     fault=fatal_native_failure(job)
     if not fault:return False
+    if place is not None and crashed_here(job,place):return True
     replay=evaluation_recovery_attempts(job)
-    if replay is None:return True
+    if replay is None:return native_crash_count(job)>=TASK_NATIVE_HOST_LIMIT
     # A replay crash, including one mislabelled as an interruption, never buys more work.
     return bool(fatal_native_failure(dict(attempts=replay))) or counted_failures(dict(attempts=replay))>=1
 
@@ -499,11 +553,16 @@ class Pool:
         self.controller_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
         self.retry_failed=retry_failed;self.max_attempts=max_attempts;self.retry_delay=retry_delay
         self.automatic_retry=False  # enabled by the node loop only after normal node admission
+        self.host=socket.gethostname()  # a native-crash retry never returns to the GPU set where the task crashed
+        self.gpus=()                    # set by the worker loop from its runtime (node_native_identity's GPU set)
         self.root.mkdir(parents=True,exist_ok=True)
 
     def retry_requested(self,state=None):
         """Task restarts admitted on this node; keep the existing shared retry marker."""
         return self.automatic_retry or self.retry_failed or bool((state or {}).get('retry_failed_requested_at'))
+
+    def place(self):
+        return (getattr(self,'host',None) or socket.gethostname(),tuple(str(g) for g in getattr(self,'gpus',()) or ()))
 
     def retry_limit_reached(self,job):
         if evaluation_recovery_attempts(job) is not None:return retry_budget_failures(job)>=1
@@ -513,7 +572,7 @@ class Pool:
         """One immediate retry by default; repeated faults stay excluded across joins."""
         receipt=job.get('evaluation_native_recovery')
         if receipt and receipt.get('binding_sha256')!=digest(self.binding):return False
-        if native_failure_blocks(job) or self.retry_limit_reached(job):return False
+        if native_failure_blocks(job,self.place()) or self.retry_limit_reached(job):return False
         if job.get('state')=='interrupted' and job.get('resume_not_before'):
             return self.retry_delay<=0 or (time.time() if now is None else now)>=job['resume_not_before']
         if job.get('state')!='failed':return True
@@ -699,7 +758,8 @@ class Pool:
             already=any(row.get('controller_sha256')==controller or row.get('controller_policy')==DISPATCH_POLICY
                         for row in history)
             if already and job['state'] in ('pending','interrupted'):resumable=True
-            if job['state']!='failed' or already or native_failure_blocks(job) or self.retry_limit_reached(job):continue
+            if (job['state']!='failed' or already or fatal_native_failure(job) or native_failure_blocks(job)
+                    or self.retry_limit_reached(job)):continue
             attempts=job.get('attempts',[])
             if attempts and (attempts[-1].get('controller_sha256')==controller
                              or attempts[-1].get('controller_policy')==DISPATCH_POLICY):continue
@@ -1002,7 +1062,8 @@ class Pool:
             if job['state']=='done' or not self.retryable(job,state=state):continue
             lease=Lock(self.root/'leases'/(path.stem+'.lock'))
             if not lease.acquire():continue
-            attempt=dict(id=uuid.uuid4().hex,worker=worker,started_at=time.time(),pid=os.getpid(),
+            attempt=dict(id=uuid.uuid4().hex,worker=worker,host=self.place()[0],gpus=list(self.place()[1]),
+                         started_at=time.time(),pid=os.getpid(),
                          controller_sha256=self.controller_sha256,controller_policy=DISPATCH_POLICY)
             if job.get('retry_epoch'):
                 attempt.update(retry_epoch=dict(job['retry_epoch']),retry_budget_failures_before_start=retry_budget_failures(job))
@@ -1240,6 +1301,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
             runtime.primary_cohort_scope=tuple(p.binding['cohort'] for p,_ in pairs)
         pool.retry_failed=retry;pool.max_attempts=max_attempts;pool.retry_delay=retry_delay
         pool.automatic_retry=automatic_retry
+        pool.gpus=tuple(str(g) for g in getattr(runtime,'gpus',()) or ())  # the place recorded on each attempt
         runtime.stop_event=stop  # runtime actors report signals through the same stop event
         def heartbeat(task=None,pool=pool):
             atomic(pool.root/'workers'/(digest(worker)+'.json'),

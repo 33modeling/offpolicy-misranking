@@ -64,12 +64,17 @@ def test_nine_failed_attempts_outside_current_plan_cannot_idle_worker_forever(tm
 
 
 @pytest.mark.parametrize('launcher_rc',[-11,1])
-def test_first_sigsegv_is_terminal_even_when_torchrun_wraps_it_as_exit1(tmp_path,launcher_rc):
-    pool=nodes.Pool(tmp_path/'queue',dict(cohort='fixture'));pool.automatic_retry=True
-    job=dict(state='failed',attempts=[dict(id='first',outcome='failed',exit_code=launcher_rc,
+def test_first_sigsegv_is_retried_only_on_another_host_even_when_torchrun_wraps_it_as_exit1(tmp_path,launcher_rc):
+    """v25: a first SIGSEGV is resumed from its checkpoint on another host, never on the host where it crashed."""
+    pool=nodes.Pool(tmp_path/'queue',dict(cohort='fixture'));pool.automatic_retry=True;pool.host='crash-host'
+    job=dict(state='failed',attempts=[dict(id='first',outcome='failed',exit_code=launcher_rc,host='crash-host',
         child_failure=dict(failures=[dict(signal=11,message='torchrun launcher exit -11; no Python traceback')]))])
-    assert not pool.retryable(job),'SIGSEGV was scheduled again despite no repair'
-    assert not pool.retry_later(job)
+    assert not pool.retryable(job),'SIGSEGV was sent back to the host where it crashed'
+    assert pool.retry_later(job),'another host may still resume it: not a queue-wide failure'
+    assert not nodes.native_failure_blocks(job)
+    pool.host='other-host';assert pool.retryable(job)
+    second=dict(job,attempts=job['attempts']+[dict(job['attempts'][0],id='second',host='other-host')])
+    assert nodes.native_failure_blocks(second) and not pool.retryable(second) and not pool.retry_later(second)
     pool.initialize();key=pool.register(dict(kind='train',run_id='fatal',parent={}), 'train')
     path=pool.root/'jobs'/(key+'.json');saved=nodes.read(path);saved.update(job);nodes.atomic(path,saved)
     pool.initialize(recover=pool.controller_sha256,worker='fresh-node')

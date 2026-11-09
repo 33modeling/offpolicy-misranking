@@ -50,7 +50,11 @@ def prepared(tmp_path,old_failures=0,failures_remaining=0,complete=False):
 @pytest.mark.parametrize('old_failures',[0,9])
 def test_plain_launch_recovers_native_eval_without_replacing_its_checkpoint_or_spec(tmp_path,old_failures):
     pool,runtime,path,checkpoint,result=prepared(tmp_path,old_failures,failures_remaining=0 if old_failures else 1)
-    assert nodes.worker_loop(pool,runtime,'new-node',threading.Event(),poll=.001)==0
+    pool.host='node-a';rc=nodes.worker_loop(pool,runtime,'new-node',threading.Event(),poll=.001)
+    if not old_failures:   # v25: the replay never runs on the host where the eval crashed; another host runs it
+        assert rc==1 and len(runtime.calls)==1
+        pool.host='node-b';rc=nodes.worker_loop(pool,runtime,'node-b-worker',threading.Event(),poll=.001)
+    assert rc==0
     job=nodes.read(path)
     assert len(runtime.calls)==(1 if old_failures else 2),'native eval never received its bounded automatic replay'
     assert job['state']=='done' and len(job['attempts'])==(old_failures+1 if old_failures else 2)
@@ -61,11 +65,14 @@ def test_plain_launch_recovers_native_eval_without_replacing_its_checkpoint_or_s
 @pytest.mark.parametrize('old_failures',[0,9])
 def test_repeated_native_eval_is_finite_and_new_nodes_cannot_renew_recovery(tmp_path,old_failures):
     pool,runtime,path,checkpoint,result=prepared(tmp_path,old_failures,failures_remaining=100)
-    assert nodes.worker_loop(pool,runtime,'first-node',threading.Event(),poll=.001)==1
+    pool.host='node-a';assert nodes.worker_loop(pool,runtime,'first-node',threading.Event(),poll=.001)==1
+    if not old_failures:   # v25: the one replay goes to another host
+        assert len(runtime.calls)==1
+        pool.host='node-b';assert nodes.worker_loop(pool,runtime,'second-node',threading.Event(),poll=.001)==1
     assert len(runtime.calls)==(1 if old_failures else 2)
     before=nodes.read(path)
     for i in range(3):
-        joined=nodes.Pool(pool.root,pool.binding);joined.controller_sha256=f'later-code-{i}'
+        joined=nodes.Pool(pool.root,pool.binding);joined.controller_sha256=f'later-code-{i}';joined.host=f'node-new-{i}'
         assert nodes.worker_loop(joined,runtime,f'new-node-{i}',threading.Event(),poll=.001)==1
         assert nodes.read(path)==before,'restarting a node renewed the recovery budget'
     assert not result.exists()
@@ -79,11 +86,14 @@ def test_finished_native_eval_is_adopted_without_running_it_again(tmp_path):
     assert nodes.read(path)['state']=='done' and result.read_bytes()==content
 
 
-def test_training_sigsegv_is_not_reopened_by_the_evaluation_repair(tmp_path):
+def test_training_sigsegv_is_retried_on_another_host_not_by_the_evaluation_repair(tmp_path):
+    """v25 (user 11-10 'failed로 된거 복구 되는거지?'): the eval receipt never arms for training, but nine old
+    relaunch crashes on one node are one node fault, so another host resumes it; the crash host does not."""
     pool,runtime,path,checkpoint,result=prepared(tmp_path,9)
     job=nodes.read(path);job['task']=dict(kind='train',run_id='native-failed-training',parent={})
     assert not pool.arm_evaluation_recovery(job,'new-node')
-    pool.automatic_retry=True;assert not pool.retryable(job)
+    pool.automatic_retry=True;pool.host='other-node';assert pool.retryable(job)
+    pool.host='old-node';assert not pool.retryable(job) and pool.retry_later(job)
 
 
 def test_changed_task_cannot_reuse_an_evaluation_recovery_receipt(tmp_path):
@@ -91,7 +101,9 @@ def test_changed_task_cannot_reuse_an_evaluation_recovery_receipt(tmp_path):
     assert pool.arm_evaluation_recovery(job,'new-node')
     job['task']['snapshot_sha256']='different-checkpoint'
     assert nodes.evaluation_recovery_attempts(job) is None
-    pool.automatic_retry=True;assert not pool.retryable(job)
+    # the invalid receipt grants nothing; the task falls back to the general other-host rule (v25)
+    pool.automatic_retry=True;pool.host='old-node';assert not pool.retryable(job)
+    pool.host='other-node';assert pool.retryable(job)
 
 
 def test_changed_binding_cannot_reuse_an_evaluation_recovery_receipt(tmp_path):
@@ -120,7 +132,10 @@ def test_actual_cpu_torchrun_eval_recovers_after_one_native_sigsegv(tmp_path,chi
         if rc==0:result.write_bytes(b'original completed evaluation result')
         return rc
     runtime.execute=execute
-    assert nodes.worker_loop(pool,runtime,'real-cpu-node',threading.Event(),poll=.001)==0
+    pool.host='cpu-node-a'   # v25: the crash host does not replay it; a second host does
+    assert nodes.worker_loop(pool,runtime,'real-cpu-node',threading.Event(),poll=.001)==1 and calls==['segfault']
+    pool.host='cpu-node-b'
+    assert nodes.worker_loop(pool,runtime,'real-cpu-node-b',threading.Event(),poll=.001)==0
     job=nodes.read(path)
     assert calls==['segfault','success'] and job['state']=='done'
     assert [a['outcome'] for a in job['attempts']]==['failed','done']

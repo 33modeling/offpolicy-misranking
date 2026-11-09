@@ -22,7 +22,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from v8_probe import active_roots, last_row, read, root, tail  # noqa: E402
-from srgc_v8_nodes import retry_budget_failures, fatal_native_failure, evaluation_recovery_attempts, native_failure_blocks
+from srgc_v8_nodes import retry_budget_failures, fatal_native_failure, evaluation_recovery_attempts, native_failure_blocks, native_crash_hosts
 
 COHORTS = ('olmo_math', 'olmo_mbpp', 'qwen_math', 'qwen_mbpp')   # model, then task (user 11-09: 'status 순서 맞춰')
 ATTENTION = {'failed', 'interrupted', 'stopped', 'unconfirmed'}
@@ -410,10 +410,18 @@ def failure_story(row, attempt, job, task, directory, state, live_policies, now)
     if native_fault and eval_recovery is not None and not native_failure_blocks(job):
         nxt = ('evaluation recovery queued: one identical checkpoint/spec replay; '
                f'{used} of 1 replay failures used; no flag needed')
-    elif native_fault:
-        number=native_fault['signal']
-        nxt = (f'BLOCKED: {signal.Signals(number).name} (exit -{number}); automatic relaunch disabled; '
-               f'{used} historical failures retained; repair required')
+    elif native_fault and native_failure_blocks(job):
+        number=native_fault['signal'];hosts=native_crash_hosts(job)
+        nxt = (f"BLOCKED: {signal.Signals(number).name} (exit -{number}) on {len(hosts)} different nodes "
+               f"({', '.join(h or '?' for h in hosts)}): likely the task itself, not a node; no more automatic retries; "
+               'checkpoints and logs kept; repair required' if eval_recovery is None else
+               f"BLOCKED: {signal.Signals(number).name} (exit -{number}) again in its one evaluation replay; "
+               'no more automatic retries; repair required')
+    elif native_fault and used < limit:
+        hosts=native_crash_hosts(job)
+        nxt = (f"retried automatically from its last checkpoint on a node other than {', '.join(h or '?' for h in hosts)} "
+               f"(it crashed there): attempt {used + 1}/{limit} " +
+               ('is waiting for a free node on another host' if row.get('status') == 'failed' else 'started'))
     elif limit == 0:
         nxt = ('UNBOUNDED legacy retry policy is still recorded; update and restart all workers to apply '
                'the finite failure cap; reading status alone does not stop running workers')

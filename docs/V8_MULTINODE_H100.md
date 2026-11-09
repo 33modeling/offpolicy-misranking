@@ -525,3 +525,21 @@ git pull && sh scripts/run_v8_nodes.sh stop && sh scripts/run_v8_nodes.sh
 
 `stop`은 해당 노드의 기존 V8 실행만 종료한다. 새 명령은 기존 큐와 checkpoint를
 사용하며, 실패 숫자를 지워서 성공으로 보이게 처리하지 않는다.
+
+### native 충돌 작업은 다른 GPU 묶음에서 이어 받음 (v25, 2026-11-10)
+
+`native-crash-retry-other-host-v25`. 사용자 지시(11-10): "failed로 된거 복구 되는거지? 느린건지 복구가 안된건지
+모르겠어 디버깅 계속 해보고 수정해". v21~v24 에서는 SIGSEGV(-11) 학습 작업은 첫 충돌부터 다시 배정되지 않았고,
+평가 작업도 노드가 새로 합류할 때만 1회 재생 예산이 붙었다. 그래서 failed 로 남은 작업은 느린 것이 아니라 복구되지 않는 상태였다.
+
+- native 충돌(SIGSEGV·SIGABRT·SIGBUS·SIGILL·SIGFPE)로 끝난 작업은 노드 합류를 기다리지 않고 곧바로 다시 배정된다.
+  마지막 저장 checkpoint 부터 이어 가며, 충돌한 GPU 묶음(호스트+GPU 집합)에는 다시 가지 않는다. 같은 호스트의
+  다른 GPU 묶음은 받을 수 있다.
+- 서로 다른 GPU 묶음에서 두 번 충돌하면 작업 자체 문제일 가능성이 커서 자동 재시도를 멈춘다(`TASK_NATIVE_HOST_LIMIT = 2`).
+  status 의 next 줄에 `BLOCKED: SIGSEGV (exit -11) on 2 different nodes (...)` 로 나온다.
+- v25 이전 기록에서 한 노드가 같은 작업을 여러 번 다시 띄워 쌓인 충돌(V8-136·V8-144)은 노드당 1회로 센다.
+  그 노드 말고 다른 곳에서 1회 더 시도한다. v25 이후 시도는 attempt 마다 `host`·`gpus` 를 기록하고 하나씩 센다.
+- 충돌한 GPU 묶음의 worker 는 그 작업을 "나중에 다른 노드가 받을 일"로 세므로 큐 전체 실패를 쓰지 않는다.
+  다른 일이 없고 아무것도 돌지 않으면 기존처럼 그 worker 만 끝난다(`blocked_work`).
+- 노드별 격리(같은 GPU 묶음에서 native 충돌 2번이면 그 cohort 일을 받지 않음), 실패 상한(작업당 2), 평가 재생 예산
+  기록은 그대로다. 이 규칙은 SIGSEGV 원인 수정이 아니다. 원인은 다음 충돌의 status why 줄(충돌 함수·파일·줄)로 찾는다.
