@@ -869,7 +869,9 @@ def eval_branch(r, runs):
     if r.get('run_id') in runs:
         return runs[r['run_id']]
     m = re.search(r'\.s\d+\.([A-Za-z0-9_]+)\.[0-9a-f]+$', str(r.get('run_id') or ''))
-    return (branch_column(m.group(1)), False) if m else ('?', False)
+    if m:return branch_column(m.group(1)),False
+    # Older error records can have no run id; retain their recorded evaluation stage.
+    return (branch_column(r['arm']) if not r.get('run_id') and r.get('arm') else '?'),False
 
 
 def task_name(r, runs):
