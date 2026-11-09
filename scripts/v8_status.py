@@ -726,7 +726,7 @@ LEGEND_TABLE = ("progress, train/ext/eval = how far it is, running tasks counted
                 "(a branch or extension counts from where it starts; + = extension updates still to be planned) · fail = real error · marked = failed, no training error · "
                 "intr = interrupted, reruns · stuck = marked running but no live node runs it (DEAD node or no worker) · "
                 "other = unknown job state")
-LEGEND = "✓ done  ▶44% running (44% done)  ○ ready  · waiting  ✗ failed  ! no training error  ⏸ interrupted  ? no heartbeat"
+LEGEND = "✓ done  ▶120 running, at update 120  ○ ready  · waiting  ✗ failed  ! no training error  ⏸ interrupted  ? no heartbeat"
 COHORT_LABEL = {'olmo_math': 'OLMo MATH', 'qwen_mbpp': 'Qwen MBPP', 'olmo_mbpp': 'OLMo MBPP', 'qwen_math': 'Qwen MATH'}
 COHORT_SHORT = {}   # four experiments: 'OLMo'/'Qwen' alone would be ambiguous, so the node table shows the full name
 COLOR = False   # set by main() only when stdout is a terminal (never in logs, pipes or tests)
@@ -789,9 +789,10 @@ def symbol(row):
     status = row['status']
     if status == 'done':
         return '✓'
-    if status == 'running':      # progress of this task (user: '진척률을 나타내라고')
-        frac = task_fraction(row)
-        return f"▶{round(100 * frac)}%" if frac > 0 else '▶'
+    if status == 'running' and row.get('kind') == 'evaluate':   # the update being evaluated (user: '그냥 275로 해놔')
+        return f"▶{row['update']}" if row.get('update') not in (None, '') else '▶'
+    if status == 'running':      # the update it is at now, like the eval cell's ▶275 (user: 'training 쪽도 그냥 275로')
+        return f"▶{row['done']}" if isinstance(row.get('done'), int) else '▶'
     if status == 'pending':
         return '○' if row.get('ready') else '·'
     if status == 'failed' and row.get('failure_real') is False:
@@ -972,6 +973,11 @@ def clean_block(base, cohort, now, host, width):
             return '✓'
         if any(i['status'] == 'failed' for i in items):
             return '✗'
+        if kind == 'eval':      # a branch's evaluations: the one running now, by its update ('▶275')
+            running = [i for i in items if i['status'] == 'running']
+            if running:
+                return symbol(min(running, key=lambda i: exit_code(i.get('update')) or 0))
+            return '○' if any(i.get('ready') for i in items if i['status'] == 'pending') else '·'
         frac = sum(task_fraction(i) for i in items) / len(items)
         if frac > 0 or any(i['status'] == 'running' for i in items):
             # combined progress of the branch's tasks (user: '0/2 가 진행률이냐 ?')
@@ -1020,8 +1026,8 @@ def clean_block(base, cohort, now, host, width):
                     lines.append(row_text(f'{seed!s:>6}', {c: part[(seed, c)] for c in cols}))
         if use_plan:
             known = ' · '.join(f"s{k} @{v}" for k, v in sorted(u_tau.items()))
-            lines.append(paint(clip("   ▶44% = running, 44% done · · = waiting · ○ = ready to start · none = no such task (On is never "
-                                    "extended; no Uniform when that seed never switched) · eval = that branch's evaluations together", width), 'dim'))
+            lines.append(paint(clip("   ▶120 = running, now at update 120 · · = waiting · ○ = ready to start · none = no such task (On is never "
+                                    "extended; no Uniform when that seed never switched) · eval ▶275 = evaluation at update 275 running", width), 'dim'))
             lines.append(paint(clip(f"   · = not created yet (a branch appears when its parent snapshot is saved) · U = Uniform at the "
                                     f"seed's switch point" + (f": {known}" if known else ' (known when that On trajectory is done)'),
                                     width), 'dim'))
