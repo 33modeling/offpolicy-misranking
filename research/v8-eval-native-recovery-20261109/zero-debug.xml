@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="0.061" timestamp="2026-11-09T22:55:29.173054+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_zero_update_extension" name="test_zero_update_budget_extension_records_parent_endpoint_without_training" time="0.007"><failure message="ModuleNotFoundError: No module named 'switching'">tests/test_srgc_v8_zero_update_extension.py:19: in test_zero_update_budget_extension_records_parent_endpoint_without_training
+    from switching import runner,snapshots
+E   ModuleNotFoundError: No module named 'switching'</failure></testcase></testsuite></testsuites>

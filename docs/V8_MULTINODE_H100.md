@@ -225,6 +225,11 @@ V23은 사용자의 eval 복구 지시에 따라 평가 작업의 SIGSEGV에 한
 갱신되지 않는다. 그1회도 실패하면 더 배정하지 않는다. 입력·binding 오류, 학습의
 native fault, 다른 치명 signal을 이 방식으로 해제하지 않는다. 이는 SIGSEGV 원인이
 고쳐졌다는 기록이 아니라 사용자가 요청한 유한 평가 복구 정책이다.
+별도 기록 오류로, 고정 예산이 추가 update를 허용하지 않는 ext도 원래 fork 상태의
+끝점 snapshot을 요구하는데 saved runner는 latest.pt가 있을 때만 그 시작점을 저장했다.
+원본 SHA f14d92ee...에만 적용하는 기록 overlay가 budget fork의 retained 시작점을
+저장한다. 원래 예산·optimizer step·샘플링을 바꾸지 않고 model/optimizer/RNG 상태를
+그대로 보존한다. 원본 runner 파일은 수정하지 않으며 overlay SHA를 rank receipt에 남긴다.
 SIGSEGV를 차단한 것은 native 오류 원인을 고쳤다는 뜻이 아니다. 원래 오류와 checkpoint는
 보존하고, 원인 수리 없이 상한만 올려 native crash를 재실행하지 않는다.
  이전 V8가

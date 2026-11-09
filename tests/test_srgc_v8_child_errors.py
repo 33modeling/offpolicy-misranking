@@ -25,6 +25,7 @@ sys.path.insert(0,REPO_RUNNER)
 def main():
  from switching.runner import write_exit_marker
  mode=os.environ['FAULT_MODE'];rank=int(os.environ['RANK'])
+ if mode=='success':return
  if mode=='busy' or (mode in ('mixed','mixed_signal') and rank==0):
   if rank==0:write_exit_marker(75,'busy',task='fixture-task')
   if mode in ('mixed','mixed_signal'):
@@ -50,8 +51,9 @@ def main():
         environment=dict(os.environ,V8_CODE_ROOT=str(REPO),V8_TASK_STALL_SECONDS='60',
           SRGC_PROGRESS_DIR=str(tmp_path/'progress'),OMP_NUM_THREADS='1',OPENBLAS_NUM_THREADS='1',
           V8_ORIGINAL_CHILD_SHA256=hashlib.sha256(script.read_bytes()).hexdigest()))
-    def run(mode):
+    def run(mode,directory=None):
         runtime.environment['FAULT_MODE']=mode
+        if directory is not None:runtime.environment['SRGC_PROGRESS_DIR']=str(directory)
         command=[sys.executable,'-m','torch.distributed.run','--standalone','--nproc_per_node=2','--max_restarts=0',
                  str(REPO/'scripts/v8_task_entry.py'),str(script)]
         return worker.run_srgc_child(runtime,command,tmp_path/'task.log',[],threading.Event(),

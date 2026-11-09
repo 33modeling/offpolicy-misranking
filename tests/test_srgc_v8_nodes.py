@@ -574,13 +574,19 @@ class ToyRuntime(nodes.Runtime):
             nodes.atomic(self.root/'software-finalized.json',dict(scope='CPU software test, not paper results'))
 
     def execute(self,t,matrix,fd,stop,device_fds,attempt):
+        # Exercise the same recording-only overlay as the production child.
+        import importlib
+        directory=str(Path(nodes.__file__).parent)
+        if directory not in sys.path:sys.path.insert(0,directory)
+        from switching import runner as original_runner
+        checkpoint_repair=importlib.import_module('v8_task_entry').repair_budget_fork_checkpoint(original_runner)
         from switching.runner import execute_train,execute_eval
         if t.get('method',{}).get('extension_of') and not self.streaming_ready_tasks:
             assert all(nodes.primary_results_ready(self.root.parent/c) for c in self.primary_cohort_scope)
         ctx=self.context(t['training_seed'])
         result=execute_eval(t,ctx) if t['kind']=='evaluate' else execute_train(t,ctx)
         nodes.atomic(self.root/'executed'/(attempt['id']+'.json'),dict(task=nodes.task_key(t),kind=t['kind'],
-                     worker=attempt['worker'],method=t.get('method_id'),result=result))
+                     worker=attempt['worker'],method=t.get('method_id'),result=result,checkpoint_recording=checkpoint_repair))
         return 75 if result.get('status')=='busy' else 0
 
 

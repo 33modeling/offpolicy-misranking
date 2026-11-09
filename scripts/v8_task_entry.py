@@ -22,6 +22,34 @@ LEGACY_DENSE_BACKEND_SHA256='c73ee5e60288791bedbc790147fc88903ba6f3429d48b2ab626
 MBPP_VERIFIER_HASHES={'5062befe4ed5a8e21f6de01a73dca4f1d3544dd033c5d2c846bff391d1148a90',
                       '5d2414c2ef8c6091aeace48ac8eccadce3357b5e0854e658980b33bd854a1522'}
 _NATIVE_FAULT_STATE=None
+ZERO_UPDATE_RUNNER_SHA256='f14d92eed0d8dd139e3ea7602112bae148a6fd860ed883c22f55512f6fe8c732'
+
+
+def repair_budget_fork_checkpoint(runner):
+    """Retain an extension's initial endpoint even if B permits zero new updates.
+
+    Original numerical decisions, budget and frozen files are unchanged. The saved
+    runner otherwise requires this endpoint in _finalize but only writes it when
+    latest.pt already exists, which a fresh zero-update fork never creates first.
+    """
+    original=getattr(runner,'_execute_train',None)
+    if not callable(original):return None
+    receipt=getattr(original,'_v8_budget_fork_checkpoint',None)
+    if receipt:return receipt
+    path=Path(runner.__file__)
+    if hashlib.sha256(path.read_bytes()).hexdigest()!=ZERO_UPDATE_RUNNER_SHA256:return None
+    source=textwrap.dedent(inspect.getsource(original))
+    before='and latest.exists())):'
+    after='and (latest.exists() or method.get("extension_of")))):'
+    if source.count(before)!=1:raise RuntimeError('Frozen zero-update checkpoint guard differs from its audited source')
+    source=source.replace(before,after,1);namespace={}
+    exec(compile(source,'<v8-budget-fork-checkpoint>','exec'),original.__globals__,namespace)
+    fixed=namespace[original.__name__];functools.update_wrapper(fixed,original)
+    receipt=dict(policy='retain-initial-budget-fork-endpoint-v1',original_runner_sha256=ZERO_UPDATE_RUNNER_SHA256,
+                 recording_overlay_sha256=hashlib.sha256(source.encode()).hexdigest(),extra_optimizer_updates=0,
+                 budget_changed=False,sampling_changed=False)
+    fixed._v8_budget_fork_checkpoint=receipt;runner._execute_train=fixed
+    return receipt
 
 
 def install_native_fault_handler():
@@ -221,6 +249,7 @@ def repair_olmo_memory(backend):
 def repair_context(ctx):
     """Apply the seed runs' documented verifier/cache protections after saved-source selection."""
     backend=ctx.backend;changes={};verifier=getattr(backend,'verifier',None)
+    if getattr(ctx,'_v8_budget_fork_checkpoint',None):changes['checkpoint_recording']=ctx._v8_budget_fork_checkpoint
     fixed,spawn=repair_mbpp_subprocess(verifier)
     if spawn:backend.verifier=fixed;changes['mbpp_subprocess']=spawn
     dense_memory=repair_dense_memory(backend)
@@ -287,12 +316,16 @@ def repair_context(ctx):
 
 
 def install_runtime_repairs():
+    from switching import runner
+    checkpoint_repair=repair_budget_fork_checkpoint(runner)
     from switching.runner import Context
     if getattr(Context,'_v8_runtime_repairs',False):return
     original=Context.__init__
     @functools.wraps(original)
     def initialize(self,*args,**kwargs):
-        original(self,*args,**kwargs);repair_context(self)
+        original(self,*args,**kwargs)
+        if checkpoint_repair:self._v8_budget_fork_checkpoint=checkpoint_repair
+        repair_context(self)
     Context.__init__=initialize;Context._v8_runtime_repairs=True
 
 

@@ -7,6 +7,7 @@ import threading
 import pytest
 
 from scripts import srgc_v8_nodes as nodes
+from test_srgc_v8_child_errors import child_runtime
 
 if os.environ.get('V8_EVAL_RECOVERY_SOURCE'):
     spec=importlib.util.spec_from_file_location('old_eval_recovery',os.environ['V8_EVAL_RECOVERY_SOURCE'])
@@ -108,3 +109,20 @@ def test_status_shows_bounded_eval_recovery_instead_of_permanent_native_block(tm
     story=status.failure_story(row,job['attempts'][-1],job,job['task'],checkpoint.parent,pool.queue_state(),{nodes.DISPATCH_POLICY},100)
     assert 'evaluation recovery queued' in story['failure_next']
     assert '0 of 1' in story['failure_next'] and 'lifetime failures 9' in story['failure_next']
+
+
+def test_actual_cpu_torchrun_eval_recovers_after_one_native_sigsegv(tmp_path,child_runtime):
+    run,progress,log=child_runtime
+    pool,runtime,path,checkpoint,result=prepared(tmp_path);calls=[]
+    def execute(task,matrix,fd,stop,device_fds,attempt):
+        mode='segfault' if not calls else 'success';calls.append(mode)
+        rc=run(mode,pool.root/'progress'/attempt['id'])
+        if rc==0:result.write_bytes(b'original completed evaluation result')
+        return rc
+    runtime.execute=execute
+    assert nodes.worker_loop(pool,runtime,'real-cpu-node',threading.Event(),poll=.001)==0
+    job=nodes.read(path)
+    assert calls==['segfault','success'] and job['state']=='done'
+    assert [a['outcome'] for a in job['attempts']]==['failed','done']
+    assert any(f.get('signal')==11 for f in job['attempts'][0]['child_failure']['failures'])
+    assert checkpoint.read_bytes()==b'original immutable checkpoint sentinel'
