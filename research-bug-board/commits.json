@@ -14362,6 +14362,26 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "7ad703d4d16a0b327b16707699c0197496593bea",
+      "at": "2026-11-09T23:15:04+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve bounded eval recovery, checkpoint and startup evidence with 474 passing checks",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/7ad703d4d16a0b327b16707699c0197496593bea",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "b9c9444b86aa21371a857960ee34e97bbdb273d9",
+      "at": "2026-11-09T23:28:05+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Stop repeated native crashes across node tasks and preserve the original rank fault dump",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/b9c9444b86aa21371a857960ee34e97bbdb273d9",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

@@ -9405,6 +9405,15 @@
         "text": "평가의 유한 복구/별도 checkpoint기록/startup경합을 소스에서 고친 상태다. 실제H100 native SIGSEGV근본원인과 수정본적용뒤실제평가진행은미확인이다. 같은오류가재발하면평가별1회재실행뒤멈추며무제한quota로전환하지않는다. 기록한학습보상과완료평가·원래checkpoint는보존한다.",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/771dc4c96f83957bb49d8c06efcc957e1b4d5efd",
         "evidence_kind": "limitation"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "user_recurrence",
+        "status": "remote_native_fault_unresolved",
+        "text": "사용자가 수정 이후에도 exit-11/failed 누적을 재보고했다. 평가별 유한 복구는 실제 native 충돌 근본 원인 수정의 증거가 아니다. V8-144/145에 새로 재현한 노드별 누적 경로와 진단 덮기 누락을 등록했다. H100은 다른 컴퓨터이며 새 native stack/task 원문을 요청한 상태다.",
+        "evidence_kind": "user_report",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/b9c9444b86aa21371a857960ee34e97bbdb273d9"
       }
     ]
   },
@@ -9521,6 +9530,32 @@
         "status": "open",
         "text": "아이 좆 같은 새끼 아직도 exit-11 못고쳤네 계속 쌓인다고",
         "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed_remote_native_cause_unconfirmed",
+        "text": "이전 코드의 20개 eval CPU 재현에서 40회의 native 실패가 같은 노드에 쌓임을 before-valid.xml로 보존했다. 수정본의 관련29검사는 두 번째 native 충돌 뒤 같은 GPU/cohort의 추가 배정0, 같은 코드에서 worker PID 변경으로 예산 갱신0, 다른 GPU의20평가 완료와 정상 다른 cohort 진행을 검증했다. 큐 전체 실패와 기존 checkpoint/결과 삭제는 없다. 이 수정은 native 장애 누적 차단이며 실제 H100 SIGSEGV 원인 해결은 미확인이다.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/b9c9444b86aa21371a857960ee34e97bbdb273d9"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "provenance_clarification",
+        "status": "recorded",
+        "text": "introduction_commit의7ad703d는 이번 재현에 사용한 직전 baseline이다. 해당 필드만으로 실제 최초 도입 커밋이 확정됐다는 뜻은 아니다. 최초 도입의 별도 추적은 미실시이며 H100 충돌 근본 원인도 미확인이다.",
+        "evidence_kind": "provenance"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "regression_verified",
+        "status": "source_verified_remote_native_cause_unconfirmed",
+        "text": "Source b9c9444: 최종478 CPU 검사0실패/0skip. 같은GPU/cohort 최대2 native실패, PID재시작추가0, 다른GPU20완료/다른cohort유지, 실제CPU torchrun의 원래진단초기화뒤 native stack보존을 확인했다. 48coordinator/7runner 모든 archive payload SHA와 원본30trainer SHA가 일치한다.5fixture/256원문파일 CPU proofzip과 수정전실패를 보존했다. 실제H100 native원인/복구/정확도는 여전히 미측정이다.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/b9c9444b86aa21371a857960ee34e97bbdb273d9"
       }
     ]
   },
@@ -9543,6 +9578,32 @@
         "status": "open",
         "text": "아이 좆 같은 새끼 아직도 exit-11 못고쳤네 계속 쌓인다고",
         "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed_remote_native_cause_unconfirmed",
+        "text": "원래 install_diagnostics가 faulthandler를 다른 FD로 다시 설정하는 실제 CPU torchrun2rank 대조에서 SIGSEGV의 matching rank dump가 누락됨을 재현했다. 같은 초기화 뒤 attempt FD를 복원하자 실제 ctypes SIGSEGV의 rank1·gradient_scoring·string_at 원문이 child-failure 및 기본 작업 로그에 남는 검사가 통과했다. 원래 periodic/SIGUSR1 진단 함수의 실행과 반환값은 유지한다.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/b9c9444b86aa21371a857960ee34e97bbdb273d9"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "provenance_clarification",
+        "status": "recorded",
+        "text": "introduction_commit의7ad703d는 이번 재현에 사용한 직전 baseline이다. 해당 필드만으로 실제 최초 도입 커밋이 확정됐다는 뜻은 아니다. 최초 도입의 별도 추적은 미실시이며 H100 충돌 근본 원인도 미확인이다.",
+        "evidence_kind": "provenance"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "regression_verified",
+        "status": "source_verified_remote_native_cause_unconfirmed",
+        "text": "Source b9c9444: 최종478 CPU 검사0실패/0skip. 같은GPU/cohort 최대2 native실패, PID재시작추가0, 다른GPU20완료/다른cohort유지, 실제CPU torchrun의 원래진단초기화뒤 native stack보존을 확인했다. 48coordinator/7runner 모든 archive payload SHA와 원본30trainer SHA가 일치한다.5fixture/256원문파일 CPU proofzip과 수정전실패를 보존했다. 실제H100 native원인/복구/정확도는 여전히 미측정이다.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/b9c9444b86aa21371a857960ee34e97bbdb273d9"
       }
     ]
   }

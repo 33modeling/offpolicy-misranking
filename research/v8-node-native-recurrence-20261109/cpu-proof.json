@@ -1,0 +1,12 @@
+{
+  "sourceCommit": "b9c9444b86aa21371a857960ee34e97bbdb273d9",
+  "fixtures": 5,
+  "files": 256,
+  "zipSHA256": "cdc334171402e4cd93af0838ed74d695a462a6778e626c75702821c99e4ce475",
+  "sameNodeNewAttempts": 2,
+  "sameNodeRestartAdditionalAttempts": 0,
+  "healthyDifferentGPUCompleted": 20,
+  "actualCPUOriginalDiagnosticsFaultDump": true,
+  "realH100Measurements": false,
+  "checkpointsRemoved": 0
+}

@@ -502,3 +502,26 @@ Ctrl-C는 즉시 정리를 요청한다. 자식 출력 pipe의 EOF를 기다리�
 기존 큐와 control.lock을 옮기거나 바꾸지 않는다. 현재 실행에는 동일한 수치 코드의
 호환 묶음으로 supervisor·종료·진단 경로만 추가할 수 있다.
 모델 로딩에서 실제로 멈췄는지에 대한 원격 원인은 로그/노드 관측 전에는 미확인이다.
+
+### 반복되는 native 충돌과 수정본 적용
+
+`node-native-fault-quarantine-v24`는 작업별 재시도 제한에 노드별 제한을 추가한다.
+같은 GPU 묶음·cohort·실행기 코드에서 native 충돌이 두 번 기록되면 그 GPU 묶음에
+해당 cohort의 새 작업을 배정하지 않는다. 작업을 바꾸거나 worker PID를 바꿔도
+제한을 초기화하지 않는다. 다른 GPU 묶음과 정상 cohort는 계속 처리한다.
+공유 큐 전체를 실패로 바꾸거나 기존 실패·checkpoint·완료 평가를 삭제하지 않는다.
+기록은 각 cohort의 `.multi-node/node-native-faults/`에 남는다.
+
+eval의 고정 1회 복구 예산은 그대로다. 이 제한과 노드 격리는 SIGSEGV 원인 수정의
+증거가 아니다. 실제 H100에서 같은 task가 정상 진행하는지는 별도로 확인해야 한다.
+원래 child의 진단 초기화 후에도 attempt 전용 fatal-signal FD를 복원하므로,
+유효한 rank 덤프가 있으면 기본 작업 로그의 `NATIVE STACK`에 원문을 출력한다.
+
+이미 실행 중인 worker에 수정본을 적용할 때는 각 노드에서 다음 한 줄을 실행한다.
+
+```sh
+git pull && sh scripts/run_v8_nodes.sh stop && sh scripts/run_v8_nodes.sh
+```
+
+`stop`은 해당 노드의 기존 V8 실행만 종료한다. 새 명령은 기존 큐와 checkpoint를
+사용하며, 실패 숫자를 지워서 성공으로 보이게 처리하지 않는다.
