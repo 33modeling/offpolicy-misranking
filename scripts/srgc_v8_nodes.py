@@ -32,7 +32,7 @@ SCHEMA = 1
 DISPATCH_POLICY = 'source-recovery-node-interruption-v13'
 TERMINAL = {'completed_horizon', 'completed_budget'}
 PHASES = ('train', 'extension', 'evaluation')
-DEFAULT_COHORTS = ('olmo_math', 'qwen_mbpp', 'olmo_mbpp')
+DEFAULT_COHORTS = ('olmo_math', 'qwen_mbpp', 'olmo_mbpp', 'qwen_math')
 CORRECTED_PLANNER = 'current-v8-016'  # evaluation planner replaced for pre-V8-016 coordinators
 
 
@@ -1393,7 +1393,7 @@ class Runtime:
 
 def main(argv=None,*,selected_cohorts=None):
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('cohort',nargs='?',default='all',help='default: share olmo_math, qwen_mbpp and olmo_mbpp')
+    parser.add_argument('cohort',nargs='?',default='all',help='default: share olmo_math, qwen_mbpp, olmo_mbpp and qwen_math')
     parser.add_argument('--runner-root',type=Path,default=os.environ.get('V8_RUNNER_ROOT',str(Path.cwd()/'v8/experiments')))
     parser.add_argument('--root',type=Path,default=os.environ.get('V8_ROOT'))
     parser.add_argument('--python',default=os.environ.get('V8_PYTHON',sys.executable),help='fallback Python; cohort-specific environments take priority')

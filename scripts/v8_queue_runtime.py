@@ -190,7 +190,7 @@ def selections(tools,env,args):
     parser.add_argument('--new-queue',action='store_true')
     options,unknown=parser.parse_known_args(args)
     if unknown:raise ValueError('Unsupported V8 launch arguments: '+' '.join(unknown))
-    cohorts=['olmo_math','qwen_mbpp','olmo_mbpp'] if options.cohort=='all' else [options.cohort]
+    cohorts=['olmo_math','qwen_mbpp','olmo_mbpp','qwen_math'] if options.cohort=='all' else [options.cohort]
     root=Path(options.root or env['V8_ROOT']).resolve()
     bindings={};errors={}
     for cohort in cohorts:

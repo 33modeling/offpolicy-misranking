@@ -15,7 +15,7 @@ STAGES={
     'cache_refresh':'Refreshing the training reward cache', 'cache_export':'Saving the training reward cache',
     'evaluation':'Measuring answers on the held-out evaluation questions',
 }
-COHORTS={'olmo_math':'OLMo / MATH','qwen_mbpp':'Qwen / MBPP','olmo_mbpp':'OLMo / MBPP'}
+COHORTS={'olmo_math':'OLMo / MATH','qwen_mbpp':'Qwen / MBPP','olmo_mbpp':'OLMo / MBPP','qwen_math':'Qwen / MATH'}
 
 
 def describe(stage,details):

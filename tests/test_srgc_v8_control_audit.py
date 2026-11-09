@@ -143,7 +143,7 @@ def test_bad_cohort_source_does_not_block_healthy_cohort(tmp_path,monkeypatch,ba
     good=make_queue(base,'qwen_mbpp',source.sha(REPO/'scripts/srgc_v8_nodes.py'),source.runner_identity(runner))
     before={p:p.read_bytes() for p in base.rglob('*') if p.is_file()}
     plan=source.selections(REPO,dict(V8_ROOT=str(base),V8_RUNNER_ROOT=str(runner),V8_PYTHON=sys.executable),[])
-    assert len(plan)==1 and plan[0]['cohorts']==['qwen_mbpp','olmo_mbpp']
+    assert len(plan)==1 and plan[0]['cohorts']==['qwen_mbpp','olmo_mbpp','qwen_math']
     assert 'olmo_math' in plan.errors
     assert all(p.read_bytes()==data for p,data in before.items())
 
@@ -153,14 +153,14 @@ def test_different_python_environments_do_not_share_admission_process(tmp_path,m
     left=tmp_path/'left-python';left.symlink_to(sys.executable)
     right=tmp_path/'right-python';right.symlink_to(sys.executable)
     env=dict(V8_ROOT=str(tmp_path/'experiments'),V8_RUNNER_ROOT=str(REPO/'v8/experiments'),
-             V8_PYTHON_OLMO_MATH=str(left),V8_PYTHON_QWEN_MBPP=str(right),V8_PYTHON_OLMO_MBPP=str(left))
+             V8_PYTHON_OLMO_MATH=str(left),V8_PYTHON_QWEN_MBPP=str(right),V8_PYTHON_OLMO_MBPP=str(left),V8_PYTHON_QWEN_MATH=str(right))
     plan=source.selections(REPO,env,[])
     assert len(plan)==2,'separate Python environments would otherwise run admission under the first cohort interpreter'
-    assert [g['cohorts'] for g in plan]==[['olmo_math','olmo_mbpp'],['qwen_mbpp']]
+    assert [g['cohorts'] for g in plan]==[['olmo_math','olmo_mbpp'],['qwen_mbpp','qwen_math']]
     env['V8_CODE_ROOT']=str(REPO);env['V8_PYTHON']=sys.executable
     monkeypatch.setattr(bootstrap,'environment',lambda *a,**k:env)
     plan=bootstrap_plan(bootstrap,[],monkeypatch)
-    assert [entry['python'] for entry in plan['entries']]==[str(left),str(left),str(right)]
+    assert [entry['python'] for entry in plan['entries']]==[str(left),str(left),str(right),str(right)]
 
 
 def test_healthy_cohort_runs_but_partial_startup_keeps_failure_exit(tmp_path,monkeypatch):
@@ -172,7 +172,7 @@ def test_healthy_cohort_runs_but_partial_startup_keeps_failure_exit(tmp_path,mon
     monkeypatch.setattr(bootstrap,'environment',lambda *a,**k:env)
     plan=bootstrap_plan(bootstrap,[],monkeypatch)
     assert 'olmo_math' in plan['errors']
-    assert [entry['cohort'] for entry in plan['entries']]==['qwen_mbpp','olmo_mbpp']
+    assert [entry['cohort'] for entry in plan['entries']]==['qwen_mbpp','olmo_mbpp','qwen_math']
 
 
 def test_missing_cohort_interpreter_does_not_block_other_environment(tmp_path,monkeypatch):

@@ -1,0 +1,48 @@
+{
+  "base_commit": "8635a5dab4b6a77620a2628799718781317d4687",
+  "user_request": "qwen math도 추가해라 / 빨리해 / git push 부터 바로해",
+  "changes": [
+    "Add qwen_math to default source selection, common dispatch, bootstrap interpreter overrides, node probe/progress and shell. The status reader already includes four cohorts in peer8635a5d, retained unchanged.",
+    "Reuse original qwen:math plan, Qwen adapter, original seeds5-9 and checkpoint25; existing queue source pins and checkpoints retained. Same training/budget/final evaluation/collect/analyze pipeline.",
+    "Environment precedence V8_PYTHON_QWEN_MATH then QWEN_PYTHON then PAIR_PYTHON. A broken Qwen MATH environment does not block the other three."
+  ],
+  "controls": {
+    "scope": "CPU software validation only; no H100 connected",
+    "model_data": "Original V8 runner/evaluator plus synthetic ToyBackend/toy_problem(0)",
+    "seeds": [
+      5,
+      6,
+      7
+    ],
+    "updates": "prefix25/matched75/safety100 in CPU controls; original production275/cap400 unchanged",
+    "metrics": "Four cohorts complete with three shared workers, no duplicate/overlapping work; production collect/analyze generate final results for Qwen MATH; routing and failed-environment isolation pass",
+    "checkpoint_provenance": "Original optimizer/RNG/checkpoints and per-update training rewards retained; final held-out evaluations separate; original30 trainer hashes unchanged"
+  },
+  "evidence": {
+    "targeted": {
+      "tests": 26,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "cpu_summary": "four-cohort-cpu-summary.json"
+  },
+  "limitations": "Real H100 progress/idle nodes/accuracy/memory/throughput unmeasured. Updated command applies to newly started workers; running frozen workers are unchanged. Four prepared cohorts yield40 initial tasks, not an allocated node count. No cloud node allocation or paid API/credit call.",
+  "scientific_measurements": null,
+  "source_sha256": {
+    "docs/V8_MULTINODE_H100.md": "096775fa3cee272bf2d772db2ce4625999508cffcdb4591496320751d44e17e3",
+    "scripts/run_v8_nodes.sh": "e96abff248466088c9016ac1476b99fe63b4bbddde608d6a30939edaaa149513",
+    "scripts/srgc_v8_nodes.py": "9f20cf134c50ac4e377109adb7c93e19f21baa297347eea1c41ec5028c1d7a31",
+    "scripts/v8_bootstrap.py": "926fb3010804adb64c0cb2d08218d5f10abfe8a4e2274b28e1bbeb339fddf054",
+    "scripts/v8_probe.py": "ff4383abbf4aeae3d3a8b4299cb1fd30d3132dc5ffdc97063f4578c19a7c58b6",
+    "scripts/v8_progress_text.py": "425ce9390cdc9badafc57874a6c629b6139b13a5c94d6379ea20cafeea119410",
+    "scripts/v8_queue_runtime.py": "d45dec87690726c291ae45405047687a62c01147954d8b979c9ce6c00cd202c6",
+    "tests/test_srgc_v8_control_audit.py": "4965b7d0c7b4f26c6dd0534912ebc90ccf2d5c2b8ee6d84eb2a74aef89b5b755",
+    "tests/test_srgc_v8_nodes.py": "c4b05b25fb662c8a54b5d66b6867b75b8070ca4722ab0ba8c7f85990ed3656a6",
+    "tests/test_srgc_v8_olmo_mbpp.py": "9877405ebac71af56e0d42e9c4d0c82f638e28a102f3649632b575fa2e3123c0",
+    "tests/test_srgc_v8_queue_runtime.py": "e4aaa4bb8b35328f0ec7fb10c995ad33f46da6a90e10b50691ba0d2b95ece1e4",
+    "tests/test_srgc_v8_source_runtime.py": "92cabf06dfeb3d6b8e5fd5b031eff0cedf629df7c94d76223bbe8adabfd3ad67",
+    "tests/test_v8_status_word.py": "5316f4224382c10b00cfd8b9044bb912103102759cc9f8b3c9e388bc3f7ade72",
+    "tests/test_srgc_v8_qwen_math.py": "cf854b17c0420850c6a05af2589a69d86b0ceede41f7cbc12f7265d50e1d7b71"
+  }
+}

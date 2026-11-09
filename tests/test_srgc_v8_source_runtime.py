@@ -116,7 +116,7 @@ print('SAVED_RUNTIME_CPU_TRAINING_OK')
     assert 'SAVED_RUNTIME_CPU_TRAINING_OK' in result.stdout
 
 
-@pytest.mark.parametrize('cohort',['olmo_math','qwen_mbpp','olmo_mbpp'])
+@pytest.mark.parametrize('cohort',['olmo_math','qwen_mbpp','olmo_mbpp','qwen_math'])
 def test_production_locator_uses_the_verified_training_identity_and_explains_missing_prefix(tmp_path,monkeypatch,cohort):
     from switching import cluster,spec
     cfg=spec.resolve(cohort,role='rebuttal_bank')
@@ -124,7 +124,7 @@ def test_production_locator_uses_the_verified_training_identity_and_explains_mis
     plan.update(output_root='runs',model=cfg['model']['repository'],model_revision=cfg['model']['revision'])
     path=tmp_path/'plan.json';path.write_text(json.dumps(plan))
     saved='f581eb043e89409e0e68d8ed77201fa030e34bd93d4d5babbab65304c24a5d6b'
-    identity=hashlib.sha256((saved+adapter_hash()).encode()).hexdigest() if cohort=='qwen_mbpp' else saved
+    identity=hashlib.sha256((saved+adapter_hash()).encode()).hexdigest() if cohort.startswith('qwen_') else saved
     for seed in [5,6,7,8,9]:
         folder=tmp_path/f'runs/seed-{seed}';folder.mkdir(parents=True)
         nodes.atomic(folder/'run.json',{'implementation_sha256':identity})

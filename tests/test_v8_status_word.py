@@ -17,7 +17,7 @@ def run(args, tmp_path):
 def test_status_word_shows_table(tmp_path):
     out = run(["status"], tmp_path)
     assert out.returncode == 0, out.stderr
-    assert "V8 status · " in out.stdout and all(c in out.stdout for c in ("OLMo MATH","Qwen MBPP","OLMo MBPP"))
+    assert "V8 status · " in out.stdout and all(c in out.stdout for c in ("OLMo MATH","Qwen MBPP","OLMo MBPP","Qwen MATH"))
     assert "status.json" not in out.stdout + out.stderr
     out = run(["olmo_math", "status"], tmp_path)
     assert out.returncode == 0 and "OLMo MATH" in out.stdout and "Qwen MBPP" not in out.stdout
@@ -46,6 +46,7 @@ def test_run_srgc_words_and_option_values_are_forwarded_intact(tmp_path):
     env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)}
     cases = {(): [], ("math",): ["olmo_math"], ("mbpp", "run"): ["qwen_mbpp"], ("all",): [],
              ("olmo_mbpp", "run"): ["olmo_mbpp"],
+             ("qwen_math", "run"): ["qwen_math"],
              ("--gpus", "4,5,6,7"): ["--gpus", "4,5,6,7"],
              ("olmo_math", "--gpus", "4,5,6,7", "--new-queue"): ["--gpus", "4,5,6,7", "--new-queue", "olmo_math"],
              ("--root", "/a b/v8", "mbpp"): ["--root", "/a b/v8", "qwen_mbpp"],

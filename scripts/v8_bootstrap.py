@@ -15,8 +15,8 @@ except ImportError:
 
 PATH_VARIABLES=('GROUP_VOLUME','OM_USER','OM_WORK','V8_ROOT','VENV_DIR','V8_CODE_ROOT','OM_CODE_ROOT','V8_RUNNER_ROOT',
                 'EXPORT_CODE_ROOT','USER_VOLUME','SRGC_STORAGE_ROOT','V8_PYTHON','PAIR_PYTHON','SWITCH_PYTHON','QWEN_PYTHON',
-                'V8_PYTHON_OLMO_MATH','V8_PYTHON_QWEN_MBPP','V8_PYTHON_OLMO_MBPP')
-PYTHON_VARIABLES=('V8_PYTHON','PAIR_PYTHON','SWITCH_PYTHON','QWEN_PYTHON','V8_PYTHON_OLMO_MATH','V8_PYTHON_QWEN_MBPP','V8_PYTHON_OLMO_MBPP')
+                'V8_PYTHON_OLMO_MATH','V8_PYTHON_QWEN_MBPP','V8_PYTHON_OLMO_MBPP','V8_PYTHON_QWEN_MATH')
+PYTHON_VARIABLES=('V8_PYTHON','PAIR_PYTHON','SWITCH_PYTHON','QWEN_PYTHON','V8_PYTHON_OLMO_MATH','V8_PYTHON_QWEN_MBPP','V8_PYTHON_OLMO_MBPP','V8_PYTHON_QWEN_MATH')
 
 
 def environment(tools,source,*,cwd=None,warn=None,defer_cohort_errors=False):
@@ -47,7 +47,7 @@ def environment(tools,source,*,cwd=None,warn=None,defer_cohort_errors=False):
     if not env.get('V8_CODE_ROOT'):
         candidates=[]
         if env.get('OM_CODE_ROOT'):candidates.append(Path(env['OM_CODE_ROOT']))
-        for cohort in ('olmo_math','qwen_mbpp','olmo_mbpp'):
+        for cohort in ('olmo_math','qwen_mbpp','olmo_mbpp','qwen_math'):
             receipt=Path(env['V8_ROOT'])/cohort/'locator.json'
             if receipt.exists():
                 saved=json.loads(receipt.read_text()).get('code',{}).get('code_root')

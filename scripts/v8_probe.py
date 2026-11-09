@@ -56,7 +56,7 @@ def active_roots(proc=Path('/proc')):
 
 def snapshot(base,host):
     result=[]
-    for cohort in ('olmo_math','qwen_mbpp','olmo_mbpp'):
+    for cohort in ('olmo_math','qwen_mbpp','olmo_mbpp','qwen_math'):
         directory=Path(base)/cohort;queue=directory/'.multi-node';state_path=queue/'state.json'
         raw=read(state_path);errors=[]
         if not isinstance(raw,dict):

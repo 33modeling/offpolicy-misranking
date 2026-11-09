@@ -44,19 +44,20 @@ def test_olmo_mbpp_keeps_the_original_mbpp_interpreter():
     assert nodes.cohort_python('olmo_mbpp','fallback',env)=='/specific/mbpp/python'
 
 
-def test_original_olmo_mbpp_runner_finishes_and_production_collect_analyze_emit_results(tmp_path,monkeypatch):
+@pytest.mark.parametrize('cohort',['olmo_mbpp','qwen_math'])
+def test_original_runner_finishes_and_production_collect_analyze_emit_results(tmp_path,monkeypatch,cohort):
     import os
     runner=os.environ.get('V8_NODES_TEST_RUNTIME')
     if not runner:pytest.skip('original V8 runner required')
     monkeypatch.setenv('V8_CODE_ROOT',str(ROOT))
     monkeypatch.setenv('GROUP_VOLUME',str(tmp_path))
     from test_srgc_v8_nodes import ToyRuntime
-    runtime=ToyRuntime(runner,tmp_path,'olmo_mbpp')
+    runtime=ToyRuntime(runner,tmp_path,cohort)
     pool=nodes.Pool(runtime.root/'.multi-node',runtime.binding)
     assert nodes.worker_loop(pool,runtime,'cpu-node',threading.Event(),poll=.001,retry_delay=0)==0
     from switching import cluster
     monkeypatch.setattr(cluster.spec,'resolve',lambda *a,**k:runtime.cfg)
-    args=SimpleNamespace(cohort='olmo_mbpp',v8_root=str(tmp_path))
+    args=SimpleNamespace(cohort=cohort,v8_root=str(tmp_path))
     cluster.cmd_collect(args);cluster.cmd_analyze(args)
     rows=nodes.read(runtime.root/'analysis/policy_outcomes_bank.json')
     assert rows and all(r.get('eval_status')=='measured' for r in rows if r.get('status') in ('triggered','not_triggered'))
