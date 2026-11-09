@@ -14062,6 +14062,76 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "abcd57b01f81ce010546047db0748902dc879818",
+      "at": "2026-11-09T12:12:30+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Record peer status integration without changing verified V18 dispatch",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/abcd57b01f81ce010546047db0748902dc879818",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "4a678397e44dc5c35c3f1e3229eafa968fa8161b",
+      "at": "2026-11-09T12:45:51+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Dispatch final checkpoint eval without waiting for other reference seeds",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/4a678397e44dc5c35c3f1e3229eafa968fa8161b",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "0a5b49c129ce8ac8c0855a9508074e4642d59ce4",
+      "at": "2026-11-09T12:46:00+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve V19 coordinator alongside all pinned numerical runtimes",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/0a5b49c129ce8ac8c0855a9508074e4642d59ce4",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "1342050ab698586093c443f1614d23b633276ba2",
+      "at": "2026-11-09T12:26:29+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: separate ext and eval tables per branch; running evaluation shown as ▶",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/1342050ab698586093c443f1614d23b633276ba2",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "738ddf16fbea2ed08d583fe05d9dc6e9e5c2f4b7",
+      "at": "2026-11-09T12:48:37+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve concurrent status changes with immediate checkpoint evaluation",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/738ddf16fbea2ed08d583fe05d9dc6e9e5c2f4b7",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "6fc56407d286e86dea86ce7cfa7ac5abc9f87daa",
+      "at": "2026-11-09T12:52:14+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Avoid loading evaluation bundles before matched checkpoints exist",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/6fc56407d286e86dea86ce7cfa7ac5abc9f87daa",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "dbd28e7613b50d1535c5a77e55546e338bea18fb",
+      "at": "2026-11-09T12:52:22+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Retain the optimized V19 coordinator without changing older queue pins",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/dbd28e7613b50d1535c5a77e55546e338bea18fb",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

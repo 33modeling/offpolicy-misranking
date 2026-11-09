@@ -1,0 +1,23 @@
+{
+  "scope": "CPU metadata checks only",
+  "cases": [
+    {
+      "phase": "extension",
+      "claim_kind": "evaluate",
+      "completed_update": 275,
+      "budget_frozen": false
+    },
+    {
+      "phase": "evaluation",
+      "claim_kind": "evaluate",
+      "completed_update": 275,
+      "budget_frozen": false
+    },
+    {
+      "phase": "evaluation",
+      "base_planner_error_retained": true,
+      "independent_extension_claimed": true,
+      "experiment_complete": false
+    }
+  ]
+}

@@ -1,0 +1,243 @@
+{
+  "scope": "CPU software control, no H100 results",
+  "points": [
+    {
+      "run_id": "olmo_math.rebuttal_bank.s6.bank_sr_t050.0fd99cec7f",
+      "seed": 6,
+      "method": "bank_sr_t050",
+      "phase": "train",
+      "completed_update": 75,
+      "training_batch_metrics": {
+        "gradient_norm": 0.3097921379508067,
+        "sample_reward": 0.71875
+      },
+      "checkpoint_sha256": "a4326428fe8d23117a0b12b1313e1b52e29cba9f71ccfb6c1821198b18a54abe",
+      "heldout_reward": null,
+      "heldout_status": "separate original final evaluation records; never substituted from training"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s6.bank_uniform_t050.62b3567f36",
+      "seed": 6,
+      "method": "bank_uniform_t050",
+      "phase": "train",
+      "completed_update": 75,
+      "training_batch_metrics": {
+        "gradient_norm": 0.5314921167031312,
+        "sample_reward": 0.625
+      },
+      "checkpoint_sha256": "e1e682ceaf8348b3ccf2db2b942650c2a9e06f296d6b78040d8db643fd76183d",
+      "heldout_reward": null,
+      "heldout_status": "separate original final evaluation records; never substituted from training"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s6.bank_sr_t025.36ec8e4931",
+      "seed": 6,
+      "method": "bank_sr_t025",
+      "phase": "train",
+      "completed_update": 50,
+      "training_batch_metrics": {
+        "gradient_norm": 0.8072032784016683,
+        "sample_reward": 0.90625
+      },
+      "checkpoint_sha256": "66bd3a67a2cf3f42f7d2fc09668e21f7077d1dd2edcb0db639d47429fcfe5d59",
+      "heldout_reward": null,
+      "heldout_status": "separate original final evaluation records; never substituted from training"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s6.bank_sr_t025.36ec8e4931",
+      "seed": 6,
+      "method": "bank_sr_t025",
+      "phase": "train",
+      "completed_update": 75,
+      "training_batch_metrics": {
+        "gradient_norm": 0.0,
+        "sample_reward": 1.0
+      },
+      "checkpoint_sha256": "3ca7a02a2074fbc347b77173a2a6b0a6ec1b8f5bddd0d6f47063f392ae297810",
+      "heldout_reward": null,
+      "heldout_status": "separate original final evaluation records; never substituted from training"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s7.bank_uniform_t050.f2a49680a8",
+      "seed": 7,
+      "method": "bank_uniform_t050",
+      "phase": "train",
+      "completed_update": 75,
+      "training_batch_metrics": {
+        "gradient_norm": 0.46027143697585515,
+        "sample_reward": 0.8125
+      },
+      "checkpoint_sha256": "4a21f665c5f002bd119f3276e12f65b2611ed1062dea4aaed9a5c7cac11c555e",
+      "heldout_reward": null,
+      "heldout_status": "separate original final evaluation records; never substituted from training"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s5.bank_sr_t025.8ce0879220",
+      "seed": 5,
+      "method": "bank_sr_t025",
+      "phase": "train",
+      "completed_update": 50,
+      "training_batch_metrics": {
+        "gradient_norm": 0.18965121039377436,
+        "sample_reward": 0.84375
+      },
+      "checkpoint_sha256": "4eab32540dfba929821f9aad2ba5f866130cf32deee310451a6e95eaec9fcf34",
+      "heldout_reward": null,
+      "heldout_status": "separate original final evaluation records; never substituted from training"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s5.bank_sr_t025.8ce0879220",
+      "seed": 5,
+      "method": "bank_sr_t025",
+      "phase": "train",
+      "completed_update": 75,
+      "training_batch_metrics": {
+        "gradient_norm": 0.5894849545615962,
+        "sample_reward": 0.84375
+      },
+      "checkpoint_sha256": "e8ed3186a2eb04a1199e82c6fe037469185fa2adbdd209c66bc3a4fa5e5fc0a8",
+      "heldout_reward": null,
+      "heldout_status": "separate original final evaluation records; never substituted from training"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s5.bank_sr_t050.08ecee3f76",
+      "seed": 5,
+      "method": "bank_sr_t050",
+      "phase": "train",
+      "completed_update": 75,
+      "training_batch_metrics": {
+        "gradient_norm": 0.7244368810219569,
+        "sample_reward": 0.78125
+      },
+      "checkpoint_sha256": "653bf2304c4fd15cd25b16dd4dbd218bb9103a66c4c74a4643e91d7470ccee0d",
+      "heldout_reward": null,
+      "heldout_status": "separate original final evaluation records; never substituted from training"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s7.bank_sr_t050.5c9a32616a",
+      "seed": 7,
+      "method": "bank_sr_t050",
+      "phase": "train",
+      "completed_update": 75,
+      "training_batch_metrics": {
+        "gradient_norm": 0.46027143697585515,
+        "sample_reward": 0.5625
+      },
+      "checkpoint_sha256": "0e13567ed1a2370002c29e10388d561f962e9ef269d200dcc826b259b292a237",
+      "heldout_reward": null,
+      "heldout_status": "separate original final evaluation records; never substituted from training"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s7.bank_sr_t025.3521a11263",
+      "seed": 7,
+      "method": "bank_sr_t025",
+      "phase": "train",
+      "completed_update": 50,
+      "training_batch_metrics": {
+        "gradient_norm": 0.22985401433096797,
+        "sample_reward": 0.9375
+      },
+      "checkpoint_sha256": "e7bb3563bbf4350d49752000e93127ab5725216691daa247def5e92b5da3fc46",
+      "heldout_reward": null,
+      "heldout_status": "separate original final evaluation records; never substituted from training"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s7.bank_sr_t025.3521a11263",
+      "seed": 7,
+      "method": "bank_sr_t025",
+      "phase": "train",
+      "completed_update": 75,
+      "training_batch_metrics": {
+        "gradient_norm": 1.0498535703676835,
+        "sample_reward": 0.8125
+      },
+      "checkpoint_sha256": "baefadc3ac57d6e9baaf623d2a10a3347a26ca07274be522bcf868d0057579cf",
+      "heldout_reward": null,
+      "heldout_status": "separate original final evaluation records; never substituted from training"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s6.on_monitored.2165848192",
+      "seed": 6,
+      "method": "on_monitored",
+      "phase": "train",
+      "completed_update": 50,
+      "training_batch_metrics": {
+        "gradient_norm": 0.0,
+        "sample_reward": 1.0
+      },
+      "checkpoint_sha256": "cc0db45eb2047579734e19cd8d51bde19c6a1eac099cd8e4924400f448cb9705",
+      "heldout_reward": null,
+      "heldout_status": "separate original final evaluation records; never substituted from training"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s6.on_monitored.2165848192",
+      "seed": 6,
+      "method": "on_monitored",
+      "phase": "train",
+      "completed_update": 75,
+      "training_batch_metrics": {
+        "gradient_norm": 0.0,
+        "sample_reward": 1.0
+      },
+      "checkpoint_sha256": "a0fdda413f214995bbbd28b942e43481912dbf2d589cbe1b7a9a768fced5162d",
+      "heldout_reward": null,
+      "heldout_status": "separate original final evaluation records; never substituted from training"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s7.on_monitored.750a0f0ea8",
+      "seed": 7,
+      "method": "on_monitored",
+      "phase": "train",
+      "completed_update": 50,
+      "training_batch_metrics": {
+        "gradient_norm": 0.0,
+        "sample_reward": 1.0
+      },
+      "checkpoint_sha256": "277aea7a77e777925c582b21f53520ccbd598c7d30f735cf7e3071414ebd239f",
+      "heldout_reward": null,
+      "heldout_status": "separate original final evaluation records; never substituted from training"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s7.on_monitored.750a0f0ea8",
+      "seed": 7,
+      "method": "on_monitored",
+      "phase": "train",
+      "completed_update": 75,
+      "training_batch_metrics": {
+        "gradient_norm": 0.5927104573923746,
+        "sample_reward": 0.8125
+      },
+      "checkpoint_sha256": "0fe6d6d041ebae5e3b37805326fea047cb024171a6826a8a6c75a90e06aab814",
+      "heldout_reward": null,
+      "heldout_status": "separate original final evaluation records; never substituted from training"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s5.on_monitored.6976ea0e58",
+      "seed": 5,
+      "method": "on_monitored",
+      "phase": "train",
+      "completed_update": 50,
+      "training_batch_metrics": {
+        "gradient_norm": 0.0,
+        "sample_reward": 1.0
+      },
+      "checkpoint_sha256": "f0af7a2a47b53dc4a2796ea6f12431fc3229222ad83d002024da85b352e71176",
+      "heldout_reward": null,
+      "heldout_status": "separate original final evaluation records; never substituted from training"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s5.on_monitored.6976ea0e58",
+      "seed": 5,
+      "method": "on_monitored",
+      "phase": "train",
+      "completed_update": 75,
+      "training_batch_metrics": {
+        "gradient_norm": 0.2765824175454096,
+        "sample_reward": 0.875
+      },
+      "checkpoint_sha256": "f1716129d2a3f31fb77f9308fbe9720bf19712daff599c0001fbca98c29f181d",
+      "heldout_reward": null,
+      "heldout_status": "separate original final evaluation records; never substituted from training"
+    }
+  ]
+}

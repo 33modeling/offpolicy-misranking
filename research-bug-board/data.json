@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-09T12:12:30+09:00",
+  "recorded_at": "2026-11-09T13:00:20+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "89efd332b036171db6b2c7a5717a8592c0e40ed6",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/89efd332b036171db6b2c7a5717a8592c0e40ed6",
-    "all_available_commits": 1335,
+    "source_commit": "6fc56407d286e86dea86ce7cfa7ac5abc9f87daa",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/6fc56407d286e86dea86ce7cfa7ac5abc9f87daa",
+    "all_available_commits": 1342,
     "fix_commit_records": 143,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
@@ -42,7 +42,7 @@
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hang-fix-20261108:f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:89efd332b036171db6b2c7a5717a8592c0e40ed6",
+      "refs/heads/master:dbd28e7613b50d1535c5a77e55546e338bea18fb",
       "refs/heads/v8-coord-fixes-20261108:377c256e55f80c64b484d82ef812064ed9e7c8a3",
       "refs/heads/v8-modes:6821c9c09292662008eb4f933c74bae7490358ed",
       "refs/heads/v8-nodes:3adf26925b2b1c1bf572cf0e68f75b26bbae3ddc",
@@ -55,7 +55,7 @@
       "refs/heads/v8-status-clean:2f6994f544c150e58e2e3d7f43e6e67c16ae442e",
       "refs/heads/v8-status-cohorts:8635a5dab4b6a77620a2628799718781317d4687",
       "refs/heads/v8-status-counts:212a09963ac6d926b9fb20d95c6f19d28d5c87f7",
-      "refs/heads/v8-status-exteval:4786582848143de024d30ae9f78b75d7274952dd",
+      "refs/heads/v8-status-exteval:1342050ab698586093c443f1614d23b633276ba2",
       "refs/heads/v8-status-grid:e902db8a5e5a317c9aa5c26fdd9294f3a1f50c03",
       "refs/heads/v8-status-layout:616a1e3a5ba03620144c98f7370165e0107c4a63",
       "refs/heads/v8-status-lease:f418288156a4633f243691417f1e453be9bf8c0c",
@@ -81,7 +81,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:4786582848143de024d30ae9f78b75d7274952dd"
+      "refs/remotes/origin/master:dbd28e7613b50d1535c5a77e55546e338bea18fb"
     ]
   },
   "incidents": [
@@ -8636,6 +8636,15 @@
           "text": "최종 V18 전체 CPU 검사429개0실패/0skip. 원본39 coordinator·7 runner·453파일과 모든 payload SHA, 원본30 trainer 파일 보존을 확인했다. 원래 V8 CPU 실행기의 학습11/ext8/eval21 총40작업이 중복 없이 완료됐고 ext/eval 모두 미완료 uniform 학습보다 먼저 실행됐다. 원문 모델·optimizer·RNG checkpoint, 비용로그·학습보상·고정 최종평가를 cpu-streaming-run-v18.zip에 보존하고25-update 간격의 실제 training metrics17점을 별도 추출했다. 실제 H100 성능값이 아니다. 이전4실패·9/1편중·부분비용 초안·시험구성 실패·구형 API6실패도 모두 보존한다. 실제 원격 적용·배정은 status/log 미수신으로 확인하지 못했다.",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/643ffd1b893a1756488d37c6d2ee2f08c1ca314b",
           "evidence_kind": "code_test_and_limitation"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "remaining_budget_gate_corrected",
+          "status": "remote_verification_pending",
+          "text": "이전 병렬화가 수치 B를 먼저 요구해 다른 seed가 막히면 정상 checkpoint eval도 대기하는 조건을 남겼다. 사용자의 새로 시작했다는 설명을 반영해 V8-134에서 이를 별도 재현·수정했다. 재시작만 반복하라고 한 설명은 충분하지 않았다. V19은 비용 규칙·입력을 먼저 고정하고 정상 H eval을 독립 배정한다.",
+          "evidence_kind": "correction_and_code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/6fc56407d286e86dea86ce7cfa7ac5abc9f87daa"
         }
       ]
     },
@@ -8871,6 +8880,155 @@
           "text": "원격의 분기별 ext/eval 표와 run 기반 이름은 보존하고 run_id 없는 과거 기록에만 원래 arm/stage를 사용한다. 상태표시·복구계수53검사가0실패/0skip으로 통과했다. 상태는 읽기 전용이며 실제 H100 배정 검증을 뜻하지 않는다.",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/89efd332b036171db6b2c7a5717a8592c0e40ed6",
           "evidence_kind": "code_test_and_limitation"
+        }
+      ]
+    },
+    {
+      "id": "V8-134",
+      "title": "다른 reference seed의 비용 예산을 기다리느라 정상 checkpoint eval도 시작하지 않음",
+      "area": "V8 준비된 ext/eval 배정 / idle 원인",
+      "severity": "high",
+      "first_reported": "2026-11-09",
+      "introduction_commit": "1b1acd6a03a6d820622d860fafb0d395816cd358",
+      "cause": "이전 V16~V18의 ready_side_tasks는 수치 예산 B가 없고 지정 seed 하나라도 reference 비용이 완성되지 않으면 빈 작업 목록을 반환했다. eval은 고정 checkpoint와 원래 평가 spec만 있으면 계산할 수 있는데 ext의 수치 예산 의존성에 같이 묶여 있었다.",
+      "impact": "사용자가 이미 새로 시작했다고 해도 이 조건은 그대로 남았다. 정상 seed의275 checkpoint가 있고 빈 worker가 있어도 다른 seed 실패 때문에 eval이 생성되지 않을 수 있었다. 재시작 여부만 원인으로 설명한 것은 충분하지 않았다.",
+      "attribution": "이전 병렬화의 남은 결합 조건과 이번 재현·수정·검증은 Codex가 기록한다. 실제 원격 H100의 현재 idle 원인과 일치하는지는 아직 상태 출력이 없어 확정하지 않는다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "V19 예산과 독립된 최종 checkpoint 평가",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/6fc56407d286e86dea86ce7cfa7ac5abc9f87daa"
+        },
+        {
+          "kind": "raw_evidence",
+          "label": "실패 재현·원래 CPU 실행기·원본 checkpoint/학습 보상/최종평가",
+          "url": "https://github.com/33modeling/offpolicy-misranking/tree/6fc56407d286e86dea86ce7cfa7ac5abc9f87daa/research/v8-idle-ready-eval-20261109"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-09",
+          "actor": "user",
+          "type": "reported",
+          "status": "open",
+          "text": "새로 시작했다고 . 왜 idle 이냐고 ext eval 시작하라니까",
+          "evidence_kind": "user_report",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/6fc56407d286e86dea86ce7cfa7ac5abc9f87daa"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "reproduced",
+          "status": "open",
+          "text": "before.xml의3실패/1통과에 다른 reference seed가 없는 정상 checkpoint eval의 claim 실패와 ext/eval 계획 결합을 보존했다. 실제 H100 상태가 아니라 CPU에서 확정한 코드 경로다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/6fc56407d286e86dea86ce7cfa7ac5abc9f87daa"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "게시된 matched-horizon checkpoint eval을 수치 B와 분리했다. eval task key·원래 question IDs·responses·seed purpose·checkpoint SHA는 유지한다. 첫 조기 평가 전에 원본 비용 함수 해시·설정·binding·입력 신원·전체 seed·H를 budget-rule.json에 먼저 고정한다. 모든 reference endpoint와 비용이 완성된 뒤 같은 원본 함수로 수치 B를 계산하며 평가값을 읽지 않는다. 부분 seed 평균·추정 비용은 사용하지 않는다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/6fc56407d286e86dea86ce7cfa7ac5abc9f87daa"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "timing_protocol_recorded",
+          "status": "code_fixed",
+          "text": "실행 순서 변경을 명시한다. 기존 numeric B-before-eval에서 formula/input precommit-before-eval로 바꿨다. 예산 JSON에 selection_protocol·budget_rule_receipt_sha256·numeric_budget_timing·평가 기록 존재 여부와 rule_timing_note를 남긴다. 원본 계산기의 예전 rule 문자열은 호환성을 위해 보존하지만 실제 timing과 구분한다. 기존 예산을 재선택하거나 이전 결과를 뒤늦게 preregister했다고 기록하지 않는다.",
+          "evidence_kind": "protocol_change",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/6fc56407d286e86dea86ce7cfa7ac5abc9f87daa"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "cpu_original_runner_verified",
+          "status": "code_fixed",
+          "text": "원래 V8 CPU 실행기에서 seed7 학습을 다른 seed의 최종평가가 끝날 때까지 막았고, eval이 예산보다 먼저 실행되어 막힌 seed7 이후 작업도 완료됐다. 최종 학습11/ext8/eval22 총41작업이 각1회 완료됐다. 원문 model/optimizer/RNG checkpoint·모든 학습/비용 로그·분리된 최종평가를 cpu-blocked-reference-final.zip에 보존하고25-update 학습 metrics17점을 그대로 추출했다. 실제 H100 측정은 아니다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/6fc56407d286e86dea86ce7cfa7ac5abc9f87daa"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "regression_verified",
+          "status": "code_fixed",
+          "text": "최종438 CPU 검사0실패/0skip. 41 coordinator·7 runner·455파일의 모든 payload SHA와 원본30 trainer 파일 보존 확인. H checkpoint가 없을 때 큰 평가 bundle을 반복 로드하지 않는 검사도 통과했다. 초기 시험의 eval-before-B 계약 변경에 따른1실패/20통과는 targeted.xml에 보존했다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/6fc56407d286e86dea86ce7cfa7ac5abc9f87daa"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "remote_verification_pending",
+          "status": "remote_verification_pending",
+          "text": "실제 H100의 현재 queue/status/log는 받지 못했다. 실제 idle가 이 조건 때문이었는지, 수정본에서 실제 배정이 시작됐는지는 미확인이다. 기존 prefix·latest.pt·optimizer·RNG·실패 이력은 보존한다.",
+          "evidence_kind": "limitation",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/6fc56407d286e86dea86ce7cfa7ac5abc9f87daa"
+        }
+      ]
+    },
+    {
+      "id": "V8-135",
+      "title": "한 budget eval 계획 오류가 이미 준비된 정상 ext 목록까지 버림",
+      "area": "V8 준비된 ext/eval 배정 / idle 원인",
+      "severity": "high",
+      "first_reported": "2026-11-09",
+      "introduction_commit": "1b1acd6a03a6d820622d860fafb0d395816cd358",
+      "cause": "ready_side_tasks가 정상 extension 목록을 만든 다음 Runtime.plan(evaluation)의 전체 성공을 요구했다. 한 checkpoint의 eval 계획 오류가 나면 함수 전체가 예외로 끝나 앞서 만든 ext도 offer에 전달되지 않았다. 현재 phase의 planner 실패도 다른 독립 작업을 막을 수 있었다.",
+      "impact": "일부 평가 endpoint가 없거나 변한 상태에서 다른 정상 branch의 ext까지 멈출 수 있었다. 이 데이터 문제 자체가 해결됐다고 간주해서는 안 된다.",
+      "attribution": "이전 병렬화의 남은 결합 조건과 이번 재현·수정·검증은 Codex가 기록한다. 실제 원격 H100의 현재 idle 원인과 일치하는지는 아직 상태 출력이 없어 확정하지 않는다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "V19 예산과 독립된 최종 checkpoint 평가",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/6fc56407d286e86dea86ce7cfa7ac5abc9f87daa"
+        },
+        {
+          "kind": "raw_evidence",
+          "label": "실패 재현·원래 CPU 실행기·원본 checkpoint/학습 보상/최종평가",
+          "url": "https://github.com/33modeling/offpolicy-misranking/tree/6fc56407d286e86dea86ce7cfa7ac5abc9f87daa/research/v8-idle-ready-eval-20261109"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "reproduced",
+          "status": "open",
+          "text": "before.xml에 Selected budget checkpoint is missing or changed 오류가 정상 ext를 버리는 실패를 보존했다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/6fc56407d286e86dea86ce7cfa7ac5abc9f87daa"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "eval 계획 오류를 planning_errors에 남기고 정상 matched-horizon eval과 이미 준비된 ext를 독립 배정한다. base phase 계획이 막혀도 오류와 원본 계획을 보존하고 독립 work만 offer한다. 지정된 missing/changed budget-eval 오류로 옛 코드가 조합 전체를 멈춘 경우 입력 검증 후 독립 작업만 재개하며 unresolved_evaluation_planner_failure를 남긴다. 손상/누락된 checkpoint가 복구됐다고 처리하거나 미완성 계획을 완료로 처리하지 않는다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/6fc56407d286e86dea86ce7cfa7ac5abc9f87daa"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "phase_gates_verified",
+          "status": "code_fixed",
+          "text": "phase-checks.json에서 수치 예산 없는 extension/evaluation phase에서도 H checkpoint eval을 claim했고, 평가 phase의 planner 오류를 보존한 채 다른 정상 ext를 claim했다. 일반 신원·입력 오류는 해제하지 않는 대조 검사와 전체438회귀가 통과했다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/6fc56407d286e86dea86ce7cfa7ac5abc9f87daa"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "remote_verification_pending",
+          "status": "remote_verification_pending",
+          "text": "실제 원격 오류는 상태 출력 미수신으로 확인하지 못했다. 이 수정은 다른 정상 작업의 배정을 허용하며 누락된 예산 endpoint 자체의 문제를 해결했다고 주장하지 않는다.",
+          "evidence_kind": "limitation",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/6fc56407d286e86dea86ce7cfa7ac5abc9f87daa"
         }
       ]
     }
