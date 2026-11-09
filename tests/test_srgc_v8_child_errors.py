@@ -31,6 +31,11 @@ def main():
    while not (Path(os.environ['SRGC_PROGRESS_DIR'])/'rank-1-error.json').exists():time.sleep(.01)
   raise SystemExit(75)
  if rank==1:
+  if mode=='segfault':
+   import ctypes,resource,json
+   resource.setrlimit(resource.RLIMIT_CORE,(0,0))
+   (Path(os.environ['SRGC_PROGRESS_DIR'])/'rank-1.json').write_text(json.dumps(dict(pid=os.getpid(),stage='gradient_scoring',scope='CPU synthetic crash fixture')))
+   ctypes.string_at(0)
   if mode in ('mixed','mixed_signal'):
    while not Path(os.environ['V8_EXIT_FILE']).exists():time.sleep(.01)
   if mode=='mixed_signal':

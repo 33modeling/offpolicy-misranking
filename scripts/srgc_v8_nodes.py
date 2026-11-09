@@ -30,7 +30,7 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'source-recovery-node-interruption-v13'
+DISPATCH_POLICY = 'source-recovery-native-crash-mbpp-spawn-v14'
 TERMINAL = {'completed_horizon', 'completed_budget'}
 PHASES = ('train', 'primary_evaluation', 'extension', 'evaluation')
 CPU_PHASES = ('prepare', 'freeze', 'primary_finalize', 'finalize')

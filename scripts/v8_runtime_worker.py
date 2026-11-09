@@ -55,19 +55,46 @@ def child_result(rc,directory,environment,log,label,*,log_offset=0):
                 traceback=message.get('extraInfo',{}).get('py_callstack'),error_file=str(path),original_error=error))
         except (OSError,ValueError,KeyError,TypeError,AttributeError) as exc:
             print(f'Cannot read rank error {path}: {exc}; original process exit={rc}',flush=True)
-    # SIGKILL/segfaults cannot write a Python traceback. A rank0 busy marker must
-    # not hide another rank's recorded fatal signal. TERM/INT can be torchrun cleanup.
-    if not failures:
+    # Keep fatal signals even beside another rank's Python exception. TERM/INT may be cleanup.
+    numbers=set()
+    try:
+        with Path(log).open('rb') as handle:
+            handle.seek(max(log_offset,Path(log).stat().st_size-131072))
+            tail=handle.read(131072).decode(errors='replace')
+        numbers={int(n) for n in re.findall(r'exitcode\s*:\s*-(\d+)',tail)}-{2,15}
+    except OSError as exc:print(f'Cannot inspect torchrun failure output: {exc}',flush=True)
+    if type(rc)is int and rc<0 and -rc not in (2,15):numbers.add(-rc)
+    retained=set()
+    for meta_path in sorted(directory.glob('native-fault-rank-*.json')):
         try:
-            with Path(log).open('rb') as handle:
-                handle.seek(max(log_offset,Path(log).stat().st_size-131072))
-                tail=handle.read(131072).decode(errors='replace')
-            for number in sorted({int(n) for n in re.findall(r'exitcode\s*:\s*-(\d+)',tail)}-{2,15}):
-                try:name=signal.Signals(number).name
-                except ValueError:name='signal '+str(number)
-                failures.append(dict(rank=None,message=f'Torchrun reported {name} (exit -{number}); '
-                    'a signal-killed process cannot retain a Python traceback',signal=number,error_file=str(log)))
-        except OSError as exc:print(f'Cannot inspect torchrun failure output: {exc}',flush=True)
+            meta=json.loads(meta_path.read_text())
+            if meta.get('invocation')!=environment['V8_FAILURE_TOKEN']:continue
+            path=(directory/meta['log']).resolve()
+            if path.parent!=directory.resolve():continue
+            with path.open('rb') as handle:
+                stack=handle.read(65536).decode(errors='replace')
+                if path.stat().st_size>65536:
+                    handle.seek(max(65536,path.stat().st_size-65536))
+                    stack+='\n[bounded native trace: middle omitted]\n'+handle.read(65536).decode(errors='replace')
+            fatal={'Segmentation fault':11,'Aborted':6,'Bus error':7,'Illegal instruction':4,'Floating point exception':8}
+            found=next((n for text,n in fatal.items() if 'Fatal Python error: '+text in stack and n in numbers),None)
+            if found is None:continue
+            stage=None;progress=directory/f'rank-{meta["rank"]}.json'
+            if progress.exists():
+                event=json.loads(progress.read_text())
+                if event.get('pid')==meta['pid']:stage=event
+            name=signal.Signals(found).name
+            failures.append(dict(rank=meta['rank'],pid=meta['pid'],signal=found,
+                message=f'{name} (exit -{found}): native crash; last stage={stage.get("stage") if stage else "unrecorded"}; '
+                        f'rank stack={path}; underlying cause unconfirmed',error_file=str(path),
+                native_fault_log=str(path),native_invocation=meta['invocation'],native_python_stack=stack[:12000],last_progress=stage))
+            retained.add(found)
+        except (OSError,ValueError,KeyError,TypeError) as exc:print(f'Cannot read native fault evidence {meta_path}: {exc}',flush=True)
+    for number in sorted(numbers-retained):
+        try:name=signal.Signals(number).name
+        except ValueError:name='signal '+str(number)
+        failures.append(dict(rank=None,message=f'Torchrun/launcher reported {name} (exit -{number}); '
+            'no matching rank fault dump found; underlying cause unconfirmed',signal=number,error_file=str(log)))
     if failures:
         failure_rc=1 if rc==75 else rc
         report=dict(schema=1,attempt_id=directory.name,exit_code=failure_rc,original_exit_code=rc,task=label,failures=failures)
@@ -103,6 +130,7 @@ def run_srgc_child(runtime,command,log,fds,stop,*,extra=None,label=None,interval
     from srgc_rebuttal.cluster import run_child
     from srgc_rebuttal.progress import signature
     environment=dict(runtime.environment,CUDA_VISIBLE_DEVICES=','.join(runtime.gpus),**(extra or {}))
+    environment['PYTHONFAULTHANDLER']='1'
     if code:
         paths=[str(code),str(code/'src'),*environment.get('PYTHONPATH','').split(os.pathsep)]
         environment['PYTHONPATH']=os.pathsep.join(dict.fromkeys(path for path in paths if path))

@@ -159,7 +159,7 @@ worker는60초마다 현황을 출력한다. 자식 출력은 터미널과 각 c
 정책 버전이 나온다. 표 형식 `status`는 `dispatch current <hash>`(현재 checkout과
 같음), `dispatch different <hash>`(다름), `dispatch unverified`(기록 없음)를 구분한다.
 정책 파일이 디스크에 있다는 것만으로 실행 중인 worker에 적용됐다고 판단하지 않는다.
-현재 배정 정책은 `source-recovery-node-interruption-v13`이다. 작업 검사는 해당 cohort의
+현재 배정 정책은 `source-recovery-native-crash-mbpp-spawn-v14`이다. 작업 검사는 해당 cohort의
 control lease만 잡고 별도로 수행한다. 검사 결과가 준비되면 공유 잠금 안에서 현재
 binding·phase·실패 상태·작업 정의·작업 lease를 다시 확인한 뒤 claim한다.
 검사와 claim 사이에 다른 노드가 가져간 작업이나 실패한 작업은 가져오지 않는다.
@@ -188,6 +188,20 @@ binding·checkpoint를 고치거나 지우지 않는다. 신원·설정·CPU 준
 해제하지 않는다. 입력·설정 검증을 우회하지 않으며 살아 있는 task lease는 건드리지 않는다.
 `--retry-failed`는 기존 명시적 복구용 호환 옵션이며 일반 실행에 필요 없다.
 자동 복구는 작업 실패에만 적용하며 입력·신원·CPU 준비 오류를 해제하지 않는다.
+
+`exit -11`은 SIGSEGV이며 CUDA OOM과 구분한다. SIGSEGV는 실제 작업 실패로 남기고
+원래 오류·종료 코드·실패 횟수를 보존한다. 원인 확인 없이 정상 중단이나 성공으로 바꾸지 않는다.
+V14는 MBPP 채점 subprocess의 Python `preexec_fn`을 제거하고 exec 뒤에 같은
+주소 공간·CPU·파일 크기 제한을 적용한다. 원본 verifier·code_check 파일과 채점 규칙·
+프로토콜 버전은 바꾸지 않으며, 알려진 두 원본 verifier 해시에만 별도 실행 overlay를 적용한다.
+이 수정이 실제 H100 SIGSEGV 원인과 일치하는지는 rank 로그로 확인해야 한다.
+
+원래 child 실행 전부터 `faulthandler`를 켜고 `.multi-node/progress/<attempt>/`에
+`native-fault-rank-N-<invocation>.log`와 해당 JSON 메타데이터를 남긴다. torchrun의
+일반 ChildFailedError 뒤에서도 실제 rank·SIGSEGV·호출 스택과 현재 PID의 마지막 진행
+기록을 `child-failure.json`에 연결한다. Python 버전에 따라 C 스택은 지원되지 않을 수 있다.
+다른 rank의 Python 예외와 fatal signal이 동시에 있으면 둘 다 남기고, 이전 invocation의
+기록은 현재 실패로 사용하지 않는다. 체크포인트·optimizer·RNG와 학습 보상은 보존한다.
 
 재시도 상한에 걸린 failed 작업도 원래 실행 잠금과 완료 출력은 먼저 검증한다.
 동일 run/config와 endpoint가 정상 완료됐으면 재학습 없이 done으로 인수하며 실패

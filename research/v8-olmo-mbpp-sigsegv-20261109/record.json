@@ -1,0 +1,120 @@
+{
+  "base_commit": "b0f57e59fff1f9fe0f4e722a467bb2eb2935e2ef",
+  "user_reports": [
+    "olmo mbpp fail 자주남",
+    "torchrun reported sigsegv",
+    "exit -11 이거 버그 현황판에서 찾아서 버그 빨리 고쳐놔"
+  ],
+  "hypotheses": [
+    "실제 H100 SIGSEGV의 원인은 아직 미확인이다. exit -11만으로 CUDA OOM 또는 특정 라이브러리를 원인으로 정하지 않는다.",
+    "확인된 MBPP verifier의 Python preexec_fn은 다중 스레드 부모의 fork와 exec 사이에 Python을 실행하는 위험 경로다. 실제 원격 SIGSEGV와의 인과관계는 미측정이다.",
+    "SIGSEGV 기록을 invocation/rank/PID/마지막 stage와 연결하면 현재 시도의 native crash와 다른 rank의 Python 오류를 함께 보존할 수 있다."
+  ],
+  "tested": {
+    "scope": "CPU 소프트웨어 회귀만 수행. 실제 H100 접근 또는 학습 없음.",
+    "data_model": "원본 verifier v2/v3의 합성 add 함수 후보와 CPU torchrun 두 rank ctypes.string_at(0) 의도적 crash",
+    "controls": "v2/v3 각각 원본 함수와 repaired clone을 비교. 정답/오답/예외/조기exit/문법오류/후보SIGSEGV/자원제한/제한설정실패/8스레드24회 채점. 원본 grader/checker와 버전 유지.",
+    "seeds": "채점/의도적 crash에는 학습 seed 없음. 전체 회귀의 합성 학습 seed는 개별 fixture에 기록.",
+    "updates": "이 채점/진단 수정 검사에는 optimizer update 없음. production275/cap400과25-step 보존 정책 변경 없음.",
+    "metrics": "보상0/1 parity, 설정실패 예외 유지, 호출 preexec_fn 없음, rank/호출스택/PID-stage 연결, 다른 예외와 signal 보존, stale invocation/path 거절.",
+    "checkpoint_provenance": "실제 checkpoint 접근/변경/삭제 없음. 원본30 trainer SHA 보존. 기존 checkpoint/optimizer/RNG/학습 보상 기록 정책 유지."
+  },
+  "changes": [
+    "해시가 확인된 verifier 두 버전만 복제하여 자원제한을 exec 뒤에 적용; 시작 ACK로 제한설정 실패를 reward0으로 숨기지 않음.",
+    "원래 checker 경로/인자/환경/session/FD와 채점 protocol을 유지하며 Python preexec_fn 제거.",
+    "rank별 raw FD faulthandler와 invocation 메타데이터, bounded stack/같은PID stage를 child-failure에 연결.",
+    "Python 예외와 fatal signal을 함께 보존하고 direct launcher -11도 실패로 기록. 실제 signal을 중단/성공으로 변경하지 않음.",
+    "V14 기존 검증된 유한 재시도 복구 정책 사용. 실패 이력/기존 binding/source pin 유지."
+  ],
+  "scientific_measurements": {
+    "H100_crash_root_cause": null,
+    "H100_fix_verified": false,
+    "accuracy": null,
+    "GPU_memory": null,
+    "throughput": null,
+    "reason": "원격 H100 로그/호출스택과 실행 환경에 접근할 수 없음"
+  },
+  "references": [
+    "https://docs.python.org/3/library/subprocess.html",
+    "https://docs.python.org/3/library/faulthandler.html"
+  ],
+  "frozen_trainer_sha256": {
+    "srgc_rebuttal/__init__.py": "daff68712fd7115469febaaad3c782d020ad450bce6e0f883a0259cadd3a258f",
+    "srgc_rebuttal/admission.py": "befe3a6514875e24a23979b795602b281ef2ea2a9abadb01e19c9977cd7b8024",
+    "srgc_rebuttal/build_cache.py": "91a3776141b2d83eca30dc45ecc1df964b24d43d1f8baa26b8e569e80894672e",
+    "srgc_rebuttal/build_inputs.py": "59a8f3ba3f023a475fb600cc75b2ad5a26eca59c9de611adc2bf89096eef11c9",
+    "srgc_rebuttal/cluster.py": "0aa3a50fb18170a5ee4ca00f36a641ab5e3ac9c5c395cd691324c59e8387d142",
+    "srgc_rebuttal/cluster_queue.py": "960bc8a63c4ecdc3e2ae40131faf637f6e0e4af006007ef4577fe4dcc065153f",
+    "srgc_rebuttal/code_assertions.py": "51b4a2fd02664d0f02b4f154cf18172cc654931404a45515e3423da14f666e76",
+    "srgc_rebuttal/code_check.py": "38f708dcec041d9e2434c52a9b947284938acc3216fd06e99f0f9cd5b606450b",
+    "srgc_rebuttal/cost_ledger.py": "2b878384943e5e24c912884a20b71d31bca0b45e280e666d5caf81147222f5e7",
+    "srgc_rebuttal/cost_report.py": "53ceba5a2753391f46331fbedaf26e210b0d33027ddb4237bbdbf0d07bc60521",
+    "srgc_rebuttal/distributed.py": "222fd71362b442ed6c63afb3c4a2937add9ef7130be010d7b093277c2a21e265",
+    "srgc_rebuttal/existing_runtime.py": "a1702f2907da3decf7f7356fd1c68c933442a460d1fc8360ef1d2dbdcb37c7f4",
+    "srgc_rebuttal/import_pair_inputs.py": "7b5332bdba9476b86d2cbf42fb997a3b865d5547b5fc3ac6575704e8d549429f",
+    "srgc_rebuttal/objectives.py": "1e686c118c79ab5b51c7d6973ae897aaf2bfdde0824470937ef7c30e18293ba4",
+    "srgc_rebuttal/plan.py": "643ed49f1ad74297cfecec8f453a9cf3e737260b960479e6e116e48c9377dc3e",
+    "srgc_rebuttal/plan_dataset.py": "468af80b4f59e9b7f2683eaa724f308fc91872bb1918e65e127e557ee6e992b2",
+    "srgc_rebuttal/prepare_inputs.py": "71f6a8e0f1cc6df586df8bd4bd234b413a5945895d3cdf3ae0446fd9763230e1",
+    "srgc_rebuttal/prepare_rebuttal.py": "f0978d96f418bfd90fd3cd291b977b61f50b6a14d30d876e489fc65ed3073cba",
+    "srgc_rebuttal/progress.py": "d3202b65e9eb53557fb45b6b54f1cce0ae50d196486bd5bc11d0de2e8e19440f",
+    "srgc_rebuttal/reports.py": "97317b77c9f57536a34d421a70d6c57a714ad4184630253f6c41297cf21194bf",
+    "srgc_rebuttal/run_demo.py": "0f69daf7c1f255f1690b5354e40fb56a2a20bc6a11ef39a6666207392697bd7e",
+    "srgc_rebuttal/run_experiment.py": "9f2dc57536fdb5f6f5a7f5016129a6814120089bf8135431d1f8bd4da804e885",
+    "srgc_rebuttal/runtime.py": "518d37beb7c733e1497599bfe0f9131cd1caf7e9cfdea887f20060291f335e10",
+    "srgc_rebuttal/srgc.py": "d2dc8e3b83df63139f06f97574009e03b1f6bf26f47c3013dedf98e1076516e7",
+    "srgc_rebuttal/summarize.py": "0d7179717ede53de7ccebaf9f5e691bd4ea8eb954a5cd8c0803bf077bba31c49",
+    "srgc_rebuttal/timing.py": "82e53cc63751177188fa6da4abdca6dc0567f4ac27524488c643ff863b08efa5",
+    "srgc_rebuttal/torch_backend.py": "94a8d2d98b6312ee584c32674dbfc194a9e95e714b484a5a64b84b3e78631e11",
+    "srgc_rebuttal/torch_state.py": "eda68cecdd6ed5f5312a7b5f5a026d14d86db4f9f329aaf45a825a867c72e2d6",
+    "srgc_rebuttal/toy_backend.py": "159a6b72e8923620469600d3acb09bf36fb2eb629cdbee0ca6058a0cfba08272",
+    "srgc_rebuttal/verifiers.py": "5062befe4ed5a8e21f6de01a73dca4f1d3544dd033c5d2c846bff391d1148a90"
+  },
+  "evidence": {
+    "before.xml": {
+      "tests": 3,
+      "failures": 3,
+      "errors": 0,
+      "skipped": 0
+    },
+    "native-fixed.xml": {
+      "tests": 16,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "spawn-fixed.xml": {
+      "tests": 40,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1
+    },
+    "targeted-final.xml": {
+      "tests": 55,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "targeted.xml": {
+      "tests": 50,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "raw_evidence_sha256": {
+    "before.xml": "8d78c5d6ca757a499ad9d02a1294b7b9eecf5eade83104071fd44d4f4098573e",
+    "cpu-native-crash/child-failure.json": "6d9b78a0024acf33b1493a042d556fbd7c328d12ecd12451585c069f2e19258e",
+    "cpu-native-crash/cluster_child.py": "cb279ed05f6ea050269df69ae026d928b2e3347f7a8778dfbeacfa68c4b0ec24",
+    "cpu-native-crash/native-fault-rank-0-b0aca7b328939ed27e3cd205.log": "372e6ff4b7c165c6c976e259cfcd212c3efb6757190ed3c8c279213c4da3b595",
+    "cpu-native-crash/native-fault-rank-0.json": "e6f7cb7927fe0da10ed764d9af817f88c343c38eda3459574a78d69bc2200c82",
+    "cpu-native-crash/native-fault-rank-1-b0aca7b328939ed27e3cd205.log": "7ce724f4d7b515a983f1fb5c321a90d3bee441663851bb538723933831aff00a",
+    "cpu-native-crash/native-fault-rank-1.json": "7e091f0b440a55814a952f2d174a1aec0948a8c7c04e10b6f262d17742a518f0",
+    "cpu-native-crash/rank-1.json": "88e5d37c042159da393998e9aa2b3833aa0ca3b6e98d986c2a8e83b233318885",
+    "cpu-native-crash/task.log": "73667626feb63689e81d8d6b1ed8688b6f09c83701f9d09bcdd39540fea64636",
+    "native-fixed.xml": "04e306ca83ece00a8adbf758d21672f083af732fabc11a49e7844f0fcd58c5e9",
+    "spawn-fixed.xml": "913f37ffb63b9a73992d5317f0c07609129829e3067019ba8721e6b77b24f79b",
+    "targeted-final.xml": "cad3c88af2c373c027d25106178a238c3d9ee74af3e8d5bee1c2b2ebe4c2f4cb",
+    "targeted.xml": "985204cafa67516eeed2949fa38133f4d6220c348403fced051da2e2ee970048"
+  }
+}

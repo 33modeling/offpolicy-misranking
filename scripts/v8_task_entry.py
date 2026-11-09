@@ -5,18 +5,115 @@ import functools
 import gc
 import importlib.util
 import inspect
+import faulthandler
 import json
 import os
 from pathlib import Path
 import sys
 import time
 import textwrap
+import types
 from contextlib import contextmanager
 
 from v8_generation_probe import install
 
 
 LEGACY_DENSE_BACKEND_SHA256='c73ee5e60288791bedbc790147fc88903ba6f3429d48b2ab626774b334f4f3fc'
+MBPP_VERIFIER_HASHES={'5062befe4ed5a8e21f6de01a73dca4f1d3544dd033c5d2c846bff391d1148a90',
+                      '5d2414c2ef8c6091aeace48ac8eccadce3357b5e0854e658980b33bd854a1522'}
+_NATIVE_FAULT_STATE=None
+
+
+def install_native_fault_handler():
+    """Keep a raw fd open through interpreter teardown; no Python work in the signal handler."""
+    global _NATIVE_FAULT_STATE
+    directory=os.environ.get('SRGC_PROGRESS_DIR')
+    if not directory:return
+    if _NATIVE_FAULT_STATE is None:
+        root=Path(directory);root.mkdir(parents=True,exist_ok=True)
+        rank=int(os.environ.get('RANK','0'));token=os.environ.get('V8_FAILURE_TOKEN','pid-'+str(os.getpid()))
+        key=hashlib.sha256(token.encode()).hexdigest()[:24]
+        path=root/f'native-fault-rank-{rank}-{key}.log'
+        fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_APPEND|os.O_CLOEXEC,0o660)
+        meta=dict(schema=1,rank=rank,pid=os.getpid(),invocation=token,log=path.name,python=sys.version)
+        os.write(fd,('V8 native fault context '+json.dumps(meta)+'\n').encode())
+        target=root/f'native-fault-rank-{rank}.json';temporary=target.with_suffix('.tmp')
+        temporary.write_text(json.dumps(meta)+'\n');os.replace(temporary,target)
+        _NATIVE_FAULT_STATE=fd
+    # torch.elastic's record() installs its own default handler; main() rebinds this fd afterwards.
+    try:faulthandler.enable(file=_NATIVE_FAULT_STATE,all_threads=True,c_stack=True)
+    except TypeError:faulthandler.enable(file=_NATIVE_FAULT_STATE,all_threads=True)
+
+
+_MBPP_EXEC_BOOTSTRAP='''import os,resource,sys
+ack=int(sys.argv[1])
+memory,cpu,fsize=map(int,sys.argv[2:5])
+sys.argv=sys.argv[5:]
+try:
+ resource.setrlimit(resource.RLIMIT_AS,(memory,memory))
+ resource.setrlimit(resource.RLIMIT_CPU,(cpu,cpu))
+ resource.setrlimit(resource.RLIMIT_FSIZE,(fsize,fsize))
+except BaseException as error:
+ os.write(ack,('ERROR '+type(error).__name__+': '+str(error))[:2000].encode())
+ os.close(ack)
+ raise
+os.write(ack,b'OK');os.close(ack)
+path=sys.argv[0]
+with open(path,'rb') as handle:source=handle.read()
+scope={'__name__':'__main__','__file__':path,'__package__':None,'__spec__':None,'__cached__':None,'__builtins__':__builtins__}
+exec(compile(source,path,'exec'),scope)
+'''
+
+
+def repair_mbpp_subprocess(verifier):
+    """Move audited limits after exec; retain each frozen verifier's checker, scoring and limits."""
+    if getattr(verifier,'_v8_mbpp_spawn',None):return verifier,verifier._v8_mbpp_spawn
+    namespace=getattr(verifier,'__globals__',{});filename=namespace.get('__file__')
+    if getattr(verifier,'__name__',None)!='code_reward' or not filename:return verifier,None
+    if not Path(filename).is_file():return verifier,None
+    digest=hashlib.sha256(Path(filename).read_bytes()).hexdigest()
+    if digest not in MBPP_VERIFIER_HASHES:return verifier,None
+    original=namespace['subprocess'];limits=namespace['_limits']
+    memory=namespace['CODE_MEMORY_BYTES'];cpu=int(namespace['CODE_TIMEOUT_SECONDS'])+1
+    fsize=namespace.get('CODE_RESULT_BYTES',1<<20)
+    class ProcessModule:
+        def __getattr__(self,name):return getattr(original,name)
+        def Popen(self,args,*pos,**kwargs):
+            import select,signal
+            if kwargs.pop('preexec_fn',None) is not limits or list(args[:3])!=[sys.executable,'-I','-B']:
+                raise RuntimeError('MBPP subprocess differs from the audited frozen launch')
+            reader,writer=os.pipe();process=None
+            try:
+                kwargs['pass_fds']=(*kwargs.get('pass_fds',()),writer)
+                command=[*args[:3],'-c',_MBPP_EXEC_BOOTSTRAP,str(writer),str(memory),str(cpu),str(fsize),*args[3:]]
+                process=original.Popen(command,*pos,**kwargs);started=time.monotonic()
+                os.close(writer);writer=None
+                ready,_,_=select.select([reader],[],[],float(namespace['CODE_TIMEOUT_SECONDS']))
+                status=os.read(reader,4096) if ready else b'startup timeout'
+                if status!=b'OK':
+                    raise original.SubprocessError('MBPP checker limits/setup failed after exec: '+status.decode(errors='replace'))
+                elapsed=time.monotonic()-started;wait=process.wait
+                # Keep the original wall timeout measured from Popen's exec completion.
+                def timed_wait(timeout=None):return wait(timeout=None if timeout is None else max(0,timeout-elapsed))
+                process.wait=timed_wait
+                return process
+            except BaseException:
+                if process is not None:
+                    try:os.killpg(process.pid,signal.SIGKILL)
+                    except ProcessLookupError:pass
+                    process.wait()
+                raise
+            finally:
+                os.close(reader)
+                if writer is not None:os.close(writer)
+    cloned=dict(namespace,subprocess=ProcessModule())
+    fixed=types.FunctionType(verifier.__code__,cloned,verifier.__name__,verifier.__defaults__,verifier.__closure__)
+    functools.update_wrapper(fixed,verifier)
+    receipt=dict(policy='mbpp-limits-after-exec-v1',original_verifier_sha256=digest,
+                 code_verifier_version=namespace['CODE_REWARD_VERSION'],preexec_fn=False,
+                 memory_bytes=memory,cpu_seconds=cpu,file_bytes=fsize,reward_rule_changed=False)
+    fixed._v8_mbpp_spawn=receipt
+    return fixed,receipt
 
 
 def cpu_snapshot(value):
@@ -125,6 +222,8 @@ def repair_olmo_memory(backend):
 def repair_context(ctx):
     """Apply the seed runs' documented verifier/cache protections after saved-source selection."""
     backend=ctx.backend;changes={};verifier=getattr(backend,'verifier',None)
+    fixed,spawn=repair_mbpp_subprocess(verifier)
+    if spawn:backend.verifier=fixed;changes['mbpp_subprocess']=spawn
     dense_memory=repair_dense_memory(backend)
     if dense_memory:changes['dense_memory']=dense_memory
     olmo_memory=repair_olmo_memory(backend)
@@ -225,6 +324,7 @@ def retain_cuda_failure(exc):
 
 
 def main():
+    install_native_fault_handler()
     path=Path(sys.argv[1]);expected=os.environ.get('V8_ORIGINAL_CHILD_SHA256')
     if not expected or hashlib.sha256(path.read_bytes()).hexdigest()!=expected:
         raise ValueError('Original v8 child bytes differ from the selected runner identity')
@@ -239,6 +339,7 @@ def main():
 
 def recorded_main():
     """Let torchrun retain the original rank traceback, including startup/SystemExit checks."""
+    install_native_fault_handler()
     try:from torch.distributed.elastic.multiprocessing.errors import record,get_error_handler
     except ModuleNotFoundError as exc:
         # Standalone CPU hash/argv checks need no torch; a real torchrun child always has it.
