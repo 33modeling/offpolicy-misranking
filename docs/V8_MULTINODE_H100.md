@@ -196,7 +196,19 @@ binding·phase·실패 상태·작업 정의·작업 lease를 다시 확인한 �
 현황판만 새로 읽어서는 이미 실행 중인 구형 worker의 무한 반복이 멈추지 않는다.
 모든 worker가 같은 V20 제어 코드를 사용해야 한다. torchrun 자체의
 `--max_restarts=0`은 내부 재시작을 끈다는 뜻이며, 바깥 실행기의 상한과 구별한다.
-실패 작업만 남으면 실패로 종료하며 freeze·평가·완료로 넘어가지 않는다. 이전 V8가
+실패 작업만 남으면 실패로 종료하며 freeze·평가·완료로 넘어가지 않는다.
+V21은 `torchrun launcher exit -11`(SIGSEGV)을 처음 기록한 시점부터 자동 재실행을
+금지한다. torchrun이 이를 exit1로 감싸도 원래 rank signal 기록을 검사한다. 다른
+치명적 native signal4/6/7/8도 동일하게 처리하며 새 노드/정책 변경으로 해제하지 않는다.
+정상 checkpoint eval과 ext는 계속 배정한다. 실행할 정상 작업·진행 중 scan/CPU 준비·
+살아 있는 task lease/native 실행 잠금이 없는데 실패가 남으면 현재 worker를 exit1로
+끝낸다. 다른 cohort가 없는 부모 checkpoint를 기다리는 경우나, 실패 작업이 현재
+ext/eval 계획에서 빠진 경우에도 대기 루프에 머무르지 않는다. 작업자별 종료 사유는
+`.multi-node/worker-exits/`에 남기며 정상 cohort의 공유 큐를 실패/완료로 바꾸지 않는다.
+`9/2` 같은 비율 대신 `BLOCKED`와 보존한 과거 실패 수·상한/치명 signal을 표시한다.
+SIGSEGV를 차단한 것은 native 오류 원인을 고쳤다는 뜻이 아니다. 원래 오류와 checkpoint는
+보존하고, 원인 수리 없이 상한만 올려 native crash를 재실행하지 않는다.
+ 이전 V8가
 개별 `task exit=...` 실패를 cohort 전체 중단으로 저장한 경우, 같은 failed job이
 존재할 때만 그 중단을 작업 범위로 옮긴다. 원래 실패는 history에 보존하고 작업·시도·
 binding·checkpoint를 고치거나 지우지 않는다. 신원·설정·CPU 준비 오류는 이 방식으로

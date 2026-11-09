@@ -31,7 +31,7 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'bounded-task-recovery-v20'
+DISPATCH_POLICY = 'fatal-fault-quiescence-v21'
 TERMINAL = {'completed_horizon', 'completed_budget'}
 PHASES = ('train', 'primary_evaluation', 'extension', 'evaluation')
 CPU_PHASES = ('prepare', 'freeze', 'primary_finalize', 'finalize')
@@ -146,6 +146,18 @@ def retry_budget_failures(job):
     another failure budget. Genuine node loss/intentional stops are still refunded.
     """
     return counted_failures(job)
+
+
+def fatal_native_failure(job):
+    """A native crash is not repaired by another identical torchrun invocation."""
+    for attempt in reversed(job.get('attempts',[])):
+        rc=attempt.get('exit_code')
+        if rc in (-4,-6,-7,-8,-11,132,134,135,136,139):
+            return dict(signal=-rc if rc<0 else rc-128,attempt=attempt.get('id'))
+        for failure in (attempt.get('child_failure') or {}).get('failures',[]):
+            if failure.get('signal') in (4,6,7,8,11):
+                return dict(signal=failure['signal'],attempt=attempt.get('id'))
+    return None
 
 
 def aggregate_task_failure(failure):
@@ -434,7 +446,7 @@ class Pool:
 
     def retryable(self,job,now=None,state=None):
         """One immediate retry by default; repeated faults stay excluded across joins."""
-        if self.retry_limit_reached(job):return False
+        if fatal_native_failure(job) or self.retry_limit_reached(job):return False
         if job.get('state')=='interrupted' and job.get('resume_not_before'):
             return self.retry_delay<=0 or (time.time() if now is None else now)>=job['resume_not_before']
         if job.get('state')!='failed':return True
@@ -445,7 +457,7 @@ class Pool:
         return (time.time() if now is None else now)>=ended+self.retry_delay
 
     def retry_later(self,job,state=None):
-        if self.retry_limit_reached(job):return False
+        if fatal_native_failure(job) or self.retry_limit_reached(job):return False
         if job.get('state')=='interrupted' and job.get('resume_not_before'):
             return self.retry_delay>0 and time.time()<job['resume_not_before']
         return job.get('state')=='failed' and self.retry_requested(state) and not self.retry_limit_reached(job)
@@ -612,7 +624,7 @@ class Pool:
             already=any(row.get('controller_sha256')==controller or row.get('controller_policy')==DISPATCH_POLICY
                         for row in history)
             if already and job['state'] in ('pending','interrupted'):resumable=True
-            if job['state']!='failed' or already or self.retry_limit_reached(job):continue
+            if job['state']!='failed' or already or fatal_native_failure(job) or self.retry_limit_reached(job):continue
             attempts=job.get('attempts',[])
             if attempts and (attempts[-1].get('controller_sha256')==controller
                              or attempts[-1].get('controller_policy')==DISPATCH_POLICY):continue
@@ -807,7 +819,7 @@ class Pool:
                 all_done=False
                 if job['state']=='done':raise ValueError('Previously completed output disappeared or became inconsistent: '+path.stem)
                 if native_busy:active=True;continue
-                if self.retry_limit_reached(job) and job['state']!='failed':
+                if (fatal_native_failure(job) or self.retry_limit_reached(job)) and job['state']!='failed':
                     # Old controllers may have reset a failed job to pending/running.
                     # Only migrate it after its lease/native lock is free and outputs
                     # were checked; never interrupt a live task or discard a result.
@@ -941,7 +953,7 @@ class Pool:
             attempt.update(outcome='interrupted',termination=termination,
                            error='Forced process termination; origin unconfirmed; resume from last saved checkpoint')
             job.update(state='interrupted',resume_not_before=time.time()+self.retry_delay)
-        elif rc==75 or stop.is_set():attempt['outcome']='interrupted';job['state']='interrupted'
+        elif (rc==75 or stop.is_set()) and not fatal_native_failure(job):attempt['outcome']='interrupted';job['state']='interrupted'
         else:
             attempt.update(outcome='failed',error=f'task exit={rc}; output verified={done}'+
                            (f"; {attempt['output_validation_error']}" if attempt.get('output_validation_error') else ''))
@@ -1004,6 +1016,44 @@ def worker_loop(pool,runtime,worker,stop,*,poll=3,device_fds=(),retry=False,**po
 
 
 NODE_LOCAL=(NodeFailure,PermissionError)  # local access faults; other OSErrors stay queue-visible
+
+
+def quiescent_failure(pairs):
+    """No offers/scans/CPU stages remain: never idle forever beside recorded errors.
+
+    Called outside dispatch/control locks. Observe leases and native execution locks
+    before returning a worker-local failure; never mark another queue complete/failed.
+    A subsequent launch may discover new work without resetting any task or receipt.
+    """
+    faults=[];snapshots=[]
+    for pool,runtime in pairs:
+        with pool.control() as control:
+            if control is None:return None
+            if read(pool.root/'binding.json')!=pool.binding:return None
+            state=pool.queue_state()
+            if state.get('failure'):faults.append(dict(cohort=pool.binding.get('cohort'),queue_failure=state['failure']))
+            jobs=[read(p) for p in pool.root.glob('jobs/*.json')]
+            if pool.held_leases():return None
+            for job in jobs:
+                if job.get('state')!='done' and (fatal_native_failure(job) or
+                        (job.get('state')=='failed' and not pool.retryable(job,state=state))):
+                    faults.append(dict(cohort=pool.binding.get('cohort'),task=task_key(job['task']),
+                        failures=counted_failures(job),failure_limit=failure_limit(pool.max_attempts),
+                        native_fault=fatal_native_failure(job)))
+            snapshots.append((pool,jobs))
+    if not faults:return None
+    # Match original Runtime.native_busy without RPC or creating absent run folders.
+    for pool,jobs in snapshots:
+        for job in jobs:
+            task=job['task']
+            if task.get('kind')!='train':continue
+            path=pool.root.parent/'runs'/task['run_id']/'.execution.lock'
+            if not path.exists():continue
+            lease=Lock(path)
+            try:
+                if not lease.acquire():return None
+            finally:lease.close()
+    return dict(reason='no eligible work remains beside failed tasks; worker exits instead of waiting',faults=faults)
 
 
 class TaskScan:
@@ -1350,6 +1400,17 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
             done=[cohort(pairs[i][0]) for i,v in terminal.items() if v=='complete']
             if done:print(f'[{worker}] complete: {", ".join(done)}',flush=True)
             return 1 if failed else 0
+        if (not dispatched and not progressed and not offers and not scans and not pending_setup
+                and all(i in initialized or i in terminal for i in range(len(pairs)))
+                and not any(getattr(r,'pending_barrier',None) is not None for _,r in pairs)):
+            blocked=quiescent_failure(pairs)
+            if blocked:
+                for pool,_ in pairs:
+                    atomic(pool.root/'worker-exits'/(digest(worker)+'.json'),
+                           dict(worker=worker,at=time.time(),exit_code=1,**blocked))
+                print(f'[{worker}] STOPPED: {blocked["reason"]}; '+canonical(blocked['faults'])+
+                      '; failed checkpoints/logs retained; no torchrun relaunch',flush=True)
+                return 1
         if not dispatched and not progressed:stop.wait(min(poll,.05) if short_claim_wait else poll)
     return 75
 

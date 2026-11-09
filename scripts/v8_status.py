@@ -21,7 +21,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from v8_probe import active_roots, last_row, read, root, tail  # noqa: E402
-from srgc_v8_nodes import retry_budget_failures  # same verified recovery boundary as the scheduler
+from srgc_v8_nodes import retry_budget_failures, fatal_native_failure
 
 COHORTS = ('olmo_math', 'olmo_mbpp', 'qwen_math', 'qwen_mbpp')   # model, then task (user 11-09: 'status 순서 맞춰')
 ATTENTION = {'failed', 'interrupted', 'stopped', 'unconfirmed'}
@@ -340,12 +340,17 @@ def failure_story(row, attempt, job, task, directory, state, live_policies, now)
     # v11 (9c1e31c) retries failed tasks by default and records it in state.json; older workers follow the marker.
     retrying = bool(state.get('retry_failed_requested_at') or state.get('automatic_retry_policy'))
     ended = attempt.get('ended_at') if isinstance(attempt.get('ended_at'), (int, float)) else None
-    if limit == 0:
+    native_fault=fatal_native_failure(job)
+    if native_fault:
+        number=native_fault['signal']
+        nxt = (f'BLOCKED: native signal -{number}; automatic relaunch disabled; '
+               f'{used} historical failures retained; repair required')
+    elif limit == 0:
         nxt = ('UNBOUNDED legacy retry policy is still recorded; update and restart all workers to apply '
                'the finite failure cap; reading status alone does not stop running workers')
     elif used >= limit:
-        nxt = (f"{used}/{limit} failures used: no more automatic retries; fix the cause, then start one node "
-               f"with --max-attempts {used + 1}")
+        nxt = (f"BLOCKED: failure cap reached ({used} recorded; limit {limit}); no more automatic retries; "
+               'failed checkpoints/logs retained; repair required')
     elif retrying:
         wait = (ended + delay - now) if ended else 0
         attempt_label=f'{used + 1}/{limit}' if limit>0 else f'{used + 1} (no limit)'
