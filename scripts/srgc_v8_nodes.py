@@ -227,6 +227,10 @@ def matched_ready_evaluations(runtime):
             row=read(path)
             if (row.get('cohort_id'),row.get('role'),row.get('training_seed'))!=(runtime.cohort,'rebuttal_bank',seed):continue
             if row.get('task',{}).get('method',{}).get('extension_of'):continue
+            index=path.parent/'snapshots.jsonl'
+            if not index.exists():continue
+            published=[json.loads(line) for line in index.read_text().splitlines() if line.strip()]
+            if not any(s.get('completed_update')==H and (path.parent/s['path']).is_file() for s in published):continue
             runs.append(path.parent.name)
         if not runs:continue
         data=runtime.cluster.load_bundle(loc.loc['seeds'][str(seed)]['input_bundle'])

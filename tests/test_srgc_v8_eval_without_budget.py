@@ -77,6 +77,15 @@ def test_cannot_claim_a_precommit_after_untracked_evaluation_results_already_exi
     with pytest.raises(ValueError,match='before budget|precommit'):nodes.ready_side_tasks(runtime)
 
 
+def test_idle_scan_does_not_load_question_bundles_before_an_endpoint_is_published(tmp_path,monkeypatch):
+    pool,runtime=partial_reference(tmp_path,monkeypatch)
+    path=runtime.root/'runs/healthy/snapshots.jsonl';row=json.loads(path.read_text());row['completed_update']=25
+    path.write_text(json.dumps(row)+'\n')
+    def forbidden(_):raise AssertionError('idle scans repeatedly loaded large bundles without any ready eval')
+    runtime.cluster.load_bundle=forbidden
+    assert nodes.matched_ready_evaluations(runtime)==[]
+
+
 def test_original_runner_evaluates_before_a_blocked_reference_seed_can_train(tmp_path,monkeypatch):
     runner=os.environ.get('V8_NODES_TEST_RUNTIME')
     if not runner:pytest.skip('original V8 runtime required')
