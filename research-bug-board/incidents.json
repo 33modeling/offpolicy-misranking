@@ -7719,6 +7719,15 @@
         "status": "remote_verification_pending",
         "text": "실제 H100의 노드 퇴거·중단·재개는 미검증이다. 기존 살아 있는/빈 worker 또는 새로 합류한 할당 노드가 작업을 인수한다. 클라우드 VM 자동 할당 기능이 아니며 기존 OLMo SR25 CUDA OOM 해결을 뜻하지 않는다. 재현 근거와 합성 CPU 체크포인트는 research/v8-node-disconnect-20261108에 보존한다.",
         "evidence_kind": "limitation"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "related_user_report",
+        "status": "remote_verification_pending",
+        "text": "사용자가 OLMo MBPP torchrun SIGSEGV·exit -11을 새로 보고했다. 이는 외부 SIGKILL/TERM/INT/HUP 중단과 다르며 기존 규칙대로 failed로 남긴다. 원인 확인과 현재 rank 스택 연결은 새 V8-121, 확인된 MBPP 실행 위험 경로는 V8-122, 이번 wrapper의 원본 대조 회귀는 V8-123에 기록한다.",
+        "evidence_kind": "user_report_and_limitation",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/88c019909879055e6af294a6f39730b2298fa539"
       }
     ]
   },
@@ -7950,6 +7959,185 @@
         "type": "verification_summary_ko",
         "status": "remote_verification_pending",
         "text": "직전 검증 기록의 한국어 정리: 최종 CPU 검사370개가 모두 통과했다. 첫 전체 검사369통과·1실패와 수정 후 중단 검사30개 원문을 보존했다. 원본 실행기34개·runtime7개·448파일의 SHA와 원본 trainer30파일 보존을 확인했다. 네 조합의 기본 결과가 첫 ext보다 먼저 저장됐고 기존 binding·계획·실패·살아 있는 lease를 보존했다. 실제 H100 적용은 아직 확인하지 못했다.",
+        "evidence_kind": "code_test_and_limitation"
+      }
+    ]
+  },
+  {
+    "id": "V8-121",
+    "title": "OLMo MBPP exit -11 보고에서 rank·현재 호출 스택을 실패 요약에 연결하지 못함",
+    "area": "V8 native crash / rank 실패 증거",
+    "severity": "high",
+    "first_reported": "2026-11-09",
+    "introduction_commit": "",
+    "cause": "실제 H100 SIGSEGV의 근본 원인은 미확인이다. 확인한 제어 코드 결함은 Python 예외가 있으면 다른 rank signal을 파싱하지 않는 조건, 직접 launcher 음수 종료의 누락, invocation별 native dump와 rank/PID 진행 기록 연결 부재다. 기존 elastic faulthandler가 combined stderr에 남기는 Python 스택 자체가 없었다고 단정하지 않는다.",
+    "impact": "사용자는 OLMo MBPP의 반복 실패와 torchrun SIGSEGV·exit -11을 보고했다. SIGSEGV는 native crash이며 OOM으로 자동 분류할 수 없다. 실패 rank와 직전 단계가 빠지면 원격 원인을 구별하기 어렵다.",
+    "attribution": "이번 재현·검토·수정·검증은 Codex가 수행했다. 원격 H100의 실제 SIGSEGV 원인과 과거 코드 작성 도구는 증거 없이 단정하지 않는다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "최종 실행·진단 수정",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/88c019909879055e6af294a6f39730b2298fa539"
+      },
+      {
+        "kind": "raw_evidence",
+        "label": "수정 전 실패와 CPU 호출 스택·원본 점수 대조",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/88c019909879055e6af294a6f39730b2298fa539/research/v8-olmo-mbpp-sigsegv-20261109"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-09",
+        "actor": "user",
+        "type": "reported",
+        "status": "open",
+        "text": "olmo mbpp fail 자주남 / torchrun reported sigsegv / exit -11 이거 버그 현황판에서 찾아서 버그 빨리 고쳐놔",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "실제 CPU 두-rank torchrun에서 ctypes.string_at(0)로 SIGSEGV를 의도적으로 재현했다. 수정 전 3검사 실패를 보존했다. 현재는 rank별 열린 raw FD에 native 스택을 남기고 같은 invocation·PID의 stage를 child-failure.json에 연결한다. Python 예외와 signal을 함께 보존하고 direct launcher -11도 남긴다. stale invocation·외부경로·오래된PID·긴스택·잘못된JSON구조도 검사했다. SIGSEGV를 성공/중단으로 바꾸지 않는다.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/88c019909879055e6af294a6f39730b2298fa539"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "remote_verification_pending",
+        "status": "remote_verification_pending",
+        "text": "실제 H100은 다른 컴퓨터이며 연결되어 있지 않다. CPU 의도적 crash는 원격 충돌의 원인 재현이 아니다. 원격 SIGSEGV의 원인·해결 여부·진행률·정확도·메모리는 미확인이다. 기존 V8-116의 SIGSEGV=failed 분류를 유지하고 실제 로그로 추후 검증한다.",
+        "evidence_kind": "limitation"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "final_regression_verified",
+        "status": "remote_verification_pending",
+        "text": "최종 소스88c0199의 전체 CPU 검사402개가0실패/0skip으로 통과했다. 원본35 coordinator·7 runner·449파일 호환 묶음의 모든 payload SHA와 원본30 trainer 파일 보존을 확인했다. 최종 CPU 두-rank SIGSEGV의 native 스택·현재PID 진행 기록을 cpu-native-crash-final에 보존했다. 수정 전3실패·첫396검사의 범위 누락·__main__ 점수1→0 차이와 최종 대조를 모두 보존했다. 최종 원문 all-final.xml과 record.json은 research/v8-olmo-mbpp-sigsegv-20261109에 있다. 실제 H100 SIGSEGV 원인·해결 여부는 미검증이다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/88c019909879055e6af294a6f39730b2298fa539",
+        "evidence_kind": "code_test_and_limitation"
+      }
+    ]
+  },
+  {
+    "id": "V8-122",
+    "title": "MBPP 채점 subprocess가 다중 스레드 부모에서 Python preexec_fn으로 자원제한을 설정함",
+    "area": "V8 MBPP / isolated checker launch",
+    "severity": "high",
+    "first_reported": "2026-11-09",
+    "introduction_commit": "8d8cf0a4e0ef9396c71f132efb481bc913c0d349",
+    "cause": "해시가 확인된 원본 verifier v2/v3의 Popen이 preexec_fn=_limits를 사용한다. Python 공식 문서는 다중 스레드 부모에서 preexec_fn이 exec 전 교착을 일으킬 수 있다고 경고한다. 이 위험 경로가 사용자의 실제 H100 SIGSEGV 원인이었다는 증거는 없다.",
+    "impact": "모델·통신 스레드가 존재하는 부모에서 fork와 exec 사이 Python 실행을 피해야 한다. 생성된 후보 자체의 SIGSEGV는 원래 격리 채점에서0점이며 훈련 rank의 SIGSEGV와 구분해야 한다.",
+    "attribution": "이번 재현·검토·수정·검증은 Codex가 수행했다. 원격 H100의 실제 SIGSEGV 원인과 과거 코드 작성 도구는 증거 없이 단정하지 않는다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "최종 실행·진단 수정",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/88c019909879055e6af294a6f39730b2298fa539"
+      },
+      {
+        "kind": "raw_evidence",
+        "label": "수정 전 실패와 CPU 호출 스택·원본 점수 대조",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/88c019909879055e6af294a6f39730b2298fa539/research/v8-olmo-mbpp-sigsegv-20261109"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "code_audit",
+        "status": "open",
+        "text": "원본 verifier의 preexec_fn=_limits 경로를 확인했다. Python subprocess 공식문서와 대조했다. 실제 교착·원격 rank SIGSEGV의 인과관계는 미측정이다.",
+        "evidence_kind": "source_audit",
+        "url": "https://docs.python.org/3/library/subprocess.html"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "알려진 두 verifier SHA에만 clone overlay를 적용하여 Python preexec_fn을 없앴다. exec 후 원래 AS/CPU/파일 제한을 설정하고 같은PID에서 원래 isolated checker 명령을 다시 exec한다. ACK로 제한설정 실패를 부모 예외로 전달해0점으로 숨기지 않는다. 원본 v2/v3의 정답·오답·예외·조기exit·문법오류·후보SIGSEGV·timeout·__main__/loader/argv·실제 자원제한과8스레드24회 채점을 비교했다. 별도 채점 검사24개 모두 통과했다. 원본30 trainer 및 checkpoint/optimizer/RNG/보상 정책은 보존했다.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/88c019909879055e6af294a6f39730b2298fa539"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "remote_verification_pending",
+        "status": "remote_verification_pending",
+        "text": "이 변경은 실행 안정성 수리이며 원본 채점 규칙과 verifier protocol 버전은 그대로다. 실제 OLMo MBPP SIGSEGV 해결 여부는 아직 확인하지 못했다. 모든 worker가 수정된 제어 코드를 시작해야 적용되며 git pull만으로 실행 중인 frozen worker가 바뀌지 않는다.",
+        "evidence_kind": "limitation"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "final_regression_verified",
+        "status": "remote_verification_pending",
+        "text": "최종 소스88c0199의 전체 CPU 검사402개가0실패/0skip으로 통과했다. 원본35 coordinator·7 runner·449파일 호환 묶음의 모든 payload SHA와 원본30 trainer 파일 보존을 확인했다. 최종 CPU 두-rank SIGSEGV의 native 스택·현재PID 진행 기록을 cpu-native-crash-final에 보존했다. 수정 전3실패·첫396검사의 범위 누락·__main__ 점수1→0 차이와 최종 대조를 모두 보존했다. 최종 원문 all-final.xml과 record.json은 research/v8-olmo-mbpp-sigsegv-20261109에 있다. 실제 H100 SIGSEGV 원인·해결 여부는 미검증이다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/88c019909879055e6af294a6f39730b2298fa539",
+        "evidence_kind": "code_test_and_limitation"
+      }
+    ]
+  },
+  {
+    "id": "V8-123",
+    "title": "첫 MBPP exec 래퍼가 __main__을 조회하는 후보의 점수를 원본과 다르게 만듦",
+    "area": "V8 MBPP repair / frozen scoring parity",
+    "severity": "high",
+    "first_reported": "2026-11-09",
+    "introduction_commit": "86d06389c16db8bf3c3a0a7240aa75e9b14722b5",
+    "cause": "Codex의 첫 수정86d0638은 checker를 새 dict에서 compile/exec했으나 sys.modules[__main__]은 bootstrap을 가리켰다. 후보가 import __main__ 후 __file__을 읽으면 원래 직접 script 실행과 달랐다.",
+    "impact": "합성 후보의 원본v2/v3 점수는 둘 다1.0인데 첫 overlay는 둘 다0.0이었다. 첫 전체396검사가 이 경우를 포함하지 않아 통과했으며 실제 H100에서 이 차이가 발생했다는 증거는 없다.",
+    "attribution": "이번 재현·검토·수정·검증은 Codex가 수행했다. 원격 H100의 실제 SIGSEGV 원인과 과거 코드 작성 도구는 증거 없이 단정하지 않는다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "최종 실행·진단 수정",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/88c019909879055e6af294a6f39730b2298fa539"
+      },
+      {
+        "kind": "raw_evidence",
+        "label": "수정 전 실패와 CPU 호출 스택·원본 점수 대조",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/88c019909879055e6af294a6f39730b2298fa539/research/v8-olmo-mbpp-sigsegv-20261109"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "reproduced",
+        "status": "open",
+        "text": "첫 수정 도입 후 추가 원본 대조에서 두 verifier 모두1.0→0.0 차이를 확인했다. main-module-before.json에 원문 수치를 보존했다. 첫396 CPU 검사의 통과를 모든 실행 환경 parity의 증거로 보지 않는다.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/88c019909879055e6af294a6f39730b2298fa539/research/v8-olmo-mbpp-sigsegv-20261109/main-module-before.json"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "dict exec를 제거하고 자원제한을 설정한 같은PID가 원래 python -I -B code_check.py 명령으로 교체되게 했다. 새 원본 대조에서 __main__의 파일명·name·spec·package·loader, isolated flag와 bytecode flag가 같고 점수도 두 버전 모두1.0이다. timeout0점 유지까지 포함한 채점 검사24개 통과. 실패 원문·도입 commit·검토 범위 누락을 지우지 않는다.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/88c019909879055e6af294a6f39730b2298fa539"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "remote_scope",
+        "status": "code_fixed",
+        "text": "실제 모델 학습·H100 성능 측정 없이 CPU 원본 대조로 확인한 wrapper 회귀 수정이다. V8-121의 원격 SIGSEGV 해결 여부와 구분한다.",
+        "evidence_kind": "limitation"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "final_regression_verified",
+        "status": "code_fixed",
+        "text": "최종 소스88c0199의 전체 CPU 검사402개가0실패/0skip으로 통과했다. 원본35 coordinator·7 runner·449파일 호환 묶음의 모든 payload SHA와 원본30 trainer 파일 보존을 확인했다. 최종 CPU 두-rank SIGSEGV의 native 스택·현재PID 진행 기록을 cpu-native-crash-final에 보존했다. 수정 전3실패·첫396검사의 범위 누락·__main__ 점수1→0 차이와 최종 대조를 모두 보존했다. 최종 원문 all-final.xml과 record.json은 research/v8-olmo-mbpp-sigsegv-20261109에 있다. 실제 H100 SIGSEGV 원인·해결 여부는 미검증이다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/88c019909879055e6af294a6f39730b2298fa539",
         "evidence_kind": "code_test_and_limitation"
       }
     ]

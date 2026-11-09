@@ -71,6 +71,12 @@
     "srgc_rebuttal/verifiers.py": "5062befe4ed5a8e21f6de01a73dca4f1d3544dd033c5d2c846bff391d1148a90"
   },
   "evidence": {
+    "all-final.xml": {
+      "tests": 402,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
     "all.xml": {
       "tests": 396,
       "failures": 0,
@@ -127,7 +133,9 @@
     }
   },
   "raw_evidence_sha256": {
+    "all-final.xml": "6dec1c7f3ea5426d60b9d278602f8064b24edf1704998c5ebb0526272a0b62c2",
     "all.xml": "c003bd6eaf3b932e5408514d0b25fb3c94f6f5e36889f9827888cf95cb4b2d20",
+    "archive-verification.json": "0f524bfc8e7d8c514af254b0bca16e5d414e1440f73233052626ea5593e31de2",
     "before.xml": "8d78c5d6ca757a499ad9d02a1294b7b9eecf5eade83104071fd44d4f4098573e",
     "cpu-native-crash/child-failure.json": "6d9b78a0024acf33b1493a042d556fbd7c328d12ecd12451585c069f2e19258e",
     "cpu-native-crash/cluster_child.py": "cb279ed05f6ea050269df69ae026d928b2e3347f7a8778dfbeacfa68c4b0ec24",
@@ -137,6 +145,14 @@
     "cpu-native-crash/native-fault-rank-1.json": "7e091f0b440a55814a952f2d174a1aec0948a8c7c04e10b6f262d17742a518f0",
     "cpu-native-crash/rank-1.json": "88e5d37c042159da393998e9aa2b3833aa0ca3b6e98d986c2a8e83b233318885",
     "cpu-native-crash/task.log": "73667626feb63689e81d8d6b1ed8688b6f09c83701f9d09bcdd39540fea64636",
+    "cpu-native-crash-final/child-failure.json": "c9b31388fc79dbed12b0363dd21d70f10254f9297f4b3e35f4bec636303bcd9b",
+    "cpu-native-crash-final/cluster_child.py": "cb279ed05f6ea050269df69ae026d928b2e3347f7a8778dfbeacfa68c4b0ec24",
+    "cpu-native-crash-final/native-fault-rank-0-64b9a24193bf3b4ad0f74e88.log": "08f2329af1ce320bbb357d72c123729274fbdd8f5f5d960beb13c8f24c507c37",
+    "cpu-native-crash-final/native-fault-rank-0.json": "f1402199e89dffc9c8efdbbe297ac34c5bb2f7aa3067ef1d52d0c72cbc82f135",
+    "cpu-native-crash-final/native-fault-rank-1-64b9a24193bf3b4ad0f74e88.log": "70466c59bdd2af6585e54efa01caed3d4546a6662874c6c6759f885bca458ff9",
+    "cpu-native-crash-final/native-fault-rank-1.json": "7794b5ce05f9fc521c49206e57a31162a040cc7fa5436ad7416b276791e19308",
+    "cpu-native-crash-final/rank-1.json": "3eaa238fadffab5b7297874564e02d8af3cc2877f7ca0ff98fdc622a6649f496",
+    "cpu-native-crash-final/task.log": "eafce75bfb2e300dd394280eed727a61e1c5b552de3e23a82dbe0a4c0c3f024d",
     "exec-final.xml": "a8f7c20b6cf2c4e02d34d6285af7bb0829a0f50b753197017f8d522caac3bb16",
     "main-module-before.json": "d329cef447760939f4d5017b27b7931f4706c98ba9d854e342f7708622498ae7",
     "native-final.xml": "0715d56d9e56db9598dac604f16815a7f80108c08c2427aeebc83ff694768d92",
@@ -153,5 +169,51 @@
     "planned_correction": "제한을 설정한 bootstrap이 같은PID에서 원래 Python -I -B code_check.py 인자를 다시 exec하여 직접 script 실행 환경을 복원한다. 별도 자식 프로세스를 추가하지 않는다.",
     "correction": "제한 설정 후 같은PID에서 원래 Python -I -B code_check.py 인자를 다시 exec한다. 별도 자식 프로세스를 추가하지 않는다. 첫396개 전체검사에 누락된 __main__/loader/argv parity를 새 원본대조 검사로 추가했다.",
     "status": "원본 대조 수정 검증 완료; 실제 H100은 미검증"
-  }
+  },
+  "verified_code_commit": "88c019909879055e6af294a6f39730b2298fa539",
+  "source_links": [
+    "https://github.com/33modeling/offpolicy-misranking/commit/86d06389c16db8bf3c3a0a7240aa75e9b14722b5",
+    "https://github.com/33modeling/offpolicy-misranking/commit/88c019909879055e6af294a6f39730b2298fa539"
+  ],
+  "cpu_native_crash_provenance": {
+    "directory": "cpu-native-crash",
+    "code_commit": "86d06389c16db8bf3c3a0a7240aa75e9b14722b5",
+    "scope": "CPU 의도적 signal11, 실제 원격 H100 원인 재현 아님"
+  },
+  "test_environment": {
+    "python": "/home/kms/dev/continual-pair-opd/.venv/bin/python",
+    "device": "CPU",
+    "commands": [
+      "pytest --noconftest tests/test_srgc_v8_*.py tests/test_v8_status*.py"
+    ],
+    "controls": "OMP_NUM_THREADS=1; OPENBLAS_NUM_THREADS=1; TMPDIR=/dev/shm; V8_FSYNC=0; runtime 원본 v8/experiments"
+  },
+  "historical_archive_verification": {
+    "through": "88c019909879055e6af294a6f39730b2298fa539",
+    "coordinators": 35,
+    "runners": 7,
+    "files": 449,
+    "sha256": "dd075a5e277c2aca27b60e7b4d246fbba3f1dc41c359dbebe5f9c7a2dda91cc6",
+    "all_payload_sha256_pass": true,
+    "original_trainer_files_unchanged": 30
+  },
+  "final_cpu_native_crash_provenance": {
+    "directory": "cpu-native-crash-final",
+    "code_commit": "88c019909879055e6af294a6f39730b2298fa539",
+    "scope": "최종 소스의 실제 CPU 두-rank SIGSEGV; 실제 H100 원인 재현 아님"
+  },
+  "intermediate_tests_reproducibility_limit": "미커밋 중간 수정 상태의 XML도 실패/검토 이력으로 보존한다. 최종 완료 검증은 명시된 최종 코드 commit에서 수행한 all-final.xml을 사용한다. 첫 all.xml396검사는86d0638에서 수행했고 새 __main__ parity 검사가 없었다.",
+  "final_verification": {
+    "code_commit": "88c019909879055e6af294a6f39730b2298fa539",
+    "cpu_tests": {
+      "tests": 402,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "source_files_match_commit": true,
+    "original_frozen_trainer_files_unchanged": 30,
+    "actual_H100_verified": false
+  },
+  "raw_log_preservation": "torchrun 원문 로그의 trailing whitespace도 변경하지 않는다. 코드 공백 검사는 raw *.log만 제외하고 수행하며 원문 파일은 SHA256으로 검증한다."
 }

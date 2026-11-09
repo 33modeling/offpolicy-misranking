@@ -13882,6 +13882,46 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "53044cbe40d6c96e72435d0584c46843522b255b",
+      "at": "2026-11-09T10:23:40+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve extension-last controls, failure evidence and final verification",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/53044cbe40d6c96e72435d0584c46843522b255b",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "b0f57e59fff1f9fe0f4e722a467bb2eb2935e2ef",
+      "at": "2026-11-09T10:23:59+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Add Korean verification summaries without rewriting ledger history",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/b0f57e59fff1f9fe0f4e722a467bb2eb2935e2ef",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "86d06389c16db8bf3c3a0a7240aa75e9b14722b5",
+      "at": "2026-11-09T10:54:37+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Remove threaded MBPP preexec and retain native rank failures",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/86d06389c16db8bf3c3a0a7240aa75e9b14722b5",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "88c019909879055e6af294a6f39730b2298fa539",
+      "at": "2026-11-09T10:58:53+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve direct MBPP checker execution after resource setup",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/88c019909879055e6af294a6f39730b2298fa539",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }
