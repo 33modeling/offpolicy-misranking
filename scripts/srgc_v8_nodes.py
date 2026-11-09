@@ -1189,7 +1189,8 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
         """Recheck original readiness after the stale scan; never claim under this check."""
         refreshed=False
         for i,(pool,runtime) in enumerate(pairs):
-            if i not in initialized or getattr(runtime,'pending_barrier',None) is not None:continue
+            if (i not in initialized or (i in terminal and i not in shared_failures)
+                    or getattr(runtime,'pending_barrier',None) is not None):continue
             try:
                 with pool.control() as control:
                     if control is None:
