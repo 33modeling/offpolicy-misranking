@@ -15,6 +15,7 @@ from contextlib import contextmanager
 import errno
 import fcntl
 import hashlib
+import inspect
 import json
 import math
 import os
@@ -30,7 +31,7 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'ready-eval-ext-fair-immediate-restart-v17'
+DISPATCH_POLICY = 'ready-eval-ext-legacy-budget-compatible-v18'
 TERMINAL = {'completed_horizon', 'completed_budget'}
 PHASES = ('train', 'primary_evaluation', 'extension', 'evaluation')
 CPU_PHASES = ('prepare', 'freeze', 'primary_finalize', 'finalize')
@@ -248,7 +249,11 @@ def ready_side_tasks(runtime):
                 raise ValueError('Reference policy endpoint identity differs from this cohort/seed')
             if endpoint.get('status') not in TERMINAL or endpoint.get('completed_updates',-1)<H:
                 return dict(tasks=[],budget_ready=False,reason='reference_endpoint_unfinished')
-        budget=freeze_budget(rows,files_read=[str(runtime.root/'runs')],expected_seeds=seeds)
+        arguments=dict(files_read=[str(runtime.root/'runs')])
+        # Earlier pinned runners lack this optional keyword. The controller above
+        # already requires every configured seed and its complete selected endpoint.
+        if 'expected_seeds' in inspect.signature(freeze_budget).parameters:arguments['expected_seeds']=seeds
+        budget=freeze_budget(rows,**arguments)
         budget.update(gpu_type=runtime.cfg['runtime']['gpu_type'],gpu_count=runtime.cfg['runtime']['world_size'])
         write_frozen_budget(budget_path,budget)
         print(f'[v8] {runtime.cohort}: reference-policy costs complete; froze original budget before any evaluation',flush=True)
@@ -468,7 +473,9 @@ class Pool:
                 state['failure']=None;atomic(state_path,state)
                 print(f'[v8] {self.binding.get("cohort")}: kept failed task {failure["task"]}; '
                       'independent ready jobs may continue. The failed task was not retried.',flush=True)
-        if recover:self.recover_failed(recover,worker)
+        if recover:
+            self.recover_budget_api_failure(recover,worker)
+            self.recover_failed(recover,worker)
         if self.automatic_retry:self.enable_automatic_retry(worker)
         state=read(state_path)
         if retry:
@@ -478,6 +485,21 @@ class Pool:
             if state['failure']:
                 state['failure_history'].append(state['failure']);state['failure']=None
             atomic(state_path,state)
+
+    def recover_budget_api_failure(self,controller,worker):
+        """After verified admission, reopen only the exact known controller keyword regression."""
+        if controller!=self.controller_sha256:return False
+        state=self.queue_state();failure=state.get('failure')
+        if (state.get('phase') not in PHASES or not isinstance(failure,dict) or failure.get('task') is not None
+                or not re.search(r'''freeze_budget\(\) got an unexpected keyword argument ['"]expected_seeds['"]''',str(failure.get('detail','')))):
+            return False
+        state.setdefault('failure_history',[]).append(failure);state['failure']=None
+        state.setdefault('actions',[]).append(dict(action='recover_verified_legacy_budget_keyword_failure',
+            controller_sha256=controller,controller_policy=DISPATCH_POLICY,worker=worker,at=time.time()))
+        atomic(self.root/'state.json',state)
+        print(f'[v8] {self.binding.get("cohort")}: recovered known budget API controller failure after node verification; '
+              'original failure/checkpoints/bindings retained',flush=True)
+        return True
 
     def enable_automatic_retry(self,worker):
         """Default task recovery after admission; never clear input/setup/identity failures."""
@@ -969,6 +991,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                     if read(pool.root/'binding.json')!=pool.binding:
                         raise BindingMismatch('Queue identity changed while waiting for shared recovery')
                     state=pool.queue_state()
+                    if index in initialized and pool.recover_budget_api_failure(controller_sha256,worker):state=pool.queue_state()
                     if state.get('failure'):continue
                     shared_failures.discard(index);reasons.pop(cohort(pool),None)
                     if state['phase']=='complete':terminal[index]='complete';continue

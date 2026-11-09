@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="6" skipped="0" tests="10" time="0.960" timestamp="2026-11-09T12:00:16.251106+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_legacy_budget_api" name="test_ready_budget_accepts_each_exact_archived_freeze_function[0]" time="0.706"><failure message="TypeError: freeze_budget() got an unexpected keyword argument 'expected_seeds'">tests/test_srgc_v8_legacy_budget_api.py:38: in test_ready_budget_accepts_each_exact_archived_freeze_function
+    result=nodes.ready_side_tasks(runtime)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/srgc_v8_nodes.py:251: in ready_side_tasks
+    budget=freeze_budget(rows,files_read=[str(runtime.root/'runs')],expected_seeds=seeds)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: freeze_budget() got an unexpected keyword argument 'expected_seeds'</failure></testcase><testcase classname="tests.test_srgc_v8_legacy_budget_api" name="test_ready_budget_accepts_each_exact_archived_freeze_function[1]" time="0.003"><failure message="TypeError: freeze_budget() got an unexpected keyword argument 'expected_seeds'">tests/test_srgc_v8_legacy_budget_api.py:38: in test_ready_budget_accepts_each_exact_archived_freeze_function
+    result=nodes.ready_side_tasks(runtime)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/srgc_v8_nodes.py:251: in ready_side_tasks
+    budget=freeze_budget(rows,files_read=[str(runtime.root/'runs')],expected_seeds=seeds)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: freeze_budget() got an unexpected keyword argument 'expected_seeds'</failure></testcase><testcase classname="tests.test_srgc_v8_legacy_budget_api" name="test_ready_budget_accepts_each_exact_archived_freeze_function[2]" time="0.003"><failure message="TypeError: freeze_budget() got an unexpected keyword argument 'expected_seeds'">tests/test_srgc_v8_legacy_budget_api.py:38: in test_ready_budget_accepts_each_exact_archived_freeze_function
+    result=nodes.ready_side_tasks(runtime)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/srgc_v8_nodes.py:251: in ready_side_tasks
+    budget=freeze_budget(rows,files_read=[str(runtime.root/'runs')],expected_seeds=seeds)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: freeze_budget() got an unexpected keyword argument 'expected_seeds'</failure></testcase><testcase classname="tests.test_srgc_v8_legacy_budget_api" name="test_ready_budget_accepts_each_exact_archived_freeze_function[3]" time="0.003"><failure message="TypeError: freeze_budget() got an unexpected keyword argument 'expected_seeds'">tests/test_srgc_v8_legacy_budget_api.py:38: in test_ready_budget_accepts_each_exact_archived_freeze_function
+    result=nodes.ready_side_tasks(runtime)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/srgc_v8_nodes.py:251: in ready_side_tasks
+    budget=freeze_budget(rows,files_read=[str(runtime.root/'runs')],expected_seeds=seeds)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: freeze_budget() got an unexpected keyword argument 'expected_seeds'</failure></testcase><testcase classname="tests.test_srgc_v8_legacy_budget_api" name="test_ready_budget_accepts_each_exact_archived_freeze_function[4]" time="0.003"><failure message="TypeError: freeze_budget() got an unexpected keyword argument 'expected_seeds'">tests/test_srgc_v8_legacy_budget_api.py:38: in test_ready_budget_accepts_each_exact_archived_freeze_function
+    result=nodes.ready_side_tasks(runtime)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/srgc_v8_nodes.py:251: in ready_side_tasks
+    budget=freeze_budget(rows,files_read=[str(runtime.root/'runs')],expected_seeds=seeds)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: freeze_budget() got an unexpected keyword argument 'expected_seeds'</failure></testcase><testcase classname="tests.test_srgc_v8_legacy_budget_api" name="test_ready_budget_accepts_each_exact_archived_freeze_function[5]" time="0.004" /><testcase classname="tests.test_srgc_v8_legacy_budget_api" name="test_ready_budget_accepts_each_exact_archived_freeze_function[6]" time="0.004" /><testcase classname="tests.test_srgc_v8_legacy_budget_api" name="test_only_verified_known_controller_api_failure_is_reopened[True-ValueError: olmo_math: TypeError: freeze_budget() got an unexpected keyword argument 'expected_seeds'-True]" time="0.002"><failure message="assert ({'at': 1, 'detail': &quot;ValueError: olmo_math: TypeError: freeze_budget() got an unexpected keyword argument 'expected_seeds'&quot;, 'task': None} is None) == True">tests/test_srgc_v8_legacy_budget_api.py:55: in test_only_verified_known_controller_api_failure_is_reopened
+    assert (state['failure'] is None)==cleared
+E   assert ({'at': 1, 'detail': "ValueError: olmo_math: TypeError: freeze_budget() got an unexpected keyword argument 'expected_seeds'", 'task': None} is None) == True</failure></testcase><testcase classname="tests.test_srgc_v8_legacy_budget_api" name="test_only_verified_known_controller_api_failure_is_reopened[False-ValueError: olmo_math: TypeError: freeze_budget() got an unexpected keyword argument 'expected_seeds'-False]" time="0.001" /><testcase classname="tests.test_srgc_v8_legacy_budget_api" name="test_only_verified_known_controller_api_failure_is_reopened[True-invalid frozen input identity-False]" time="0.001" /></testsuite></testsuites>

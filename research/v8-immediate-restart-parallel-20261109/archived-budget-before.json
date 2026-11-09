@@ -1,0 +1,77 @@
+{
+  "scope": "Source/API inspection only; no H100 execution",
+  "runners": [
+    {
+      "source_commit": "419072869dc1c9b280c4d3c47e5430b4e97e9d25",
+      "arguments": [
+        "rows",
+        "policy_id",
+        "scope",
+        "files_read"
+      ],
+      "accepts_expected_seeds": false
+    },
+    {
+      "source_commit": "cbd68a4a6c1c45cd21475182a211abfff78eea8d",
+      "arguments": [
+        "rows",
+        "policy_id",
+        "scope",
+        "files_read"
+      ],
+      "accepts_expected_seeds": false
+    },
+    {
+      "source_commit": "f6b1b53090634feded721981d0b9f73b85870b32",
+      "arguments": [
+        "rows",
+        "policy_id",
+        "scope",
+        "files_read"
+      ],
+      "accepts_expected_seeds": false
+    },
+    {
+      "source_commit": "f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
+      "arguments": [
+        "rows",
+        "policy_id",
+        "scope",
+        "files_read"
+      ],
+      "accepts_expected_seeds": false
+    },
+    {
+      "source_commit": "32365b355b939686799bb0429059ad1f2377049e",
+      "arguments": [
+        "rows",
+        "policy_id",
+        "scope",
+        "files_read"
+      ],
+      "accepts_expected_seeds": false
+    },
+    {
+      "source_commit": "f13cd3d1392440d58e96e4f77b4147ad0aa62205",
+      "arguments": [
+        "rows",
+        "policy_id",
+        "scope",
+        "files_read",
+        "expected_seeds"
+      ],
+      "accepts_expected_seeds": true
+    },
+    {
+      "source_commit": "19a0161b14877e204aae01f8513c551e60b52d44",
+      "arguments": [
+        "rows",
+        "policy_id",
+        "scope",
+        "files_read",
+        "expected_seeds"
+      ],
+      "accepts_expected_seeds": true
+    }
+  ]
+}

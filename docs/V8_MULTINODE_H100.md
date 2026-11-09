@@ -164,7 +164,7 @@ worker는60초마다 현황을 출력한다. 자식 출력은 터미널과 각 c
 정책 버전이 나온다. 표 형식 `status`는 `dispatch current <hash>`(현재 checkout과
 같음), `dispatch different <hash>`(다름), `dispatch unverified`(기록 없음)를 구분한다.
 정책 파일이 디스크에 있다는 것만으로 실행 중인 worker에 적용됐다고 판단하지 않는다.
-현재 배정 정책은 `ready-eval-ext-fair-immediate-restart-v17`이다. 작업 검사는 해당 cohort의
+현재 배정 정책은 `ready-eval-ext-legacy-budget-compatible-v18`이다. 작업 검사는 해당 cohort의
 control lease만 잡고 별도로 수행한다. 검사 결과가 준비되면 공유 잠금 안에서 현재
 binding·phase·실패 상태·작업 정의·작업 lease를 다시 확인한 뒤 claim한다.
 검사와 claim 사이에 다른 노드가 가져간 작업이나 실패한 작업은 가져오지 않는다.
@@ -197,6 +197,10 @@ binding·checkpoint를 고치거나 지우지 않는다. 신원·설정·CPU 준
 해제하지 않는다. 입력·설정 검증을 우회하지 않으며 살아 있는 task lease는 건드리지 않는다.
 `--retry-failed`는 기존 명시적 복구용 호환 옵션이며 일반 실행에 필요 없다.
 자동 복구는 작업 실패에만 적용하며 입력·신원·CPU 준비 오류를 해제하지 않는다.
+별도 제어 코드 예외로, 구형 예산 함수에 `expected_seeds`를 넘겨 생긴 정확한
+`freeze_budget() got an unexpected keyword argument 'expected_seeds'` 중단은 입력·원본
+binding을 검증한 새 worker가 이력을 보존하고 재개한다. 구형 함수에는 지원하지 않는
+인자를 넘기지 않으며, 모든 seed의 선택된 endpoint와 비용 준비 검사는 제어 코드에서 유지한다.
 준비된 새 seed·분기를 실패한 원 궤적의 반복 재시작보다 먼저 배정하여 작업 독점을 막는다.
 다른 cohort의 메타데이터 잠금이 사용 중이어도 준비된 cohort는 즉시 claim할 수 있다.
 활성 lease 수로 덜 바쁜 cohort를 우선하되 다른 cohort의 잠금을 기다리느라 GPU를 비우지 않는다.
