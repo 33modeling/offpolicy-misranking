@@ -38,6 +38,18 @@
       "failures": 0,
       "errors": 0,
       "skipped": 0
+    },
+    "all.xml": {
+      "tests": 370,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0
+    },
+    "stop-fixed.xml": {
+      "tests": 30,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
     }
   },
   "order_proof": "order-proof.json",
@@ -77,11 +89,13 @@
   "scientific_measurements": null,
   "source_sha256": {
     "docs/V8_MULTINODE_H100.md": "0ba9452a1c3e5bd340e41443bc876d7348516c567eca27bb83b388b26aa4d30c",
-    "scripts/srgc_v8_nodes.py": "ceae6e243c714c890e26b4402baabcc310f7bbb8e3a893a27ea117ef95747439",
+    "scripts/srgc_v8_nodes.py": "e2594182319b7ec4b32536be1e9d7f9e292253725110e8987f0a323f99580e14",
     "scripts/v8_dispatch.py": "b5b7cc860358753745183414e63823e01eda744582c4eaec06a2c14cbe73a459",
     "scripts/v8_runtime_worker.py": "430cd38cf9d8cceaddf8b7dc523deba2f127735d789d415f240a43006f9c4687",
     "scripts/v8_status.py": "9c7e367a1f30ee9eec08188d5ee17aa95418ad9c39d6de4e5afbb6ea3c427dd1",
     "tests/test_srgc_v8_nodes.py": "d7a347ab990fca33aa0a865e0ce3da124b4da5c3853a182b96d939ee57a0d574",
     "tests/test_srgc_v8_extension_last.py": "d47661a3a331d84d89438b26e8afea123d37e8aad9ffc1bdc1065594b73f8967"
-  }
+  },
+  "implementation_commit": "ab65eb32907d5ec72a7d0551a8509ea21888f334",
+  "failure_record": "First full run:369 passed/1failed. New scope setup accessed binding[cohort] before handling an already-set stop request in the existing minimal-binding stop test. Fixed by returning75 before setup and assigning scope only to capable real runtimes. stop-fixed.xml30pass covers stop, disconnect and four-cohort ordering. Raw failure retained."
 }

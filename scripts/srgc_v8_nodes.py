@@ -814,6 +814,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                      max_attempts=MAX_ATTEMPTS,retry_delay=RETRY_DELAY,automatic_retry=True):
     """Original actors prepare independently; serialize lease-count comparison and task claim."""
     if not pairs:raise ValueError('At least one cohort is required')
+    if stop.is_set():return 75
     initialized=set();terminal={};offers={};scans={};last_report=0;reasons={};busy_report=0;setup_report=0
     shared_failures=set();recovery_checked={}
     cursor=int(digest(worker)[:8],16)%len(pairs)
@@ -821,7 +822,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
     dispatch_lock=Path(os.path.commonpath([str(p.resolve()) for p in roots]))/'.v8-dispatch.lock'
     controller_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     for pool,runtime in pairs:
-        if not getattr(runtime,'primary_cohort_scope',None):
+        if getattr(runtime,'primary_results_first',False) and not getattr(runtime,'primary_cohort_scope',None):
             runtime.primary_cohort_scope=tuple(p.binding['cohort'] for p,_ in pairs)
         pool.retry_failed=retry;pool.max_attempts=max_attempts;pool.retry_delay=retry_delay
         pool.automatic_retry=automatic_retry
