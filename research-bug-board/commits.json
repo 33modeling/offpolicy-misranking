@@ -13812,6 +13812,36 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "32a4b0b4e0b057079798821800bac169028cb63b",
+      "at": "2026-11-09T08:46:37+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve OLMo MBPP dispatch verification and historical queue sources",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/32a4b0b4e0b057079798821800bac169028cb63b",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "8635a5dab4b6a77620a2628799718781317d4687",
+      "at": "2026-11-09T08:50:49+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: also show OLMo MBPP and Qwen MATH",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/8635a5dab4b6a77620a2628799718781317d4687",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "df6bc9c019384c694cb5b0d30c87bdcd4065945b",
+      "at": "2026-11-09T09:00:40+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Add Qwen MATH to shared V8 training and final results",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/df6bc9c019384c694cb5b0d30c87bdcd4065945b",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

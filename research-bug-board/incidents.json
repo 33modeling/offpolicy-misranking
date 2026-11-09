@@ -7775,5 +7775,59 @@
         "evidence_kind": "code_test_and_limitation"
       }
     ]
+  },
+  {
+    "id": "V8-118",
+    "title": "Qwen MATH가 상태 화면에는 있지만 기본 학습 배정 세 조합에는 포함되지 않음",
+    "area": "V8 rebuttal 실행 범위 / Qwen MATH 추가",
+    "severity": "high",
+    "first_reported": "2026-11-09",
+    "introduction_commit": "",
+    "cause": "OLMo MBPP 추가 뒤 기본 source selection과 worker 대상은 세 조합이었다. Qwen MATH 설정과 개별 실행 경로가 있어도 기본 명령의 배정 대상은 아니었다. 상태 화면의 peer8635a5d는 이미 네 조합을 표시했다.",
+    "impact": "사용자가 기본 명령에서 Qwen MATH도 학습하고 최종 결과를 생성하라고 추가 지시했다. 상태 표시만으로 학습 대상에 들어갔다고 볼 수 없었다.",
+    "attribution": "기본 범위 누락 확인과 요청에 따른 추가 구현은 Codex가 수행했다. 기존 실험 범위를 바꾸지 않고 사용자의 새 추가 요청을 기록한다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "Qwen MATH 기본 배정·최종 결과 연결",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/df6bc9c019384c694cb5b0d30c87bdcd4065945b"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-09",
+        "actor": "user",
+        "type": "reported",
+        "status": "open",
+        "text": "qwen math도 추가해라 / 빨리해 / git push 부터 바로해",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "기본 명령의 source 선택·bootstrap·배정·probe·진행 문구에 Qwen MATH를 연결했다. 기존 qwen:math plan·Qwen adapter·seed5–9와 Python 우선순위를 유지한다. CPU26검사, 네 조합163작업 완료·중복/동시 실행 없음, 실제 collect/analyze 경로 출력, Qwen MATH 환경 오류 시 나머지 세 조합 유지 검증 뒤 즉시push했다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/df6bc9c019384c694cb5b0d30c87bdcd4065945b",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "remote_verification_pending",
+        "status": "remote_verification_pending",
+        "text": "H100은 다른 컴퓨터이며 연결되어 있지 않다. 실제 MATH 정확도·메모리·처리량·노드 진행·유휴 해소는 미검증이다. CPU 합성 결과와 원본 checkpoint/optimizer/RNG/분리된 학습 보상·평가 기록을 research/v8-qwen-math-20261109에 보존한다.",
+        "evidence_kind": "limitation"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "raw_evidence_published",
+        "status": "remote_verification_pending",
+        "text": "최종365 CPU 회귀0실패/0skip. 원본32 coordinator·7 runner·446파일 호환 묶음과 모든 payload SHA 검증. 원본30 trainer 파일 보존. 네 조합163작업 완료·Qwen MATH 실제 collect/analyze 출력·원래 source pin 재개·초기/분기 DAG·환경 오류 분리 검증. 합성 CPU checkpoint/optimizer/RNG와 분리된 학습 보상·평가 기록 보존. 실제 H100 진행은 미검증.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/df6bc9c019384c694cb5b0d30c87bdcd4065945b",
+        "evidence_kind": "code_test_and_limitation"
+      }
+    ]
   }
 ]

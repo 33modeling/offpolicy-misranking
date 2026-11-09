@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-09T08:46:37+09:00",
+  "recorded_at": "2026-11-09T09:03:38+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "a8662b9db68f0a921b7af89e15ab1eaef5046f1b",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/a8662b9db68f0a921b7af89e15ab1eaef5046f1b",
-    "all_available_commits": 1310,
+    "source_commit": "df6bc9c019384c694cb5b0d30c87bdcd4065945b",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/df6bc9c019384c694cb5b0d30c87bdcd4065945b",
+    "all_available_commits": 1313,
     "fix_commit_records": 143,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
@@ -41,7 +41,7 @@
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hang-fix-20261108:f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:a8662b9db68f0a921b7af89e15ab1eaef5046f1b",
+      "refs/heads/master:df6bc9c019384c694cb5b0d30c87bdcd4065945b",
       "refs/heads/v8-coord-fixes-20261108:377c256e55f80c64b484d82ef812064ed9e7c8a3",
       "refs/heads/v8-modes:6821c9c09292662008eb4f933c74bae7490358ed",
       "refs/heads/v8-nodes:3adf26925b2b1c1bf572cf0e68f75b26bbae3ddc",
@@ -52,7 +52,7 @@
       "refs/heads/v8-status:a3675bbd4b6f678b3ef8fbacde56aaf072d0aafa",
       "refs/heads/v8-status-bottom:94a76aa9483e323066159197d040bb6b0d5b257e",
       "refs/heads/v8-status-clean:2f6994f544c150e58e2e3d7f43e6e67c16ae442e",
-      "refs/heads/v8-status-cohorts:bd90294e624e3d036bf73602794594c3f307826f",
+      "refs/heads/v8-status-cohorts:8635a5dab4b6a77620a2628799718781317d4687",
       "refs/heads/v8-status-counts:212a09963ac6d926b9fb20d95c6f19d28d5c87f7",
       "refs/heads/v8-status-grid:e902db8a5e5a317c9aa5c26fdd9294f3a1f50c03",
       "refs/heads/v8-status-layout:616a1e3a5ba03620144c98f7370165e0107c4a63",
@@ -78,7 +78,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:a8662b9db68f0a921b7af89e15ab1eaef5046f1b"
+      "refs/remotes/origin/master:df6bc9c019384c694cb5b0d30c87bdcd4065945b"
     ]
   },
   "incidents": [
@@ -7855,6 +7855,60 @@
           "status": "remote_verification_pending",
           "text": "전체359 CPU 회귀0실패/0skip. 원본31개 coordinator·7개 runner·445파일 호환 묶음과 전체 payload SHA를 검증했다. 세 조합122작업 완료와 OLMo MBPP collect/analyze 성공, 원본30 trainer 해시 보존, 합성 checkpoint/optimizer/RNG/학습 보상·분리 평가 원문을 보존했다. 실제 H100 상태는 확인하지 못했다.",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/a8662b9db68f0a921b7af89e15ab1eaef5046f1b",
+          "evidence_kind": "code_test_and_limitation"
+        }
+      ]
+    },
+    {
+      "id": "V8-118",
+      "title": "Qwen MATH가 상태 화면에는 있지만 기본 학습 배정 세 조합에는 포함되지 않음",
+      "area": "V8 rebuttal 실행 범위 / Qwen MATH 추가",
+      "severity": "high",
+      "first_reported": "2026-11-09",
+      "introduction_commit": "",
+      "cause": "OLMo MBPP 추가 뒤 기본 source selection과 worker 대상은 세 조합이었다. Qwen MATH 설정과 개별 실행 경로가 있어도 기본 명령의 배정 대상은 아니었다. 상태 화면의 peer8635a5d는 이미 네 조합을 표시했다.",
+      "impact": "사용자가 기본 명령에서 Qwen MATH도 학습하고 최종 결과를 생성하라고 추가 지시했다. 상태 표시만으로 학습 대상에 들어갔다고 볼 수 없었다.",
+      "attribution": "기본 범위 누락 확인과 요청에 따른 추가 구현은 Codex가 수행했다. 기존 실험 범위를 바꾸지 않고 사용자의 새 추가 요청을 기록한다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "Qwen MATH 기본 배정·최종 결과 연결",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/df6bc9c019384c694cb5b0d30c87bdcd4065945b"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-09",
+          "actor": "user",
+          "type": "reported",
+          "status": "open",
+          "text": "qwen math도 추가해라 / 빨리해 / git push 부터 바로해",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "기본 명령의 source 선택·bootstrap·배정·probe·진행 문구에 Qwen MATH를 연결했다. 기존 qwen:math plan·Qwen adapter·seed5–9와 Python 우선순위를 유지한다. CPU26검사, 네 조합163작업 완료·중복/동시 실행 없음, 실제 collect/analyze 경로 출력, Qwen MATH 환경 오류 시 나머지 세 조합 유지 검증 뒤 즉시push했다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/df6bc9c019384c694cb5b0d30c87bdcd4065945b",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "remote_verification_pending",
+          "status": "remote_verification_pending",
+          "text": "H100은 다른 컴퓨터이며 연결되어 있지 않다. 실제 MATH 정확도·메모리·처리량·노드 진행·유휴 해소는 미검증이다. CPU 합성 결과와 원본 checkpoint/optimizer/RNG/분리된 학습 보상·평가 기록을 research/v8-qwen-math-20261109에 보존한다.",
+          "evidence_kind": "limitation"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "raw_evidence_published",
+          "status": "remote_verification_pending",
+          "text": "최종365 CPU 회귀0실패/0skip. 원본32 coordinator·7 runner·446파일 호환 묶음과 모든 payload SHA 검증. 원본30 trainer 파일 보존. 네 조합163작업 완료·Qwen MATH 실제 collect/analyze 출력·원래 source pin 재개·초기/분기 DAG·환경 오류 분리 검증. 합성 CPU checkpoint/optimizer/RNG와 분리된 학습 보상·평가 기록 보존. 실제 H100 진행은 미검증.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/df6bc9c019384c694cb5b0d30c87bdcd4065945b",
           "evidence_kind": "code_test_and_limitation"
         }
       ]
