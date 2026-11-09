@@ -216,6 +216,15 @@ V22는 실패 종료 직전에 원래 planner/ready/done을 다시 검사한다.
 `blocked_work` 작업자 종료, 현재 worker의 native crash/OOM/timeout, 이전 worker들의
 실패 수를 따로 남긴다. exit1만으로 새로운 모델 crash라고 단정하지 않는다. 실패
 코드·checkpoint·원문 로그는 그대로 보존하고 미완성 실험을 성공 처리하지 않는다.
+V23은 사용자의 eval 복구 지시에 따라 평가 작업의 SIGSEGV에 한정해1회의 제한된
+재실행을 허용한다. 이미 막힌 eval도 기본 실행에서 입력 검증 후 자동으로 재개한다.
+원래 snapshot/spec/question set/responses/seed와 task key를 유지한다. 완료된 평가
+파일은 원래 validator로 확인해 재사용하며, 미완료 평가는 같은 checkpoint에서 다시
+실행한다. 과거 실패가9회여도 그 이력을 보존하고 명시적인 eval recovery receipt 뒤의
+재실행 오류만1회까지 허용한다. 고정 recovery policy는 새 node/코드 hash/재시작으로
+갱신되지 않는다. 그1회도 실패하면 더 배정하지 않는다. 입력·binding 오류, 학습의
+native fault, 다른 치명 signal을 이 방식으로 해제하지 않는다. 이는 SIGSEGV 원인이
+고쳐졌다는 기록이 아니라 사용자가 요청한 유한 평가 복구 정책이다.
 SIGSEGV를 차단한 것은 native 오류 원인을 고쳤다는 뜻이 아니다. 원래 오류와 checkpoint는
 보존하고, 원인 수리 없이 상한만 올려 native crash를 재실행하지 않는다.
  이전 V8가

@@ -31,7 +31,8 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'revalidated-worker-retirement-v22'
+DISPATCH_POLICY = 'bounded-native-evaluation-recovery-v23'
+EVAL_NATIVE_RECOVERY = 'evaluation-sigsegv-recovery-v1'
 TERMINAL = {'completed_horizon', 'completed_budget'}
 PHASES = ('train', 'primary_evaluation', 'extension', 'evaluation')
 CPU_PHASES = ('prepare', 'freeze', 'primary_finalize', 'finalize')
@@ -140,12 +141,35 @@ def counted_failures(job):
 
 
 def retry_budget_failures(job):
-    """Lifetime task faults: a new node/controller never refunds repeated errors.
+    """Lifetime task faults, except the single user-requested native evaluation replay.
 
     Historical retry_epoch records stay intact as evidence, but no longer grant
     another failure budget. Genuine node loss/intentional stops are still refunded.
     """
-    return counted_failures(job)
+    recovery=evaluation_recovery_attempts(job)
+    return counted_failures(dict(attempts=recovery)) if recovery is not None else counted_failures(job)
+
+
+def evaluation_recovery_attempts(job):
+    """One explicit evaluation recovery allowance; never renewed by a new node/hash."""
+    receipt=job.get('evaluation_native_recovery')
+    if (job.get('task',{}).get('kind')!='evaluate' or not isinstance(receipt,dict)
+            or receipt.get('policy')!=EVAL_NATIVE_RECOVERY or receipt.get('max_failed_replays')!=1
+            or receipt.get('task_sha256')!=digest(semantic_task(job['task']))):return None
+    attempts=job.get('attempts',[]);matches=[i for i,a in enumerate(attempts) if a.get('id')==receipt.get('after_attempt')]
+    if len(matches)!=1:return None
+    index=matches[0];fault=fatal_native_failure(dict(attempts=[attempts[index]]))
+    if not fault or fault['signal']!=11:return None
+    return attempts[index+1:]
+
+
+def native_failure_blocks(job):
+    fault=fatal_native_failure(job)
+    if not fault:return False
+    replay=evaluation_recovery_attempts(job)
+    if replay is None:return True
+    # A replay crash, including one mislabelled as an interruption, never buys more work.
+    return bool(fatal_native_failure(dict(attempts=replay))) or counted_failures(dict(attempts=replay))>=1
 
 
 def fatal_native_failure(job):
@@ -444,11 +468,14 @@ class Pool:
         return self.automatic_retry or self.retry_failed or bool((state or {}).get('retry_failed_requested_at'))
 
     def retry_limit_reached(self,job):
+        if evaluation_recovery_attempts(job) is not None:return retry_budget_failures(job)>=1
         return retry_budget_failures(job)>=failure_limit(self.max_attempts)
 
     def retryable(self,job,now=None,state=None):
         """One immediate retry by default; repeated faults stay excluded across joins."""
-        if fatal_native_failure(job) or self.retry_limit_reached(job):return False
+        receipt=job.get('evaluation_native_recovery')
+        if receipt and receipt.get('binding_sha256')!=digest(self.binding):return False
+        if native_failure_blocks(job) or self.retry_limit_reached(job):return False
         if job.get('state')=='interrupted' and job.get('resume_not_before'):
             return self.retry_delay<=0 or (time.time() if now is None else now)>=job['resume_not_before']
         if job.get('state')!='failed':return True
@@ -459,7 +486,7 @@ class Pool:
         return (time.time() if now is None else now)>=ended+self.retry_delay
 
     def retry_later(self,job,state=None):
-        if fatal_native_failure(job) or self.retry_limit_reached(job):return False
+        if native_failure_blocks(job) or self.retry_limit_reached(job):return False
         if job.get('state')=='interrupted' and job.get('resume_not_before'):
             return self.retry_delay>0 and time.time()<job['resume_not_before']
         return job.get('state')=='failed' and self.retry_requested(state) and not self.retry_limit_reached(job)
@@ -623,10 +650,18 @@ class Pool:
         recovered=[];resumable=False
         for path in sorted(self.root.glob('jobs/*.json')):
             job=read(path);history=job.get('recovery_history',[])
+            if job['state'] in ('failed','interrupted','pending') and not job.get('evaluation_native_recovery') and job.get('task',{}).get('kind')=='evaluate':
+                lease=Lock(self.root/'leases'/(path.stem+'.lock'))
+                if not lease.acquire():continue
+                try:
+                    if self.arm_evaluation_recovery(job,worker):
+                        job['state']='pending';atomic(path,job);recovered.append(path.stem)
+                finally:lease.close()
+                if path.stem in recovered:continue
             already=any(row.get('controller_sha256')==controller or row.get('controller_policy')==DISPATCH_POLICY
                         for row in history)
             if already and job['state'] in ('pending','interrupted'):resumable=True
-            if job['state']!='failed' or already or fatal_native_failure(job) or self.retry_limit_reached(job):continue
+            if job['state']!='failed' or already or native_failure_blocks(job) or self.retry_limit_reached(job):continue
             attempts=job.get('attempts',[])
             if attempts and (attempts[-1].get('controller_sha256')==controller
                              or attempts[-1].get('controller_policy')==DISPATCH_POLICY):continue
@@ -647,6 +682,21 @@ class Pool:
             atomic(self.root/'state.json',state)
             print(f'[v8] {self.binding.get("cohort")}: resumed {len(recovered)} older-controller failed task(s) '
                   'after node verification; original attempts/checkpoints retained; no retry flag needed',flush=True)
+
+    def arm_evaluation_recovery(self,job,worker):
+        """Latest user request: recover an eval SIGSEGV once without resetting its history."""
+        if job.get('task',{}).get('kind')!='evaluate' or job.get('evaluation_native_recovery'):return False
+        attempts=job.get('attempts',[])
+        if not attempts:return False
+        fault=fatal_native_failure(dict(attempts=[attempts[-1]]))
+        if not fault or fault['signal']!=11:return False
+        job['evaluation_native_recovery']=dict(policy=EVAL_NATIVE_RECOVERY,max_failed_replays=1,
+            after_attempt=attempts[-1]['id'],task_sha256=digest(semantic_task(job['task'])),
+            binding_sha256=digest(self.binding),worker=worker,at=time.time(),
+            reason='user_requested_bounded_recovery_of_native_evaluation_failure')
+        print(f'[v8] evaluation recovery armed once: {task_key(job["task"])}; '
+              f'{counted_failures(job)} original failures retained; identical checkpoint/spec; not unlimited',flush=True)
+        return True
 
     def queue_state(self):
         """state.json, recreated as a fresh 'prepare' record (with a printed note) if it is missing,
@@ -829,7 +879,7 @@ class Pool:
                 all_done=False
                 if job['state']=='done':raise ValueError('Previously completed output disappeared or became inconsistent: '+path.stem)
                 if native_busy:active=True;continue
-                if (fatal_native_failure(job) or self.retry_limit_reached(job)) and job['state']!='failed':
+                if (native_failure_blocks(job) or self.retry_limit_reached(job)) and job['state']!='failed':
                     # Old controllers may have reset a failed job to pending/running.
                     # Only migrate it after its lease/native lock is free and outputs
                     # were checked; never interrupt a live task or discard a result.
@@ -972,6 +1022,7 @@ class Pool:
             state.setdefault('task_failures',[]).append(dict(detail=f'task exit={rc}; output verified={done}',
                                                            task=key,attempt=job['attempts'][-1]['id'],at=time.time()))
             atomic(self.root/'state.json',state)
+        if job['state'] in ('failed','interrupted'):self.arm_evaluation_recovery(job,attempt.get('worker'))
         atomic(path,job)
         return job['state']
 
@@ -1048,7 +1099,7 @@ def quiescent_failure(pairs):
             jobs=[read(p) for p in pool.root.glob('jobs/*.json')]
             if pool.held_leases():return None
             for job in jobs:
-                if job.get('state')!='done' and (fatal_native_failure(job) or
+                if job.get('state')!='done' and (native_failure_blocks(job) or
                         (job.get('state')=='failed' and not pool.retryable(job,state=state))):
                     faults.append(dict(cohort=pool.binding.get('cohort'),task=task_key(job['task']),
                         failures=counted_failures(job),failure_limit=failure_limit(pool.max_attempts),

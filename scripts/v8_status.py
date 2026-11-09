@@ -22,7 +22,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from v8_probe import active_roots, last_row, read, root, tail  # noqa: E402
-from srgc_v8_nodes import retry_budget_failures, fatal_native_failure
+from srgc_v8_nodes import retry_budget_failures, fatal_native_failure, evaluation_recovery_attempts, native_failure_blocks
 
 COHORTS = ('olmo_math', 'olmo_mbpp', 'qwen_math', 'qwen_mbpp')   # model, then task (user 11-09: 'status 순서 맞춰')
 ATTENTION = {'failed', 'interrupted', 'stopped', 'unconfirmed'}
@@ -342,7 +342,11 @@ def failure_story(row, attempt, job, task, directory, state, live_policies, now)
     retrying = bool(state.get('retry_failed_requested_at') or state.get('automatic_retry_policy'))
     ended = attempt.get('ended_at') if isinstance(attempt.get('ended_at'), (int, float)) else None
     native_fault=fatal_native_failure(job)
-    if native_fault:
+    eval_recovery=evaluation_recovery_attempts(job)
+    if native_fault and eval_recovery is not None and not native_failure_blocks(job):
+        nxt = ('evaluation recovery queued: one identical checkpoint/spec replay; '
+               f'{used} of 1 replay failures used; no flag needed')
+    elif native_fault:
         number=native_fault['signal']
         nxt = (f'BLOCKED: {signal.Signals(number).name} (exit -{number}); automatic relaunch disabled; '
                f'{used} historical failures retained; repair required')
@@ -367,7 +371,9 @@ def failure_story(row, attempt, job, task, directory, state, live_policies, now)
         nxt = 'work is already complete (a retry resumes from its checkpoint, nothing finished is redone); ' + nxt
     elif not real and rc in (9, -9, 137):
         nxt += f"; if it was host memory (OOM killer), check dmesg on {row.get('host') or 'that node'} first"
-    if lifetime != used:nxt += f'; current verified repair failures {used}, historical failures {lifetime}'
+    if lifetime != used:
+        nxt += (f'; evaluation replay failures {used}, lifetime failures {lifetime}' if eval_recovery is not None else
+                f'; current verified repair failures {used}, historical failures {lifetime}')
     return dict(failure_cause=cause[:400], failure_next=nxt, failure_real=real, failure_at=at,
                 failure_budget_used=used,failure_lifetime_count=lifetime)
 

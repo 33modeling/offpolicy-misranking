@@ -161,7 +161,8 @@ def main():
                             default_task_recovery=dict(max_counted_failures=nodes.MAX_ATTEMPTS,retry_delay=nodes.RETRY_DELAY,
                                                        unlimited_failures=False,retry_count_scope='task-lifetime',
                                                        native_crash_relaunch=False,quiescent_errors='exit-worker',
-                                                       final_exit_check='refresh-original-ready-tasks'),
+                                                       final_exit_check='refresh-original-ready-tasks',
+                                                       evaluation_sigsegv_replay=dict(policy=nodes.EVAL_NATIVE_RECOVERY,max_failed_replays=1)),
                             per_rank_receipt='progress/<attempt>/runtime-repair-rank-N.json'))
             if actor.overrides:record['control_overrides']=actor.overrides
             receipt=Path(root)/'.v8-dispatch-policies'/(cohort+'-'+nodes.digest(record)+'.json')
