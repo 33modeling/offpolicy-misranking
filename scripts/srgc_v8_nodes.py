@@ -31,7 +31,7 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'checkpoint-eval-cost-precommit-v19'
+DISPATCH_POLICY = 'bounded-task-recovery-v20'
 TERMINAL = {'completed_horizon', 'completed_budget'}
 PHASES = ('train', 'primary_evaluation', 'extension', 'evaluation')
 CPU_PHASES = ('prepare', 'freeze', 'primary_finalize', 'finalize')
@@ -120,8 +120,13 @@ def access_message(path,exc):
             'Run the worker as the account that created this queue; nothing was changed.')
 
 
-MAX_ATTEMPTS=0     # 0: keep restarting task faults until completion or an explicit stop
+MAX_ATTEMPTS=2     # initial task fault plus one immediate retry, across all workers
 RETRY_DELAY=0.0    # restart from the saved checkpoint without a cooldown
+
+
+def failure_limit(value):
+    """Legacy zero must not re-enable unlimited torchrun relaunches."""
+    return value if type(value) is int and value>0 else MAX_ATTEMPTS
 
 
 def counted_failures(job):
@@ -135,21 +140,12 @@ def counted_failures(job):
 
 
 def retry_budget_failures(job):
-    """Count this verified repair's failures without erasing historical failures.
+    """Lifetime task faults: a new node/controller never refunds repeated errors.
 
-    Only a recovery record made after node/input verification can establish a new
-    boundary. Missing or inconsistent metadata conservatively retains the total.
+    Historical retry_epoch records stay intact as evidence, but no longer grant
+    another failure budget. Genuine node loss/intentional stops are still refunded.
     """
-    epoch=job.get('retry_epoch') or {}
-    policy=epoch.get('policy');previous=epoch.get('after_attempt')
-    if not policy or not any(row.get('controller_policy')==policy and row.get('previous_attempt')==previous
-                             for row in job.get('recovery_history',[])):
-        return counted_failures(job)
-    attempts=job.get('attempts',[])
-    if previous is None:return counted_failures(job)
-    positions=[i for i,a in enumerate(attempts) if a.get('id')==previous]
-    if len(positions)!=1:return counted_failures(job)
-    return counted_failures({'attempts':attempts[positions[0]+1:]})
+    return counted_failures(job)
 
 
 def aggregate_task_failure(failure):
@@ -434,10 +430,11 @@ class Pool:
         return self.automatic_retry or self.retry_failed or bool((state or {}).get('retry_failed_requested_at'))
 
     def retry_limit_reached(self,job):
-        return self.max_attempts>0 and retry_budget_failures(job)>=self.max_attempts
+        return retry_budget_failures(job)>=failure_limit(self.max_attempts)
 
     def retryable(self,job,now=None,state=None):
-        """Restart immediately by default; positive explicit limits/delays remain supported."""
+        """One immediate retry by default; repeated faults stay excluded across joins."""
+        if self.retry_limit_reached(job):return False
         if job.get('state')=='interrupted' and job.get('resume_not_before'):
             return self.retry_delay<=0 or (time.time() if now is None else now)>=job['resume_not_before']
         if job.get('state')!='failed':return True
@@ -448,6 +445,7 @@ class Pool:
         return (time.time() if now is None else now)>=ended+self.retry_delay
 
     def retry_later(self,job,state=None):
+        if self.retry_limit_reached(job):return False
         if job.get('state')=='interrupted' and job.get('resume_not_before'):
             return self.retry_delay>0 and time.time()<job['resume_not_before']
         return job.get('state')=='failed' and self.retry_requested(state) and not self.retry_limit_reached(job)
@@ -585,9 +583,8 @@ class Pool:
     def enable_automatic_retry(self,worker):
         """Default task recovery after admission; never clear input/setup/identity failures."""
         state=self.queue_state();failure=state.get('failure')
-        policy=dict(policy=DISPATCH_POLICY,max_failed_attempts=self.max_attempts,retry_delay=self.retry_delay,
-                    unlimited_failures=self.max_attempts==0,
-                    retry_count_scope='verified-controller-recovery')
+        policy=dict(policy=DISPATCH_POLICY,max_failed_attempts=failure_limit(self.max_attempts),retry_delay=self.retry_delay,
+                    unlimited_failures=False,retry_count_scope='task-lifetime')
         changed=state.get('automatic_retry_policy')!=policy or not state.get('retry_failed_requested_at')
         state['automatic_retry_policy']=policy
         # Older dispatchers already understand this shared request and cooldown.
@@ -615,7 +612,7 @@ class Pool:
             already=any(row.get('controller_sha256')==controller or row.get('controller_policy')==DISPATCH_POLICY
                         for row in history)
             if already and job['state'] in ('pending','interrupted'):resumable=True
-            if job['state']!='failed' or already:continue
+            if job['state']!='failed' or already or self.retry_limit_reached(job):continue
             attempts=job.get('attempts',[])
             if attempts and (attempts[-1].get('controller_sha256')==controller
                              or attempts[-1].get('controller_policy')==DISPATCH_POLICY):continue
@@ -626,9 +623,6 @@ class Pool:
                     controller_policy=DISPATCH_POLICY,worker=worker,
                     previous_attempt=attempts[-1].get('id') if attempts else None,at=time.time(),
                     reason='verified_node_join_after_controller_update'))
-                job['retry_epoch']=dict(policy=DISPATCH_POLICY,
-                    after_attempt=attempts[-1].get('id') if attempts else None,
-                    previous_failed_attempts=counted_failures(job))
                 job['state']='pending';atomic(path,job);recovered.append(path.stem)
             finally:lease.close()
         if aggregate and (recovered or resumable):
@@ -813,6 +807,11 @@ class Pool:
                 all_done=False
                 if job['state']=='done':raise ValueError('Previously completed output disappeared or became inconsistent: '+path.stem)
                 if native_busy:active=True;continue
+                if self.retry_limit_reached(job) and job['state']!='failed':
+                    # Old controllers may have reset a failed job to pending/running.
+                    # Only migrate it after its lease/native lock is free and outputs
+                    # were checked; never interrupt a live task or discard a result.
+                    job['state']='failed';atomic(path,job)
                 if not self.retryable(job,state=state):
                     if job['state']=='failed':failed.append(path.stem)
                     later=later or self.retry_later(job,state);continue
@@ -831,7 +830,7 @@ class Pool:
             return 'advance',None
         if failed and not pending and not active and not later:
             state=self.queue_state();state.pop('retry_failed_requested_at',None)
-            cap='no failure cap' if self.max_attempts==0 else f'at most {self.max_attempts} failures in this verified repair'
+            cap=f'at most {failure_limit(self.max_attempts)} failures over this task lifetime'
             state['failure']=dict(detail=f'{len(failed)} task(s) failed; no independent ready/running work remains. '
                                   'Failed attempts/checkpoints are preserved. Automatic recovery exhausted or disabled '
                                   f'({cap}, {self.retry_delay:g}s between attempts).',
@@ -1771,7 +1770,7 @@ def main(argv=None,*,selected_cohorts=None):
     parser.add_argument('--retry-failed',action='store_true',
                         help='legacy explicit retry request; failed tasks already retry by default under '
                              '--max-attempts/--retry-delay; does not delete checkpoints or failure history')
-    parser.add_argument('--max-attempts',type=int,default=MAX_ATTEMPTS,help='counted failure cap; 0 (default) restarts until completion or stop')
+    parser.add_argument('--max-attempts',type=int,default=MAX_ATTEMPTS,help='lifetime task failure cap; default2 (one retry); legacy0 also means2')
     parser.add_argument('--retry-delay',type=float,default=RETRY_DELAY,help='seconds before restart; default0 (immediate)')
     parser.add_argument('--status',action='store_true')
     parser.add_argument('--new-queue',action='store_true',
@@ -1794,7 +1793,7 @@ def main(argv=None,*,selected_cohorts=None):
     if not args.python:parser.error('V8_PYTHON or --python is required')
     if not args.poll_seconds>0:parser.error('poll-seconds must be positive')
     if args.max_attempts<0 or not math.isfinite(args.retry_delay) or args.retry_delay<0:
-        parser.error('--max-attempts must be >= 0 (0 means no cap) and --retry-delay a finite number >= 0')
+        parser.error('--max-attempts must be >= 0 (legacy0 uses the default finite cap) and --retry-delay a finite number >= 0')
     gpus=[gpu.strip() for gpu in args.gpus.split(',')]
     if any(not x.strip() for x in gpus) or len(set(gpus))!=len(gpus):parser.error('GPU IDs must be nonempty and distinct')
     group=Path(os.environ.get('GROUP_VOLUME','/group-volume')).resolve()

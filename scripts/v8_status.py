@@ -243,7 +243,7 @@ def _collect(base, cohort, now):
 
 
 TERMINAL_RUN = {'completed_horizon', 'completed_budget'}   # srgc_v8_nodes.TERMINAL
-MAX_ATTEMPTS = 3   # legacy queues without a recorded retry policy; V15 records0/no cap
+MAX_ATTEMPTS = 2   # V20: lifetime task faults, including failures from previous nodes
 RETRY_DELAY = 60.0
 
 
@@ -340,7 +340,10 @@ def failure_story(row, attempt, job, task, directory, state, live_policies, now)
     # v11 (9c1e31c) retries failed tasks by default and records it in state.json; older workers follow the marker.
     retrying = bool(state.get('retry_failed_requested_at') or state.get('automatic_retry_policy'))
     ended = attempt.get('ended_at') if isinstance(attempt.get('ended_at'), (int, float)) else None
-    if limit > 0 and used >= limit:
+    if limit == 0:
+        nxt = ('UNBOUNDED legacy retry policy is still recorded; update and restart all workers to apply '
+               'the finite failure cap; reading status alone does not stop running workers')
+    elif used >= limit:
         nxt = (f"{used}/{limit} failures used: no more automatic retries; fix the cause, then start one node "
                f"with --max-attempts {used + 1}")
     elif retrying:

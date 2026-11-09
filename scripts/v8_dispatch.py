@@ -159,7 +159,7 @@ def main():
                             legacy_dense_memory='hash-pinned-per-prompt-release-and-host-optimizer-snapshot',
                             olmo_memory='zero-dropout-activation-recomputation-and-generation-last-logit',
                             default_task_recovery=dict(max_counted_failures=nodes.MAX_ATTEMPTS,retry_delay=nodes.RETRY_DELAY,
-                                                       unlimited_failures=nodes.MAX_ATTEMPTS==0),
+                                                       unlimited_failures=False,retry_count_scope='task-lifetime'),
                             per_rank_receipt='progress/<attempt>/runtime-repair-rank-N.json'))
             if actor.overrides:record['control_overrides']=actor.overrides
             receipt=Path(root)/'.v8-dispatch-policies'/(cohort+'-'+nodes.digest(record)+'.json')
