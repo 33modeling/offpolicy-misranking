@@ -241,7 +241,7 @@ def _collect(base, cohort, now):
 
 
 TERMINAL_RUN = {'completed_horizon', 'completed_budget'}   # srgc_v8_nodes.TERMINAL
-MAX_ATTEMPTS = 3   # srgc_v8_nodes / srgc_rebuttal.cluster default --max-attempts
+MAX_ATTEMPTS = 3   # legacy queues without a recorded retry policy; V15 records0/no cap
 RETRY_DELAY = 60.0
 
 
@@ -338,18 +338,20 @@ def failure_story(row, attempt, job, task, directory, state, live_policies, now)
     # v11 (9c1e31c) retries failed tasks by default and records it in state.json; older workers follow the marker.
     retrying = bool(state.get('retry_failed_requested_at') or state.get('automatic_retry_policy'))
     ended = attempt.get('ended_at') if isinstance(attempt.get('ended_at'), (int, float)) else None
-    if used >= limit:
+    if limit > 0 and used >= limit:
         nxt = (f"{used}/{limit} failures used: no more automatic retries; fix the cause, then start one node "
                f"with --max-attempts {used + 1}")
     elif retrying:
         wait = (ended + delay - now) if ended else 0
-        nxt = f"retried automatically: attempt {used + 1}/{limit} " + \
-              (f"starts in {age_text(wait)}" if wait > 0 else 'is waiting for the next free node')
+        attempt_label=f'{used + 1}/{limit}' if limit>0 else f'{used + 1} (no limit)'
+        nxt = f"retried automatically: attempt {attempt_label} " + \
+              (f"starts in {age_text(wait)}" if wait > 0 else 'is waiting for the next free node'+
+               (' (immediate checkpoint restart)' if delay==0 else ''))
     elif live_policies and policy and policy not in live_policies and not (recovered & live_policies):
         nxt = 'failed under older code: a node started with the current bundle retries it automatically'
     else:
         nxt = (f"not retried yet: a node started with the current bundle retries failed tasks automatically "
-               f"(up to {limit} failures)")
+               + (f"(up to {limit} failures)" if limit>0 else '(no retry limit)'))
     if finished:
         nxt = 'work is already complete (a retry resumes from its checkpoint, nothing finished is redone); ' + nxt
     elif not real and rc in (9, -9, 137):

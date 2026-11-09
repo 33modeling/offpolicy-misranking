@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="4" skipped="0" tests="4" time="0.577" timestamp="2026-11-09T11:32:50.024417+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_immediate_restart" name="test_default_restart_has_no_failure_cap_or_cooldown" time="0.001"><failure message="assert (3 == 0)&#10; +  where 3 = &lt;scripts.srgc_v8_nodes.Pool object at 0x736f69d26540&gt;.max_attempts">tests/test_srgc_v8_immediate_restart.py:16: in test_default_restart_has_no_failure_cap_or_cooldown
+    assert pool.max_attempts==0 and pool.retry_delay==0
+E   assert (3 == 0)
+E    +  where 3 = &lt;scripts.srgc_v8_nodes.Pool object at 0x736f69d26540&gt;.max_attempts</failure></testcase><testcase classname="tests.test_srgc_v8_immediate_restart" name="test_ready_new_work_is_not_starved_by_immediately_retryable_primary" time="0.003"><failure message="AssertionError: failed on-policy trajectory starved independent ready branches/seeds&#10;assert '2a02e033e89f2b966ff81ae2dad97fa5b80748ec53d502083be996c5aefb8f99' != '2a02e033e89f2b966ff81ae2dad97fa5b80748ec53d502083be996c5aefb8f99'">tests/test_srgc_v8_immediate_restart.py:27: in test_ready_new_work_is_not_starved_by_immediately_retryable_primary
+    try:assert key!=bad,'failed on-policy trajectory starved independent ready branches/seeds'
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: failed on-policy trajectory starved independent ready branches/seeds
+E   assert '2a02e033e89f2b966ff81ae2dad97fa5b80748ec53d502083be996c5aefb8f99' != '2a02e033e89f2b966ff81ae2dad97fa5b80748ec53d502083be996c5aefb8f99'</failure></testcase><testcase classname="tests.test_srgc_v8_immediate_restart" name="test_busy_gpu_is_rechecked_quickly_after_process_exit" time="0.000"><failure message="AssertionError: a finished task left a stale busy cache for30seconds&#10;assert False is True">tests/test_srgc_v8_immediate_restart.py:38: in test_busy_gpu_is_rechecked_quickly_after_process_exit
+    assert gate()[0] is True,'a finished task left a stale busy cache for30seconds'
+E   AssertionError: a finished task left a stale busy cache for30seconds
+E   assert False is True</failure></testcase><testcase classname="tests.test_srgc_v8_immediate_restart" name="test_one_contended_cohort_does_not_idle_ready_other_cohort" time="0.502"><failure message="AssertionError: metadata contention in a prevented all GPU dispatch&#10;assert ([True, True, True, True, True, True, ...] and [] == ['b']&#10;  &#10;  Right contains one more item: 'b'&#10;  Use -v to get more diff)">tests/test_srgc_v8_immediate_restart.py:73: in test_one_contended_cohort_does_not_idle_ready_other_cohort
+    assert contention and launched==['b'],'metadata contention in a prevented all GPU dispatch'
+E   AssertionError: metadata contention in a prevented all GPU dispatch
+E   assert ([True, True, True, True, True, True, ...] and [] == ['b']
+E     
+E     Right contains one more item: 'b'
+E     Use -v to get more diff)</failure></testcase></testsuite></testsuites>

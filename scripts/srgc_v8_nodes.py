@@ -30,7 +30,7 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'source-recovery-native-crash-mbpp-spawn-v14'
+DISPATCH_POLICY = 'immediate-checkpoint-restart-work-conserving-v15'
 TERMINAL = {'completed_horizon', 'completed_budget'}
 PHASES = ('train', 'primary_evaluation', 'extension', 'evaluation')
 CPU_PHASES = ('prepare', 'freeze', 'primary_finalize', 'finalize')
@@ -117,8 +117,8 @@ def access_message(path,exc):
             'Run the worker as the account that created this queue; nothing was changed.')
 
 
-MAX_ATTEMPTS=3     # srgc_rebuttal/cluster.py --max-attempts default
-RETRY_DELAY=60.0   # srgc_rebuttal/cluster.py --retry-delay default (seconds)
+MAX_ATTEMPTS=0     # 0: keep restarting task faults until completion or an explicit stop
+RETRY_DELAY=0.0    # restart from the saved checkpoint without a cooldown
 
 
 def counted_failures(job):
@@ -301,23 +301,27 @@ class Pool:
         self.root.mkdir(parents=True,exist_ok=True)
 
     def retry_requested(self,state=None):
-        """Default bounded task retries, shared with older workers through the existing queue marker."""
+        """Task restarts admitted on this node; keep the existing shared retry marker."""
         return self.automatic_retry or self.retry_failed or bool((state or {}).get('retry_failed_requested_at'))
 
+    def retry_limit_reached(self,job):
+        return self.max_attempts>0 and retry_budget_failures(job)>=self.max_attempts
+
     def retryable(self,job,now=None,state=None):
-        """Retry task faults below the failure limit and after the shared cooldown."""
+        """Restart immediately by default; positive explicit limits/delays remain supported."""
         if job.get('state')=='interrupted' and job.get('resume_not_before'):
-            return (time.time() if now is None else now)>=job['resume_not_before']
+            return self.retry_delay<=0 or (time.time() if now is None else now)>=job['resume_not_before']
         if job.get('state')!='failed':return True
-        if not self.retry_requested(state) or retry_budget_failures(job)>=self.max_attempts:return False
+        if not self.retry_requested(state) or self.retry_limit_reached(job):return False
+        if self.retry_delay<=0:return True
         attempts=job.get('attempts',[]);last=attempts[-1] if attempts else {}
         ended=last.get('ended_at') or last.get('started_at') or 0
         return (time.time() if now is None else now)>=ended+self.retry_delay
 
     def retry_later(self,job,state=None):
         if job.get('state')=='interrupted' and job.get('resume_not_before'):
-            return time.time()<job['resume_not_before']
-        return job.get('state')=='failed' and self.retry_requested(state) and retry_budget_failures(job)<self.max_attempts
+            return self.retry_delay>0 and time.time()<job['resume_not_before']
+        return job.get('state')=='failed' and self.retry_requested(state) and not self.retry_limit_reached(job)
 
     def held_leases(self):
         """Jobs whose lease a live worker or its training child still holds."""
@@ -432,6 +436,7 @@ class Pool:
         """Default task recovery after admission; never clear input/setup/identity failures."""
         state=self.queue_state();failure=state.get('failure')
         policy=dict(policy=DISPATCH_POLICY,max_failed_attempts=self.max_attempts,retry_delay=self.retry_delay,
+                    unlimited_failures=self.max_attempts==0,
                     retry_count_scope='verified-controller-recovery')
         changed=state.get('automatic_retry_policy')!=policy or not state.get('retry_failed_requested_at')
         state['automatic_retry_policy']=policy
@@ -642,15 +647,17 @@ class Pool:
             return 'advance',None
         if failed and not pending and not active and not later:
             state=self.queue_state();state.pop('retry_failed_requested_at',None)
+            cap='no failure cap' if self.max_attempts==0 else f'at most {self.max_attempts} failures in this verified repair'
             state['failure']=dict(detail=f'{len(failed)} task(s) failed; no independent ready/running work remains. '
                                   'Failed attempts/checkpoints are preserved. Automatic recovery exhausted or disabled '
-                                  f'(at most {self.max_attempts} failures in this verified repair, {self.retry_delay:g}s between attempts).',
+                                  f'({cap}, {self.retry_delay:g}s between attempts).',
                                   task=None,at=time.time())
             atomic(self.root/'state.json',state)
             return 'failed',None
-        # Fill trajectories first, then checkpoint-ready branches. Ties rotate
-        # toward tasks with fewer launch attempts so a busy task cannot starve others.
-        pending.sort(key=lambda item:(item[1]['task'].get('method_id')!='on_monitored',len(item[1]['attempts']),item[0].stem))
+        # Fresh ready work precedes failed retries, so a broken primary trajectory cannot
+        # monopolize all workers when immediate restarts are enabled. Then fill trajectories.
+        pending.sort(key=lambda item:(item[1]['state']=='failed',item[1]['task'].get('method_id')!='on_monitored',
+                                      len(item[1]['attempts']),item[0].stem))
         if pending and offer:
             return 'ready',dict(phase=phase,jobs=[dict(key=p.stem,task=semantic_task(j['task'])) for p,j in pending])
         if pending and not claim:return 'gpu_busy',None
@@ -816,7 +823,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
     if not pairs:raise ValueError('At least one cohort is required')
     if stop.is_set():return 75
     initialized=set();terminal={};offers={};scans={};last_report=0;reasons={};busy_report=0;setup_report=0
-    shared_failures=set();recovery_checked={}
+    shared_failures=set();recovery_checked={};claim_contention_since={}
     cursor=int(digest(worker)[:8],16)%len(pairs)
     roots=[p.root.parent.parent if p.root.name=='.multi-node' else p.root.parent for p,_ in pairs]
     dispatch_lock=Path(os.path.commonpath([str(p.resolve()) for p in roots]))/'.v8-dispatch.lock'
@@ -862,7 +869,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
         atomic(pool.root/'state.json',state)
         print(f'[{worker}] {cohort(pool)}: CPU stage finished; phase={state["phase"]}',flush=True)
     while not stop.is_set():
-        progressed=False;dispatched=False
+        progressed=False;dispatched=False;short_claim_wait=False
         # A different verified worker may recover the shared queue while this
         # worker is waiting on the other cohort. Do not cache that old failure
         # forever. This never clears a failure or retries a job on its own.
@@ -1053,9 +1060,13 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                             give_up(candidate,pool,'queue access',exc);progressed=True;continue
                         try:
                             if control is None:
-                                # Metadata contention is not evidence that the less busy cohort
-                                # has no work. Retry instead of sending everyone to the other model.
-                                break
+                                # Give short metadata writes a chance to preserve model balance.
+                                # A prolonged scan must not idle this GPU when another cohort is ready.
+                                since=claim_contention_since.setdefault(candidate,time.monotonic())
+                                if time.monotonic()-since<.25:
+                                    short_claim_wait=True;break
+                                continue
+                            claim_contention_since.pop(candidate,None)
                             try:
                                 action,claimed=pool.claim_offered(offers.pop(candidate),worker,stop)
                             except BindingMismatch as exc:
@@ -1125,7 +1136,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
             done=[cohort(pairs[i][0]) for i,v in terminal.items() if v=='complete']
             if done:print(f'[{worker}] complete: {", ".join(done)}',flush=True)
             return 1 if failed else 0
-        if not dispatched and not progressed:stop.wait(poll)
+        if not dispatched and not progressed:stop.wait(min(poll,.05) if short_claim_wait else poll)
     return 75
 
 
@@ -1240,7 +1251,10 @@ class GpuGate:
         self.checked=-1e9;self.value=(True,None)
 
     def __call__(self):
-        if time.monotonic()-self.checked<self.ttl:return self.value
+        # A finished/crashed task can release GPU memory immediately. Do not keep
+        # an idle worker behind a stale30s busy reading after those processes exit.
+        cache=self.ttl if self.value[0] else min(1.0,self.ttl)
+        if time.monotonic()-self.checked<cache:return self.value
         self.checked=time.monotonic();rows=self.inventory(self.gpus)
         busy=[r for r in rows or [] if r['used_mib']>self.limit]
         if not busy:self.value=(True,None)
@@ -1538,8 +1552,8 @@ def main(argv=None,*,selected_cohorts=None):
     parser.add_argument('--retry-failed',action='store_true',
                         help='legacy explicit retry request; failed tasks already retry by default under '
                              '--max-attempts/--retry-delay; does not delete checkpoints or failure history')
-    parser.add_argument('--max-attempts',type=int,default=MAX_ATTEMPTS)
-    parser.add_argument('--retry-delay',type=float,default=RETRY_DELAY)
+    parser.add_argument('--max-attempts',type=int,default=MAX_ATTEMPTS,help='counted failure cap; 0 (default) restarts until completion or stop')
+    parser.add_argument('--retry-delay',type=float,default=RETRY_DELAY,help='seconds before restart; default0 (immediate)')
     parser.add_argument('--status',action='store_true')
     parser.add_argument('--new-queue',action='store_true',
                         help='after stopping the workers on ALL nodes: keep the existing queue as .multi-node.superseded-<time> '
@@ -1560,8 +1574,8 @@ def main(argv=None,*,selected_cohorts=None):
         print(json.dumps(statuses if args.cohort=='all' else statuses[args.cohort],indent=2));return 0
     if not args.python:parser.error('V8_PYTHON or --python is required')
     if not args.poll_seconds>0:parser.error('poll-seconds must be positive')
-    if args.max_attempts<1 or not math.isfinite(args.retry_delay) or args.retry_delay<0:
-        parser.error('--max-attempts must be >= 1 and --retry-delay a finite number >= 0')
+    if args.max_attempts<0 or not math.isfinite(args.retry_delay) or args.retry_delay<0:
+        parser.error('--max-attempts must be >= 0 (0 means no cap) and --retry-delay a finite number >= 0')
     gpus=[gpu.strip() for gpu in args.gpus.split(',')]
     if any(not x.strip() for x in gpus) or len(set(gpus))!=len(gpus):parser.error('GPU IDs must be nonempty and distinct')
     group=Path(os.environ.get('GROUP_VOLUME','/group-volume')).resolve()

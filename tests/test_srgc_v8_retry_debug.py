@@ -31,6 +31,7 @@ def failed(pool,key,count,policy):
 
 def test_old_source_failures_do_not_exhaust_the_verified_repair_budget(tmp_path):
     pool,runtime,task,key,saved=prepared(tmp_path)
+    pool.max_attempts=3  # explicit bounded policy remains available
     path=failed(pool,key,5,'older-runtime-policy')
     pool.fail('1 task(s) failed; no independent ready/running work remains.')
     pool.initialize(worker='new-node',recover=pool.controller_sha256)
@@ -47,7 +48,7 @@ def test_old_source_failures_do_not_exhaust_the_verified_repair_budget(tmp_path)
     # New nodes/status-only code hashes cannot buy another retry epoch.
     exhausted=nodes.read(path)
     for i in range(4):
-        joined=nodes.Pool(pool.root,pool.binding,retry_delay=0);joined.automatic_retry=True
+        joined=nodes.Pool(pool.root,pool.binding,retry_delay=0,max_attempts=3);joined.automatic_retry=True
         joined.controller_sha256='another-status-hash-'+str(i)
         joined.initialize(worker='restart-'+str(i),recover=joined.controller_sha256)
         assert not joined.retryable(nodes.read(path))
@@ -104,6 +105,7 @@ def test_unverified_or_broken_retry_boundary_does_not_refund_failures():
 def test_status_counts_the_same_verified_retry_budget_as_the_dispatcher(tmp_path):
     from test_v8_status import status
     pool,runtime,task,key,saved=prepared(tmp_path);path=failed(pool,key,5,'older-runtime-policy')
+    pool.max_attempts=3
     pool.initialize(worker='node',recover=pool.controller_sha256)
     stop=threading.Event();_,claim=pool.tick(runtime,'node',stop)
     pool.finish(key,1,runtime,stop);claim[0].close();job=nodes.read(path)

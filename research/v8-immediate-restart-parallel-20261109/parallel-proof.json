@@ -1,0 +1,101 @@
+{
+  "scope": "24 actual CPU worker processes; no H100 allocation",
+  "claims": [
+    {
+      "cohort": "qwen_mbpp",
+      "run_id": "qwen_mbpp-8"
+    },
+    {
+      "cohort": "olmo_math",
+      "run_id": "olmo_math-18"
+    },
+    {
+      "cohort": "qwen_math",
+      "run_id": "qwen_math-11"
+    },
+    {
+      "cohort": "olmo_math",
+      "run_id": "olmo_math-9"
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "run_id": "qwen_mbpp-2"
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "run_id": "qwen_mbpp-7"
+    },
+    {
+      "cohort": "olmo_mbpp",
+      "run_id": "olmo_mbpp-0"
+    },
+    {
+      "cohort": "qwen_math",
+      "run_id": "qwen_math-8"
+    },
+    {
+      "cohort": "olmo_mbpp",
+      "run_id": "olmo_mbpp-6"
+    },
+    {
+      "cohort": "olmo_mbpp",
+      "run_id": "olmo_mbpp-7"
+    },
+    {
+      "cohort": "qwen_math",
+      "run_id": "qwen_math-7"
+    },
+    {
+      "cohort": "olmo_mbpp",
+      "run_id": "olmo_mbpp-11"
+    },
+    {
+      "cohort": "olmo_math",
+      "run_id": "olmo_math-14"
+    },
+    {
+      "cohort": "qwen_math",
+      "run_id": "qwen_math-1"
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "run_id": "qwen_mbpp-10"
+    },
+    {
+      "cohort": "olmo_math",
+      "run_id": "olmo_math-6"
+    },
+    {
+      "cohort": "qwen_math",
+      "run_id": "qwen_math-16"
+    },
+    {
+      "cohort": "olmo_mbpp",
+      "run_id": "olmo_mbpp-1"
+    },
+    {
+      "cohort": "olmo_math",
+      "run_id": "olmo_math-8"
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "run_id": "qwen_mbpp-18"
+    },
+    {
+      "cohort": "olmo_math",
+      "run_id": "olmo_math-1"
+    },
+    {
+      "cohort": "qwen_mbpp",
+      "run_id": "qwen_mbpp-12"
+    },
+    {
+      "cohort": "olmo_mbpp",
+      "run_id": "olmo_mbpp-16"
+    },
+    {
+      "cohort": "qwen_math",
+      "run_id": "qwen_math-13"
+    }
+  ]
+}

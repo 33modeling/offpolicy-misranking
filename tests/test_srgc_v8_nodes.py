@@ -124,7 +124,7 @@ def test_more_workers_than_tasks_wait_instead_of_skipping_phase(tmp_path):
 
 @pytest.mark.parametrize('mode',['fail','no_output'])
 def test_failed_task_or_success_without_output_never_becomes_complete(tmp_path,mode):
-    queue,runtime,rc=launch_workers(tmp_path,**{mode:'branch0'})
+    queue,runtime,rc=launch_workers(tmp_path,max_attempts=3,**{mode:'branch0'})
     assert all(value!=0 for value in rc)
     state=nodes.read(queue/'state.json')
     # A task failure is a task record (original SRGC worker rules); only when it blocks all remaining work is
@@ -475,7 +475,7 @@ def run_mixed_fake(root,worker,stop,blocked=False,failed=False):
         runtime.binding['cohort']=cohort
         if blocked and cohort=='a':runtime.ready=lambda _:False
         pairs.append((nodes.Pool(Path(root)/cohort/'queue',runtime.binding),runtime))
-    rc=nodes.worker_loop_many(pairs,worker,stop,poll=.003,retry_delay=0)
+    rc=nodes.worker_loop_many(pairs,worker,stop,poll=.003,retry_delay=0,max_attempts=3 if failed else 0)
     nodes.atomic(Path(root)/(worker+'-exit.json'),{'exit_code':rc})
 
 
