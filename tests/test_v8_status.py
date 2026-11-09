@@ -231,11 +231,11 @@ def test_clean_view_is_compact_with_summary_last(tmp_path):
     lines = text.rstrip().splitlines()
     norm = lambda line: ' '.join(line.split())
     assert lines[0].startswith("OLMo MATH · training ─")
-    assert "train  On" in text and "▶37" in text
+    assert "train  On" in text and "▶13%" in text      # 37 of 275 updates (user: "진척률을 나타내라고")
     top, bottom = text.split("━━ V8 status · ")
     assert "needs attention" not in top
     summary = next(norm(line) for line in bottom.splitlines() if line.startswith(" OLMo MATH "))
-    assert summary.startswith("OLMo MATH training ░░░░░░░░░░░░ 1% 1/55-60 0/50-55 0/≥55 ") and summary.endswith("37/8,125+")
+    assert summary.startswith("OLMo MATH training ░░░░░░░░░░░░ 1% 2% (1/55-60) 0% (0/50-55) 0% (0/≥55) ") and summary.endswith("37/8,125+")
     assert "cells to fill: OLMo MATH ≥160 (train 55-60 + ext 50-55 + eval ≥55)" in bottom
     header = next(norm(line) for line in bottom.splitlines() if norm(line).startswith("phase progress"))
     assert header == "phase progress train ext eval run wait fail updates"
@@ -550,7 +550,10 @@ def test_failed_tasks_say_why_and_whether_it_is_a_real_failure(tmp_path):
     stats = status.clean_block(base, "olmo_math", now, "viewer", 200)[4]
     assert stats["failed"] == 5 and stats["marked"] == 2
     table = text.split("━━ V8 status")[0]
-    assert "!" in table.split("seed")[1] and "✗" in table.split("seed")[1]
+    lines = table.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith(" train "))
+    grid = "\n".join(line for line in lines[start + 1:] if line.strip()[:1].isdigit())   # seed rows of the tables
+    assert "!" in grid and "✗" in grid
 
 
 
@@ -601,7 +604,7 @@ def test_summary_numbers_add_up_and_updates_count_each_job_once(tmp_path, monkey
     assert stats["dead"] == 1 and stats["other"] == 1 and stats["running"] == 0
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
     assert "marked running but no worker is recorded for it" in text and "unknown job state 'weird'" in text
-    head = next(line for line in text.splitlines() if " phase " in line and "progress" in line)
+    head = next(line for line in text.splitlines() if line.split()[:2] == ["phase", "progress"])
     assert " stuck " in head and " other " in head and " train " in head and " eval " in head
 
 
@@ -666,7 +669,7 @@ def test_seed_table_draws_every_planned_branch_before_its_job_exists(tmp_path, m
     assert rows["5"][1] == "▶" and rows["5"][2:12] == ["·"] * 10 and rows["9"][1:] == ["·"] * 12
     assert rows["6"][12] == "✓" and "U = Uniform at the seed's switch point: s6 @150" in block
     later = {line.split()[0]: line.split() for line in lines[i_later + 1:i_later + 6]}
-    assert later["9"] == ["9", "-"] + ["·"] * 11      # ext table: On is never extended; nothing else exists yet
+    assert later["9"] == ["9", "none"] + ["·"] * 11      # ext table: On is never extended; nothing else exists yet
     i_eval = next(i for i, line in enumerate(lines) if line.startswith(" eval "))
     assert {line.split()[0]: line.split() for line in lines[i_eval + 1:i_eval + 6]}["9"] == ["9"] + ["·"] * 12
     for phase in ("train", "extension", "evaluation"):
@@ -722,20 +725,20 @@ def test_extension_and_evaluation_cells_follow_each_task_through_its_states(tmp_
         worker_beat(q, wid, 2, "child:1", now)
     job("x25", "pending", extension, "extension"); job("e1", "pending", e275, "evaluation")
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
-    assert cells(text, "ext")["SR25"] == "·" and cells(text, "eval")["SR25"] == "·" and cells(text, "ext")["On"] == "-"
+    assert cells(text, "ext")["SR25"] == "·" and cells(text, "eval")["SR25"] == "·" and cells(text, "ext")["On"] == "none"
     job("x25", "running", extension, "extension", "h-ext.1"); run(R + "bank_sr_t025.bb22", 310)
     job("e1", "running", e275, "evaluation", "h-ev.1"); run(R + "bank_sr_t025.aa11", 275)
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
-    assert cells(text, "ext")["SR25"] == "▶310" and cells(text, "eval")["SR25"] == "▶"     # not '▶275'
+    assert cells(text, "ext")["SR25"] == "▶28%" and cells(text, "eval")["SR25"] == "▶"     # (310-275)/(400-275); eval not '▶275'
     node = {line.split()[1]: line for line in text.splitlines() if line.startswith(" ▶ h-")}
     assert " s5 SR25 ext " in node["h-ext"] and " 310/400 " in node["h-ext"] and " s5 eval SR25@275 " in node["h-ev"]
     job("x25", "done", extension, "extension"); run(R + "bank_sr_t025.bb22", 400)
     job("e1", "done", e275, "evaluation"); job("e2", "running", e400, "evaluation", "h-ev.1")
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
-    assert cells(text, "ext")["SR25"] == "✓" and cells(text, "eval")["SR25"] == "✓▶"   # one mark per evaluation, update order
+    assert cells(text, "ext")["SR25"] == "✓" and cells(text, "eval")["SR25"] == "▶50%"   # one of two evaluations done, the other running
     assert any(" s5 eval SR25 ext@400 " in line for line in text.splitlines() if line.startswith(" ▶ h-ev"))
     job("e2", "done", e400, "evaluation")
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
-    assert cells(text, "eval")["SR25"] == "✓✓"
+    assert cells(text, "eval")["SR25"] == "✓"
     stats = status.clean_block(base, "olmo_math", now, "viewer", 220)[4]
     assert stats["ext"] == (1, 1) and stats["eval"] == (2, 2) and stats["running"] == 0
