@@ -230,6 +230,9 @@ native fault, 다른 치명 signal을 이 방식으로 해제하지 않는다. �
 원본 SHA f14d92ee...에만 적용하는 기록 overlay가 budget fork의 retained 시작점을
 저장한다. 원래 예산·optimizer step·샘플링을 바꾸지 않고 model/optimizer/RNG 상태를
 그대로 보존한다. 원본 runner 파일은 수정하지 않으며 overlay SHA를 rank receipt에 남긴다.
+여러 runtime actor가 읽는 per-launch plan은 UUID가 포함된 경로에 원자적으로 게시한다.
+actor 시작 중 같은 JSON을 truncate/write해 빈 파일이나 반쪽 문자열을 읽는 경합을 막는다.
+이는 native SIGSEGV와 별도의 초기화 오류이며 scientific task/config 값은 바꾸지 않는다.
 SIGSEGV를 차단한 것은 native 오류 원인을 고쳤다는 뜻이 아니다. 원래 오류와 checkpoint는
 보존하고, 원인 수리 없이 상한만 올려 native crash를 재실행하지 않는다.
  이전 V8가

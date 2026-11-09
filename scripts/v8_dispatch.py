@@ -10,6 +10,7 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 
 import srgc_v8_nodes as nodes
 from v8_rpc import send,receive
@@ -135,8 +136,8 @@ def main():
     planfile=Path(sys.argv[1]);plan=json.loads(planfile.read_text());actors=[]
     plan['worker']=socket.gethostname()+'.'+str(os.getpid())
     # The actor receives this private per-launch plan, with paths already frozen by bootstrap.
-    runfile=planfile.with_name(planfile.stem+'-'+str(os.getpid())+'.json')
-    runfile.write_text(json.dumps(plan))
+    runfile=planfile.with_name(planfile.stem+'-'+str(os.getpid())+'-'+uuid.uuid4().hex+'.json')
+    nodes.atomic(runfile,plan)
     entries={entry['cohort']:entry for entry in plan['entries']}
     controls={name:hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
               for name in ('v8_dispatch.py','v8_runtime_worker.py','v8_rpc.py','srgc_v8_nodes.py',
@@ -146,7 +147,7 @@ def main():
     print(f'[v8] dispatch policy={nodes.DISPATCH_POLICY} controller={controls["srgc_v8_nodes.py"][:12]}',flush=True)
     def factory(runner,root,cohort,python,gpus):
         plan['root']=str(Path(root).resolve());plan['gpus']=gpus
-        runfile.write_text(json.dumps(plan))
+        nodes.atomic(runfile,plan)
         def record_policy(actor):
             record=dict(schema=1,policy=nodes.DISPATCH_POLICY,controller_source=controls,
                         original_runtime_binding=actor.binding,numerical_source_changed=False,

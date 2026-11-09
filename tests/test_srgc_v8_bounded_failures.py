@@ -5,6 +5,7 @@ import multiprocessing as mp
 import os
 from pathlib import Path
 import threading
+import time
 
 import pytest
 
@@ -119,8 +120,9 @@ def test_twelve_nodes_share_two_failures_then_stop_claiming_bad_task(tmp_path):
     ctx=mp.get_context('fork');workers=[ctx.Process(target=run_worker,args=(str(tmp_path),f'node-{i}')) for i in range(12)]
     try:
         for worker in workers:worker.start()
-        for worker in workers:worker.join(2)
-        assert not any(worker.is_alive() for worker in workers),'workers infinitely relaunched the failed task'
+        deadline=time.monotonic()+10
+        for worker in workers:worker.join(max(0,deadline-time.monotonic()))
+        assert not any(worker.is_alive() for worker in workers),'workers did not exit within10s after finite task isolation'
         assert all(worker.exitcode==0 for worker in workers)
         jobs=[nodes.read(p) for p in pool.root.glob('jobs/*.json')]
         bad=next(j for j in jobs if j['task']['run_id']=='bad')

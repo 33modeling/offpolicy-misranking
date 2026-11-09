@@ -103,6 +103,32 @@ def jobs(root,cohort):
     return [json.loads(p.read_text()) for p in (root/cohort/'.multi-node/jobs').glob('*.json')]
 
 
+def test_runtime_plan_publication_never_exposes_partial_json_to_starting_actors(tmp_path):
+    root,plan=fixture_plan(tmp_path)
+    slow_publication=r'''
+import pathlib,time
+stem=pathlib.Path(sys.argv[1]).stem
+original_write=pathlib.Path.write_text
+def slow_write(path,data,*args,**kwargs):
+ if path.name.startswith(stem+'-') and path.suffix=='.json':
+  # Expose an ordinary truncate/write window while the first actor starts.
+  with path.open('w') as handle:
+   half=len(data)//2;handle.write(data[:half]);handle.flush();time.sleep(.3);handle.write(data[half:])
+  return len(data)
+ return original_write(path,data,*args,**kwargs)
+pathlib.Path.write_text=slow_write
+'''
+    code=NODE.replace("raise SystemExit(v8_dispatch.main())",slow_publication+"\nraise SystemExit(v8_dispatch.main())")
+    env=dict(os.environ,PYTHONPATH=str(SCRIPTS),V8_ROOT=str(root),V8_ALLOW_ANY_ROOT='1',
+             FAKE_NODE='healthy',FAKE_SLEEP='0',FAKE_TASKS='1')
+    process=subprocess.Popen([sys.executable,'-c',code,str(plan)],env=env,start_new_session=True,
+                             stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
+    rc,out=finish(process)
+    assert rc==0,out
+    assert 'JSONDecodeError' not in out
+    assert all(nodes.read(root/cohort/'.multi-node/state.json')['phase']=='complete' for cohort in ('olmo_math','qwen_mbpp'))
+
+
 @pytest.mark.parametrize('fault',['admission','actor_exit'])
 def test_node_local_fault_never_fails_the_shared_queue(tmp_path,fault):
     """COORD-01: one node's NCCL admission failure or dead runtime actor stops only that node."""
