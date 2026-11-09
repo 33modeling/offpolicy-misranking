@@ -30,11 +30,12 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'immediate-checkpoint-restart-work-conserving-v15'
+DISPATCH_POLICY = 'ready-eval-ext-immediate-restart-v16'
 TERMINAL = {'completed_horizon', 'completed_budget'}
 PHASES = ('train', 'primary_evaluation', 'extension', 'evaluation')
 CPU_PHASES = ('prepare', 'freeze', 'primary_finalize', 'finalize')
 PRIMARY_ORDER = 'matched-results-before-extension-v1'
+CONCURRENT_ORDER = 'ready-checkpoint-evaluation-extension-v1'
 DEFAULT_COHORTS = ('olmo_math', 'qwen_mbpp', 'olmo_mbpp', 'qwen_math')
 CORRECTED_PLANNER = 'current-v8-016'  # evaluation planner replaced for pre-V8-016 coordinators
 
@@ -212,6 +213,52 @@ def primary_evaluation_tasks(runtime):
             tasks+=found
     if not tasks:raise ValueError('No matched-horizon evaluations; refusing to publish empty primary results')
     return tasks,True
+
+
+def ready_side_tasks(runtime):
+    """Original cost-only budget and exact planners; never wait for unrelated arms/cohorts."""
+    budget_path=runtime.root/'frozen/budget.json';seeds=runtime.cfg['seeds']['training']
+    H=runtime.cfg['training']['matched_update_endpoint']
+    if not budget_path.exists():
+        if list((runtime.root/'evaluations').glob('*.json')):
+            raise ValueError('Evaluation records exist before budget freeze; cannot certify cost-only selection')
+        complete=set()
+        for path in (runtime.root/'runs').glob('*/manifest.json'):
+            row=read(path)
+            if (row.get('cohort_id')==runtime.cohort and row.get('role')=='rebuttal_bank'
+                    and row.get('status')=='completed_horizon' and row.get('completed_updates',-1)>=H):
+                complete.add(row.get('training_seed'))
+        if not set(seeds)<=complete:return dict(tasks=[],budget_ready=False,reason='reference_policy_costs_incomplete')
+        from switching.bank import SeedBank
+        from switching.freeze import freeze_budget,write_frozen_budget
+        rows=[]
+        for seed in seeds:
+            rows+=SeedBank(runtime.root,runtime.cfg,runtime.cohort,seed,'rebuttal_bank',evals={},
+                           prefix_cost=runtime.cluster.prefix_cost_from_receipts(runtime.root,seed)).policy_rows()
+        reference=[r for r in rows if r['policy_id']=='srgc_current']
+        if (set(seeds)!={r['seed'] for r in reference}
+                or any(r.get('status') not in ('triggered','not_triggered')
+                       or r.get('continuation_gpu_seconds') is None for r in reference)):
+            return dict(tasks=[],budget_ready=False,reason='reference_policy_costs_incomplete')
+        for row in reference:
+            path=runtime.root/'runs'/row['run_id']/'manifest.json'
+            if not path.is_file():return dict(tasks=[],budget_ready=False,reason='reference_endpoint_unfinished')
+            endpoint=read(path)
+            if (endpoint.get('cohort_id'),endpoint.get('role'),endpoint.get('training_seed'))!=(runtime.cohort,'rebuttal_bank',row['seed']):
+                raise ValueError('Reference policy endpoint identity differs from this cohort/seed')
+            if endpoint.get('status') not in TERMINAL or endpoint.get('completed_updates',-1)<H:
+                return dict(tasks=[],budget_ready=False,reason='reference_endpoint_unfinished')
+        budget=freeze_budget(rows,files_read=[str(runtime.root/'runs')],expected_seeds=seeds)
+        budget.update(gpu_type=runtime.cfg['runtime']['gpu_type'],gpu_count=runtime.cfg['runtime']['world_size'])
+        write_frozen_budget(budget_path,budget)
+        print(f'[v8] {runtime.cohort}: reference-policy costs complete; froze original budget before any evaluation',flush=True)
+    loc=runtime.locator();budget=read(budget_path)['value']
+    extension,notes=runtime.mx.build_stage('budget-extension',runtime.cfg,loc,runtime.root,seeds=seeds,budget=budget)
+    evaluations,_=Runtime.plan(runtime,'evaluation')
+    result=dict(tasks=[dict(phase='extension',task=t) for t in extension]+
+                      [dict(phase='evaluation',task=t) for t in evaluations],
+                budget_ready=True,budget_sha256=hashlib.sha256(budget_path.read_bytes()).hexdigest(),waiting_parents=notes)
+    return result
 
 
 def capture_primary_results(runtime):
@@ -532,6 +579,13 @@ class Pool:
         if not getattr(runtime,'primary_results_first',False):return state
         order=state.get('execution_order') or {};updated=False
         scope=list(dict.fromkeys([*order.get('cohorts',[]),*getattr(runtime,'primary_cohort_scope',(self.binding['cohort'],))]))
+        if getattr(runtime,'streaming_ready_tasks',False):
+            if order.get('policy')!=CONCURRENT_ORDER or order.get('cohorts')!=scope:
+                state.setdefault('actions',[]).append(dict(action='enable_ready_checkpoint_parallel_work',
+                    previous_order=order,at=time.time(),policy=CONCURRENT_ORDER))
+                state['execution_order']=dict(policy=CONCURRENT_ORDER,cohorts=scope)
+                atomic(self.root/'state.json',state)
+            return state
         if order.get('policy')!=PRIMARY_ORDER or order.get('cohorts')!=scope:
             state['execution_order']=dict(policy=PRIMARY_ORDER,cohorts=scope);updated=True
         phase=state['phase']
@@ -607,10 +661,22 @@ class Pool:
         job_phase='evaluation' if phase=='primary_evaluation' else phase
         selected={task_key(t) for t in tasks}
         for task in tasks:self.register(task,job_phase)
+        side_keys=set();side_budget=None
+        if getattr(runtime,'streaming_ready_tasks',False):
+            side=runtime.side_tasks()
+            summary={k:v for k,v in side.items() if k!='tasks'}
+            if state.get('ready_side_work')!=summary:
+                state['ready_side_work']=summary;atomic(self.root/'state.json',state)
+            side_budget=side.get('budget_sha256')
+            for item in side.get('tasks',[]):
+                if item['phase'] not in ('extension','evaluation'):raise ValueError('Invalid side task phase')
+                if not side_budget:raise ValueError('Ready ext/eval work has no frozen-budget receipt')
+                side_keys.add(self.register(item['task'],item['phase']))
         jobs=[]
         for path in sorted(self.root.glob('jobs/*.json')):
             job=read(path)
-            if job['phase']==job_phase and (phase!='primary_evaluation' or path.stem in selected):jobs.append((path,job))
+            if (job['phase']==job_phase and (phase!='primary_evaluation' or path.stem in selected)) or path.stem in side_keys:
+                jobs.append((path,job))
         if not jobs and phase!='extension':
             raise ValueError('No tasks produced for '+phase+'; refusing to declare an empty experiment complete')
         pending=[];all_done=True;active=False;failed=[];later=False
@@ -659,10 +725,11 @@ class Pool:
         pending.sort(key=lambda item:(item[1]['state']=='failed',item[1]['task'].get('method_id')!='on_monitored',
                                       len(item[1]['attempts']),item[0].stem))
         if pending and offer:
-            return 'ready',dict(phase=phase,jobs=[dict(key=p.stem,task=semantic_task(j['task'])) for p,j in pending])
+            return 'ready',dict(phase=phase,side_budget_sha256=side_budget,
+                                jobs=[dict(key=p.stem,phase=j['phase'],task=semantic_task(j['task'])) for p,j in pending])
         if pending and not claim:return 'gpu_busy',None
 
-        return self.claim_offered(dict(phase=phase,jobs=[dict(key=p.stem,task=semantic_task(j['task']))
+        return self.claim_offered(dict(phase=phase,side_budget_sha256=side_budget,jobs=[dict(key=p.stem,phase=j['phase'],task=semantic_task(j['task']))
                                                        for p,j in pending]),worker,stop)
 
     def claim_offered(self,offer,worker,stop):
@@ -675,10 +742,17 @@ class Pool:
         state=self.queue_state()
         if state.get('failure') or state['phase']!=offer['phase']:return 'stale',None
         if offer['phase']=='extension' and self.extension_blockers():return 'waiting',None
+        if offer.get('side_budget_sha256'):
+            budget=self.root.parent/'frozen/budget.json'
+            if not budget.is_file() or hashlib.sha256(budget.read_bytes()).hexdigest()!=offer['side_budget_sha256']:
+                return 'stale',None
         for item in offer['jobs']:
             if stop.is_set():return 'stopped',None
             path=self.root/'jobs'/(item['key']+'.json');job=read(path)
             job_phase='evaluation' if offer['phase']=='primary_evaluation' else offer['phase']
+            if state.get('execution_order',{}).get('policy')==CONCURRENT_ORDER:
+                job_phase=item.get('phase',job_phase)
+                if job_phase not in (offer['phase'],'extension','evaluation'):raise ValueError('Invalid concurrent claim phase')
             if job['phase']!=job_phase or semantic_task(job['task'])!=item['task']:
                 raise ValueError('Inspected task definition changed before claim: '+item['key'])
             # A failed task is claimable only under the retry rules (--retry-failed, attempts, delay).
@@ -864,7 +938,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
         if action=='primary_finalize':
             receipt=(pool.root/'primary-results.json').read_bytes()
             state['primary_results_receipt_sha256']=hashlib.sha256(receipt).hexdigest()
-        state['phase']={'prepare':'train','freeze':'primary_evaluation' if state.get('execution_order',{}).get('policy')==PRIMARY_ORDER else 'extension',
+        state['phase']={'prepare':'train','freeze':'primary_evaluation' if state.get('execution_order',{}).get('policy') in (PRIMARY_ORDER,CONCURRENT_ORDER) else 'extension',
                         'primary_finalize':'extension','finalize':'complete'}[action]
         atomic(pool.root/'state.json',state)
         print(f'[{worker}] {cohort(pool)}: CPU stage finished; phase={state["phase"]}',flush=True)
@@ -1270,7 +1344,7 @@ class Runtime:
     def __init__(self,runner,root,cohort,python,gpus):
         self.runner=Path(runner).resolve();self.root=Path(root).resolve()/cohort
         self.cohort=cohort;self.python=python;self.gpus=gpus
-        self.primary_results_first=True
+        self.primary_results_first=True;self.streaming_ready_tasks=True
         if not (self.runner/'cluster_child.py').is_file():raise ValueError('runner-root must contain cluster_child.py')
         if not os.environ.get('V8_CODE_ROOT'):raise ValueError('V8_CODE_ROOT must point to the frozen trainer checkout')
         sys.path.insert(0,str(self.runner))
@@ -1357,6 +1431,8 @@ class Runtime:
             if action=='primary_finalize' and not stop.is_set():capture_primary_results(self)
 
     def locator(self):return self.cluster.ClusterLocator(self.root,self.cfg)
+
+    def side_tasks(self):return ready_side_tasks(self)
 
     def plan(self,phase):
         if phase=='primary_evaluation':return primary_evaluation_tasks(self)

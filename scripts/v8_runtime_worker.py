@@ -175,7 +175,8 @@ def control_overrides(runtime,source):
             return evaluation_original_plan(phase)
         runtime.plan=plan;overrides.append('plan.evaluation:current-v8-016');corrected.append('evaluation')
     if all(hasattr(runtime,name) for name in ('cfg','mx','cluster','cpu','locator')):
-        runtime.primary_results_first=True
+        runtime.primary_results_first=True;runtime.streaming_ready_tasks=True
+        runtime.side_tasks=types.MethodType(control.ready_side_tasks,runtime)
         primary_original_plan=runtime.plan;primary_original_barrier=runtime.barrier
         def primary_plan(phase):
             if phase=='primary_evaluation':return control.primary_evaluation_tasks(runtime)
@@ -184,7 +185,8 @@ def control_overrides(runtime,source):
             if action=='primary_finalize':return control.Runtime.barrier(runtime,action,*args)
             return primary_original_barrier(action,*args)
         runtime.plan=primary_plan;runtime.barrier=primary_barrier
-        overrides.extend(('plan.primary:matched-horizon-first','barrier.primary:collect-and-preserve'))
+        overrides.extend(('plan.primary:matched-horizon-first','barrier.primary:collect-and-preserve',
+                          'plan.side:ready-eval-extension-original-budget'))
     return overrides,corrected
 
 
@@ -223,7 +225,8 @@ def main():
                                dispatch_policy=plan.get('dispatch_policy'),controller_sha256=plan.get('controller_sha256')))
         runtime.heartbeat=heartbeat
         send(channel,dict(ok=True,binding=runtime.binding,overrides=overrides,corrected_plans=corrected,
-                          primary_results_first=getattr(runtime,'primary_results_first',False)))
+                          primary_results_first=getattr(runtime,'primary_results_first',False),
+                          streaming_ready_tasks=getattr(runtime,'streaming_ready_tasks',False)))
     except Exception as exc:
         try:send(channel,dict(ok=False,type=type(exc).__name__,error=str(exc)))
         except OSError:pass  # the dispatcher already left (stop or startup timeout)
@@ -243,7 +246,7 @@ def main():
             elif method=='execute':
                 task,matrix,attempt=args
                 result=runtime.execute(task,Path(matrix),fds[0],stop,fds[1:],attempt)
-            elif method in ('verify_node','plan','done','ready','native_busy'):
+            elif method in ('verify_node','plan','done','ready','native_busy','side_tasks'):
                 result=getattr(runtime,method)(*args)
             else:raise ValueError('unsupported runtime actor method')
             reply=dict(ok=True,result=result,interrupted=stop.is_set())

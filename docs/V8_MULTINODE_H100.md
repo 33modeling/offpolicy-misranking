@@ -119,20 +119,23 @@ binding·실패 기록은 setup-history에 보존한다. 학습이 시작된 큐
 불러온다. 저장된 process RNG가 있으면 복원한다. 같은 v8 작업은 `latest.pt`에서
 재개한다. 다른 방법의 기존275-update 결과를 새 v8 작업 완료로 자동 대체하지 않는다.
 
-각 cohort는 준비·입력 검증 → trajectory와 checkpoint가 준비된 분기 →
-275스텝 학습 완료 → 비용만으로 예산 고정 → 275스텝 최종 평가·수집·분석 순서로 진행한다.
-**기본 명령의 네 조합 모두 이 결과를 저장한 다음에 ext를 시작한다.** ext 이후에는
-연장된 예산 endpoint를 평가하고 전체 보고서를 갱신한다. 평가를 보기 전에 고정한
-예산은 바꾸지 않으며, 각 cohort의 예산과 학습 결과는 분리한다. 한쪽의 GPU 작업 실패는
-기록하고 그 cohort의 새 배정을 멈춘다. 정상 cohort의 남은 작업을 마친 뒤 전체
-worker는 실패 종료 코드를 반환한다. 환경·입력 사전검사 오류는 가려서 진행하지 않는다.
+최신 사용자 지시에 따라 **준비된 ext와 최종 eval을 학습과 함께 배정한다.** 네 조합의
+기본 결과를 모두 기다리는 전역 장벽과, 관계없는 분기 전체의 학습 완료 대기를 없앴다.
+각 cohort는 모든 지정 seed의 `srgc_current`가 실제275 endpoint에 도달하고 비용이
+기록되면 원래 비용 전용 함수로 예산을 먼저 고정한다. 평가 결과는 예산 계산에 쓰지 않는다.
+예산이 고정되면275 체크포인트가 준비된 각 분기의 ext·최종 eval 및 확정된 예산
+endpoint eval을 빈4GPU 노드에 배정한다. 다른 분기·seed·모델은 동시에 학습할 수 있다.
+예산 기준 정책의 endpoint·비용이 아직 없거나 부모 checkpoint가 없으면 해당 작업만
+기다린다. 이 조건을 우회해 미측정 비용이나 평가를 만들지 않는다.
+작업 실패는 원문을 남기고 즉시 재시작하며, 환경·입력 사전검사 오류는 가려서 진행하지 않는다.
 
 먼저 나온275스텝 결과는 각 cohort의 `analysis/matched-update-275/`에 보존한다.
 `.multi-node/primary-results.json`은 보고서·평가 목록·원본 binding·고정 예산의 해시를
-기록하고, 네 조합의 유효한 결과 기록이 있어야 새 ext 작업을 배정한다. 기존 evaluation
+기록한다. 이 보고서는 ext 배정의 전역 장벽으로 사용하지 않는다. 기존 evaluation
 job·계획·실패 기록은 지우지 않고275스텝 평가는 같은 결과 파일을 재사용한다.
-이미 ext가 시작된 큐에서는 살아 있는 task lease를 빼앗지 않는다. 작업이 끝나 잠금이
-풀린 뒤 기본 결과를 먼저 확인하고 남은 ext를 뒤로 미룬다. 이미 끝난 ext는 되돌리지 않는다.
+일찍 배정한 작업도 원래 `extension`·`evaluation` job phase와 task key를 유지하며,
+claim 직전 고정 예산 해시와 현재 task 정의·lease를 다시 확인한다. 이미 실행 중인
+task lease는 빼앗지 않고 완료된 ext나 평가도 되풀이하지 않는다.
 이 순서를 적용하려면 모든 V8 worker를 수정본으로 다시 시작해야 한다. 이전 worker는
 고정된 예전 코드를 계속 쓰므로 `git pull`만으로 실행 순서가 바뀌지 않는다. 재시작해도
 원래 체크포인트·optimizer·RNG와 학습 기록은 보존한다.
@@ -159,7 +162,7 @@ worker는60초마다 현황을 출력한다. 자식 출력은 터미널과 각 c
 정책 버전이 나온다. 표 형식 `status`는 `dispatch current <hash>`(현재 checkout과
 같음), `dispatch different <hash>`(다름), `dispatch unverified`(기록 없음)를 구분한다.
 정책 파일이 디스크에 있다는 것만으로 실행 중인 worker에 적용됐다고 판단하지 않는다.
-현재 배정 정책은 `immediate-checkpoint-restart-work-conserving-v15`이다. 작업 검사는 해당 cohort의
+현재 배정 정책은 `ready-eval-ext-immediate-restart-v16`이다. 작업 검사는 해당 cohort의
 control lease만 잡고 별도로 수행한다. 검사 결과가 준비되면 공유 잠금 안에서 현재
 binding·phase·실패 상태·작업 정의·작업 lease를 다시 확인한 뒤 claim한다.
 검사와 claim 사이에 다른 노드가 가져간 작업이나 실패한 작업은 가져오지 않는다.

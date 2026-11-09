@@ -20,7 +20,7 @@
     "metrics": "SIGSEGV 실패4회 후5번째 완료, 실패4건 보존;24동시worker/4cohort/중복0; legacy 명시cap3/대기60 유지",
     "scientific_measurements": null
   },
-  "next_scope": "최신 ext/eval 즉시 배정 요청은 별도 동시 실행 제어 변경으로 이어서 구현 중. 이 V15 commit만으로 전역 ext 장벽을 해제했다고 보고하지 않는다.",
+  "next_scope": "준비된 ext/eval 동시 배정과 원래 결과 수집 경로 구현·선행검증 완료. 최종 전체 회귀와 영구장부 기록을 이어서 수행한다.",
   "frozen_trainer_sha256": {
     "srgc_rebuttal/__init__.py": "daff68712fd7115469febaaad3c782d020ad450bce6e0f883a0259cadd3a258f",
     "srgc_rebuttal/admission.py": "befe3a6514875e24a23979b795602b281ef2ea2a9abadb01e19c9977cd7b8024",
@@ -54,6 +54,24 @@
     "srgc_rebuttal/verifiers.py": "5062befe4ed5a8e21f6de01a73dca4f1d3544dd033c5d2c846bff391d1148a90"
   },
   "evidence": {
+    "ready-rpc.xml": {
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "ready-side-final.xml": {
+      "tests": 17,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "ready-cost-before.xml": {
+      "tests": 1,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0
+    },
     "before.xml": {
       "tests": 4,
       "failures": 4,
@@ -66,11 +84,39 @@
       "errors": 0,
       "skipped": 0
     },
+    "ready-side.xml": {
+      "tests": 16,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0
+    },
     "targeted-final.xml": {
       "tests": 52,
       "failures": 0,
       "errors": 0,
       "skipped": 0
+    },
+    "ready-cost-before-valid.xml": {
+      "tests": 1,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0
     }
+  },
+  "ready_ext_eval_changes": [
+    "최신 사용자 지시로 전역 네-cohort 기본보고서 장벽을 해제. 원래 예산 규칙/원본평가spec/동결입력은 유지.",
+    "모든 지정 seed의 선택된 srgc_current endpoint와 비용이 완성되면 기존 함수를 사용해 B를 먼저고정. 다른분기 전체완료 전 ext/eval 배정.",
+    "원본 extension/evaluation phase·task key·결과파일과 실패를 보존. claim 시 고정예산SHA/현재phase/task/lease 재검증.",
+    "원본 V8 CPU실행기40작업(학습11/ext8/eval21) 완료. 미완료uniform학습 전에 ext/eval 둘다시작. 호출스택/학습보상/평가·모델·optimizer·RNG checkpoint를 zip에 원문보존."
+  ],
+  "additional_retained_failures": [
+    "첫 ready-side 검사1fail/15pass: 단일worker 검사가 기존2-worker 검증헬퍼를 잘못사용. 기본2를 유지하고 새 단일worker 검사에 min_workers1 명시.",
+    "미공개 V16 초안에서 다른 branch만H완료여도 아직250진행중인 selected On의부분비용을 B로고정할수있었다. 원문1fail을 보존하고 선택된 run 자체의cohort/seed/role·terminal·H를 검사하도록수정. 첫fixture의locator누락도 보존. 실제 H100 노출 없음."
+  ],
+  "source_files_sha256": {
+    "scripts/srgc_v8_nodes.py": "38e8853902b02f6c8859c81c1920267a03c11ab477f41ab1dec84b891d760dd3",
+    "scripts/v8_dispatch.py": "2651f5be26a34834d8bf064827cffbe596481d26371b98b743dab2050cfea130",
+    "scripts/v8_runtime_worker.py": "bc4bee128d1ccd8187a6972e33e692e2dec55c84847bbc68722c4f6bbe6d9f63",
+    "scripts/v8_status.py": "5c72bbf73922e72a8274a913ddaaddd3ce0e95f97ab246a4c6a574245265cc6e"
   }
 }

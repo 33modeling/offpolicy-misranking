@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="0.785" timestamp="2026-11-09T11:43:39.359008+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_ready_eval_ext" name="test_budget_waits_for_selected_on_policy_endpoint_even_if_another_branch_completed" time="0.700"><failure message="AttributeError: 'types.SimpleNamespace' object has no attribute 'locator'">tests/test_srgc_v8_ready_eval_ext.py:115: in test_budget_waits_for_selected_on_policy_endpoint_even_if_another_branch_completed
+    result=nodes.ready_side_tasks(runtime)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/srgc_v8_nodes.py:247: in ready_side_tasks
+    loc=runtime.locator();budget=read(budget_path)['value']
+        ^^^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'locator'</failure></testcase></testsuite></testsuites>

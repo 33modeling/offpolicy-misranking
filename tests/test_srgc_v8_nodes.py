@@ -518,6 +518,7 @@ class ToyRuntime(nodes.Runtime):
     """Actual v8 planner, runner and evaluator with its own CPU ToyBackend."""
     def __init__(self,runner,root,cohort='olmo_math'):
         super().__init__(runner,root,cohort,sys.executable,['0','1','2','3'])
+        self.streaming_ready_tasks=False  # retained control for the previously requested extension-last order
         from switching import backends,coderepo,smoke,spec
         from switching.engine import make_engine_class
         self.backends,self.smoke=backends,smoke
@@ -552,7 +553,7 @@ class ToyRuntime(nodes.Runtime):
         elif action=='freeze':
             from switching.bank import SeedBank
             from switching.freeze import freeze_budget,write_frozen_budget
-            assert not list((self.root/'evaluations').glob('*.json'))
+            if not (self.root/'frozen/budget.json').exists():assert not list((self.root/'evaluations').glob('*.json'))
             rows=[]
             for seed in self.cfg['seeds']['training']:
                 rows+=SeedBank(self.root,self.cfg,self.cohort,seed,'rebuttal_bank',evals={},
@@ -574,7 +575,7 @@ class ToyRuntime(nodes.Runtime):
 
     def execute(self,t,matrix,fd,stop,device_fds,attempt):
         from switching.runner import execute_train,execute_eval
-        if t.get('method',{}).get('extension_of'):
+        if t.get('method',{}).get('extension_of') and not self.streaming_ready_tasks:
             assert all(nodes.primary_results_ready(self.root.parent/c) for c in self.primary_cohort_scope)
         ctx=self.context(t['training_seed'])
         result=execute_eval(t,ctx) if t['kind']=='evaluate' else execute_train(t,ctx)
@@ -607,13 +608,13 @@ def test_real_v8_cpu_three_worker_branch_bank(tmp_path,monkeypatch):
     nodes.atomic(tmp_path/'integration-summary.json',verify_toy_complete(runner,tmp_path,'olmo_math',monkeypatch))
 
 
-def verify_toy_complete(runner,tmp_path,cohort,monkeypatch):
+def verify_toy_complete(runner,tmp_path,cohort,monkeypatch,*,min_workers=2):
     root=tmp_path/cohort;queue=root/'.multi-node'
     assert nodes.read(queue/'state.json')['phase']=='complete'
     jobs=[nodes.read(path) for path in queue.glob('jobs/*.json')]
     executions=[nodes.read(path) for path in (root/'executed').glob('*.json')]
     assert len(executions)==len(jobs)==len({row['task'] for row in executions})
-    assert len({row['worker'] for row in executions})>=2
+    assert len({row['worker'] for row in executions})>=min_workers
     assert all(job['state']=='done' for job in jobs)
     assert all(len(job['attempts'])==1 for job in jobs)
     assert {job['task']['training_seed'] for job in jobs}=={5,6,7}

@@ -47,6 +47,7 @@ class RuntimeProxy:
         # Pool keeps this same dictionary, created before the asynchronous reply.
         self.binding.clear();self.binding.update(reply['binding']);self.initialized=True
         self.primary_results_first=reply.get('primary_results_first',False)
+        self.streaming_ready_tasks=reply.get('streaming_ready_tasks',False)
         self.overrides=list(reply.get('overrides',[]));self.corrected_plans=tuple(reply.get('corrected_plans',()))
         if self.on_ready:self.on_ready(self)
 
@@ -87,6 +88,7 @@ class RuntimeProxy:
 
     def verify_node(self):return self.call('verify_node')
     def plan(self,phase):return self.call('plan',phase)
+    def side_tasks(self):return self.call('side_tasks')
     def ready(self,task):return self.call('ready',task)
     def native_busy(self,task):return self.call('native_busy',task)
     def done(self,task):return self.call('done',task)
@@ -148,7 +150,8 @@ def main():
         def record_policy(actor):
             record=dict(schema=1,policy=nodes.DISPATCH_POLICY,controller_source=controls,
                         original_runtime_binding=actor.binding,numerical_source_changed=False,
-                        execution_order=nodes.PRIMARY_ORDER if actor.primary_results_first else 'original-runtime-order',
+                        execution_order=nodes.CONCURRENT_ORDER if actor.streaming_ready_tasks else
+                                        nodes.PRIMARY_ORDER if actor.primary_results_first else 'original-runtime-order',
                         conditional_runtime_repairs=dict(strict_math_verifier='recorded-seed-fallback',
                             mbpp_subprocess='hash-pinned-limits-after-exec',native_fault='per-rank-invocation-stack',
                             rollout_memory='cache-release-and-one-identical-retry',
