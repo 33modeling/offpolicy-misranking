@@ -230,6 +230,8 @@ def _collect(base, cohort, now):
                 row['activity_age'] = min(ages) if ages else None
             else:
                 row['activity_age'] = row.get('log_age')
+            if task.get('kind') == 'evaluate':
+                row['done'] = None      # the scored run's updates are not evaluation progress (was shown as '▶275')
             if row['status'] == 'pending':
                 row['ready'] = task_ready(task)
             if row['status'] == 'failed':
@@ -949,43 +951,38 @@ def clean_block(base, cohort, now, host, width):
     for c in sorted({c for _, c in ext} | {c for _, c in ev}, key=col_key):
         if c not in cols:
             cols.append(c)
-    table, later = {}, {}
+    table, ext_table, eval_table = {}, {}, {}
     show_later = bool(ext or ev or use_plan)
     for seed in seeds:
         for c in cols:
             table[(seed, c)] = cells.get((seed, c), missing['train'])
-            # second table: '<extension> <evaluations>' of the same branch; On is never extended
-            e = '-' if c == 'On' else count_cell(ext.get((seed, c), []), 'ext')
-            later[(seed, c)] = f"{e} {count_cell(ev.get((seed, c), []), 'eval')}"
-    widths = ({c: max(len(c), *(len(table[(s, c)]) for s in seeds), *((len(later[(s, c)]) for s in seeds) if show_later else []))
-               for c in cols} if seeds else {})
+            ext_table[(seed, c)] = '-' if c == 'On' else count_cell(ext.get((seed, c), []), 'ext')   # On is never extended
+            eval_table[(seed, c)] = count_cell(ev.get((seed, c), []), 'eval')
+    tables = [table] + ([ext_table, eval_table] if show_later else [])
+    widths = {c: max(len(c), *(len(t[(s, c)]) for t in tables for s in seeds)) for c in cols} if seeds else {}
     phase_text = PHASE_LABEL.get(state.get('phase'), state.get('phase', 'not started'))
     title = f"{label} · {phase_text} "
     lines = [paint(title, 'head') + paint('─' * max(3, min(width, 100) - len(title)), 'dim')]
-    def row_text(first, cells, header=False, pair=False):
+    def row_text(first, cells, header=False):
         plain, coloured = [first], [paint(first, 'dim') if header else first]
         for c in cols:
             cell = f'{cells[c]:<{widths[c]}}'
             plain.append(cell)
-            if header:
-                coloured.append(paint(cell, 'dim'))
-            elif pair:      # '<ext> <eval>': colour each half by its own state
-                e, _, v = cells[c].partition(' ')
-                coloured.append(paint(e, mark_style(e)) + ' ' + paint(v, mark_style(v)) + ' ' * (widths[c] - len(cells[c])))
-            else:
-                coloured.append(paint(cell, mark_style(cells[c])))
+            coloured.append(paint(cell, 'dim' if header else mark_style(cells[c])))
         return clip('  '.join(plain), width) if len('  '.join(plain)) > width else '  '.join(coloured)
     if seeds:
         lines.append(row_text(' train', {c: c for c in cols}, header=True))
         for seed in seeds:
             lines.append(row_text(f'{seed!s:>6}', {c: table[(seed, c)] for c in cols}))
         if show_later:
-            lines.append(row_text(' ex·ev', {c: c for c in cols}, header=True))
-            for seed in seeds:
-                lines.append(row_text(f'{seed!s:>6}', {c: later[(seed, c)] for c in cols}, pair=True))
+            for name, part in ((' ext', ext_table), (' eval', eval_table)):
+                lines.append(row_text(f'{name:<6}', {c: c for c in cols}, header=True))
+                for seed in seeds:
+                    lines.append(row_text(f'{seed!s:>6}', {c: part[(seed, c)] for c in cols}))
         if use_plan:
             known = ' · '.join(f"s{k} @{v}" for k, v in sorted(u_tau.items()))
-            lines.append(paint(clip("   ex·ev cell = <budget extension> <evaluations of that branch, done/all> · On is never extended", width), 'dim'))
+            lines.append(paint(clip("   ext = budget extension of that branch (On is never extended) · eval = evaluations of that branch "
+                                    "(one symbol, or done/all when it has several)", width), 'dim'))
             lines.append(paint(clip(f"   · = not created yet (a branch appears when its parent snapshot is saved) · U = Uniform at the "
                                     f"seed's switch point" + (f": {known}" if known else ' (known when that On trajectory is done)'),
                                     width), 'dim'))

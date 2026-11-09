@@ -658,7 +658,7 @@ def test_seed_table_draws_every_planned_branch_before_its_job_exists(tmp_path, m
     block = text.split("Qwen MBPP ·")[0]
     lines = block.splitlines()
     i_train = next(i for i, line in enumerate(lines) if line.startswith(" train"))
-    i_later = next(i for i, line in enumerate(lines) if line.startswith(" ex·ev"))
+    i_later = next(i for i, line in enumerate(lines) if line.startswith(" ext "))
     assert lines[i_train].split() == ["train", "On", "SR25", "SR50", "SR75", "SR100", "SR125", "SR150", "SR175", "SR200", "SR225",
                                       "SR250", "U"]
     rows = {line.split()[0]: line.split() for line in lines[i_train + 1:i_later]}
@@ -666,7 +666,9 @@ def test_seed_table_draws_every_planned_branch_before_its_job_exists(tmp_path, m
     assert rows["5"][1] == "▶" and rows["5"][2:12] == ["·"] * 10 and rows["9"][1:] == ["·"] * 12
     assert rows["6"][12] == "✓" and "U = Uniform at the seed's switch point: s6 @150" in block
     later = {line.split()[0]: line.split() for line in lines[i_later + 1:i_later + 6]}
-    assert later["9"] == ["9", "-", "·"] + ["·", "·"] * 11      # On is never extended; nothing else exists yet
+    assert later["9"] == ["9", "-"] + ["·"] * 11      # ext table: On is never extended; nothing else exists yet
+    i_eval = next(i for i, line in enumerate(lines) if line.startswith(" eval "))
+    assert {line.split()[0]: line.split() for line in lines[i_eval + 1:i_eval + 6]}["9"] == ["9"] + ["·"] * 12
     for phase in ("train", "extension", "evaluation"):
         write(q / "plans" / f"{phase}.json", {"sealed": True, "tasks": []})
     sealed = status.render_clean([base], now=now, gpus=[], host="viewer", width=200).split("Qwen MBPP ·")[0]
@@ -690,25 +692,50 @@ def test_default_screen_lists_all_four_experiments(tmp_path):
 
 
 
-def test_extension_and_evaluation_are_shown_per_branch_and_named_by_run(tmp_path):
-    """'status ext eval 도 노드 표시해 현황': each branch's budget extension and evaluations get their own cell, and an
-    evaluation job is named by the run it scores ('s5 eval SR25 ext@400'), in the node table too."""
+def test_extension_and_evaluation_cells_follow_each_task_through_its_states(tmp_path):
+    """'status ext eval 도 노드 표시해 현황', 'ext eval 칸만 만들고 제대로 업데이트 하고 잇는지 체크': per-branch ext and eval
+    cells change with the jobs (pending -> running -> done); a running evaluation is '▶', not the scored run's
+    update count; evaluation jobs are named by the run they score in the node table."""
     now = time.time()
     base, q, m = two_cohort_base(tmp_path, now)
-    def job(key, state, task, phase, attempts=None):
-        write(q / "jobs" / f"{key}.json", {"state": state, "phase": phase, "task": task, "attempts": attempts or []})
-    job("t25", "done", {"kind": "train", "method_id": "bank_sr_t025", "training_seed": 5, "run_id": "olmo_math.rebuttal_bank.s5.bank_sr_t025.aa11", "horizon": 275}, "train")
-    job("x25", "done", {"kind": "train", "method_id": "bank_sr_t025", "training_seed": 5, "run_id": "olmo_math.rebuttal_bank.s5.bank_sr_t025.bb22", "horizon": 400}, "extension")
-    job("e1", "done", {"kind": "evaluate", "training_seed": 5, "run_id": "olmo_math.rebuttal_bank.s5.bank_sr_t025.aa11", "completed_update": 275}, "evaluation")
-    job("e2", "running", {"kind": "evaluate", "training_seed": 5, "run_id": "olmo_math.rebuttal_bank.s5.bank_sr_t025.bb22", "completed_update": 400},
-        "evaluation", [{"id": "ea", "worker": "h-ev.1", "started_at": now - 600}])
-    worker_beat(q, "h-ev.1", 2, "child:1", now)
-    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
-    lines = text.splitlines()
-    i = next(k for k, line in enumerate(lines) if line.startswith(" ex·ev"))
-    header = lines[i].split()
-    seed5 = lines[i + 1].split()
-    sr25 = header.index("SR25")
-    assert seed5[0] == "5" and seed5[1 + 2 * (sr25 - 1)] == "✓" and seed5[2 + 2 * (sr25 - 1)] == "1/2▶"
-    node = next(line for line in lines if line.startswith(" ▶ h-ev"))
-    assert " s5 eval SR25 ext@400 " in node
+    R = "olmo_math.rebuttal_bank.s5."
+    def job(key, state, task, phase, worker=None):
+        attempts = [{"id": key + "a", "worker": worker, "started_at": now - 600}] if worker else []
+        write(q / "jobs" / f"{key}.json", {"state": state, "phase": phase, "task": task, "attempts": attempts})
+    def run(rid, done):
+        write(base / "olmo_math" / "runs" / rid / "manifest.json", {"attempts": [{"attempt_id": "x"}]})
+        (base / "olmo_math" / "runs" / rid / "attempts" / "x").mkdir(parents=True, exist_ok=True)
+        (base / "olmo_math" / "runs" / rid / "attempts" / "x" / "updates.jsonl").write_text(json.dumps({"completed_updates": done}) + "\n")
+    def cells(text, table):
+        lines = text.split("Qwen MBPP ·")[0].splitlines()
+        i = next(k for k, line in enumerate(lines) if line.startswith(f" {table} "))
+        header = lines[i].split()
+        row = next(line for line in lines[i + 1:] if line.split()[:1] == ["5"]).split()
+        return dict(zip(header[1:], row[1:]))
+    train = {"kind": "train", "method_id": "bank_sr_t025", "training_seed": 5, "run_id": R + "bank_sr_t025.aa11", "horizon": 275}
+    extension = {"kind": "train", "method_id": "bank_sr_t025", "training_seed": 5, "run_id": R + "bank_sr_t025.bb22", "horizon": 400,
+                 "parent": {"completed_update": "275"}}
+    e275 = {"kind": "evaluate", "training_seed": 5, "run_id": R + "bank_sr_t025.aa11", "completed_update": 275}
+    e400 = {"kind": "evaluate", "training_seed": 5, "run_id": R + "bank_sr_t025.bb22", "completed_update": 400}
+    job("t25", "done", train, "train"); run(R + "bank_sr_t025.aa11", 275)
+    for wid in ("h-ext.1", "h-ev.1"):
+        worker_beat(q, wid, 2, "child:1", now)
+    job("x25", "pending", extension, "extension"); job("e1", "pending", e275, "evaluation")
+    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
+    assert cells(text, "ext")["SR25"] == "·" and cells(text, "eval")["SR25"] == "·" and cells(text, "ext")["On"] == "-"
+    job("x25", "running", extension, "extension", "h-ext.1"); run(R + "bank_sr_t025.bb22", 310)
+    job("e1", "running", e275, "evaluation", "h-ev.1"); run(R + "bank_sr_t025.aa11", 275)
+    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
+    assert cells(text, "ext")["SR25"] == "▶310" and cells(text, "eval")["SR25"] == "▶"     # not '▶275'
+    node = {line.split()[1]: line for line in text.splitlines() if line.startswith(" ▶ h-")}
+    assert " s5 SR25 ext " in node["h-ext"] and " 310/400 " in node["h-ext"] and " s5 eval SR25@275 " in node["h-ev"]
+    job("x25", "done", extension, "extension"); run(R + "bank_sr_t025.bb22", 400)
+    job("e1", "done", e275, "evaluation"); job("e2", "running", e400, "evaluation", "h-ev.1")
+    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
+    assert cells(text, "ext")["SR25"] == "✓" and cells(text, "eval")["SR25"] == "1/2▶"
+    assert any(" s5 eval SR25 ext@400 " in line for line in text.splitlines() if line.startswith(" ▶ h-ev"))
+    job("e2", "done", e400, "evaluation")
+    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
+    assert cells(text, "eval")["SR25"] == "✓"
+    stats = status.clean_block(base, "olmo_math", now, "viewer", 220)[4]
+    assert stats["ext"] == (1, 1) and stats["eval"] == (2, 2) and stats["running"] == 0
