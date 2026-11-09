@@ -728,11 +728,11 @@ def render_srgc(live, base, cohort, now, host):
 # One compact block per cohort: short column names, one symbol per cell, one line per running task
 # and per problem, one line for all nodes; the summary (counts, workers, this node) is at the bottom.
 
-LEGEND_TABLE = ("progress, train/ext/eval = how far it is, running tasks counted by their own progress; (done/all planned tasks, a range or ≥ until that phase is planned) · updates = optimizer updates this plan adds "
-                "(a branch or extension counts from where it starts; + = extension updates still to be planned) · fail = real error · marked = failed, no training error · "
-                "intr = interrupted, reruns · stuck = marked running but no live node runs it (DEAD node or no worker) · "
-                "other = unknown job state")
-LEGEND = "✓ done  ▶120 running, at update 120  ○ ready  · waiting  ✗ failed  ! no training error  ⏸ interrupted  ? no heartbeat"
+LEGEND_TABLE = ("% = how far (a running task counts by its own progress), (done/planned tasks) · updates = updates the plan adds, "
+                "+ = more to plan · fail = real error · marked = failed, no training error · intr = interrupted, reruns · "
+                "stuck = running but no live node · other = unknown state")
+LEGEND = ("✓ done  ▶120 running, at update 120 (eval ▶275 = evaluating update 275)  ○ ready  · waiting or not created yet  "
+          "none = no such task (On has no ext; no U if a seed never switched)  ✗ failed  ! no training error  ⏸ interrupted  ? no heartbeat")
 COHORT_LABEL = {'olmo_math': 'OLMo MATH', 'qwen_mbpp': 'Qwen MBPP', 'olmo_mbpp': 'OLMo MBPP', 'qwen_math': 'Qwen MATH'}
 COHORT_SHORT = {}   # four experiments: 'OLMo'/'Qwen' alone would be ambiguous, so the node table shows the full name
 COLOR = False   # set by main() only when stdout is a terminal (never in logs, pipes or tests)
@@ -1032,11 +1032,8 @@ def clean_block(base, cohort, now, host, width):
                     lines.append(row_text(f'{seed!s:>6}', {c: part[(seed, c)] for c in cols}))
         if use_plan:
             known = ' · '.join(f"s{k} @{v}" for k, v in sorted(u_tau.items()))
-            lines.append(paint(clip("   ▶120 = running, now at update 120 · · = waiting · ○ = ready to start · none = no such task (On is never "
-                                    "extended; no Uniform when that seed never switched) · eval ▶275 = evaluation at update 275 running", width), 'dim'))
-            lines.append(paint(clip(f"   · = not created yet (a branch appears when its parent snapshot is saved) · U = Uniform at the "
-                                    f"seed's switch point" + (f": {known}" if known else ' (known when that On trajectory is done)'),
-                                    width), 'dim'))
+            if known:
+                lines.append(paint(clip(f"   U = Uniform at the seed's switch point: {known}", width), 'dim'))
     else:
         lines.append('  (no tasks yet)')
     problems = [r for r in rows if r['status'] in ATTENTION]
@@ -1380,7 +1377,9 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
                 job = next((x for x in rows if x['status'] == 'running' and x.get('host') == host), None)
                 if job:
                     mine = f"▶ {task_name(job, run_branches(rows))} ({COHORT_SHORT.get(COHORT_LABEL.get(cohort, cohort), COHORT_LABEL.get(cohort, cohort))})"
-    out.append(paint(clip(LEGEND, width), 'dim'))
+    import textwrap
+    for part in textwrap.wrap(LEGEND, max(60, width - 2), break_on_hyphens=False):
+        out.append(paint(part, 'dim'))
     import textwrap
     for part in textwrap.wrap(LEGEND_TABLE, max(60, width - 2)):
         out.append(paint(part, 'dim'))
@@ -1484,7 +1483,8 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
                 import textwrap
                 m = re.match(r'(\w+:)\s+(.*)', line.lstrip())
                 label_part, text = (m.group(1), m.group(2)) if m else ('', line.strip())
-                wrapped = textwrap.wrap(text, max(30, width - 12)) or ['']
+                wrapped = ([text] if label_part == 'log:' else      # a path stays on one line so it can be copied
+                           textwrap.wrap(text, max(30, width - 12), break_on_hyphens=False) or [''])
                 if len(wrapped) > 3:
                     wrapped = wrapped[:3]; wrapped[-1] = wrapped[-1][:max(30, width - 13)] + '…'
                 for k, part in enumerate(wrapped):
