@@ -14382,6 +14382,36 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "7c9325fc07b4d8ea9e84c99195cf248b04f04ad9",
+      "at": "2026-11-09T23:32:44+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Record recurring native faults, preserved CPU evidence and 478 passing regression checks",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/7c9325fc07b4d8ea9e84c99195cf248b04f04ad9",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "070ba1ce289888cfa90e27f2cb0d80d257f3a05d",
+      "at": "2026-11-09T23:31:47+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: no DEAD rows; a lost node's task shows as ready",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/070ba1ce289888cfa90e27f2cb0d80d257f3a05d",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "7bf5ccbb1c63bfc4727c313afcc70252b907da1b",
+      "at": "2026-11-09T23:32:58+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve newer status display changes alongside native crash controls",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/7bf5ccbb1c63bfc4727c313afcc70252b907da1b",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

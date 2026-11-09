@@ -120,6 +120,19 @@
     "research/v8-node-native-recurrence-20261109/cpu-proof.zip": "cdc334171402e4cd93af0838ed74d695a462a6778e626c75702821c99e4ce475",
     "research/v8-node-native-recurrence-20261109/diagnostics-before.xml": "98ea83b0cfa41d8e568b1d2d24b7cbb2580c9590bd92b058809c0a57b94c46e5",
     "research/v8-node-native-recurrence-20261109/focused.xml": "76b01b34d3546ef38c18dec123505a16d48eaf390b156a973b7eb74fba3c1088",
-    "research/v8-node-native-recurrence-20261109/initial-missing-test-parent-all.xml": "bf7c392deef8aeb72e09e26901e3f5b3ad935d908677f1980e503807045b6b7d"
+    "research/v8-node-native-recurrence-20261109/initial-missing-test-parent-all.xml": "bf7c392deef8aeb72e09e26901e3f5b3ad935d908677f1980e503807045b6b7d",
+    "research/v8-node-native-recurrence-20261109/status-merge.xml": "c99ea0e5f76be33323487ed63da9a0c13eb65e385f1aa8a0803aba9e7f9fc468"
+  },
+  "integration": {
+    "commit": "7bf5ccbb1c63bfc4727c313afcc70252b907da1b",
+    "preservedPeerCommit": "070ba1ce289888cfa90e27f2cb0d80d257f3a05d",
+    "scope": "Peer status display and status tests only; native control/source/runtime are byte-identical to the478-test source.",
+    "tests": {
+      "tests": 59,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "statusSourceSHA256": "a87a41c8485bb211a3e33ff0f5736b57f0854d418f4a55e432a978cf39bb990b"
   }
 }
