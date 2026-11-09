@@ -161,6 +161,12 @@
       "failures": 0,
       "errors": 0,
       "skipped": 0
+    },
+    "status-integration.xml": {
+      "tests": 66,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
     }
   },
   "archive": {
@@ -185,8 +191,26 @@
     "all-local-enospc.xml": "7d797b2d63d560c4084240df9d3969e94285421e09fb1cb0d593f2a112ad0034",
     "cached-eval-before.xml": "08f76ee648f0089bc723f015d4445523eae742d070a1603f05117d684e34c0ad",
     "intermediate-training-records.json": "3e88eec63cf92c97f736236c54db87b3e7989ed7f5653829d8d9344e9b6443fd",
+    "status-integration.xml": "ea04cf1b90fe1859a37b02c413edf724de9ac49bb32e320452e2ef66d61562b5",
     "before.xml": "bb6195a595703e9f0a223c82486b569ebb11580ecafea1134f5c2a697d3a409f",
     "targeted.xml": "926b7da685084400def0a6652102958bdca2ba07f85c3815c2a8288d3988811e",
     "cpu-fail-stop-proof.zip": "4e4d4635294391c318691012a3b4fa3cfaa5fbe22b38eccb929fe87c405b57ee"
+  },
+  "post_merge_verification": {
+    "source_commit": "33a356d37cc5013827efc68a1733265555a939d8",
+    "peer_commit": "6e17ae96878ae05fa27e0c17cd45c2ce974f0796",
+    "scope": "Preserved concurrent status percentage display; scheduler/actor/dispatcher source unchanged from the458-test run.",
+    "tests": {
+      "tests": 66,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "final_source_files_sha256": {
+      "scripts/srgc_v8_nodes.py": "598b06b2eb27c771b9468cd395edcf941af935db188be6574f9f2edc16e01f11",
+      "scripts/v8_status.py": "42f4f8f9131bcc74a849f610af734e5c0f787434ee11af0d614b71570d31151b",
+      "scripts/v8_dispatch.py": "9072e27afda346ce7a55e5f892f71f08573b81908999f3bfb0aa851f8904f6c1",
+      "scripts/v8_runtime_worker.py": "92157d9499f71ad68fa670bde39b5525a3be368f44a90e79e063dc4367b212b9"
+    }
   }
 }

@@ -14204,11 +14204,31 @@
       "gemma": false
     },
     {
+      "hash": "b4811abc92da977bdddb7c4ef56b739f9294bb9f",
+      "at": "2026-11-09T15:48:19+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve fail-stop and eval dispatch proof with 458 passing checks",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/b4811abc92da977bdddb7c4ef56b739f9294bb9f",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
       "hash": "6e17ae96878ae05fa27e0c17cd45c2ce974f0796",
       "at": "2026-11-09T15:46:02+09:00",
       "author": "33modeling",
       "title": "[Skip CI] [skip review] V8 status: progress percentages; no ambiguous '-' marks",
       "url": "https://github.com/33modeling/offpolicy-misranking/commit/6e17ae96878ae05fa27e0c17cd45c2ce974f0796",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "33a356d37cc5013827efc68a1733265555a939d8",
+      "at": "2026-11-09T15:48:58+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve concurrent status progress display with verified fail-stop runner",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/33a356d37cc5013827efc68a1733265555a939d8",
       "attribution": [],
       "is_fix": false,
       "gemma": false

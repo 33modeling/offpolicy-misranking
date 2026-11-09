@@ -9109,6 +9109,15 @@
         "text": "최종458 CPU 검사0실패/0skip. 9회 실패가 숨은 두 phase에서 준비된 정상 eval 실행 후 worker exit1을 확인했고7개 종료 receipt를 보존했다. 실제 CPU torchrun의 의도적 ctypes SIGSEGV와 stage/원문 dump, 원래 CPU V8 ToyBackend41작업·25간격 학습 metrics17점·별도 최종평가22개를 cpu-fail-stop-proof.zip 및 export에 보존했다. 44 coordinator/7 runner 전체 SHA 및 원본30 trainer 보존 확인. 앞선 교체 중단 검사와 로컬 ENOSPC 실패도 숨기지 않았으며 해당 실패는 실제 H100 측정이 아니다.",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/92105f3bde2878fbf1646eed18e950cf01726fee",
         "evidence_kind": "code_test_and_limitation"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "concurrent_status_integration_verified",
+        "status": "code_fixed",
+        "text": "원격6e17ae9의 진척률 표시 변경을 덮지 않고 병합했다. 458개 전체 검사 때의 scheduler/actor/dispatcher SHA는 그대로이며, 병합 후 모든 status 및 실패종료/기존 eval 회귀66개가 통과했다. 두 검사수를 더해 독립 검사수처럼 보고하지 않는다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/33a356d37cc5013827efc68a1733265555a939d8",
+        "evidence_kind": "code_test"
       }
     ],
     "first_reported": "2026-11-09",
@@ -9173,6 +9182,15 @@
         "text": "최종458 CPU 검사0실패/0skip. 9회 실패가 숨은 두 phase에서 준비된 정상 eval 실행 후 worker exit1을 확인했고7개 종료 receipt를 보존했다. 실제 CPU torchrun의 의도적 ctypes SIGSEGV와 stage/원문 dump, 원래 CPU V8 ToyBackend41작업·25간격 학습 metrics17점·별도 최종평가22개를 cpu-fail-stop-proof.zip 및 export에 보존했다. 44 coordinator/7 runner 전체 SHA 및 원본30 trainer 보존 확인. 앞선 교체 중단 검사와 로컬 ENOSPC 실패도 숨기지 않았으며 해당 실패는 실제 H100 측정이 아니다.",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/92105f3bde2878fbf1646eed18e950cf01726fee",
         "evidence_kind": "code_test_and_limitation"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "concurrent_status_integration_verified",
+        "status": "code_fixed",
+        "text": "원격6e17ae9의 진척률 표시 변경을 덮지 않고 병합했다. 458개 전체 검사 때의 scheduler/actor/dispatcher SHA는 그대로이며, 병합 후 모든 status 및 실패종료/기존 eval 회귀66개가 통과했다. 두 검사수를 더해 독립 검사수처럼 보고하지 않는다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/33a356d37cc5013827efc68a1733265555a939d8",
+        "evidence_kind": "code_test"
       }
     ],
     "first_reported": "2026-11-09",
