@@ -13842,6 +13842,46 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "134122809de8a6e00e1cf144ef81624b28e92594",
+      "at": "2026-11-09T09:03:38+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve Qwen MATH verification and historical queue sources",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/134122809de8a6e00e1cf144ef81624b28e92594",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "74c5a3f2ecda5fcb995258ec51e90dfed0a3ba2f",
+      "at": "2026-11-09T09:22:46+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: experiments in model-then-task order",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/74c5a3f2ecda5fcb995258ec51e90dfed0a3ba2f",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "ab65eb32907d5ec72a7d0551a8509ea21888f334",
+      "at": "2026-11-09T10:16:25+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Publish matched-horizon results before all-cohort budget extensions",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/ab65eb32907d5ec72a7d0551a8509ea21888f334",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "87b2d30a29a905ea76cfe46dd16653308f02f375",
+      "at": "2026-11-09T10:20:26+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Honor early stop before extension-order setup",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/87b2d30a29a905ea76cfe46dd16653308f02f375",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

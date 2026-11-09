@@ -50,6 +50,12 @@
       "failures": 0,
       "errors": 0,
       "skipped": 0
+    },
+    "all-final.xml": {
+      "tests": 370,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
     }
   },
   "order_proof": "order-proof.json",
@@ -97,5 +103,24 @@
     "tests/test_srgc_v8_extension_last.py": "d47661a3a331d84d89438b26e8afea123d37e8aad9ffc1bdc1065594b73f8967"
   },
   "implementation_commit": "ab65eb32907d5ec72a7d0551a8509ea21888f334",
-  "failure_record": "First full run:369 passed/1failed. New scope setup accessed binding[cohort] before handling an already-set stop request in the existing minimal-binding stop test. Fixed by returning75 before setup and assigning scope only to capable real runtimes. stop-fixed.xml30pass covers stop, disconnect and four-cohort ordering. Raw failure retained."
+  "failure_record": "First full run:369 passed/1failed. New scope setup accessed binding[cohort] before handling an already-set stop request in the existing minimal-binding stop test. Fixed by returning75 before setup and assigning scope only to capable real runtimes. stop-fixed.xml30pass covers stop, disconnect and four-cohort ordering. Raw failure retained.",
+  "source_commit": "87b2d30a29a905ea76cfe46dd16653308f02f375",
+  "bug_board_incidents": [
+    "V8-119",
+    "V8-120"
+  ],
+  "primary_control_archive": {
+    "file": "primary-report-control.zip",
+    "sha256": "e0b5a433dffe4c910985865ddf3f2c9594f4c5e5b1fcb091765f03a531d017f3",
+    "scope": "single-host synthetic CPU control; gate uses receipts rather than clocks"
+  },
+  "historical_queue_archive": {
+    "through": "87b2d30a29a905ea76cfe46dd16653308f02f375",
+    "coordinators": 34,
+    "runners": 7,
+    "files": 448,
+    "sha256": "240b3ed9cdb4d153e62967fcd20804e3c4b00f1d96613909ccbba934fb017275",
+    "all_payloads_verified": true
+  },
+  "verification_sequence": "targeted5pass initial order; actors47pass original Runtime/legacy binding controls; order6pass after complete training validation and unavailable-cohort exit; first full369pass1failure (raw all.xml retained); stop-fixed30pass on corrected stop path; rebuilt34-coordinator/7-runner/448-file archive then final full370pass0skip. No executable changes after all-final.xml."
 }

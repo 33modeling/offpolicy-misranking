@@ -7829,5 +7829,113 @@
         "evidence_kind": "code_test_and_limitation"
       }
     ]
+  },
+  {
+    "id": "V8-119",
+    "title": "400-step 예산 연장이275-step 기본 결과 평가보다 먼저 실행됨",
+    "area": "V8 실행 순서 / 기본 결과 우선",
+    "severity": "high",
+    "first_reported": "2026-11-09",
+    "introduction_commit": "",
+    "cause": "기존 단계는 train→freeze→extension→evaluation→finalize여서 기본275 결과를 보기 위해 연장 학습 완료까지 기다려야 했다.",
+    "impact": "기본 결과 확인이 늦어지거나 중단 경로가 오류로 종료될 수 있었다. 실제 H100 증상 일치나 실행 적용은 확인하지 못했다.",
+    "attribution": "이번 순서 변경과 새 중단 회귀의 도입·재현·수정은 Codex가 수행했다. 이전 동결 수치 코드의 작성 도구는 추정하지 않는다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "기본 결과 우선 및 초기 중단 수정",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/ab65eb32907d5ec72a7d0551a8509ea21888f334"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-09",
+        "actor": "user",
+        "type": "reported",
+        "status": "open",
+        "text": "ext 를 가장 뒤로 해",
+        "evidence_kind": "user_request"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "사용자 요청에 따라 각 조합의 기본 평가·분석을 먼저 저장하고 네 조합의 유효 결과 receipt가 모두 있어야 ext를 claim한다. 비용 예산은 평가 전에 고정하고 평가 결과값을 연장 선택에 쓰지 않는다. 원래 binding·cached plans·evaluation keys·체크포인트·실패는 보존한다. 원본30 trainer 파일 해시는 보존했고 CPU 원래 runner의 네 조합에서 모든 primary 결과가 첫 ext보다 먼저 저장됨을 검증했다. 원문 근거는 research/v8-extension-last-20261109.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/ab65eb32907d5ec72a7d0551a8509ea21888f334",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "remote_verification_pending",
+        "status": "remote_verification_pending",
+        "text": "H100은 다른 컴퓨터에 있다. 실제 작업 진도·벽시계 시간·OOM 해결·live 적용은 미검증이다. 모든 worker를 수정본으로 재시작해야 새 순서를 보장한다. 이미 끝난 ext는 되돌리지 않고 살아 있는 task lease를 빼앗지 않는다.",
+        "evidence_kind": "limitation"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "raw_evidence_published",
+        "status": "remote_verification_pending",
+        "text": "最終370 CPU回帰0失敗/0skip。最初の369pass/1failと修正後stop30passを保持。元34 coordinator・7 runner・448ファイルの全SHA、元30 trainerの同一性、四cohortのprimary結果が初extより前に保存されること、旧binding/計画/失敗/生存leaseの保持を確認。実H100は未接続。",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/87b2d30a29a905ea76cfe46dd16653308f02f375",
+        "evidence_kind": "code_test_and_limitation"
+      }
+    ]
+  },
+  {
+    "id": "V8-120",
+    "title": "실행 전 중단 요청보다 새 cohort scope 초기화를 먼저 수행함",
+    "area": "V8 실행 순서 / 기본 결과 우선",
+    "severity": "high",
+    "first_reported": "2026-11-09",
+    "introduction_commit": "ab65eb32907d5ec72a7d0551a8509ea21888f334",
+    "cause": "새 실행 순서 코드 ab65eb3가 stop이 이미 set된 경우에도 binding[cohort]를 먼저 읽어 최소 binding 중단 회귀에서 KeyError를 냈다. 첫 전체 회귀369통과/1실패로 확인했다.",
+    "impact": "기본 결과 확인이 늦어지거나 중단 경로가 오류로 종료될 수 있었다. 실제 H100 증상 일치나 실행 적용은 확인하지 못했다.",
+    "attribution": "이번 순서 변경과 새 중단 회귀의 도입·재현·수정은 Codex가 수행했다. 이전 동결 수치 코드의 작성 도구는 추정하지 않는다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "기본 결과 우선 및 초기 중단 수정",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/87b2d30a29a905ea76cfe46dd16653308f02f375"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-09",
+        "actor": "user",
+        "type": "reported",
+        "status": "open",
+        "text": "ext 를 가장 뒤로 해",
+        "evidence_kind": "user_request"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "중단 요청을 준비 단계 전에75로 반환하고 primary 기능을 쓰는 Runtime에만 scope를 설정한다. stop/disconnect/재개/네 조합 순서30검사가 통과했다. 원본30 trainer 파일 해시는 보존했고 CPU 원래 runner의 네 조합에서 모든 primary 결과가 첫 ext보다 먼저 저장됨을 검증했다. 원문 근거는 research/v8-extension-last-20261109.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/87b2d30a29a905ea76cfe46dd16653308f02f375",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "remote_verification_pending",
+        "status": "remote_verification_pending",
+        "text": "H100은 다른 컴퓨터에 있다. 실제 작업 진도·벽시계 시간·OOM 해결·live 적용은 미검증이다. 모든 worker를 수정본으로 재시작해야 새 순서를 보장한다. 이미 끝난 ext는 되돌리지 않고 살아 있는 task lease를 빼앗지 않는다.",
+        "evidence_kind": "limitation"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "raw_evidence_published",
+        "status": "remote_verification_pending",
+        "text": "最終370 CPU回帰0失敗/0skip。最初の369pass/1failと修正後stop30passを保持。元34 coordinator・7 runner・448ファイルの全SHA、元30 trainerの同一性、四cohortのprimary結果が初extより前に保存されること、旧binding/計画/失敗/生存leaseの保持を確認。実H100は未接続。",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/87b2d30a29a905ea76cfe46dd16653308f02f375",
+        "evidence_kind": "code_test_and_limitation"
+      }
+    ]
   }
 ]

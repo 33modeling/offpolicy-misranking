@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-09T09:03:38+09:00",
+  "recorded_at": "2026-11-09T10:23:39+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "df6bc9c019384c694cb5b0d30c87bdcd4065945b",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/df6bc9c019384c694cb5b0d30c87bdcd4065945b",
-    "all_available_commits": 1313,
+    "source_commit": "87b2d30a29a905ea76cfe46dd16653308f02f375",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/87b2d30a29a905ea76cfe46dd16653308f02f375",
+    "all_available_commits": 1317,
     "fix_commit_records": 143,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
@@ -41,7 +41,7 @@
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hang-fix-20261108:f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:df6bc9c019384c694cb5b0d30c87bdcd4065945b",
+      "refs/heads/master:87b2d30a29a905ea76cfe46dd16653308f02f375",
       "refs/heads/v8-coord-fixes-20261108:377c256e55f80c64b484d82ef812064ed9e7c8a3",
       "refs/heads/v8-modes:6821c9c09292662008eb4f933c74bae7490358ed",
       "refs/heads/v8-nodes:3adf26925b2b1c1bf572cf0e68f75b26bbae3ddc",
@@ -60,6 +60,7 @@
       "refs/heads/v8-status-live:a870f596b03848fadfe79764978b08006316c9e2",
       "refs/heads/v8-status-node-view:21b58c03963e32a327ade081419acb508d0fcf5a",
       "refs/heads/v8-status-nodes2:1e47050b470a5eef8a9ca86fac577e06d3bb5abc",
+      "refs/heads/v8-status-order:74c5a3f2ecda5fcb995258ec51e90dfed0a3ba2f",
       "refs/heads/v8-status-planned:f69c67227ccdab354ad1e61fe148d77a56bce10e",
       "refs/heads/v8-status-progress:7fa90b7f51fc50939a8cc53b9c115abe22bda381",
       "refs/heads/v8-status-robust:0648f8a767acdbc8eddf152de22b54195c50814f",
@@ -78,7 +79,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:df6bc9c019384c694cb5b0d30c87bdcd4065945b"
+      "refs/remotes/origin/master:87b2d30a29a905ea76cfe46dd16653308f02f375"
     ]
   },
   "incidents": [
@@ -7909,6 +7910,114 @@
           "status": "remote_verification_pending",
           "text": "최종365 CPU 회귀0실패/0skip. 원본32 coordinator·7 runner·446파일 호환 묶음과 모든 payload SHA 검증. 원본30 trainer 파일 보존. 네 조합163작업 완료·Qwen MATH 실제 collect/analyze 출력·원래 source pin 재개·초기/분기 DAG·환경 오류 분리 검증. 합성 CPU checkpoint/optimizer/RNG와 분리된 학습 보상·평가 기록 보존. 실제 H100 진행은 미검증.",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/df6bc9c019384c694cb5b0d30c87bdcd4065945b",
+          "evidence_kind": "code_test_and_limitation"
+        }
+      ]
+    },
+    {
+      "id": "V8-119",
+      "title": "400-step 예산 연장이275-step 기본 결과 평가보다 먼저 실행됨",
+      "area": "V8 실행 순서 / 기본 결과 우선",
+      "severity": "high",
+      "first_reported": "2026-11-09",
+      "introduction_commit": "",
+      "cause": "기존 단계는 train→freeze→extension→evaluation→finalize여서 기본275 결과를 보기 위해 연장 학습 완료까지 기다려야 했다.",
+      "impact": "기본 결과 확인이 늦어지거나 중단 경로가 오류로 종료될 수 있었다. 실제 H100 증상 일치나 실행 적용은 확인하지 못했다.",
+      "attribution": "이번 순서 변경과 새 중단 회귀의 도입·재현·수정은 Codex가 수행했다. 이전 동결 수치 코드의 작성 도구는 추정하지 않는다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "기본 결과 우선 및 초기 중단 수정",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/ab65eb32907d5ec72a7d0551a8509ea21888f334"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-09",
+          "actor": "user",
+          "type": "reported",
+          "status": "open",
+          "text": "ext 를 가장 뒤로 해",
+          "evidence_kind": "user_request"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "사용자 요청에 따라 각 조합의 기본 평가·분석을 먼저 저장하고 네 조합의 유효 결과 receipt가 모두 있어야 ext를 claim한다. 비용 예산은 평가 전에 고정하고 평가 결과값을 연장 선택에 쓰지 않는다. 원래 binding·cached plans·evaluation keys·체크포인트·실패는 보존한다. 원본30 trainer 파일 해시는 보존했고 CPU 원래 runner의 네 조합에서 모든 primary 결과가 첫 ext보다 먼저 저장됨을 검증했다. 원문 근거는 research/v8-extension-last-20261109.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/ab65eb32907d5ec72a7d0551a8509ea21888f334",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "remote_verification_pending",
+          "status": "remote_verification_pending",
+          "text": "H100은 다른 컴퓨터에 있다. 실제 작업 진도·벽시계 시간·OOM 해결·live 적용은 미검증이다. 모든 worker를 수정본으로 재시작해야 새 순서를 보장한다. 이미 끝난 ext는 되돌리지 않고 살아 있는 task lease를 빼앗지 않는다.",
+          "evidence_kind": "limitation"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "raw_evidence_published",
+          "status": "remote_verification_pending",
+          "text": "最終370 CPU回帰0失敗/0skip。最初の369pass/1failと修正後stop30passを保持。元34 coordinator・7 runner・448ファイルの全SHA、元30 trainerの同一性、四cohortのprimary結果が初extより前に保存されること、旧binding/計画/失敗/生存leaseの保持を確認。実H100は未接続。",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/87b2d30a29a905ea76cfe46dd16653308f02f375",
+          "evidence_kind": "code_test_and_limitation"
+        }
+      ]
+    },
+    {
+      "id": "V8-120",
+      "title": "실행 전 중단 요청보다 새 cohort scope 초기화를 먼저 수행함",
+      "area": "V8 실행 순서 / 기본 결과 우선",
+      "severity": "high",
+      "first_reported": "2026-11-09",
+      "introduction_commit": "ab65eb32907d5ec72a7d0551a8509ea21888f334",
+      "cause": "새 실행 순서 코드 ab65eb3가 stop이 이미 set된 경우에도 binding[cohort]를 먼저 읽어 최소 binding 중단 회귀에서 KeyError를 냈다. 첫 전체 회귀369통과/1실패로 확인했다.",
+      "impact": "기본 결과 확인이 늦어지거나 중단 경로가 오류로 종료될 수 있었다. 실제 H100 증상 일치나 실행 적용은 확인하지 못했다.",
+      "attribution": "이번 순서 변경과 새 중단 회귀의 도입·재현·수정은 Codex가 수행했다. 이전 동결 수치 코드의 작성 도구는 추정하지 않는다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "기본 결과 우선 및 초기 중단 수정",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/87b2d30a29a905ea76cfe46dd16653308f02f375"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-09",
+          "actor": "user",
+          "type": "reported",
+          "status": "open",
+          "text": "ext 를 가장 뒤로 해",
+          "evidence_kind": "user_request"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "중단 요청을 준비 단계 전에75로 반환하고 primary 기능을 쓰는 Runtime에만 scope를 설정한다. stop/disconnect/재개/네 조합 순서30검사가 통과했다. 원본30 trainer 파일 해시는 보존했고 CPU 원래 runner의 네 조합에서 모든 primary 결과가 첫 ext보다 먼저 저장됨을 검증했다. 원문 근거는 research/v8-extension-last-20261109.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/87b2d30a29a905ea76cfe46dd16653308f02f375",
+          "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "remote_verification_pending",
+          "status": "remote_verification_pending",
+          "text": "H100은 다른 컴퓨터에 있다. 실제 작업 진도·벽시계 시간·OOM 해결·live 적용은 미검증이다. 모든 worker를 수정본으로 재시작해야 새 순서를 보장한다. 이미 끝난 ext는 되돌리지 않고 살아 있는 task lease를 빼앗지 않는다.",
+          "evidence_kind": "limitation"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "raw_evidence_published",
+          "status": "remote_verification_pending",
+          "text": "最終370 CPU回帰0失敗/0skip。最初の369pass/1failと修正後stop30passを保持。元34 coordinator・7 runner・448ファイルの全SHA、元30 trainerの同一性、四cohortのprimary結果が初extより前に保存されること、旧binding/計画/失敗/生存leaseの保持を確認。実H100は未接続。",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/87b2d30a29a905ea76cfe46dd16653308f02f375",
           "evidence_kind": "code_test_and_limitation"
         }
       ]
