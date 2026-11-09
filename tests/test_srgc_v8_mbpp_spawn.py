@@ -51,6 +51,26 @@ def test_limits_are_applied_and_python_preexec_is_removed(verifier,monkeypatch):
     assert fixed(record,code)==1.0 and len(calls)==1
 
 
+def test_checker_keeps_original_main_module_loader_and_argv(verifier):
+    module,fixed=verifier
+    record=dict(answer='assert context()==("code_check.py", "__main__", None, None, "__main__", 1, True)')
+    code='''def context():
+ import __main__,os,sys
+ return (os.path.basename(__main__.__file__),__main__.__name__,__main__.__spec__,
+         __main__.__package__,__main__.__loader__.name,sys.flags.isolated,sys.dont_write_bytecode)
+'''
+    assert module.code_reward(record,code)==fixed(record,code)==1.0
+
+
+def test_bad_candidate_timeout_remains_zero_reward(verifier,monkeypatch):
+    module,_=verifier
+    monkeypatch.setattr(module,'CODE_TIMEOUT_SECONDS',0.2)
+    import v8_task_entry
+    fixed,_=v8_task_entry.repair_mbpp_subprocess(module.code_reward)
+    record=dict(answer='assert add(2,3)==5');code='while True: pass'
+    assert module.code_reward(record,code)==fixed(record,code)==0.0
+
+
 def test_threaded_mbpp_grading_does_not_run_python_between_fork_and_exec(verifier,monkeypatch):
     module,fixed=verifier;original=module.subprocess.Popen;calls=[]
     def checked(command,*a,**kwargs):

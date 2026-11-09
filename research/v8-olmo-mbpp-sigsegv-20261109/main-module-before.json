@@ -1,0 +1,12 @@
+[
+  {
+    "verifier": "srgc_rebuttal/verifiers.py",
+    "original": 1.0,
+    "first_overlay": 0.0
+  },
+  {
+    "verifier": "scripts/frozen_srgc/pre_20261004/verifiers.py",
+    "original": 1.0,
+    "first_overlay": 0.0
+  }
+]

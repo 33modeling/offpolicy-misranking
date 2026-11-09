@@ -82,14 +82,14 @@ def child_result(rc,directory,environment,log,label,*,log_offset=0):
             stage=None;progress=directory/f'rank-{meta["rank"]}.json'
             if progress.exists():
                 event=json.loads(progress.read_text())
-                if event.get('pid')==meta['pid']:stage=event
+                if isinstance(event,dict) and event.get('pid')==meta['pid']:stage=event
             name=signal.Signals(found).name
             failures.append(dict(rank=meta['rank'],pid=meta['pid'],signal=found,
                 message=f'{name} (exit -{found}): native crash; last stage={stage.get("stage") if stage else "unrecorded"}; '
                         f'rank stack={path}; underlying cause unconfirmed',error_file=str(path),
                 native_fault_log=str(path),native_invocation=meta['invocation'],native_python_stack=stack[:12000],last_progress=stage))
             retained.add(found)
-        except (OSError,ValueError,KeyError,TypeError) as exc:print(f'Cannot read native fault evidence {meta_path}: {exc}',flush=True)
+        except (OSError,ValueError,KeyError,TypeError,AttributeError) as exc:print(f'Cannot read native fault evidence {meta_path}: {exc}',flush=True)
     for number in sorted(numbers-retained):
         try:name=signal.Signals(number).name
         except ValueError:name='signal '+str(number)

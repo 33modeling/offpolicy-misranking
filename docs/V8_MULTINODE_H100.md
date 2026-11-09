@@ -194,6 +194,8 @@ binding·checkpoint를 고치거나 지우지 않는다. 신원·설정·CPU 준
 V14는 MBPP 채점 subprocess의 Python `preexec_fn`을 제거하고 exec 뒤에 같은
 주소 공간·CPU·파일 크기 제한을 적용한다. 원본 verifier·code_check 파일과 채점 규칙·
 프로토콜 버전은 바꾸지 않으며, 알려진 두 원본 verifier 해시에만 별도 실행 overlay를 적용한다.
+제한 설정에 실패하면 학습 오류로 전달하고 보상0으로 바꾸지 않는다. 제한 설정 뒤 같은
+PID에서 원래 `python -I -B code_check.py ...`를 exec해 `__main__`·loader·argv도 보존한다.
 이 수정이 실제 H100 SIGSEGV 원인과 일치하는지는 rank 로그로 확인해야 한다.
 
 원래 child 실행 전부터 `faulthandler`를 켜고 `.multi-node/progress/<attempt>/`에

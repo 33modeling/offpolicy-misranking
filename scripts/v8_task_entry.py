@@ -58,10 +58,9 @@ except BaseException as error:
  os.close(ack)
  raise
 os.write(ack,b'OK');os.close(ack)
-path=sys.argv[0]
-with open(path,'rb') as handle:source=handle.read()
-scope={'__name__':'__main__','__file__':path,'__package__':None,'__spec__':None,'__cached__':None,'__builtins__':__builtins__}
-exec(compile(source,path,'exec'),scope)
+# Replace this same process with the exact original isolated checker command.
+# A fresh exec preserves its __main__/loader/argv instead of leaking bootstrap globals.
+os.execv(sys.executable,[sys.executable,'-I','-B',*sys.argv])
 '''
 
 
@@ -109,7 +108,7 @@ def repair_mbpp_subprocess(verifier):
     cloned=dict(namespace,subprocess=ProcessModule())
     fixed=types.FunctionType(verifier.__code__,cloned,verifier.__name__,verifier.__defaults__,verifier.__closure__)
     functools.update_wrapper(fixed,verifier)
-    receipt=dict(policy='mbpp-limits-after-exec-v1',original_verifier_sha256=digest,
+    receipt=dict(policy='mbpp-limits-after-exec-v2',original_verifier_sha256=digest,
                  code_verifier_version=namespace['CODE_REWARD_VERSION'],preexec_fn=False,
                  memory_bytes=memory,cpu_seconds=cpu,file_bytes=fsize,reward_rule_changed=False)
     fixed._v8_mbpp_spawn=receipt

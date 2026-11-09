@@ -20,7 +20,7 @@
     "checkpoint_provenance": "실제 checkpoint 접근/변경/삭제 없음. 원본30 trainer SHA 보존. 기존 checkpoint/optimizer/RNG/학습 보상 기록 정책 유지."
   },
   "changes": [
-    "해시가 확인된 verifier 두 버전만 복제하여 자원제한을 exec 뒤에 적용; 시작 ACK로 제한설정 실패를 reward0으로 숨기지 않음.",
+    "해시가 확인된 verifier 두 버전만 복제하여 자원제한을 exec 뒤에 적용; 시작 ACK로 제한설정 실패를 reward0으로 숨기지 않음. 같은PID에서 원래 isolated checker를 다시 exec하여 직접script 실행 환경 보존.",
     "원래 checker 경로/인자/환경/session/FD와 채점 protocol을 유지하며 Python preexec_fn 제거.",
     "rank별 raw FD faulthandler와 invocation 메타데이터, bounded stack/같은PID stage를 child-failure에 연결.",
     "Python 예외와 fatal signal을 함께 보존하고 direct launcher -11도 실패로 기록. 실제 signal을 중단/성공으로 변경하지 않음.",
@@ -71,14 +71,38 @@
     "srgc_rebuttal/verifiers.py": "5062befe4ed5a8e21f6de01a73dca4f1d3544dd033c5d2c846bff391d1148a90"
   },
   "evidence": {
+    "all.xml": {
+      "tests": 396,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
     "before.xml": {
       "tests": 3,
       "failures": 3,
       "errors": 0,
       "skipped": 0
     },
+    "exec-final.xml": {
+      "tests": 57,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "native-final.xml": {
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
     "native-fixed.xml": {
       "tests": 16,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "spawn-final.xml": {
+      "tests": 24,
       "failures": 0,
       "errors": 0,
       "skipped": 0
@@ -103,6 +127,7 @@
     }
   },
   "raw_evidence_sha256": {
+    "all.xml": "c003bd6eaf3b932e5408514d0b25fb3c94f6f5e36889f9827888cf95cb4b2d20",
     "before.xml": "8d78c5d6ca757a499ad9d02a1294b7b9eecf5eade83104071fd44d4f4098573e",
     "cpu-native-crash/child-failure.json": "6d9b78a0024acf33b1493a042d556fbd7c328d12ecd12451585c069f2e19258e",
     "cpu-native-crash/cluster_child.py": "cb279ed05f6ea050269df69ae026d928b2e3347f7a8778dfbeacfa68c4b0ec24",
@@ -112,9 +137,21 @@
     "cpu-native-crash/native-fault-rank-1.json": "7e091f0b440a55814a952f2d174a1aec0948a8c7c04e10b6f262d17742a518f0",
     "cpu-native-crash/rank-1.json": "88e5d37c042159da393998e9aa2b3833aa0ca3b6e98d986c2a8e83b233318885",
     "cpu-native-crash/task.log": "73667626feb63689e81d8d6b1ed8688b6f09c83701f9d09bcdd39540fea64636",
+    "exec-final.xml": "a8f7c20b6cf2c4e02d34d6285af7bb0829a0f50b753197017f8d522caac3bb16",
+    "main-module-before.json": "d329cef447760939f4d5017b27b7931f4706c98ba9d854e342f7708622498ae7",
+    "native-final.xml": "0715d56d9e56db9598dac604f16815a7f80108c08c2427aeebc83ff694768d92",
     "native-fixed.xml": "04e306ca83ece00a8adbf758d21672f083af732fabc11a49e7844f0fcd58c5e9",
+    "spawn-final.xml": "3d539956cf4c8ad318010debdd5919a85123c7c239f198ad444e7dbbf0791652",
     "spawn-fixed.xml": "913f37ffb63b9a73992d5317f0c07609129829e3067019ba8721e6b77b24f79b",
     "targeted-final.xml": "cad3c88af2c373c027d25106178a238c3d9ee74af3e8d5bee1c2b2ebe4c2f4cb",
     "targeted.xml": "985204cafa67516eeed2949fa38133f4d6220c348403fced051da2e2ee970048"
+  },
+  "newly_detected_overlay_regression": {
+    "introduced_in": "86d06389c16db8bf3c3a0a7240aa75e9b14722b5",
+    "evidence": "main-module-before.json",
+    "measured": "원본v2/v3 모두1.0, 첫 overlay 두 버전 모두0.0: 후보가 import __main__ 후 code_check.py 파일명을 확인하는 경우. 첫 검사는 이 경우를 포함하지 않았다.",
+    "planned_correction": "제한을 설정한 bootstrap이 같은PID에서 원래 Python -I -B code_check.py 인자를 다시 exec하여 직접 script 실행 환경을 복원한다. 별도 자식 프로세스를 추가하지 않는다.",
+    "correction": "제한 설정 후 같은PID에서 원래 Python -I -B code_check.py 인자를 다시 exec한다. 별도 자식 프로세스를 추가하지 않는다. 첫396개 전체검사에 누락된 __main__/loader/argv parity를 새 원본대조 검사로 추가했다.",
+    "status": "원본 대조 수정 검증 완료; 실제 H100은 미검증"
   }
 }

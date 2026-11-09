@@ -68,3 +68,18 @@ def test_long_native_dump_keeps_fatal_header_without_reusing_old_pid_stage(tmp_p
     [fault]=json.loads((tmp_path/'child-failure.json').read_text())['failures']
     assert fault['rank']==1 and fault['signal']==11 and fault['last_progress'] is None
     assert fault['native_python_stack'].startswith('Fatal Python error: Segmentation fault')
+
+
+@pytest.mark.parametrize('malformed',['metadata','stage'])
+def test_valid_json_with_wrong_shape_does_not_replace_signal_exit(tmp_path,monkeypatch,malformed):
+    monkeypatch.syspath_prepend(str(ROOT/'scripts'));worker=importlib.import_module('v8_runtime_worker')
+    dump=tmp_path/'native.log';dump.write_text('Fatal Python error: Segmentation fault\n')
+    meta=[] if malformed=='metadata' else dict(rank=1,pid=123,invocation='current',log=dump.name)
+    (tmp_path/'native-fault-rank-1.json').write_text(json.dumps(meta))
+    (tmp_path/'rank-1.json').write_text('[]')
+    log=tmp_path/'task.log';log.write_text('rank 1 exitcode : -11\n')
+    env=dict(V8_FAILURE_TOKEN='current',V8_EXIT_FILE=str(tmp_path/'exit.json'))
+    assert worker.child_result(1,tmp_path,env,log,'task')==1
+    [fault]=json.loads((tmp_path/'child-failure.json').read_text())['failures']
+    assert fault['signal']==11
+    if malformed=='stage':assert fault['rank']==1 and fault['last_progress'] is None
