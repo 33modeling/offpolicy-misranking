@@ -183,6 +183,9 @@ def control_overrides(runtime,source):
             return primary_original_plan(phase)
         def primary_barrier(action,*args):
             if action=='primary_finalize':return control.Runtime.barrier(runtime,action,*args)
+            root=getattr(runtime,'root',None)
+            if (action=='freeze' and root is not None and (Path(root)/'.multi-node/budget-rule.json').exists()
+                    and not (Path(root)/'frozen/budget.json').exists()):return control.freeze_precommitted_budget(runtime)
             return primary_original_barrier(action,*args)
         runtime.plan=primary_plan;runtime.barrier=primary_barrier
         overrides.extend(('plan.primary:matched-horizon-first','barrier.primary:collect-and-preserve',

@@ -44,6 +44,7 @@ def test_ready_budget_accepts_each_exact_archived_freeze_function(tmp_path,monke
     (True,"ValueError: olmo_math: TypeError: freeze_budget() got an unexpected keyword argument 'expected_seeds'",True),
     (False,"ValueError: olmo_math: TypeError: freeze_budget() got an unexpected keyword argument 'expected_seeds'",False),
     (True,'invalid frozen input identity',False),
+    (True,'ValueError: Selected budget checkpoint is missing or changed: another-run@300',True),
 ])
 def test_only_verified_known_controller_api_failure_is_reopened(tmp_path,verified,detail,cleared):
     pool=nodes.Pool(tmp_path/'olmo_math/.multi-node',dict(cohort='olmo_math'));pool.initialize()
@@ -54,5 +55,6 @@ def test_only_verified_known_controller_api_failure_is_reopened(tmp_path,verifie
     state=pool.queue_state()
     assert (state['failure'] is None)==cleared
     if cleared:assert original in state['failure_history']
+    if 'Selected budget checkpoint' in detail:assert state['unresolved_evaluation_planner_failure']==original
     assert (pool.root/'binding.json').read_bytes()==binding
     assert checkpoint.read_bytes()==b'original model optimizer RNG rewards'

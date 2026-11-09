@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="3" skipped="0" tests="4" time="0.098" timestamp="2026-11-09T12:35:26.637419+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_eval_without_budget" name="test_missing_reference_seed_does_not_block_ready_checkpoint_evaluation" time="0.003"><failure message="AssertionError: healthy checkpoint evaluation waited for a different reference seed&#10;assert 'waiting' == 'claimed'&#10;  &#10;  - claimed&#10;  + waiting">tests/test_srgc_v8_eval_without_budget.py:46: in test_missing_reference_seed_does_not_block_ready_checkpoint_evaluation
+    assert action=='claimed','healthy checkpoint evaluation waited for a different reference seed'
+E   AssertionError: healthy checkpoint evaluation waited for a different reference seed
+E   assert 'waiting' == 'claimed'
+E     
+E     - claimed
+E     + waiting</failure></testcase><testcase classname="tests.test_srgc_v8_eval_without_budget" name="test_early_evaluation_rechecks_its_precommitted_rule_before_claim" time="0.002"><failure message="AssertionError: assert 'waiting' == 'ready'&#10;  &#10;  - ready&#10;  + waiting">tests/test_srgc_v8_eval_without_budget.py:56: in test_early_evaluation_rechecks_its_precommitted_rule_before_claim
+    action,offer=pool.tick(runtime,'inspector',threading.Event(),claim=False,offer=True);assert action=='ready'
+                                                                                         ^^^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: assert 'waiting' == 'ready'
+E     
+E     - ready
+E     + waiting</failure></testcase><testcase classname="tests.test_srgc_v8_eval_without_budget" name="test_evaluation_planning_error_does_not_discard_ready_extensions" time="0.001"><failure message="ValueError: Selected budget checkpoint is missing or changed: another-run@300">tests/test_srgc_v8_eval_without_budget.py:69: in test_evaluation_planning_error_does_not_discard_ready_extensions
+    result=nodes.ready_side_tasks(runtime)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/srgc_v8_nodes.py:262: in ready_side_tasks
+    evaluations,_=Runtime.plan(runtime,'evaluation')
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_srgc_v8_eval_without_budget.py:67: in failed_plan
+    def failed_plan(*args):raise ValueError('Selected budget checkpoint is missing or changed: another-run@300')
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   ValueError: Selected budget checkpoint is missing or changed: another-run@300</failure></testcase><testcase classname="tests.test_srgc_v8_eval_without_budget" name="test_cannot_claim_a_precommit_after_untracked_evaluation_results_already_exist" time="0.001" /></testsuite></testsuites>

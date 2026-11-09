@@ -1,0 +1,60 @@
+{
+  "base_commit": "abcd57b01f81ce010546047db0748902dc879818",
+  "user_report": "새로 시작했다고 . 왜 idle 이냐고 ext eval 시작하라니까",
+  "confirmed_code_defects": [
+    "V18의 ready_side_tasks가 모든 reference seed의 비용이 끝날 때까지 final eval까지 생성하지 않았다.",
+    "Runtime.plan(evaluation)의 한 오류가 이미 준비된 extension 목록도 버리게 했다."
+  ],
+  "changes": [
+    "게시된 matched-horizon checkpoint eval을 비용 예산과 분리해 즉시 배정한다. 기존 final question IDs/responses/seed purpose/checkpoint SHA/task keys를 유지한다.",
+    "첫 조기 eval 전 원본 비용 함수 해시·cfg·binding·입력 신원·모든 seed·H를 사전 고정한다. 수치 B는 모든 reference endpoint와 비용이 완성된 뒤 같은 원본 함수로 계산하며 held-out 값은 읽지 않는다.",
+    "기존 수치 예산을 다시 선택하지 않는다. 사전 기록 없는 과거 결과에 대해 뒤늦게 preregister했다고 주장하지 않는다.",
+    "eval planner 오류는 명시적으로 남기고 독립적인 ext/다른 matched eval을 배정한다. 필수 계획이 완성되지 않으면 전체를 완료 처리하지 않는다."
+  ],
+  "timing_protocol_change": "이전에는 numeric B를 평가 출력보다 먼저 고정했다. 최신 실행 순서 요청에 따라 비용 규칙·입력·전체 seed를 먼저 고정하고 숫자 B는 완전한 비용이 있을 때 계산한다. 원본 B.rule의 예전 timing 문자열은 보존하되 selection_protocol/rule_timing_note/실제 timing 필드로 새 절차를 구분한다.",
+  "software_controls": {
+    "model_data": "CPU ToyBackend synthetic fixed questions; actual original V8 train/eval lifecycle",
+    "seeds": [
+      5,
+      6,
+      7
+    ],
+    "updates": "prefix25/matched75/cap100; production25/275/400 unchanged",
+    "metrics": "blocked seed7 cannot train until another immutable endpoint has been evaluated; all tasks finish once, all reference costs required for B",
+    "checkpoint_provenance": "original trainer30 SHA preserved; zip retains model/optimizer/RNG, per-update training metrics, immutable25-interval checkpoints and separate final evaluation records"
+  },
+  "scientific_measurements": {
+    "H100_verified": false,
+    "actual_idle_cause_confirmed": false,
+    "accuracy": null,
+    "memory": null,
+    "throughput": null,
+    "reason": "H100 is not connected; no current status/log provided"
+  },
+  "evidence": {
+    "proof.xml": {
+      "tests": 27,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "before.xml": {
+      "tests": 4,
+      "failures": 3,
+      "errors": 0,
+      "skipped": 0
+    },
+    "targeted.xml": {
+      "tests": 21,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0
+    },
+    "targeted-final.xml": {
+      "tests": 22,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  }
+}

@@ -31,12 +31,13 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'ready-eval-ext-legacy-budget-compatible-v18'
+DISPATCH_POLICY = 'checkpoint-eval-cost-precommit-v19'
 TERMINAL = {'completed_horizon', 'completed_budget'}
 PHASES = ('train', 'primary_evaluation', 'extension', 'evaluation')
 CPU_PHASES = ('prepare', 'freeze', 'primary_finalize', 'finalize')
 PRIMARY_ORDER = 'matched-results-before-extension-v1'
 CONCURRENT_ORDER = 'ready-checkpoint-evaluation-extension-v1'
+BUDGET_RULE = 'original-cost-rule-precommitted-v1'
 DEFAULT_COHORTS = ('olmo_math', 'qwen_mbpp', 'olmo_mbpp', 'qwen_math')
 CORRECTED_PLANNER = 'current-v8-016'  # evaluation planner replaced for pre-V8-016 coordinators
 
@@ -216,12 +217,63 @@ def primary_evaluation_tasks(runtime):
     return tasks,True
 
 
+def matched_ready_evaluations(runtime):
+    """Only published matched-horizon checkpoints; no other seed or budget is needed to score them."""
+    if not list((runtime.root/'runs').glob('*/snapshots.jsonl')):return []
+    loc=runtime.locator();tasks=[];H=runtime.cfg['training']['matched_update_endpoint']
+    for seed in runtime.cfg['seeds']['training']:
+        runs=[]
+        for path in sorted((runtime.root/'runs').glob('*/manifest.json')):
+            row=read(path)
+            if (row.get('cohort_id'),row.get('role'),row.get('training_seed'))!=(runtime.cohort,'rebuttal_bank',seed):continue
+            if row.get('task',{}).get('method',{}).get('extension_of'):continue
+            runs.append(path.parent.name)
+        if not runs:continue
+        data=runtime.cluster.load_bundle(loc.loc['seeds'][str(seed)]['input_bundle'])
+        tasks.extend(t for t in runtime.mx.eval_tasks(runtime.cfg,data,runtime.root,runs,split='final',updates={H})
+                     if Path(t['snapshot_path']).is_file())
+    return tasks
+
+
+def precommit_budget_rule(runtime):
+    """Fix the exact cost-only formula and all seeds before permitting any early evaluation."""
+    from switching import freeze
+    path=runtime.root/'.multi-node/budget-rule.json'
+    source=hashlib.sha256(Path(freeze.__file__).read_bytes()).hexdigest()
+    expected=runtime.binding.get('runner_sha256',{}).get('switching/freeze.py')
+    if expected and expected!=source:raise ValueError('Frozen budget implementation differs from this binding')
+    identity=runtime.root/'.multi-node/input-identity.json'
+    rule=dict(schema=1,policy=BUDGET_RULE,root=str(runtime.root.resolve()),binding_sha256=digest(runtime.binding),
+              config_sha256=digest(runtime.cfg),seeds=list(runtime.cfg['seeds']['training']),
+              horizon=runtime.cfg['training']['matched_update_endpoint'],reference_policy='srgc_current',
+              freeze_implementation_sha256=source,input_identity_sha256=hashlib.sha256(identity.read_bytes()).hexdigest() if identity.exists() else None,
+              reads_evaluation_results=False,requires_all_reference_endpoints=True)
+    if path.exists():
+        old=read(path)
+        if {k:v for k,v in old.items() if k!='committed_at'}!=rule:
+            raise ValueError('Budget precommit identity/config/rule changed; original receipt retained')
+    else:
+        if list((runtime.root/'evaluations').glob('*.json')):
+            raise ValueError('Cannot precommit budget rule after untracked evaluation results already exist')
+        atomic(path,dict(rule,committed_at=time.time()))
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def ready_side_tasks(runtime):
     """Original cost-only budget and exact planners; never wait for unrelated arms/cohorts."""
     budget_path=runtime.root/'frozen/budget.json';seeds=runtime.cfg['seeds']['training']
     H=runtime.cfg['training']['matched_update_endpoint']
+    rule_path=runtime.root/'.multi-node/budget-rule.json';rule_sha=None
+    def waiting(reason,error=None):
+        evaluations=matched_ready_evaluations(runtime)
+        rule=precommit_budget_rule(runtime) if evaluations or rule_path.exists() else None
+        result=dict(tasks=[dict(phase='evaluation',task=t) for t in evaluations],budget_ready=False,reason=reason,
+                    evaluation_independent_of_budget=True,ready_matched_evaluations=len(evaluations),budget_rule_sha256=rule)
+        if error:result['budget_error']=error
+        return result
     if not budget_path.exists():
-        if list((runtime.root/'evaluations').glob('*.json')):
+        if rule_path.exists():rule_sha=precommit_budget_rule(runtime)
+        elif list((runtime.root/'evaluations').glob('*.json')):
             raise ValueError('Evaluation records exist before budget freeze; cannot certify cost-only selection')
         complete=set()
         for path in (runtime.root/'runs').glob('*/manifest.json'):
@@ -229,7 +281,7 @@ def ready_side_tasks(runtime):
             if (row.get('cohort_id')==runtime.cohort and row.get('role')=='rebuttal_bank'
                     and row.get('status')=='completed_horizon' and row.get('completed_updates',-1)>=H):
                 complete.add(row.get('training_seed'))
-        if not set(seeds)<=complete:return dict(tasks=[],budget_ready=False,reason='reference_policy_costs_incomplete')
+        if not set(seeds)<=complete:return waiting('reference_policy_costs_incomplete')
         from switching.bank import SeedBank
         from switching.freeze import freeze_budget,write_frozen_budget
         rows=[]
@@ -240,30 +292,51 @@ def ready_side_tasks(runtime):
         if (set(seeds)!={r['seed'] for r in reference}
                 or any(r.get('status') not in ('triggered','not_triggered')
                        or r.get('continuation_gpu_seconds') is None for r in reference)):
-            return dict(tasks=[],budget_ready=False,reason='reference_policy_costs_incomplete')
+            return waiting('reference_policy_costs_incomplete')
         for row in reference:
             path=runtime.root/'runs'/row['run_id']/'manifest.json'
-            if not path.is_file():return dict(tasks=[],budget_ready=False,reason='reference_endpoint_unfinished')
+            if not path.is_file():return waiting('reference_endpoint_unfinished')
             endpoint=read(path)
             if (endpoint.get('cohort_id'),endpoint.get('role'),endpoint.get('training_seed'))!=(runtime.cohort,'rebuttal_bank',row['seed']):
                 raise ValueError('Reference policy endpoint identity differs from this cohort/seed')
             if endpoint.get('status') not in TERMINAL or endpoint.get('completed_updates',-1)<H:
-                return dict(tasks=[],budget_ready=False,reason='reference_endpoint_unfinished')
+                return waiting('reference_endpoint_unfinished')
         arguments=dict(files_read=[str(runtime.root/'runs')])
         # Earlier pinned runners lack this optional keyword. The controller above
         # already requires every configured seed and its complete selected endpoint.
         if 'expected_seeds' in inspect.signature(freeze_budget).parameters:arguments['expected_seeds']=seeds
-        budget=freeze_budget(rows,**arguments)
+        try:budget=freeze_budget(rows,**arguments)
+        except ValueError as exc:return waiting('budget_calculation_error',str(exc))
         budget.update(gpu_type=runtime.cfg['runtime']['gpu_type'],gpu_count=runtime.cfg['runtime']['world_size'])
+        if rule_sha:
+            budget.update(selection_protocol=BUDGET_RULE,budget_rule_receipt_sha256=rule_sha,
+                          evaluation_records_present_at_numeric_freeze=bool(list((runtime.root/'evaluations').glob('*.json'))),
+                          formula_precommitted_before_evaluation=True,numeric_budget_timing='after_all_reference_costs',
+                          legacy_rule_timing_text_preserved=True,
+                          rule_timing_note='Saved rule text describes legacy order; actual timing follows selection_protocol and the immutable precommit receipt.')
         write_frozen_budget(budget_path,budget)
-        print(f'[v8] {runtime.cohort}: reference-policy costs complete; froze original budget before any evaluation',flush=True)
+        print(f'[v8] {runtime.cohort}: all reference costs complete; original cost-only budget frozen; precommit={rule_sha or "legacy-order"}',flush=True)
     loc=runtime.locator();budget=read(budget_path)['value']
     extension,notes=runtime.mx.build_stage('budget-extension',runtime.cfg,loc,runtime.root,seeds=seeds,budget=budget)
-    evaluations,_=Runtime.plan(runtime,'evaluation')
+    errors={}
+    try:evaluations,_=Runtime.plan(runtime,'evaluation')
+    except (ValueError,json.JSONDecodeError) as exc:
+        errors['evaluation']=f'{type(exc).__name__}: {exc}'
+        evaluations=matched_ready_evaluations(runtime)
     result=dict(tasks=[dict(phase='extension',task=t) for t in extension]+
                       [dict(phase='evaluation',task=t) for t in evaluations],
-                budget_ready=True,budget_sha256=hashlib.sha256(budget_path.read_bytes()).hexdigest(),waiting_parents=notes)
+                budget_ready=True,budget_sha256=hashlib.sha256(budget_path.read_bytes()).hexdigest(),waiting_parents=notes,
+                planning_errors=errors,evaluation_independent_of_budget=True)
     return result
+
+
+def freeze_precommitted_budget(runtime):
+    """Keep the saved calculator; its CLI's legacy timing guard cannot describe early-eval scheduling."""
+    precommit_budget_rule(runtime)
+    state=ready_side_tasks(runtime)
+    if not state.get('budget_ready'):
+        raise ValueError('Reference-policy cost budget is not ready; early checkpoint evaluations are retained: '+
+                         str(state.get('budget_error') or state.get('reason')))
 
 
 def capture_primary_results(runtime):
@@ -487,18 +560,22 @@ class Pool:
             atomic(state_path,state)
 
     def recover_budget_api_failure(self,controller,worker):
-        """After verified admission, reopen only the exact known controller keyword regression."""
+        """Verified recovery: fix the known API regression, or allow independent work beside a blocked eval plan."""
         if controller!=self.controller_sha256:return False
         state=self.queue_state();failure=state.get('failure')
-        if (state.get('phase') not in PHASES or not isinstance(failure,dict) or failure.get('task') is not None
-                or not re.search(r'''freeze_budget\(\) got an unexpected keyword argument ['"]expected_seeds['"]''',str(failure.get('detail','')))):
+        if state.get('phase') not in PHASES or not isinstance(failure,dict) or failure.get('task') is not None:
             return False
+        detail=str(failure.get('detail',''))
+        api=bool(re.search(r'''freeze_budget\(\) got an unexpected keyword argument ['"]expected_seeds['"]''',detail))
+        evaluation='Selected budget checkpoint is missing or changed:' in detail
+        if not api and not evaluation:return False
         state.setdefault('failure_history',[]).append(failure);state['failure']=None
-        state.setdefault('actions',[]).append(dict(action='recover_verified_legacy_budget_keyword_failure',
+        if evaluation:state['unresolved_evaluation_planner_failure']=failure
+        state.setdefault('actions',[]).append(dict(action='recover_verified_legacy_budget_keyword_failure' if api else 'resume_independent_work_with_blocked_evaluation_plan',
             controller_sha256=controller,controller_policy=DISPATCH_POLICY,worker=worker,at=time.time()))
         atomic(self.root/'state.json',state)
-        print(f'[v8] {self.binding.get("cohort")}: recovered known budget API controller failure after node verification; '
-              'original failure/checkpoints/bindings retained',flush=True)
+        print(f'[v8] {self.binding.get("cohort")}: resumed independent work after verified controller recovery; '
+              f'evaluation planner error remains recorded={evaluation}; original failure/checkpoints/bindings retained',flush=True)
         return True
 
     def enable_automatic_retry(self,worker):
@@ -657,10 +734,13 @@ class Pool:
                     print(f'[{worker}] {self.binding["cohort"]}: extension deferred; matched-step results pending: '+', '.join(blocked),flush=True)
                 return 'waiting',None
             if state.pop('extension_waiting_for',None):atomic(self.root/'state.json',state)
+        base_error=None;deferred_base=(getattr(runtime,'streaming_ready_tasks',False) and phase in ('extension','evaluation')
+                                      and not (self.root.parent/'frozen/budget.json').exists())
         try:
             cached=self.root/'plans'/(phase+'.json')
             corrected=phase in getattr(runtime,'corrected_plans',())
-            if cached.exists():
+            if deferred_base:tasks,sealed=[],False
+            elif cached.exists():
                 plan=read(cached);tasks,sealed=plan['tasks'],True
                 if corrected and plan.get('planner')!=CORRECTED_PLANNER:
                     raise ValueError(f'{phase} plan was cached by this queue\'s original coordinator, whose evaluation '
@@ -680,26 +760,38 @@ class Pool:
                 probe.close()
             if active:return 'waiting',None
             raise ValueError('Invalid run metadata with no active writer')
+        except ValueError as exc:
+            if not getattr(runtime,'streaming_ready_tasks',False) or phase not in ('extension','evaluation','primary_evaluation'):raise
+            tasks,sealed=[],False;base_error=f'{type(exc).__name__}: {exc}'
+        if state.get('base_planning_error')!=base_error:
+            if base_error:state.setdefault('planning_failure_history',[]).append(dict(phase=phase,detail=base_error,at=time.time()))
+            state['base_planning_error']=base_error;atomic(self.root/'state.json',state)
         job_phase='evaluation' if phase=='primary_evaluation' else phase
         selected={task_key(t) for t in tasks}
         for task in tasks:self.register(task,job_phase)
-        side_keys=set();side_budget=None
+        side_keys=set();side_budget=None;side_rule=None
         if getattr(runtime,'streaming_ready_tasks',False):
-            side=runtime.side_tasks()
+            try:side=runtime.side_tasks()
+            except json.JSONDecodeError:
+                if self.held_leases():return 'waiting',None
+                raise
             summary={k:v for k,v in side.items() if k!='tasks'}
             if state.get('ready_side_work')!=summary:
                 state['ready_side_work']=summary;atomic(self.root/'state.json',state)
             side_budget=side.get('budget_sha256')
+            side_rule=side.get('budget_rule_sha256')
             for item in side.get('tasks',[]):
                 if item['phase'] not in ('extension','evaluation'):raise ValueError('Invalid side task phase')
-                if not side_budget:raise ValueError('Ready ext/eval work has no frozen-budget receipt')
+                if not side_budget and (item['phase']=='extension' or not side_rule):
+                    raise ValueError('Ready side work has no frozen budget or precommitted evaluation rule')
                 side_keys.add(self.register(item['task'],item['phase']))
         jobs=[]
         for path in sorted(self.root.glob('jobs/*.json')):
             job=read(path)
-            if (job['phase']==job_phase and (phase!='primary_evaluation' or path.stem in selected)) or path.stem in side_keys:
+            if (job['phase']==job_phase and (not (phase=='primary_evaluation' or deferred_base or base_error) or path.stem in selected)) or path.stem in side_keys:
                 jobs.append((path,job))
         if not jobs and phase!='extension':
+            if deferred_base or base_error:return 'waiting',None
             raise ValueError('No tasks produced for '+phase+'; refusing to declare an empty experiment complete')
         pending=[];all_done=True;active=False;failed=[];later=False
         for path,job in jobs:
@@ -747,11 +839,11 @@ class Pool:
         pending.sort(key=lambda item:(item[1]['state']=='failed',item[1]['task'].get('method_id')!='on_monitored',
                                       len(item[1]['attempts']),item[0].stem))
         if pending and offer:
-            return 'ready',dict(phase=phase,side_budget_sha256=side_budget,
+            return 'ready',dict(phase=phase,side_budget_sha256=side_budget,side_rule_sha256=side_rule,
                                 jobs=[dict(key=p.stem,phase=j['phase'],retry=j['state']=='failed',task=semantic_task(j['task'])) for p,j in pending])
         if pending and not claim:return 'gpu_busy',None
 
-        return self.claim_offered(dict(phase=phase,side_budget_sha256=side_budget,jobs=[dict(key=p.stem,phase=j['phase'],retry=j['state']=='failed',task=semantic_task(j['task']))
+        return self.claim_offered(dict(phase=phase,side_budget_sha256=side_budget,side_rule_sha256=side_rule,jobs=[dict(key=p.stem,phase=j['phase'],retry=j['state']=='failed',task=semantic_task(j['task']))
                                                        for p,j in pending]),worker,stop)
 
     def claim_offered(self,offer,worker,stop):
@@ -768,6 +860,12 @@ class Pool:
             budget=self.root.parent/'frozen/budget.json'
             if not budget.is_file() or hashlib.sha256(budget.read_bytes()).hexdigest()!=offer['side_budget_sha256']:
                 return 'stale',None
+        early_rule=None
+        if offer.get('side_rule_sha256'):
+            path=self.root/'budget-rule.json'
+            if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest()!=offer['side_rule_sha256']:return 'stale',None
+            early_rule=read(path)
+            if early_rule.get('policy')!=BUDGET_RULE or early_rule.get('binding_sha256')!=digest(self.binding):return 'stale',None
         parallel=state.get('execution_order',{}).get('policy')==CONCURRENT_ORDER
         phases=('train','extension','evaluation');items=offer['jobs']
         if parallel:
@@ -783,6 +881,10 @@ class Pool:
                 if job_phase not in (offer['phase'],'extension','evaluation'):raise ValueError('Invalid concurrent claim phase')
             if job['phase']!=job_phase or semantic_task(job['task'])!=item['task']:
                 raise ValueError('Inspected task definition changed before claim: '+item['key'])
+            if parallel and not offer.get('side_budget_sha256') and job_phase in ('extension','evaluation'):
+                t=job['task']
+                if (job_phase=='extension' or not early_rule or t.get('kind')!='evaluate' or t.get('split')!='final'
+                        or t.get('completed_update')!=early_rule['horizon'] or t.get('training_seed') not in early_rule['seeds']):continue
             # A failed task is claimable only under the retry rules (--retry-failed, attempts, delay).
             if job['state']=='done' or not self.retryable(job,state=state):continue
             lease=Lock(self.root/'leases'/(path.stem+'.lock'))
@@ -1455,6 +1557,8 @@ class Runtime:
                 if stop.is_set():return
             self.freeze_inputs();self.verify_node()
         elif action=='freeze':
+            if (self.root/'.multi-node/budget-rule.json').exists() and not (self.root/'frozen/budget.json').exists():
+                return freeze_precommitted_budget(self)
             if not (self.root/'frozen/budget.json').exists() and list((self.root/'evaluations').glob('*.json')):
                 raise ValueError('Evaluation records exist before budget freeze; cannot certify outcome-independent budget selection')
             self.cpu('freeze-budget',fd,stop,device_fds)

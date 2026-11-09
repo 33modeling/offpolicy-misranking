@@ -154,6 +154,7 @@ def main():
                                         nodes.PRIMARY_ORDER if actor.primary_results_first else 'original-runtime-order',
                         conditional_runtime_repairs=dict(strict_math_verifier='recorded-seed-fallback',
                             mbpp_subprocess='hash-pinned-limits-after-exec',native_fault='per-rank-invocation-stack',
+                            checkpoint_evaluation='matched-horizon-before-numeric-budget-with-precommitted-cost-rule',
                             rollout_memory='cache-release-and-one-identical-retry',
                             legacy_dense_memory='hash-pinned-per-prompt-release-and-host-optimizer-snapshot',
                             olmo_memory='zero-dropout-activation-recomputation-and-generation-last-logit',

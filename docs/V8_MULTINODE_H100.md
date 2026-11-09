@@ -121,14 +121,21 @@ binding·실패 기록은 setup-history에 보존한다. 학습이 시작된 큐
 
 최신 사용자 지시에 따라 **준비된 ext와 최종 eval을 학습과 함께 배정한다.** 네 조합의
 기본 결과를 모두 기다리는 전역 장벽과, 관계없는 분기 전체의 학습 완료 대기를 없앴다.
-각 cohort는 모든 지정 seed의 `srgc_current`가 실제275 endpoint에 도달하고 비용이
-기록되면 원래 비용 전용 함수로 예산을 먼저 고정한다. 평가 결과는 예산 계산에 쓰지 않는다.
-예산이 고정되면275 체크포인트가 준비된 각 분기의 ext·최종 eval 및 확정된 예산
-endpoint eval을 빈4GPU 노드에 배정한다. 다른 분기·seed·모델은 동시에 학습할 수 있다.
+275 체크포인트가 게시되면 그 최종 eval을 즉시 배정한다. 다른 seed가 실패했거나
+비용 예산이 아직 준비되지 않아도 이 평가는 실행할 수 있다. 첫 조기 평가 전에
+`.multi-node/budget-rule.json`에 원본 예산 함수 해시·설정·binding·모든 seed·H·입력 신원을
+먼저 고정한다. 평가값은 예산 계산에 쓰지 않는다. 수치 예산은 모든 지정 seed의
+`srgc_current`가 실제275 endpoint에 도달하고 비용이 기록된 뒤 원래 함수로 계산한다.
+부분 seed 평균이나 추정 비용으로 대신하지 않는다. 이미 고정된 예산 파일은 바꾸지 않는다.
+ext와 예산 endpoint eval은 이 수치 예산과 각 부모 checkpoint가 준비되면 배정한다.
+다른 분기·seed·모델은 동시에 학습할 수 있다.
 준비된 학습·ext·eval은 cohort 안에서도 순환 배정하여 학습 작업이 많다는 이유로
 ext/eval이 목록 뒤에 계속 남지 않게 한다. 준비되지 않은 종류는 건너뛰고 다른 작업을 배정한다.
-예산 기준 정책의 endpoint·비용이 아직 없거나 부모 checkpoint가 없으면 해당 작업만
-기다린다. 이 조건을 우회해 미측정 비용이나 평가를 만들지 않는다.
+예산 기준 정책의 endpoint·비용이 없으면 ext만 기다리고, 준비된275 eval은 계속한다.
+수치 예산보다 먼저 평가한 경우 예산 JSON의 `selection_protocol`과 실제 시간 필드를
+함께 기록한다. 원본 계산기의 `rule` 문자열은 호환성을 위해 남기되, 그 문자열에 담긴
+예전 실행 순서와 새 순서를 `rule_timing_note`로 구분한다. 사전 기록 없이 평가 결과가
+이미 있으면 뒤늦게 사전 고정했다고 기록하지 않고 오류로 남긴다.
 작업 실패는 원문을 남기고 즉시 재시작하며, 환경·입력 사전검사 오류는 가려서 진행하지 않는다.
 
 먼저 나온275스텝 결과는 각 cohort의 `analysis/matched-update-275/`에 보존한다.
@@ -136,7 +143,7 @@ ext/eval이 목록 뒤에 계속 남지 않게 한다. 준비되지 않은 종�
 기록한다. 이 보고서는 ext 배정의 전역 장벽으로 사용하지 않는다. 기존 evaluation
 job·계획·실패 기록은 지우지 않고275스텝 평가는 같은 결과 파일을 재사용한다.
 일찍 배정한 작업도 원래 `extension`·`evaluation` job phase와 task key를 유지하며,
-claim 직전 고정 예산 해시와 현재 task 정의·lease를 다시 확인한다. 이미 실행 중인
+claim 직전 고정 예산 또는 조기 평가 사전 기록의 해시와 현재 task 정의·lease를 다시 확인한다. 이미 실행 중인
 task lease는 빼앗지 않고 완료된 ext나 평가도 되풀이하지 않는다.
 이 순서를 적용하려면 모든 V8 worker를 수정본으로 다시 시작해야 한다. 이전 worker는
 고정된 예전 코드를 계속 쓰므로 `git pull`만으로 실행 순서가 바뀌지 않는다. 재시작해도
@@ -164,7 +171,7 @@ worker는60초마다 현황을 출력한다. 자식 출력은 터미널과 각 c
 정책 버전이 나온다. 표 형식 `status`는 `dispatch current <hash>`(현재 checkout과
 같음), `dispatch different <hash>`(다름), `dispatch unverified`(기록 없음)를 구분한다.
 정책 파일이 디스크에 있다는 것만으로 실행 중인 worker에 적용됐다고 판단하지 않는다.
-현재 배정 정책은 `ready-eval-ext-legacy-budget-compatible-v18`이다. 작업 검사는 해당 cohort의
+현재 배정 정책은 `checkpoint-eval-cost-precommit-v19`이다. 작업 검사는 해당 cohort의
 control lease만 잡고 별도로 수행한다. 검사 결과가 준비되면 공유 잠금 안에서 현재
 binding·phase·실패 상태·작업 정의·작업 lease를 다시 확인한 뒤 claim한다.
 검사와 claim 사이에 다른 노드가 가져간 작업이나 실패한 작업은 가져오지 않는다.
@@ -201,6 +208,10 @@ binding·checkpoint를 고치거나 지우지 않는다. 신원·설정·CPU 준
 `freeze_budget() got an unexpected keyword argument 'expected_seeds'` 중단은 입력·원본
 binding을 검증한 새 worker가 이력을 보존하고 재개한다. 구형 함수에는 지원하지 않는
 인자를 넘기지 않으며, 모든 seed의 선택된 endpoint와 비용 준비 검사는 제어 코드에서 유지한다.
+하나의 예산 endpoint eval을 계획하다 오류가 나도 다른 정상 checkpoint eval과 준비된 ext는
+배정한다. 해당 오류는 해결됐다고 처리하지 않고 `planning_errors`와 실패 이력에 남긴다.
+이 오류로 예전 제어 코드가 조합 전체를 멈췄다면 입력 검증 후 독립 작업만 재개하며,
+원래 필수 계획이 완성되기 전에는 전체 실험을 완료로 처리하지 않는다.
 준비된 새 seed·분기를 실패한 원 궤적의 반복 재시작보다 먼저 배정하여 작업 독점을 막는다.
 다른 cohort의 메타데이터 잠금이 사용 중이어도 준비된 cohort는 즉시 claim할 수 있다.
 활성 lease 수로 덜 바쁜 cohort를 우선하되 다른 cohort의 잠금을 기다리느라 GPU를 비우지 않는다.

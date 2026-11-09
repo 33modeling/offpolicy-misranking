@@ -108,9 +108,11 @@ def test_original_cpu_runner_starts_ext_and_eval_before_unrelated_uniform_traini
         def execute(self,task,*args):
             side='evaluate' if task['kind']=='evaluate' else 'extension' if task.get('method',{}).get('extension_of') else None
             if side:
-                budget=self.root/'frozen/budget.json';assert budget.exists()
+                budget=self.root/'frozen/budget.json';rule=self.root/'.multi-node/budget-rule.json'
+                assert budget.exists() or (side=='evaluate' and rule.exists())
                 nodes.atomic(self.root/('side-started-'+side+'.json'),dict(kind=side,run_id=task['run_id'],
-                    budget_sha256=hashlib.sha256(budget.read_bytes()).hexdigest(),source='CPU original runner'))
+                    budget_sha256=hashlib.sha256(budget.read_bytes()).hexdigest() if budget.exists() else None,
+                    budget_rule_sha256=hashlib.sha256(rule.read_bytes()).hexdigest() if rule.exists() else None,source='CPU original runner'))
             return super().execute(task,*args)
         def barrier(self,action,*args):
             if action=='freeze':
@@ -123,7 +125,9 @@ def test_original_cpu_runner_starts_ext_and_eval_before_unrelated_uniform_traini
     assert rc==0,'ready ext/eval still waited for unrelated unfinished uniform training'
     budget=(runtime.root/'frozen/budget.json').read_bytes();sha=hashlib.sha256(budget).hexdigest()
     for name in ('extension','evaluate'):
-        assert nodes.read(runtime.root/('side-started-'+name+'.json'))['budget_sha256']==sha
+        receipt=nodes.read(runtime.root/('side-started-'+name+'.json'))
+        if receipt['budget_sha256'] is not None:assert receipt['budget_sha256']==sha
+        else:assert name=='evaluate' and receipt['budget_rule_sha256']==hashlib.sha256((pool.root/'budget-rule.json').read_bytes()).hexdigest()
     assert nodes.primary_results_ready(runtime.root)
     verify_toy_complete(runner,tmp_path,'olmo_math',monkeypatch,min_workers=1)
 

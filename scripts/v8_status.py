@@ -1086,6 +1086,7 @@ def clean_block(base, cohort, now, host, width):
                  eval=(sum(r['status'] == 'done' for r in evals), len(evals)),
                  planned=planned_tasks,
                  scheduler_phase=state.get('phase'),side_work=state.get('ready_side_work'),
+                 base_planning_error=state.get('base_planning_error'),
                  parallel_work=isinstance(state.get('execution_order'),dict) and state['execution_order'].get('policy')=='ready-checkpoint-evaluation-extension-v1',
                  updates=(done_updates, max(planned, planned_tasks.get('_train_updates_min') or 0)),
                  updates_more=any(v[2] != 'exact' for k, v in planned_tasks.items() if not k.startswith('_')))
@@ -1398,11 +1399,18 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
         if not st.get('parallel_work') or not isinstance(side,dict) or st.get('scheduler_phase')=='complete':continue
         if side.get('budget_ready'):
             note='budget frozen; ext/eval join the rotation when their checkpoints are ready'
+        elif side.get('evaluation_independent_of_budget'):
+            note='eval: published matched checkpoints run independently; ext: waiting for reference-policy cost budget'
+            if side.get('budget_error'):note+='; budget error: '+str(side['budget_error'])
         elif side.get('reason')=='reference_endpoint_unfinished':
             note='waiting for the selected reference-policy endpoint to finish before freezing budget'
         else:
             note='waiting for complete reference-policy endpoints and measured costs before freezing budget'
         out.append(paint(f" {st['label']} ext/eval: {note}", 'dim'))
+        for kind,error in (side.get('planning_errors') or {}).items():
+            out.append(paint(clip(f" {st['label']} {kind} planner blocked: {error}; other ready work remains eligible",width),'warn'))
+        if st.get('base_planning_error'):
+            out.append(paint(clip(f" {st['label']} stage planner blocked: {st['base_planning_error']}",width),'warn'))
 
     # 2. problems, newest failures first
     if attention:
