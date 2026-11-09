@@ -940,6 +940,13 @@ def clean_block(base, cohort, now, host, width):
             return missing[kind]
         if len(items) == 1:
             return symbol(items[0])
+        if len(items) <= 4:
+            # one mark per task, in update order (an eval cell: the matched endpoint first, then budget points):
+            # '✓▶' = the first done, the second running (user: '0/2 이게 무슨 뜻이야? 더 직관적으로')
+            def order(i):
+                u = exit_code(i.get('update'))
+                return (u if isinstance(u, int) else 10 ** 9, str(i.get('key')))
+            return ''.join(symbol(i)[0] for i in sorted(items, key=order))
         if all(i['status'] == 'pending' for i in items):
             return '○' if any(i.get('ready') for i in items) else '·'
         done = sum(i['status'] == 'done' for i in items)
@@ -984,8 +991,8 @@ def clean_block(base, cohort, now, host, width):
                     lines.append(row_text(f'{seed!s:>6}', {c: part[(seed, c)] for c in cols}))
         if use_plan:
             known = ' · '.join(f"s{k} @{v}" for k, v in sorted(u_tau.items()))
-            lines.append(paint(clip("   ext = budget extension of that branch (On is never extended) · eval = evaluations of that branch "
-                                    "(one symbol, or done/all when it has several)", width), 'dim'))
+            lines.append(paint(clip("   ext = budget extension of that branch (On is never extended) · eval = one mark per evaluation of "
+                                    "that branch in update order, e.g. ✓▶ = first done, second running", width), 'dim'))
             lines.append(paint(clip(f"   · = not created yet (a branch appears when its parent snapshot is saved) · U = Uniform at the "
                                     f"seed's switch point" + (f": {known}" if known else ' (known when that On trajectory is done)'),
                                     width), 'dim'))

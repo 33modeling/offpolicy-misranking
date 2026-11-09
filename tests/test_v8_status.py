@@ -732,10 +732,10 @@ def test_extension_and_evaluation_cells_follow_each_task_through_its_states(tmp_
     job("x25", "done", extension, "extension"); run(R + "bank_sr_t025.bb22", 400)
     job("e1", "done", e275, "evaluation"); job("e2", "running", e400, "evaluation", "h-ev.1")
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
-    assert cells(text, "ext")["SR25"] == "✓" and cells(text, "eval")["SR25"] == "1/2▶"
+    assert cells(text, "ext")["SR25"] == "✓" and cells(text, "eval")["SR25"] == "✓▶"   # one mark per evaluation, update order
     assert any(" s5 eval SR25 ext@400 " in line for line in text.splitlines() if line.startswith(" ▶ h-ev"))
     job("e2", "done", e400, "evaluation")
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
-    assert cells(text, "eval")["SR25"] == "✓"
+    assert cells(text, "eval")["SR25"] == "✓✓"
     stats = status.clean_block(base, "olmo_math", now, "viewer", 220)[4]
     assert stats["ext"] == (1, 1) and stats["eval"] == (2, 2) and stats["running"] == 0
