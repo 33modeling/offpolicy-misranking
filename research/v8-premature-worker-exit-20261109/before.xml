@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="2" time="0.075" timestamp="2026-11-09T22:07:35.608084+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_exit_revalidation" name="test_newly_available_checkpoint_is_rechecked_before_worker_exits[False]" time="0.011"><failure message="AssertionError: stale no-work observation terminated a node with a newly ready task&#10;assert [] == ['healthy']&#10;  &#10;  Right contains one more item: 'healthy'&#10;  Use -v to get more diff">tests/test_srgc_v8_exit_revalidation.py:43: in test_newly_available_checkpoint_is_rechecked_before_worker_exits
+    assert calls==['healthy'],'stale no-work observation terminated a node with a newly ready task'
+E   AssertionError: stale no-work observation terminated a node with a newly ready task
+E   assert [] == ['healthy']
+E     
+E     Right contains one more item: 'healthy'
+E     Use -v to get more diff</failure></testcase><testcase classname="tests.test_srgc_v8_exit_revalidation" name="test_newly_available_checkpoint_is_rechecked_before_worker_exits[True]" time="0.009"><failure message="AssertionError: stale no-work observation terminated a node with a newly ready task&#10;assert [] == ['healthy']&#10;  &#10;  Right contains one more item: 'healthy'&#10;  Use -v to get more diff">tests/test_srgc_v8_exit_revalidation.py:43: in test_newly_available_checkpoint_is_rechecked_before_worker_exits
+    assert calls==['healthy'],'stale no-work observation terminated a node with a newly ready task'
+E   AssertionError: stale no-work observation terminated a node with a newly ready task
+E   assert [] == ['healthy']
+E     
+E     Right contains one more item: 'healthy'
+E     Use -v to get more diff</failure></testcase></testsuite></testsuites>

@@ -208,6 +208,14 @@ V21은 `torchrun launcher exit -11`(SIGSEGV)을 처음 기록한 시점부터 �
 ext/eval 계획에서 빠진 경우에도 대기 루프에 머무르지 않는다. 작업자별 종료 사유는
 `.multi-node/worker-exits/`에 남기며 정상 cohort의 공유 큐를 실패/완료로 바꾸지 않는다.
 `9/2` 같은 비율 대신 `BLOCKED`와 보존한 과거 실패 수·상한/치명 signal을 표시한다.
+V22는 실패 종료 직전에 원래 planner/ready/done을 다시 검사한다. 첫 scan 직후 다른
+노드가 checkpoint를 게시한 경우에는 기존 task를 배정하고 worker를 종료하지 않는다.
+현재 phase의 전체 실패 종료와 숨은 실패의 대기 종료 양쪽에 같은 검사를 적용한다.
+입력/설정 오류는 해제하지 않으며 재검사에서도 새 작업을 claim하지 않는다. 최종
+재검사 잠금 대기는 유한하며 busy loop로 바뀌지 않는다. 종료 receipt와 콘솔에는
+`blocked_work` 작업자 종료, 현재 worker의 native crash/OOM/timeout, 이전 worker들의
+실패 수를 따로 남긴다. exit1만으로 새로운 모델 crash라고 단정하지 않는다. 실패
+코드·checkpoint·원문 로그는 그대로 보존하고 미완성 실험을 성공 처리하지 않는다.
 SIGSEGV를 차단한 것은 native 오류 원인을 고쳤다는 뜻이 아니다. 원래 오류와 checkpoint는
 보존하고, 원인 수리 없이 상한만 올려 native crash를 재실행하지 않는다.
  이전 V8가

@@ -31,7 +31,7 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'fatal-fault-quiescence-v21'
+DISPATCH_POLICY = 'revalidated-worker-retirement-v22'
 TERMINAL = {'completed_horizon', 'completed_budget'}
 PHASES = ('train', 'primary_evaluation', 'extension', 'evaluation')
 CPU_PHASES = ('prepare', 'freeze', 'primary_finalize', 'finalize')
@@ -1069,6 +1069,47 @@ def quiescent_failure(pairs):
     return dict(reason='no eligible work remains beside failed tasks; worker exits instead of waiting',faults=faults)
 
 
+def record_worker_retirement(pairs,worker,reason,faults=()):
+    """Distinguish a blocked dispatcher exit from new crashes of this worker's tasks."""
+    counts={};attempts=[];historical=0;unreadable=[]
+    for pool,_ in pairs:
+        for path in pool.root.glob('jobs/*.json'):
+            try:
+                job=read(path)
+                if not isinstance(job,dict) or any(not isinstance(a,dict) for a in job.get('attempts',[])):
+                    raise ValueError('invalid job/attempt record')
+                historical+=counted_failures(job)
+            except (OSError,ValueError,TypeError) as exc:
+                unreadable.append(dict(path=str(path),error=str(exc)));continue
+            for row in job.get('attempts',[]):
+                if row.get('worker')!=worker:continue
+                outcome=row.get('outcome')
+                if outcome is None:outcome='failed' if row.get('exit_code') not in (None,0,75) else 'unrecorded'
+                category=outcome
+                if outcome=='failed':
+                    messages=' '.join(str(f.get('message','')) for f in (row.get('child_failure') or {}).get('failures',[]))
+                    if fatal_native_failure(dict(attempts=[row])):category='native_crash'
+                    elif 'out of memory' in (messages+' '+str(row.get('error',''))).lower():category='out_of_memory'
+                    elif row.get('exit_code')==124:category='progress_timeout'
+                    else:category='task_error'
+                counts[category]=counts.get(category,0)+1
+                attempts.append(dict(cohort=pool.binding.get('cohort'),task=path.stem,attempt=row.get('id'),
+                    category=category,exit_code=row.get('exit_code'),log=str(pool.root/'logs'/(str(row.get('id'))+'.log'))))
+    current_failures=sum(counts.get(k,0) for k in ('native_crash','out_of_memory','progress_timeout','task_error'))
+    previous_failures=historical-current_failures
+    report=dict(worker=worker,at=time.time(),exit_code=1,exit_kind='blocked_work',reason=reason,faults=list(faults),
+                current_worker_counts=counts,lifetime_task_failure_count=historical,
+                previous_worker_failure_count=previous_failures,current_worker_attempts=attempts,
+                unreadable_records=unreadable)
+    for pool,_ in pairs:
+        try:atomic(pool.root/'worker-exits'/(digest(worker)+'.json'),report)
+        except (OSError,ValueError) as exc:print(f'[{worker}] cannot retain worker exit summary: {exc}',flush=True)
+    print(f'[{worker}] WORKER EXIT: blocked_work; current worker outcomes='+canonical(counts)+
+          f'; previous-worker failed attempts={previous_failures}; lifetime failed attempts={historical}; '
+          'exit1 does not identify a new model crash; '+reason,flush=True)
+    return report
+
+
 class TaskScan:
     """One original actor's metadata scan, holding only its own cohort control lease."""
     def __init__(self,pool,runtime,worker,stop,fd,*,verify=False,retry=False):
@@ -1099,7 +1140,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
     if not pairs:raise ValueError('At least one cohort is required')
     if stop.is_set():return 75
     initialized=set();terminal={};offers={};scans={};last_report=0;reasons={};busy_report=0;setup_report=0
-    shared_failures=set();recovery_checked={};claim_contention_since={}
+    shared_failures=set();recovery_checked={};claim_contention_since={};exit_recheck_started={}
     cursor=int(digest(worker)[:8],16)%len(pairs)
     roots=[p.root.parent.parent if p.root.name=='.multi-node' else p.root.parent for p,_ in pairs]
     dispatch_lock=Path(os.path.commonpath([str(p.resolve()) for p in roots]))/'.v8-dispatch.lock'
@@ -1144,6 +1185,32 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                         'primary_finalize':'extension','finalize':'complete'}[action]
         atomic(pool.root/'state.json',state)
         print(f'[{worker}] {cohort(pool)}: CPU stage finished; phase={state["phase"]}',flush=True)
+    def refresh_before_exit():
+        """Recheck original readiness after the stale scan; never claim under this check."""
+        refreshed=False
+        for i,(pool,runtime) in enumerate(pairs):
+            if i not in initialized or getattr(runtime,'pending_barrier',None) is not None:continue
+            try:
+                with pool.control() as control:
+                    if control is None:
+                        since=exit_recheck_started.setdefault(i,time.monotonic())
+                        if time.monotonic()-since<max(.05,min(poll,1)):
+                            stop.wait(min(poll,.05));refreshed=True
+                        continue  # finite final-check wait; never spin on a stale lock
+                    exit_recheck_started.pop(i,None)
+                    state=pool.queue_state()
+                    if state.get('phase') not in PHASES:continue
+                    if state.get('failure') and not aggregate_task_failure(state['failure']):continue
+                    action,offer=pool.tick(runtime,worker,stop,claim=False,offer=True)
+                    usable=action in ('ready','advance','complete') or (
+                        i in terminal and action=='waiting' and not pool.queue_state().get('failure'))
+                    if usable:
+                        terminal.pop(i,None);shared_failures.discard(i);reasons.pop(cohort(pool),None)
+                        if action=='ready':offers[i]=offer
+                        elif action=='complete':terminal[i]='complete'
+                        refreshed=True
+            except Exception as exc:give_up(i,pool,'final readiness check',exc)
+        return refreshed
     while not stop.is_set():
         progressed=False;dispatched=False;short_claim_wait=False
         # A different verified worker may recover the shared queue while this
@@ -1409,18 +1476,22 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                         'extension still waits for unavailable cohorts: '+', '.join(pool.extension_blockers())))
         if len(terminal)==len(pairs):
             failed=[cohort(pairs[i][0]) for i,v in terminal.items() if v=='failed']
+            if failed and refresh_before_exit():continue
             for name in failed:print(f'[{worker}] {name}: FAILED: {reasons.get(name,"see its .multi-node/state.json")}',flush=True)
             done=[cohort(pairs[i][0]) for i,v in terminal.items() if v=='complete']
             if done:print(f'[{worker}] complete: {", ".join(done)}',flush=True)
+            if failed:record_worker_retirement(pairs,worker,'no eligible work after final readiness check',
+                                               [dict(cohort=name,detail=reasons.get(name)) for name in failed])
             return 1 if failed else 0
         if (not dispatched and not progressed and not offers and not scans and not pending_setup
                 and all(i in initialized or i in terminal for i in range(len(pairs)))
                 and not any(getattr(r,'pending_barrier',None) is not None for _,r in pairs)):
             blocked=quiescent_failure(pairs)
             if blocked:
-                for pool,_ in pairs:
-                    atomic(pool.root/'worker-exits'/(digest(worker)+'.json'),
-                           dict(worker=worker,at=time.time(),exit_code=1,**blocked))
+                if refresh_before_exit():continue
+                blocked=quiescent_failure(pairs)
+                if not blocked:continue
+                record_worker_retirement(pairs,worker,blocked['reason'],blocked['faults'])
                 print(f'[{worker}] STOPPED: {blocked["reason"]}; '+canonical(blocked['faults'])+
                       '; failed checkpoints/logs retained; no torchrun relaunch',flush=True)
                 return 1
