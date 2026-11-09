@@ -30,7 +30,7 @@ STALE_SECONDS = 180  # workers heartbeat every 10 s while a child runs (srgc_v8_
 # Clean view liveness (user: 'idle 아닌데 자꾸 idle 이래 이미 삭제한 노드인데', 'status 업데이트 더 빠르게'):
 # Heartbeats are written every 3-5 s, but another node's file can be read up to ~60 s stale on a shared
 # file system and node clocks differ; a lock held on another node can look free from here. So a lock
-# probe is only positive evidence (held = alive), and DEAD needs over 3 min without any heartbeat.
+# probe is only positive evidence (held = alive), and a task counts as lost (resumed by the next free node) after over 3 min without any heartbeat.
 ALIVE_SECONDS = 90       # a worker without a task is alive with a heartbeat in the last 90 s
 BUSY_SILENT_SECONDS = 120  # silent this long in one open cohort while alive in another = busy there
 HUNG_SECONDS = 600       # task assigned, lock visibly held, no heartbeat at all: hung (or crashed, lock kept)
@@ -204,6 +204,9 @@ def _collect(base, cohort, now):
                     # Admission, long I/O or a lost worker can all stop heartbeats. This is not proof
                     # that ranks/leases are gone, especially on a remote host with fresh work logs.
                     row['status'] = 'unconfirmed'
+                    # srgc_v8_nodes claim: a running job whose lease is free is taken by the next free worker
+                    # and resumed from its last checkpoint, so the screen shows it as ready, not as a dead node.
+                    row['lost'] = True
                     row['error'] = (f"worker {attempt['worker']} heartbeat age {age_text(seen)}" if seen is not None
                                     else f"worker {attempt['worker']} has no heartbeat") + \
                                    '; process liveness unverified'
@@ -730,9 +733,9 @@ def render_srgc(live, base, cohort, now, host):
 
 LEGEND_TABLE = ("% = how far (a running task counts by its own progress), (done/planned tasks) · updates = updates the plan adds, "
                 "+ = more to plan · fail = real error · marked = failed, no training error · intr = interrupted, reruns · "
-                "stuck = running but no live node · other = unknown state")
+                "stuck = marked running, no worker recorded · other = unknown state")
 LEGEND = ("✓ done  ▶120 running, at update 120 (eval ▶275 = evaluating update 275)  ○ ready  · waiting or not created yet  "
-          "none = no such task (On has no ext; no U if a seed never switched)  ✗ failed  ! no training error  ⏸ interrupted  ? no heartbeat")
+          "none = no such task (On has no ext; no U if a seed never switched)  ✗ failed  ! no training error  ⏸ interrupted  ? running, no worker recorded")
 COHORT_LABEL = {'olmo_math': 'OLMo MATH', 'qwen_mbpp': 'Qwen MBPP', 'olmo_mbpp': 'OLMo MBPP', 'qwen_math': 'Qwen MATH'}
 COHORT_SHORT = {}   # four experiments: 'OLMo'/'Qwen' alone would be ambiguous, so the node table shows the full name
 COLOR = False   # set by main() only when stdout is a terminal (never in logs, pipes or tests)
@@ -801,6 +804,8 @@ def symbol(row):
         return f"▶{row['done']}" if isinstance(row.get('done'), int) else '▶'
     if status == 'pending':
         return '○' if row.get('ready') else '·'
+    if row.get('lost'):          # its node is gone; the next free node resumes it (user: '새노드 할당되면 알아서')
+        return '○'
     if status == 'failed' and row.get('failure_real') is False:
         return '!'
     return {'failed': '✗', 'interrupted': '⏸', 'unconfirmed': '?', 'stopped': '?'}.get(status, '?')
@@ -988,14 +993,14 @@ def clean_block(base, cohort, now, host, width):
         if frac > 0 or any(i['status'] == 'running' for i in items):
             # combined progress of the branch's tasks (user: '0/2 가 진행률이냐 ?')
             return ('▶' if any(i['status'] == 'running' for i in items) else '') + f"{round(100 * frac)}%"
-        if all(i['status'] == 'pending' for i in items):
-            return '○' if any(i.get('ready') for i in items) else '·'
+        if all(i['status'] == 'pending' or i.get('lost') for i in items):
+            return '○' if any(i.get('ready') or i.get('lost') for i in items) else '·'
         done = sum(i['status'] == 'done' for i in items)
         run = sum(i['status'] == 'running' for i in items)
         if done == len(items):
             return '✓'
         mark = ('✗' if any(i['status'] == 'failed' for i in items) else '▶' if run else
-                '?' if any(i['status'] in ('unconfirmed', 'stopped') for i in items) else
+                '?' if any(i['status'] in ('unconfirmed', 'stopped') and not i.get('lost') for i in items) else
                 '⏸' if any(i['status'] == 'interrupted' for i in items) else '')
         return f"{done}/{len(items)}" + mark
     cols = list(train_cols)
@@ -1036,7 +1041,9 @@ def clean_block(base, cohort, now, host, width):
                 lines.append(paint(clip(f"   U = Uniform at the seed's switch point: {known}", width), 'dim'))
     else:
         lines.append('  (no tasks yet)')
-    problems = [r for r in rows if r['status'] in ATTENTION]
+    # Only what needs a person: a lost or interrupted task is resumed by the next free node on its own
+    # (user: '새노드 할당되면 알아서 거기에 시작하면 되지 왜 표시를 해놓는거냐'), so it shows only in its cell.
+    problems = [r for r in rows if r['status'] in ATTENTION and not r.get('lost') and r['status'] != 'interrupted']
     unreadable = access_problems(queue)
     if state.get('_unreadable_jobs'):
         unreadable.append(f"{len(state['_unreadable_jobs'])} unreadable job record(s)")
@@ -1076,7 +1083,7 @@ def clean_block(base, cohort, now, host, width):
                 text = f"? {label} {name}: {r.get('error') or 'marked running but no worker is recorded'} — not running anywhere"
             else:
                 text = (f"? {label} {name} on {r.get('host') or '?'}: " +
-                        (f"no heartbeat {age_text(beat)}" if beat is not None else 'no heartbeat') + ' — that node is DEAD (see nodes)')
+                        (f"no heartbeat {age_text(beat)}" if beat is not None else 'no heartbeat') + ' — no live node runs it')
         attention.append('  ' + text)
     for r in rows:
         if r['status'] not in ('done', 'running', 'pending', 'failed', 'interrupted', 'unconfirmed', 'stopped'):
@@ -1089,6 +1096,7 @@ def clean_block(base, cohort, now, host, width):
     counts = {k: 0 for k in ('done', 'running', 'ready', 'waiting', 'attention', 'dead', 'interrupted', 'marked', 'other')}
     for r in rows:
         key = ('done' if r['status'] == 'done' else 'running' if r['status'] == 'running'
+               else 'ready' if r.get('lost')
                else 'dead' if r['status'] in ('unconfirmed', 'stopped')
                else 'interrupted' if r['status'] == 'interrupted'
                else 'marked' if r['status'] == 'failed' and r.get('failure_real') is False
@@ -1240,8 +1248,9 @@ def node_table(bases, cohorts, now, this_host=None):
     busy     no task, heartbeat fresh in one cohort but silent in another that is still open (CPU stage /
              checking / claiming there)
     starting loading the runtime / checking the node        idle   heartbeat fresh, no task
-    DEAD     task assigned, lock free and no heartbeat >60 s, or lock held and no heartbeat >10 min
-    gone     no heartbeat >30 s, nothing assigned            finished  same after its queue completed"""
+    hung     task assigned, its lock still held but no heartbeat >10 min: no other node can take that task
+    gone     no heartbeat >90 s and nothing it still holds (a task it ran with its lock free is resumed by
+             the next free node, so it is shown as ready, not here)   finished  same after its queue completed"""
     this_host = this_host or socket.gethostname()
     nodes, queues, info, runs_by_cohort = {}, [], {}, {}
     def entry(worker, host):
@@ -1256,13 +1265,13 @@ def node_table(bases, cohorts, now, this_host=None):
             runs_by_cohort[cohort] = run_branches(rows)
             phase = state.get('phase')
             info[cohort] = dict(phase=phase, open=phase != 'complete' and not state.get('failure'), queue=queue,
-                                ready=sum(1 for r in rows if r['status'] == 'pending' and r.get('ready')))
+                                ready=sum(1 for r in rows if (r['status'] == 'pending' and r.get('ready')) or r.get('lost')))
             for w in worker_records(queue, now):
                 e = entry(w['worker'], w['host'])
                 e['beats'][cohort] = (w['age'], w['task'])
                 e['complete'] = e['complete'] and phase == 'complete'
             for r in rows:
-                if r['status'] in ('running', 'unconfirmed') and r.get('worker'):
+                if r['status'] in ('running', 'unconfirmed') and r.get('worker') and not r.get('lost'):
                     e = entry(r['worker'], r.get('host') or str(r['worker']).rsplit('.', 1)[0])
                     e['complete'] = e['complete'] and phase == 'complete'
                     e['jobs'].append((cohort, r))
@@ -1294,7 +1303,7 @@ def node_table(bases, cohorts, now, this_host=None):
                 if r['status'] == 'running':
                     hung = r.get('quiet') is not None and r['quiet'] > HUNG_SECONDS and r.get('lease') is True
                     if hung:
-                        row.update(state='DEAD', doing=(f"process {pid} alive here but silent {age_text(r['quiet'])}: hung? kill {pid}, rerun"
+                        row.update(state='hung', doing=(f"process {pid} alive here but silent {age_text(r['quiet'])}: hung? kill {pid}, rerun"
                                                         if local_alive else
                                                         f"no heartbeat {age_text(r['quiet'])}, lock still held (hung, or crashed node's lock not released): kill it there, rerun"))
                     elif r.get('quiet') is not None:
@@ -1311,7 +1320,7 @@ def node_table(bases, cohorts, now, this_host=None):
                     else:
                         doing = ('down or hung → restart it (same command)' if r.get('beat_age') is not None
                                  else 'never sent a heartbeat → restart it (same command)')
-                    row.update(state='DEAD', doing=doing)
+                    row.update(state='hung', doing=doing)
                 out.append(row)
             continue
         live = fresh(e)
@@ -1342,7 +1351,7 @@ def node_table(bases, cohorts, now, this_host=None):
         if silent:
             doing += ' · not serving ' + ', '.join(COHORT_LABEL.get(c, c) for c in silent) + ' (gave up? see its console)'
         out.append(dict(base, state='idle', doing=doing))
-    rank = {'running': 0, 'busy': 1, 'starting': 2, 'idle': 3, 'DEAD': 4, 'gone': 5, 'finished': 6}
+    rank = {'hung': 0, 'running': 1, 'busy': 2, 'starting': 3, 'idle': 4, 'gone': 5, 'finished': 6}
     return sorted(out, key=lambda r: (rank[r['state']], natural(r['host']), natural(r['pid'])))
 
 def render_clean(bases, now=None, gpus=None, host=None, cohorts=COHORTS, width=None, all_nodes=False):
@@ -1495,7 +1504,7 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
     out.append('')
     table = node_table(bases, cohorts, now, host)
     shown = table if all_nodes else [r for r in table if r['state'] not in ('gone', 'finished')]
-    order = ('running', 'busy', 'starting', 'idle', 'DEAD', 'gone', 'finished')
+    order = ('hung', 'running', 'busy', 'starting', 'idle', 'gone', 'finished')
     per = {k: sorted({(r['host'], r['pid']) for r in table if r['state'] == k}) for k in order}
     alive = sum(len(per[k]) for k in ('running', 'busy', 'starting', 'idle'))
     if table:
@@ -1503,8 +1512,8 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
         hidden = [f"{len(per[k])} {k}" for k in ('gone', 'finished') if per[k]]
         counts = ' · '.join(f"{len(per[k])} {k}" for k in ('running', 'busy', 'starting', 'idle') if per[k]) or '0 running'
         line = paint(f" nodes ({hosts} host{'s' if hosts != 1 else ''})", 'head') + f"  {counts}"
-        line += '  ' + (paint(f"✗ {len(per['DEAD'])} DEAD: {', '.join(h for h, _ in per['DEAD'])}", 'bad') if per['DEAD']
-                        else paint('0 DEAD', 'dim'))
+        if per['hung']:
+            line += '  ' + paint(f"✗ {len(per['hung'])} hung: {', '.join(h for h, _ in per['hung'])}", 'bad')
         out.append(line)
         more = max(0, wanted - alive)
         out.append(paint(f"   tasks that can run now {wanted} · alive workers {alive}", 'dim') +
@@ -1518,11 +1527,12 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
             nw = {k: max(len(t), *(len(str(r[k])) for r in rows)) for k, t in ncols}
             out.append(paint('   ' + '  '.join(f"{t:<{nw[k]}}" for k, t in ncols) + '  now', 'dim'))
             for r in rows:
-                mark = '✗' if r['state'] == 'DEAD' else '▶' if r['state'] == 'running' else '·' if r['state'] == 'busy' else ' '
+                mark = '✗' if r['state'] == 'hung' else '▶' if r['state'] == 'running' else '·' if r['state'] == 'busy' else ' '
                 text = clip(f" {mark} " + '  '.join(f"{str(r[k]):<{nw[k]}}" for k, _ in ncols) + f"  {r['doing']}", width)
-                out.append(paint(text, {'DEAD': 'bad', 'busy': 'warn', 'starting': 'info', 'idle': 'dim'}.get(r['state'])))
-            if per['DEAD']:
-                out.append(paint("   DEAD = task assigned and no heartbeat for over 3 min (or lock held but silent over 10 min)", 'dim'))
+                out.append(paint(text, {'hung': 'bad', 'busy': 'warn', 'starting': 'info', 'idle': 'dim'}.get(r['state'])))
+            if per['hung']:
+                out.append(paint("   hung = its task lock is still held but silent over 10 min, so no other node can take that task: "
+                                 "stop that process and run the same command again", 'dim'))
     else:
         out.append(paint(' nodes', 'head') + '  no worker has started yet' + (f" · tasks that can run now {wanted}" if wanted else ''))
 
