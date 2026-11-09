@@ -32,6 +32,7 @@ def test_idle_worker_rejoins_math_after_another_node_recovers_its_failure(tmp_pa
                     job['state']='pending';nodes.atomic(path,job)
                     if recovery=='different-binding':nodes.atomic(other.root/'binding.json',{'cohort':'foreign'})
                     nodes.atomic(other.root/'state.json',state);recovered.append(True)
+                    external_lease.close()
                 return [self.task],False
             def ready(self,task):return task['run_id']=='olmo_math'
             def native_busy(self,task):return False
@@ -42,11 +43,15 @@ def test_idle_worker_rejoins_math_after_another_node_recovers_its_failure(tmp_pa
     pool=pairs[0][0];path=next((pool.root/'jobs').glob('*.json'));job=nodes.read(path)
     job['state']='failed';job['attempts']=[dict(id='failed',exit_code=1,controller_policy=nodes.DISPATCH_POLICY)]
     nodes.atomic(path,job)
+    # This fixture models recovery by another live worker. Its held native lock
+    # distinguishes legitimate external progress from the reported no-work loop.
+    external_lease=nodes.Lock(pairs[1][0].root.parent/'runs/qwen_mbpp/.execution.lock')
+    assert external_lease.acquire()
     saved=tmp_path/'checkpoint-25.pt';saved.write_bytes(b'original optimizer RNG rewards')
     timer=threading.Timer(1.5,stop.set);timer.start()
     try:
         nodes.worker_loop_many(pairs,'waiting-node',stop,poll=.002,automatic_retry=False)
-    finally:stop.set();timer.cancel();timer.join()
+    finally:stop.set();timer.cancel();timer.join();external_lease.close()
     assert recovered,'external recovery fixture did not execute'
     assert saved.read_bytes()==b'original optimizer RNG rewards'
     if recovery=='valid':

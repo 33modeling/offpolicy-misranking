@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="0.070" timestamp="2026-11-09T15:38:21.382133+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_fail_stop" name="test_already_planned_ready_budget_eval_runs_even_if_global_eval_planner_omits_it" time="0.005"><failure message="AssertionError: an already registered immutable eval stayed ready forever behind another plan error&#10;assert [] == ['evaluate']&#10;  &#10;  Right contains one more item: 'evaluate'&#10;  Use -v to get more diff">tests/test_srgc_v8_fail_stop.py:114: in test_already_planned_ready_budget_eval_runs_even_if_global_eval_planner_omits_it
+    assert runtime.calls==['evaluate'],'an already registered immutable eval stayed ready forever behind another plan error'
+E   AssertionError: an already registered immutable eval stayed ready forever behind another plan error
+E   assert [] == ['evaluate']
+E     
+E     Right contains one more item: 'evaluate'
+E     Use -v to get more diff</failure></testcase></testsuite></testsuites>

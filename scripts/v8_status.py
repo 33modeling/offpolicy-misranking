@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import socket
 import subprocess
 import sys
@@ -343,7 +344,7 @@ def failure_story(row, attempt, job, task, directory, state, live_policies, now)
     native_fault=fatal_native_failure(job)
     if native_fault:
         number=native_fault['signal']
-        nxt = (f'BLOCKED: native signal -{number}; automatic relaunch disabled; '
+        nxt = (f'BLOCKED: {signal.Signals(number).name} (exit -{number}); automatic relaunch disabled; '
                f'{used} historical failures retained; repair required')
     elif limit == 0:
         nxt = ('UNBOUNDED legacy retry policy is still recorded; update and restart all workers to apply '

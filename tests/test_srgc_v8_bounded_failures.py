@@ -16,7 +16,7 @@ if os.environ.get('V8_RETRY_TEST_SOURCE'):
 
 
 def history(count):
-    return [dict(id=f'old-{i}',outcome='failed',exit_code=-11,controller_policy='old',ended_at=0)
+    return [dict(id=f'old-{i}',outcome='failed',exit_code=1,controller_policy='old',ended_at=0)
             for i in range(count)]
 
 
@@ -53,7 +53,7 @@ def test_status_distinguishes_new_finite_policy_from_old_live_unlimited_workers(
     assert 'UNBOUNDED legacy retry policy' in story['failure_next']
     pool.enable_automatic_retry('new-node')
     story=status.failure_story(row,job['attempts'][-1],job,task,tmp_path,pool.queue_state(),{nodes.DISPATCH_POLICY},100)
-    assert '2/2 failures used' in story['failure_next'] and 'no more automatic' in story['failure_next']
+    assert '(2 recorded; limit 2)' in story['failure_next'] and 'no more automatic' in story['failure_next']
     assert 'no limit' not in story['failure_next']
 
 
@@ -101,7 +101,7 @@ class Runtime:
     def done(self,task):return (self.root/('done-'+task['run_id'])).is_file()
     def execute(self,task,matrix,fd,stop,device_fds,attempt):
         assert (self.root/'checkpoint.pt').read_bytes()==b'original optimizer RNG rewards'
-        if task['run_id']=='bad':return -11
+        if task['run_id']=='bad':return 1
         (self.root/'done-healthy').write_text('original output');return 0
 
 
@@ -126,7 +126,7 @@ def test_twelve_nodes_share_two_failures_then_stop_claiming_bad_task(tmp_path):
         bad=next(j for j in jobs if j['task']['run_id']=='bad')
         healthy=next(j for j in jobs if j['task']['run_id']=='healthy')
         assert bad['state']=='failed' and len(bad['attempts'])==2
-        assert all(a['exit_code']==-11 and a['outcome']=='failed' for a in bad['attempts'])
+        assert all(a['exit_code']==1 and a['outcome']=='failed' for a in bad['attempts'])
         assert healthy['state']=='done' and len(healthy['attempts'])==1
         assert all((tmp_path/f'node-{i}.rc').read_text()=='1' for i in range(12))
         # Another fresh launch does not reset the cap, even with --retry-failed.

@@ -570,7 +570,7 @@ def test_failure_next_step_follows_the_default_retry_rule(tmp_path):
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
     assert "retried automatically: attempt 2/3 starts in 40s" in text
     assert "retried automatically: attempt 3/3 is waiting for the next free node" in text
-    assert "3/3 failures used: no more automatic retries; fix the cause, then start one node with --max-attempts 4" in text
+    assert "BLOCKED: failure cap reached (3 recorded; limit 3); no more automatic retries; failed checkpoints/logs retained; repair required" in text
 
 
 

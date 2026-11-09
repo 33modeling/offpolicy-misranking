@@ -4,6 +4,7 @@ import importlib.util
 import os
 from pathlib import Path
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -98,3 +99,31 @@ def test_other_cohort_waiting_on_unavailable_parent_does_not_keep_failed_worker_
     finally:timer.cancel();timer.join()
     assert rc==1 and not stop.is_set(),'another blocked cohort kept all nodes in an idle loop'
     assert other.queue_state()['failure'] is None,'worker-local exit poisoned a healthy shared queue'
+
+
+def test_already_planned_ready_budget_eval_runs_even_if_global_eval_planner_omits_it(tmp_path):
+    pool,runtime,path=failed_root(tmp_path,'extension')
+    budget=runtime.root/'frozen/budget.json';nodes.atomic(budget,dict(value=10))
+    task=dict(kind='evaluate',run_id='healthy',training_seed=5,split='final',completed_update=300,
+              snapshot_path=str(runtime.snapshot),snapshot_sha256='already-pinned',evaluation_spec_hash='already-pinned-spec')
+    key=pool.register(task,'evaluation')
+    runtime.side_tasks=lambda:dict(tasks=[],budget_ready=True,budget_sha256=hashlib.sha256(budget.read_bytes()).hexdigest(),
+        planning_errors=dict(evaluation='another selected checkpoint missing'))
+    stop=threading.Event();timer=threading.Timer(.5,stop.set);timer.start()
+    try:rc=nodes.worker_loop(pool,runtime,'ready-eval',stop,poll=.001)
+    finally:timer.cancel();timer.join()
+    assert runtime.calls==['evaluate'],'an already registered immutable eval stayed ready forever behind another plan error'
+    assert nodes.read(pool.root/'jobs'/(key+'.json'))['state']=='done'
+    assert rc==1 and not stop.is_set()
+
+
+def test_extension_planner_error_does_not_discard_independent_evaluations(tmp_path,monkeypatch):
+    nodes.atomic(tmp_path/'frozen/budget.json',dict(value=10))
+    task=dict(kind='evaluate',snapshot_sha256='original',evaluation_spec_hash='original')
+    def blocked(*args,**kwargs):raise ValueError('extension parent unavailable')
+    runtime=SimpleNamespace(root=tmp_path,cfg=dict(seeds=dict(training=[5]),training=dict(matched_update_endpoint=275)),
+        locator=lambda:None,mx=SimpleNamespace(build_stage=blocked))
+    monkeypatch.setattr(nodes.Runtime,'plan',lambda *args:([task],True))
+    result=nodes.ready_side_tasks(runtime)
+    assert result['tasks']==[dict(phase='evaluation',task=task)]
+    assert 'extension parent unavailable' in result['planning_errors']['extension']

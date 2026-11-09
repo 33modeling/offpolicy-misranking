@@ -200,7 +200,9 @@ binding·phase·실패 상태·작업 정의·작업 lease를 다시 확인한 �
 V21은 `torchrun launcher exit -11`(SIGSEGV)을 처음 기록한 시점부터 자동 재실행을
 금지한다. torchrun이 이를 exit1로 감싸도 원래 rank signal 기록을 검사한다. 다른
 치명적 native signal4/6/7/8도 동일하게 처리하며 새 노드/정책 변경으로 해제하지 않는다.
-정상 checkpoint eval과 ext는 계속 배정한다. 실행할 정상 작업·진행 중 scan/CPU 준비·
+정상 checkpoint eval과 ext는 계속 배정한다. 이미 큐에 등록된 원본 eval task는
+다른 endpoint의 eval 계획에서 빠졌더라도, 원래 고정 예산 또는 해당 H 사전 규칙과
+원본 snapshot/spec가 유효하면 그대로 배정한다. ext 계획 오류도 독립 eval을 막지 않는다. 실행할 정상 작업·진행 중 scan/CPU 준비·
 살아 있는 task lease/native 실행 잠금이 없는데 실패가 남으면 현재 worker를 exit1로
 끝낸다. 다른 cohort가 없는 부모 checkpoint를 기다리는 경우나, 실패 작업이 현재
 ext/eval 계획에서 빠진 경우에도 대기 루프에 머무르지 않는다. 작업자별 종료 사유는

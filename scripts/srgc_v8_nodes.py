@@ -329,8 +329,10 @@ def ready_side_tasks(runtime):
         write_frozen_budget(budget_path,budget)
         print(f'[v8] {runtime.cohort}: all reference costs complete; original cost-only budget frozen; precommit={rule_sha or "legacy-order"}',flush=True)
     loc=runtime.locator();budget=read(budget_path)['value']
-    extension,notes=runtime.mx.build_stage('budget-extension',runtime.cfg,loc,runtime.root,seeds=seeds,budget=budget)
     errors={}
+    try:extension,notes=runtime.mx.build_stage('budget-extension',runtime.cfg,loc,runtime.root,seeds=seeds,budget=budget)
+    except (ValueError,json.JSONDecodeError) as exc:
+        extension,notes=[],[];errors['extension']=f'{type(exc).__name__}: {exc}'
     try:evaluations,_=Runtime.plan(runtime,'evaluation')
     except (ValueError,json.JSONDecodeError) as exc:
         errors['evaluation']=f'{type(exc).__name__}: {exc}'
@@ -795,9 +797,17 @@ class Pool:
                 if not side_budget and (item['phase']=='extension' or not side_rule):
                     raise ValueError('Ready side work has no frozen budget or precommitted evaluation rule')
                 side_keys.add(self.register(item['task'],item['phase']))
-        jobs=[]
+        jobs=[];side_rule_record=read(self.root/'budget-rule.json') if side_rule else None
         for path in sorted(self.root.glob('jobs/*.json')):
             job=read(path)
+            # A cached, immutable evaluation is already a pinned original task.
+            # A different endpoint's planner failure must not hide it from offers.
+            if (getattr(runtime,'streaming_ready_tasks',False) and job['phase']=='evaluation'
+                    and job['task'].get('kind')=='evaluate'):
+                t=job['task'];rule=side_rule_record
+                early=bool(rule and t.get('split')=='final' and t.get('completed_update')==rule['horizon']
+                           and t.get('training_seed') in rule['seeds'])
+                if side_budget or early:side_keys.add(path.stem)
             if (job['phase']==job_phase and (not (phase=='primary_evaluation' or deferred_base or base_error) or path.stem in selected)) or path.stem in side_keys:
                 jobs.append((path,job))
         if not jobs and phase!='extension':
@@ -1032,6 +1042,9 @@ def quiescent_failure(pairs):
             if read(pool.root/'binding.json')!=pool.binding:return None
             state=pool.queue_state()
             if state.get('failure'):faults.append(dict(cohort=pool.binding.get('cohort'),queue_failure=state['failure']))
+            errors=dict((state.get('ready_side_work') or {}).get('planning_errors') or {})
+            if state.get('base_planning_error'):errors['base']=state['base_planning_error']
+            if errors:faults.append(dict(cohort=pool.binding.get('cohort'),planning_errors=errors))
             jobs=[read(p) for p in pool.root.glob('jobs/*.json')]
             if pool.held_leases():return None
             for job in jobs:

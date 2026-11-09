@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="0.097" timestamp="2026-11-09T15:39:27.620815+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_fail_stop" name="test_extension_planner_error_does_not_discard_independent_evaluations" time="0.001"><failure message="ValueError: extension parent unavailable">tests/test_srgc_v8_fail_stop.py:127: in test_extension_planner_error_does_not_discard_independent_evaluations
+    result=nodes.ready_side_tasks(runtime)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/srgc_v8_nodes.py:332: in ready_side_tasks
+    extension,notes=runtime.mx.build_stage('budget-extension',runtime.cfg,loc,runtime.root,seeds=seeds,budget=budget)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_srgc_v8_fail_stop.py:123: in blocked
+    def blocked(*args,**kwargs):raise ValueError('extension parent unavailable')
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   ValueError: extension parent unavailable</failure></testcase></testsuite></testsuites>
