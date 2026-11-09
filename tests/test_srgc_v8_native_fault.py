@@ -19,6 +19,7 @@ def test_actual_torchrun_sigsegv_keeps_rank_stack_and_stage(child_runtime):
     assert 'Segmentation fault' in stack and 'string_at' in stack
     assert fault['native_invocation'] and 'SIGSEGV' in log.read_text()
     assert fault['last_progress']['stage']=='gradient_scoring'
+    assert 'NATIVE STACK (original fault-handler dump' in log.read_text() and 'string_at' in log.read_text()
 
 
 def test_signal_and_original_python_fault_are_both_preserved(tmp_path,monkeypatch):

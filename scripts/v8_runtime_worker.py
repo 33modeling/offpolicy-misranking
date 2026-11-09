@@ -104,6 +104,8 @@ def child_result(rc,directory,environment,log,label,*,log_offset=0):
         except OSError as exc:print(f'Cannot retain child failure summary: {exc}; log={log}',flush=True)
         for failure in failures:
             text=f'RANK FAILURE rank={failure["rank"]}: {failure["message"]}; traceback={failure["error_file"]}'
+            if failure.get('native_python_stack'):
+                text+='\nNATIVE STACK (original fault-handler dump, bounded):\n'+failure['native_python_stack'][:6000]
             print(text,flush=True)
             try:
                 with Path(log).open('a') as handle:handle.write(text+'\n')
