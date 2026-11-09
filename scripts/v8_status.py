@@ -789,6 +789,8 @@ def symbol(row):
     status = row['status']
     if status == 'done':
         return '✓'
+    if status == 'running' and row.get('kind') == 'evaluate':   # the update being evaluated (user: '그냥 275로 해놔')
+        return f"▶{row['update']}" if row.get('update') not in (None, '') else '▶'
     if status == 'running':      # progress of this task (user: '진척률을 나타내라고')
         frac = task_fraction(row)
         return f"▶{round(100 * frac)}%" if frac > 0 else '▶'
@@ -972,6 +974,11 @@ def clean_block(base, cohort, now, host, width):
             return '✓'
         if any(i['status'] == 'failed' for i in items):
             return '✗'
+        if kind == 'eval':      # a branch's evaluations: the one running now, by its update ('▶275')
+            running = [i for i in items if i['status'] == 'running']
+            if running:
+                return symbol(min(running, key=lambda i: exit_code(i.get('update')) or 0))
+            return '○' if any(i.get('ready') for i in items if i['status'] == 'pending') else '·'
         frac = sum(task_fraction(i) for i in items) / len(items)
         if frac > 0 or any(i['status'] == 'running' for i in items):
             # combined progress of the branch's tasks (user: '0/2 가 진행률이냐 ?')
@@ -1021,7 +1028,7 @@ def clean_block(base, cohort, now, host, width):
         if use_plan:
             known = ' · '.join(f"s{k} @{v}" for k, v in sorted(u_tau.items()))
             lines.append(paint(clip("   ▶44% = running, 44% done · · = waiting · ○ = ready to start · none = no such task (On is never "
-                                    "extended; no Uniform when that seed never switched) · eval = that branch's evaluations together", width), 'dim'))
+                                    "extended; no Uniform when that seed never switched) · eval ▶275 = evaluation at update 275 running", width), 'dim'))
             lines.append(paint(clip(f"   · = not created yet (a branch appears when its parent snapshot is saved) · U = Uniform at the "
                                     f"seed's switch point" + (f": {known}" if known else ' (known when that On trajectory is done)'),
                                     width), 'dim'))

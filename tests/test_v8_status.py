@@ -729,13 +729,13 @@ def test_extension_and_evaluation_cells_follow_each_task_through_its_states(tmp_
     job("x25", "running", extension, "extension", "h-ext.1"); run(R + "bank_sr_t025.bb22", 310)
     job("e1", "running", e275, "evaluation", "h-ev.1"); run(R + "bank_sr_t025.aa11", 275)
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
-    assert cells(text, "ext")["SR25"] == "▶28%" and cells(text, "eval")["SR25"] == "▶"     # (310-275)/(400-275); eval not '▶275'
+    assert cells(text, "ext")["SR25"] == "▶28%" and cells(text, "eval")["SR25"] == "▶275"   # eval: the update being evaluated
     node = {line.split()[1]: line for line in text.splitlines() if line.startswith(" ▶ h-")}
     assert " s5 SR25 ext " in node["h-ext"] and " 310/400 " in node["h-ext"] and " s5 eval SR25@275 " in node["h-ev"]
     job("x25", "done", extension, "extension"); run(R + "bank_sr_t025.bb22", 400)
     job("e1", "done", e275, "evaluation"); job("e2", "running", e400, "evaluation", "h-ev.1")
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
-    assert cells(text, "ext")["SR25"] == "✓" and cells(text, "eval")["SR25"] == "▶50%"   # one of two evaluations done, the other running
+    assert cells(text, "ext")["SR25"] == "✓" and cells(text, "eval")["SR25"] == "▶400"   # 275 done, the one at update 400 running
     assert any(" s5 eval SR25 ext@400 " in line for line in text.splitlines() if line.startswith(" ▶ h-ev"))
     job("e2", "done", e400, "evaluation")
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
