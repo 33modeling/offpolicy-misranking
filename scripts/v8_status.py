@@ -34,7 +34,7 @@ ALIVE_SECONDS = 90       # a worker without a task is alive with a heartbeat in 
 BUSY_SILENT_SECONDS = 120  # silent this long in one open cohort while alive in another = busy there
 HUNG_SECONDS = 600       # task assigned, lock visibly held, no heartbeat at all: hung (or crashed, lock kept)
 GAVE_UP_SECONDS = 900    # silent this long in one cohort while alive in the other: no longer serves it
-CPU_PHASES = {'prepare', 'freeze', 'finalize'}
+CPU_PHASES = {'prepare', 'freeze', 'primary_finalize', 'finalize'}
 _COLLECT_CACHE = None    # set by render_clean: collect() once per (root, cohort) per refresh
 
 
@@ -731,7 +731,8 @@ def mark_style(mark):
     return {'✓': 'ok', '✗': 'bad', '?': 'warn', '⏸': 'warn', '○': None, '·': 'dim'}.get(mark[0], 'run' if mark[0] == '▶' else
            'bad' if '✗' in mark else 'warn' if ('?' in mark or '⏸' in mark) else 'run' if '▶' in mark else None)
 PHASE_LABEL = {'prepare': 'prepare', 'train': 'training', 'freeze': 'budget freeze', 'extension': 'budget extension',
-               'evaluation': 'evaluation', 'finalize': 'analysis', 'complete': 'complete'}
+               'primary_evaluation': 'matched-step evaluation', 'primary_finalize': 'matched-step analysis',
+               'evaluation': 'budget evaluation', 'finalize': 'analysis', 'complete': 'complete'}
 STAGE_SHORT = {'generation_start': 'answering', 'generation': 'answering', 'generation_finished': 'answers done',
                'generation_oom_retry': 'answering (OOM retry)', 'rollout': 'checking answers',
                'gradient_scoring': 'scoring questions', 'policy_update': 'optimizer step', 'update': 'update done',
@@ -1339,7 +1340,7 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
         out.append(paint(' cells to fill: ' + ' · '.join(fill), None))
         if any(v[2] != 'exact' for st in stats for k, v in (st.get('planned') or {}).items() if not k.startswith('_')):
             out.append(paint('   exact when each phase is planned: train when every On trajectory is done, '
-                             'ext at the budget freeze, eval after the extension', 'dim'))
+                             'matched-step eval before ext, budget eval after ext', 'dim'))
 
     # 2. problems, newest failures first
     if attention:

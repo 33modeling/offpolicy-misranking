@@ -141,11 +141,22 @@ def control_overrides(runtime,source):
     if hasattr(runtime,'process'):
         runtime.process=types.MethodType(control.Runtime.process,runtime);overrides.append('process:current-bounded')
     if "row['budget_endpoint_update']" in source and 'selected_endpoints' not in source:
-        original_plan=runtime.plan
+        evaluation_original_plan=runtime.plan
         def plan(phase):
             if phase=='evaluation':return control.Runtime.plan(runtime,phase)
-            return original_plan(phase)
+            return evaluation_original_plan(phase)
         runtime.plan=plan;overrides.append('plan.evaluation:current-v8-016');corrected.append('evaluation')
+    if all(hasattr(runtime,name) for name in ('cfg','mx','cluster','cpu','locator')):
+        runtime.primary_results_first=True
+        primary_original_plan=runtime.plan;primary_original_barrier=runtime.barrier
+        def primary_plan(phase):
+            if phase=='primary_evaluation':return control.primary_evaluation_tasks(runtime)
+            return primary_original_plan(phase)
+        def primary_barrier(action,*args):
+            if action=='primary_finalize':return control.Runtime.barrier(runtime,action,*args)
+            return primary_original_barrier(action,*args)
+        runtime.plan=primary_plan;runtime.barrier=primary_barrier
+        overrides.extend(('plan.primary:matched-horizon-first','barrier.primary:collect-and-preserve'))
     return overrides,corrected
 
 
@@ -183,7 +194,8 @@ def main():
                           dict(worker=plan['worker'],pid=os.getpid(),at=module.time.time(),task=task,
                                dispatch_policy=plan.get('dispatch_policy'),controller_sha256=plan.get('controller_sha256')))
         runtime.heartbeat=heartbeat
-        send(channel,dict(ok=True,binding=runtime.binding,overrides=overrides,corrected_plans=corrected))
+        send(channel,dict(ok=True,binding=runtime.binding,overrides=overrides,corrected_plans=corrected,
+                          primary_results_first=getattr(runtime,'primary_results_first',False)))
     except Exception as exc:
         try:send(channel,dict(ok=False,type=type(exc).__name__,error=str(exc)))
         except OSError:pass  # the dispatcher already left (stop or startup timeout)

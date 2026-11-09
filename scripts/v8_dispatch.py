@@ -46,6 +46,7 @@ class RuntimeProxy:
         if not reply.get('ok'):raise ValueError(reply.get('error','actor initialization failed'))
         # Pool keeps this same dictionary, created before the asynchronous reply.
         self.binding.clear();self.binding.update(reply['binding']);self.initialized=True
+        self.primary_results_first=reply.get('primary_results_first',False)
         self.overrides=list(reply.get('overrides',[]));self.corrected_plans=tuple(reply.get('corrected_plans',()))
         if self.on_ready:self.on_ready(self)
 
@@ -147,6 +148,7 @@ def main():
         def record_policy(actor):
             record=dict(schema=1,policy=nodes.DISPATCH_POLICY,controller_source=controls,
                         original_runtime_binding=actor.binding,numerical_source_changed=False,
+                        execution_order=nodes.PRIMARY_ORDER if actor.primary_results_first else 'original-runtime-order',
                         conditional_runtime_repairs=dict(strict_math_verifier='recorded-seed-fallback',
                             rollout_memory='cache-release-and-one-identical-retry',
                             legacy_dense_memory='hash-pinned-per-prompt-release-and-host-optimizer-snapshot',
@@ -159,6 +161,8 @@ def main():
                 if nodes.read(receipt)!=record:raise ValueError('dispatch policy receipt changed')
             else:nodes.atomic(receipt,record)
         actor=RuntimeProxy(entries[cohort],plan,runfile,asynchronous=True);actors.append(actor)
+        actor.primary_cohort_scope=tuple(dict.fromkeys([*entries,*plan['errors']]))
+        actor.primary_unavailable_cohorts=tuple(plan['errors'])
         actor.on_ready=record_policy
         return actor
     original=nodes.Runtime;nodes.Runtime=factory

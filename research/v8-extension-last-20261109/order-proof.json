@@ -1,0 +1,80 @@
+{
+  "scope": "CPU synthetic software control only",
+  "cohorts": {
+    "olmo_math": {
+      "primary_recorded_at": 1794186910.9074485,
+      "matched_update": 75,
+      "analysis_dir": "analysis/matched-update-75",
+      "primary_files_sha256": {
+        "analysis.json": "d23cf275f5e14ee942a83ac429eafbe8abd85b0e98a42f54ba81d79090485534",
+        "policy_outcomes_bank.csv": "e7207c9a836fbb4bcd7ca61c88a70f07a233ffebc5f4571f51e61ff593edf65a",
+        "policy_outcomes_bank.json": "ece2656d39eeba57eff926194f6f5227ce506da5c91a53730b0f4313f314f898",
+        "policy_outcomes_development.csv": "24526432f951ea86e61db71a2c7df058d690643d1792c6525c784823544d3c03",
+        "policy_outcomes_development.json": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+        "policy_outcomes_test.csv": "24526432f951ea86e61db71a2c7df058d690643d1792c6525c784823544d3c03",
+        "policy_outcomes_test.json": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+        "report.md": "814825fbc6f9b738b148cf8b7aac2a277b0a5dfc45bf7506c5b28f9da4e3092b"
+      },
+      "first_extension_at": 1794186911.0577867,
+      "final_phase": "complete",
+      "budget_sha256": "41afff086b54f4699b320f0b3b7d972b80d8c9c8d75f0a4db909c52395acb835"
+    },
+    "olmo_mbpp": {
+      "primary_recorded_at": 1794186910.9924276,
+      "matched_update": 75,
+      "analysis_dir": "analysis/matched-update-75",
+      "primary_files_sha256": {
+        "analysis.json": "88fd675f2e9bd4c88ea158ad05fe8fba92f51de0b2fa68d05bf26fd62582c5f6",
+        "policy_outcomes_bank.csv": "3fa6a049940a6a6ada9fe182f619d8074c5e409c0abc16278e4924fe0005a7fa",
+        "policy_outcomes_bank.json": "7d61f67fe9122e395c73e80fde3bb19f344b4c58050a77386c8449b6352e3ca8",
+        "policy_outcomes_development.csv": "24526432f951ea86e61db71a2c7df058d690643d1792c6525c784823544d3c03",
+        "policy_outcomes_development.json": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+        "policy_outcomes_test.csv": "24526432f951ea86e61db71a2c7df058d690643d1792c6525c784823544d3c03",
+        "policy_outcomes_test.json": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+        "report.md": "71eeda205338bc7b4c8685bdbea733c9231e73c53d9b8e904b47cf110b87853d"
+      },
+      "first_extension_at": 1794186911.0510204,
+      "final_phase": "complete",
+      "budget_sha256": "ae9882fc807efdcc04762cb85d3a850aedeb1b0b0f9848fa5e0ee424695bc706"
+    },
+    "qwen_math": {
+      "primary_recorded_at": 1794186911.0123076,
+      "matched_update": 75,
+      "analysis_dir": "analysis/matched-update-75",
+      "primary_files_sha256": {
+        "analysis.json": "47d7c9255e68a9193bab9539c7da02a7fbfe5b8117d926967f6613cb03c28b5b",
+        "policy_outcomes_bank.csv": "cbea870c702a8997b6767821f5ed8e8c04759270a1168c3f2eac66eaacc41c25",
+        "policy_outcomes_bank.json": "981deff1c3b59c05e322e0a33507ca3267668e9f2120039b096cf1d1273695c2",
+        "policy_outcomes_development.csv": "24526432f951ea86e61db71a2c7df058d690643d1792c6525c784823544d3c03",
+        "policy_outcomes_development.json": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+        "policy_outcomes_test.csv": "24526432f951ea86e61db71a2c7df058d690643d1792c6525c784823544d3c03",
+        "policy_outcomes_test.json": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+        "report.md": "c59cc2a6d35d197eb9cd47775ea0dff9e9e0c52ffd7d943fa6925312b0fcf9ac"
+      },
+      "first_extension_at": 1794186911.1499305,
+      "final_phase": "complete",
+      "budget_sha256": "488f154efd9a9d366b594c947462ca0136d15beb0477563d244a8208a1c916bf"
+    },
+    "qwen_mbpp": {
+      "primary_recorded_at": 1794186910.8694053,
+      "matched_update": 75,
+      "analysis_dir": "analysis/matched-update-75",
+      "primary_files_sha256": {
+        "analysis.json": "bf7ecd57867a99dc9f98e697469118a67e8e9ba8b41d7639e17c872460b89177",
+        "policy_outcomes_bank.csv": "9240064fbc906f16625cacc44e97d2154f53db88b8f55e60aa65624920328005",
+        "policy_outcomes_bank.json": "b80f3c2b53f41e3e10f93550b45a3b8c89d479a65a2f2ba26e80f4eb64453a56",
+        "policy_outcomes_development.csv": "24526432f951ea86e61db71a2c7df058d690643d1792c6525c784823544d3c03",
+        "policy_outcomes_development.json": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+        "policy_outcomes_test.csv": "24526432f951ea86e61db71a2c7df058d690643d1792c6525c784823544d3c03",
+        "policy_outcomes_test.json": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+        "report.md": "fe9f5c35969f4b79184074cd6c7fbcd8adfce368e7d1692da1465f4c03ad3552"
+      },
+      "first_extension_at": 1794186911.0363371,
+      "final_phase": "complete",
+      "budget_sha256": "e1b91e8a2318bd76780695586723dfb229945f82b0d091e74d6996bdf669e00d"
+    }
+  },
+  "all_primary_before_first_extension": true,
+  "latest_primary": 1794186911.0123076,
+  "first_extension": 1794186911.0363371
+}

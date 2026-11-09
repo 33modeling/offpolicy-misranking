@@ -558,11 +558,24 @@ class ToyRuntime(nodes.Runtime):
                 rows+=SeedBank(self.root,self.cfg,self.cohort,seed,'rebuttal_bank',evals={},
                                prefix_cost=self.smoke.prefix_cost(self.root,seed)).policy_rows()
             write_frozen_budget(self.root/'frozen/budget.json',freeze_budget(rows))
+        elif action=='primary_finalize':
+            from switching import cluster
+            from types import SimpleNamespace
+            original_resolve,original_root=cluster.spec.resolve,cluster.v8_root
+            try:
+                cluster.spec.resolve=lambda *a,**k:self.cfg
+                cluster.v8_root=lambda args=None:self.root.parent
+                args=SimpleNamespace(cohort=self.cohort)
+                cluster.cmd_collect(args);cluster.cmd_analyze(args)
+            finally:cluster.spec.resolve,cluster.v8_root=original_resolve,original_root
+            nodes.capture_primary_results(self)
         else:
             nodes.atomic(self.root/'software-finalized.json',dict(scope='CPU software test, not paper results'))
 
     def execute(self,t,matrix,fd,stop,device_fds,attempt):
         from switching.runner import execute_train,execute_eval
+        if t.get('method',{}).get('extension_of'):
+            assert all(nodes.primary_results_ready(self.root.parent/c) for c in self.primary_cohort_scope)
         ctx=self.context(t['training_seed'])
         result=execute_eval(t,ctx) if t['kind']=='evaluate' else execute_train(t,ctx)
         nodes.atomic(self.root/'executed'/(attempt['id']+'.json'),dict(task=nodes.task_key(t),kind=t['kind'],
@@ -661,10 +674,15 @@ def test_real_v8_three_workers_automatically_finish_four_cohorts(tmp_path,monkey
     summaries={cohort:verify_toy_complete(runner,tmp_path,cohort,monkeypatch) for cohort in nodes.DEFAULT_COHORTS}
     owners={cohort:{nodes.read(p)['worker'] for p in (tmp_path/cohort/'executed').glob('*.json')} for cohort in summaries}
     assert all(owners['qwen_math']&owners[c] for c in ('olmo_math','qwen_mbpp','olmo_mbpp')),'workers must move between cohorts without fixed node shares'
+    receipts={c:nodes.read(tmp_path/c/'.multi-node/primary-results.json') for c in summaries}
+    assert all(nodes.primary_results_ready(tmp_path/c) for c in summaries)
+    latest_primary=max(r['recorded_at'] for r in receipts.values())
     attempts={}
     for cohort in summaries:
         for path in (tmp_path/cohort/'.multi-node/jobs').glob('*.json'):
-            for attempt in nodes.read(path)['attempts']:
+            job=nodes.read(path)
+            for attempt in job['attempts']:
+                if job['phase']=='extension':assert attempt['started_at']>=latest_primary
                 attempts.setdefault(attempt['worker'],[]).append((attempt['started_at'],attempt['ended_at']))
     for rows in attempts.values():
         rows.sort()

@@ -19,6 +19,7 @@ import json
 import math
 import os
 import re
+import shutil
 from pathlib import Path
 import signal
 import socket
@@ -31,7 +32,9 @@ import uuid
 SCHEMA = 1
 DISPATCH_POLICY = 'source-recovery-node-interruption-v13'
 TERMINAL = {'completed_horizon', 'completed_budget'}
-PHASES = ('train', 'extension', 'evaluation')
+PHASES = ('train', 'primary_evaluation', 'extension', 'evaluation')
+CPU_PHASES = ('prepare', 'freeze', 'primary_finalize', 'finalize')
+PRIMARY_ORDER = 'matched-results-before-extension-v1'
 DEFAULT_COHORTS = ('olmo_math', 'qwen_mbpp', 'olmo_mbpp', 'qwen_math')
 CORRECTED_PLANNER = 'current-v8-016'  # evaluation planner replaced for pre-V8-016 coordinators
 
@@ -172,6 +175,76 @@ def forced_termination(attempt,rc,log):
                 return None
     except OSError:pass
     return dict(signals=signals,cause='forced_signal_cause_unconfirmed',evidence='process exit or signal-only rank report')
+
+
+def primary_results_ready(cohort_root):
+    """Small immutable receipts only; never scan model/checkpoint bodies in the claim gate."""
+    root=Path(cohort_root);queue=root/'.multi-node'
+    try:
+        state=read(queue/'state.json');path=queue/'primary-results.json'
+        payload=path.read_bytes();receipt=json.loads(payload)
+        return (state.get('primary_results_receipt_sha256')==hashlib.sha256(payload).hexdigest()
+                and receipt.get('policy')==PRIMARY_ORDER and receipt.get('root')==str(root.resolve())
+                and receipt.get('binding_sha256')==digest(read(queue/'binding.json'))
+                and receipt.get('budget_sha256')==hashlib.sha256((root/'frozen/budget.json').read_bytes()).hexdigest()
+                and all((root/receipt['analysis_dir']/name).is_file()
+                        for name in ('analysis.json','policy_outcomes_bank.json','report.md')))
+    except (OSError,ValueError,KeyError,TypeError):return False
+
+
+def primary_evaluation_tasks(runtime):
+    """Exactly the original matched-horizon checkpoints; extensions are evaluated later."""
+    training,sealed=runtime.plan('train')
+    if not sealed or not training or not all(runtime.done(t) for t in training):
+        raise ValueError('Matched-horizon training is incomplete; primary results are not ready')
+    tasks=[];loc=runtime.locator();H=runtime.cfg['training']['matched_update_endpoint']
+    for seed in runtime.cfg['seeds']['training']:
+        data=runtime.cluster.load_bundle(loc.loc['seeds'][str(seed)]['input_bundle'])
+        runs=[]
+        for path in sorted((runtime.root/'runs').glob('*/manifest.json')):
+            record=read(path)
+            if (record.get('training_seed'),record.get('cohort_id'),record.get('role'))!=(seed,runtime.cohort,'rebuttal_bank'):continue
+            if record.get('task',{}).get('method',{}).get('extension_of'):continue
+            runs.append(path.parent.name)
+        for rid in runs:
+            found=runtime.mx.eval_tasks(runtime.cfg,data,runtime.root,[rid],split='final',updates={H})
+            if not found:raise ValueError('Matched-horizon checkpoint missing: '+rid+'@'+str(H))
+            tasks+=found
+    if not tasks:raise ValueError('No matched-horizon evaluations; refusing to publish empty primary results')
+    return tasks,True
+
+
+def capture_primary_results(runtime):
+    """Preserve the first complete matched-update report independently of later extension reports."""
+    tasks,_=primary_evaluation_tasks(runtime)
+    if not all(runtime.done(t) for t in tasks):raise ValueError('Matched-horizon evaluations are incomplete')
+    H=runtime.cfg['training']['matched_update_endpoint'];analysis=runtime.root/'analysis'
+    target=analysis/f'matched-update-{H}';receipt_path=target/'receipt.json'
+    if target.exists():
+        receipt=read(receipt_path)
+        if receipt.get('binding_sha256')!=digest(runtime.binding):raise ValueError('Primary result identity changed')
+        if receipt.get('budget_sha256')!=hashlib.sha256((runtime.root/'frozen/budget.json').read_bytes()).hexdigest():
+            raise ValueError('Frozen budget differs from saved primary results')
+        for name,sha in receipt['files'].items():
+            if hashlib.sha256((target/name).read_bytes()).hexdigest()!=sha:raise ValueError('Saved primary result changed: '+name)
+    else:
+        for name in ('analysis.json','policy_outcomes_bank.json','report.md'):
+            if not (analysis/name).is_file():raise ValueError('Primary analysis output missing: '+name)
+        stage=analysis/('.primary-'+uuid.uuid4().hex);stage.mkdir()
+        try:
+            files={}
+            for path in sorted(analysis.iterdir()):
+                if not path.is_file():continue
+                content=path.read_bytes();(stage/path.name).write_bytes(content)
+                files[path.name]=hashlib.sha256(content).hexdigest()
+            receipt=dict(schema=1,policy=PRIMARY_ORDER,root=str(runtime.root.resolve()),horizon=H,
+                         binding_sha256=digest(runtime.binding),analysis_dir=str(target.relative_to(runtime.root)),
+                         budget_sha256=hashlib.sha256((runtime.root/'frozen/budget.json').read_bytes()).hexdigest(),
+                         evaluation_tasks=[task_key(t) for t in tasks],files=files,recorded_at=time.time())
+            atomic(stage/'receipt.json',receipt);os.replace(stage,target)
+        finally:
+            if stage.exists():shutil.rmtree(stage)
+    atomic(runtime.root/'.multi-node/primary-results.json',receipt)
 
 
 class QueueReset(Exception):
@@ -448,6 +521,31 @@ class Pool:
         atomic(path,dict(task=task,phase=phase,state='pending',attempts=[]))
         return key
 
+    def prioritize_primary_results(self,runtime):
+        """Record an explicit control-order change; preserve scientific binding, plans and live jobs."""
+        state=self.queue_state()
+        if not getattr(runtime,'primary_results_first',False):return state
+        order=state.get('execution_order') or {};updated=False
+        scope=list(dict.fromkeys([*order.get('cohorts',[]),*getattr(runtime,'primary_cohort_scope',(self.binding['cohort'],))]))
+        if order.get('policy')!=PRIMARY_ORDER or order.get('cohorts')!=scope:
+            state['execution_order']=dict(policy=PRIMARY_ORDER,cohorts=scope);updated=True
+        phase=state['phase']
+        if phase in ('extension','evaluation','finalize','complete') and not primary_results_ready(self.root.parent):
+            if not self.held_leases() and (not state.get('failure') or aggregate_task_failure(state['failure'])):
+                if state.get('failure'):
+                    state.setdefault('failure_history',[]).append(state['failure']);state['failure']=None
+                state.setdefault('actions',[]).append(dict(action='defer_extension_until_primary_results',
+                    from_phase=phase,at=time.time(),policy=PRIMARY_ORDER))
+                state['phase']='primary_evaluation';updated=True
+        if updated:atomic(self.root/'state.json',state)
+        return state
+
+    def extension_blockers(self):
+        state=self.queue_state();order=state.get('execution_order') or {}
+        if order.get('policy')!=PRIMARY_ORDER:return []
+        base=self.root.parent.parent
+        return [c for c in order['cohorts'] if not primary_results_ready(base/c)]
+
     def tick(self,runtime,worker,stop,claim=True,*,offer=False):
         """Called with control lock held. Returns (state, claimed lease/task)."""
         if not (self.root/'binding.json').exists():
@@ -456,7 +554,7 @@ class Pool:
         if read(self.root/'binding.json')!=self.binding:
             raise BindingMismatch(f"{self.binding.get('cohort')}: another node replaced this queue's code/Python record "
                                   "while this worker was running; restart this worker with the same bundle as the others.")
-        state=self.queue_state()
+        state=self.prioritize_primary_results(runtime)
         if isinstance(state.get('failure'),dict) and state['failure'].get('task'):
             # A still-running historical worker can publish its old cohort-wide
             # task exit after this node has already joined. Reuse the same
@@ -468,8 +566,16 @@ class Pool:
         if phase=='complete':return 'complete',None
         if phase=='prepare':
             return 'prepare',None
-        if phase in ('freeze','finalize'):
+        if phase in CPU_PHASES:
             return phase,None
+        if phase=='extension':
+            blocked=self.extension_blockers()
+            if blocked:
+                if state.get('extension_waiting_for')!=blocked:
+                    state['extension_waiting_for']=blocked;atomic(self.root/'state.json',state)
+                    print(f'[{worker}] {self.binding["cohort"]}: extension deferred; matched-step results pending: '+', '.join(blocked),flush=True)
+                return 'waiting',None
+            if state.pop('extension_waiting_for',None):atomic(self.root/'state.json',state)
         try:
             cached=self.root/'plans'/(phase+'.json')
             corrected=phase in getattr(runtime,'corrected_plans',())
@@ -493,11 +599,13 @@ class Pool:
                 probe.close()
             if active:return 'waiting',None
             raise ValueError('Invalid run metadata with no active writer')
-        for task in tasks:self.register(task,phase)
+        job_phase='evaluation' if phase=='primary_evaluation' else phase
+        selected={task_key(t) for t in tasks}
+        for task in tasks:self.register(task,job_phase)
         jobs=[]
         for path in sorted(self.root.glob('jobs/*.json')):
             job=read(path)
-            if job['phase']==phase:jobs.append((path,job))
+            if job['phase']==job_phase and (phase!='primary_evaluation' or path.stem in selected):jobs.append((path,job))
         if not jobs and phase!='extension':
             raise ValueError('No tasks produced for '+phase+'; refusing to declare an empty experiment complete')
         pending=[];all_done=True;active=False;failed=[];later=False
@@ -528,7 +636,8 @@ class Pool:
             state.setdefault('failure_history',[]).append(state['failure']);state['failure']=None
             atomic(self.root/'state.json',state)
         if all_done and sealed:
-            state['phase']={'train':'freeze','extension':'evaluation','evaluation':'finalize'}[phase]
+            state['phase']={'train':'freeze','primary_evaluation':'primary_finalize',
+                            'extension':'evaluation','evaluation':'finalize'}[phase]
             atomic(self.root/'state.json',state)
             return 'advance',None
         if failed and not pending and not active and not later:
@@ -558,10 +667,12 @@ class Pool:
         if read(self.root/'binding.json')!=self.binding:raise BindingMismatch('Queue identity changed before claim')
         state=self.queue_state()
         if state.get('failure') or state['phase']!=offer['phase']:return 'stale',None
+        if offer['phase']=='extension' and self.extension_blockers():return 'waiting',None
         for item in offer['jobs']:
             if stop.is_set():return 'stopped',None
             path=self.root/'jobs'/(item['key']+'.json');job=read(path)
-            if job['phase']!=offer['phase'] or semantic_task(job['task'])!=item['task']:
+            job_phase='evaluation' if offer['phase']=='primary_evaluation' else offer['phase']
+            if job['phase']!=job_phase or semantic_task(job['task'])!=item['task']:
                 raise ValueError('Inspected task definition changed before claim: '+item['key'])
             # A failed task is claimable only under the retry rules (--retry-failed, attempts, delay).
             if job['state']=='done' or not self.retryable(job,state=state):continue
@@ -662,6 +773,8 @@ class Pool:
             except (OSError,ValueError,AttributeError):unreadable.append(str(path))
         result=dict(phase=state['phase'],failure=state.get('failure'),known_task_counts=counts,leased_tasks=owners,
                     dispatch_workers=workers)
+        for name in ('execution_order','primary_results_receipt_sha256','extension_waiting_for'):
+            if name in state:result[name]=state[name]
         if unreadable:result['unreadable']=unreadable;result['note']='some queue records could not be read; counts are incomplete. Run --status as the account that runs the workers.'
         return result
 
@@ -708,6 +821,8 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
     dispatch_lock=Path(os.path.commonpath([str(p.resolve()) for p in roots]))/'.v8-dispatch.lock'
     controller_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     for pool,runtime in pairs:
+        if not getattr(runtime,'primary_cohort_scope',None):
+            runtime.primary_cohort_scope=tuple(p.binding['cohort'] for p,_ in pairs)
         pool.retry_failed=retry;pool.max_attempts=max_attempts;pool.retry_delay=retry_delay
         pool.automatic_retry=automatic_retry
         runtime.stop_event=stop  # runtime actors report signals through the same stop event
@@ -738,7 +853,11 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
         if current!=pool.binding:raise BindingMismatch('Queue identity changed or queue folder moved during CPU stage')
         state=pool.queue_state()
         state['actions'].append(dict(action=action,worker=worker,at=time.time()))
-        state['phase']={'prepare':'train','freeze':'extension','finalize':'complete'}[action]
+        if action=='primary_finalize':
+            receipt=(pool.root/'primary-results.json').read_bytes()
+            state['primary_results_receipt_sha256']=hashlib.sha256(receipt).hexdigest()
+        state['phase']={'prepare':'train','freeze':'primary_evaluation' if state.get('execution_order',{}).get('policy')==PRIMARY_ORDER else 'extension',
+                        'primary_finalize':'extension','finalize':'complete'}[action]
         atomic(pool.root/'state.json',state)
         print(f'[{worker}] {cohort(pool)}: CPU stage finished; phase={state["phase"]}',flush=True)
     while not stop.is_set():
@@ -841,7 +960,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                             raise BindingMismatch('Queue identity changed while this worker was running' if current else
                                                   f'This queue folder ({pool.root}) was moved or replaced while this worker '
                                                   'was running; restart this worker (same command).')
-                        state=pool.queue_state()
+                        state=pool.prioritize_primary_results(runtime)
                         if isinstance(state.get('failure'),dict) and state['failure'].get('task'):
                             pool.initialize();state=pool.queue_state()
                         action='failed' if state.get('failure') else state['phase']
@@ -854,7 +973,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                                 action,offer=pool.tick(runtime,worker,stop,claim=False,offer=True)
                                 if action=='ready':offers[index]=offer
                             # Original actor scans never hold the cross-cohort dispatch lock.
-                        if action in ('prepare','freeze','finalize'):
+                        if action in CPU_PHASES:
                             print(f'[{worker}] {cohort(pool)}: CPU stage {action} started',flush=True)
                             if getattr(runtime,'independent_startup',False):
                                 runtime.begin_barrier(action,control.fd,stop,device_fds);action='waiting'
@@ -986,6 +1105,19 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
             try:print(f'[{worker}] '+canonical({p.binding.get('cohort','?'):p.status() for p,_ in pairs}),flush=True)
             except NODE_LOCAL as exc:print(f'[{worker}] status unavailable: {exc}',flush=True)
             last_report=time.monotonic()
+        if any(v=='failed' for v in terminal.values()) or any(getattr(r,'primary_unavailable_cohorts',()) for _,r in pairs):
+            deferred=[]
+            for i,(pool,runtime) in enumerate(pairs):
+                if i in terminal:continue
+                if (not getattr(runtime,'primary_results_first',False)
+                        or pool.queue_state()['phase']!='extension'
+                        or not primary_results_ready(pool.root.parent) or not pool.extension_blockers()):break
+                deferred.append(i)
+            else:
+                for i in deferred:
+                    pool=pairs[i][0]
+                    give_up(i,pool,'extension deferred',NodeFailure('matched-step results are saved; '
+                        'extension still waits for unavailable cohorts: '+', '.join(pool.extension_blockers())))
         if len(terminal)==len(pairs):
             failed=[cohort(pairs[i][0]) for i,v in terminal.items() if v=='failed']
             for name in failed:print(f'[{worker}] {name}: FAILED: {reasons.get(name,"see its .multi-node/state.json")}',flush=True)
@@ -1123,6 +1255,7 @@ class Runtime:
     def __init__(self,runner,root,cohort,python,gpus):
         self.runner=Path(runner).resolve();self.root=Path(root).resolve()/cohort
         self.cohort=cohort;self.python=python;self.gpus=gpus
+        self.primary_results_first=True
         if not (self.runner/'cluster_child.py').is_file():raise ValueError('runner-root must contain cluster_child.py')
         if not os.environ.get('V8_CODE_ROOT'):raise ValueError('V8_CODE_ROOT must point to the frozen trainer checkout')
         sys.path.insert(0,str(self.runner))
@@ -1206,10 +1339,12 @@ class Runtime:
                 self.cpu(stage,fd,stop,device_fds)
                 if stop.is_set():return
             if self.environment.get('EXPORT_CODE_ROOT'):self.cpu('history-export',fd,stop,device_fds)
+            if action=='primary_finalize' and not stop.is_set():capture_primary_results(self)
 
     def locator(self):return self.cluster.ClusterLocator(self.root,self.cfg)
 
     def plan(self,phase):
+        if phase=='primary_evaluation':return primary_evaluation_tasks(self)
         loc=self.locator();seeds=self.cfg['seeds']['training'];tasks=[]
         if not seeds:raise ValueError('No training seeds configured')
         if phase=='train':
