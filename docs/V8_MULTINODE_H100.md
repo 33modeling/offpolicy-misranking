@@ -125,6 +125,8 @@ binding·실패 기록은 setup-history에 보존한다. 학습이 시작된 큐
 기록되면 원래 비용 전용 함수로 예산을 먼저 고정한다. 평가 결과는 예산 계산에 쓰지 않는다.
 예산이 고정되면275 체크포인트가 준비된 각 분기의 ext·최종 eval 및 확정된 예산
 endpoint eval을 빈4GPU 노드에 배정한다. 다른 분기·seed·모델은 동시에 학습할 수 있다.
+준비된 학습·ext·eval은 cohort 안에서도 순환 배정하여 학습 작업이 많다는 이유로
+ext/eval이 목록 뒤에 계속 남지 않게 한다. 준비되지 않은 종류는 건너뛰고 다른 작업을 배정한다.
 예산 기준 정책의 endpoint·비용이 아직 없거나 부모 checkpoint가 없으면 해당 작업만
 기다린다. 이 조건을 우회해 미측정 비용이나 평가를 만들지 않는다.
 작업 실패는 원문을 남기고 즉시 재시작하며, 환경·입력 사전검사 오류는 가려서 진행하지 않는다.
@@ -162,7 +164,7 @@ worker는60초마다 현황을 출력한다. 자식 출력은 터미널과 각 c
 정책 버전이 나온다. 표 형식 `status`는 `dispatch current <hash>`(현재 checkout과
 같음), `dispatch different <hash>`(다름), `dispatch unverified`(기록 없음)를 구분한다.
 정책 파일이 디스크에 있다는 것만으로 실행 중인 worker에 적용됐다고 판단하지 않는다.
-현재 배정 정책은 `ready-eval-ext-immediate-restart-v16`이다. 작업 검사는 해당 cohort의
+현재 배정 정책은 `ready-eval-ext-fair-immediate-restart-v17`이다. 작업 검사는 해당 cohort의
 control lease만 잡고 별도로 수행한다. 검사 결과가 준비되면 공유 잠금 안에서 현재
 binding·phase·실패 상태·작업 정의·작업 lease를 다시 확인한 뒤 claim한다.
 검사와 claim 사이에 다른 노드가 가져간 작업이나 실패한 작업은 가져오지 않는다.

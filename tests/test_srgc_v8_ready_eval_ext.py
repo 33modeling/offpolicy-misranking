@@ -53,6 +53,21 @@ def test_parallel_policy_removes_cross_cohort_primary_result_barrier(tmp_path):
     assert not nodes.primary_results_ready(tmp_path/'qwen_mbpp')
 
 
+def test_three_ready_kinds_rotate_instead_of_waiting_behind_many_trajectories(tmp_path):
+    pool,runtime,budget=prepared(tmp_path);base=runtime.plan('train')[0][0]
+    runtime.plan=lambda phase:([dict(base,run_id='trajectory-'+str(i)) for i in range(20)],True)
+    runtime.ready=lambda task:True
+    claims=[]
+    try:
+        for i in range(3):
+            action,claim=pool.tick(runtime,'cpu-node-'+str(i),threading.Event())
+            assert action=='claimed';claims.append(claim)
+        phases=[nodes.read(pool.root/'jobs'/(c[1]+'.json'))['phase'] for c in claims]
+        assert phases==['train','extension','evaluation'],'ready ext/eval waited behind all training trajectories'
+    finally:
+        for claim in claims:claim[0].close()
+
+
 def test_side_offer_rechecks_frozen_budget_before_claim(tmp_path):
     pool,runtime,budget=prepared(tmp_path)
     action,offer=pool.tick(runtime,'inspector',threading.Event(),claim=False,offer=True);assert action=='ready'

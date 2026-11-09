@@ -30,7 +30,7 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'ready-eval-ext-immediate-restart-v16'
+DISPATCH_POLICY = 'ready-eval-ext-fair-immediate-restart-v17'
 TERMINAL = {'completed_horizon', 'completed_budget'}
 PHASES = ('train', 'primary_evaluation', 'extension', 'evaluation')
 CPU_PHASES = ('prepare', 'freeze', 'primary_finalize', 'finalize')
@@ -726,10 +726,10 @@ class Pool:
                                       len(item[1]['attempts']),item[0].stem))
         if pending and offer:
             return 'ready',dict(phase=phase,side_budget_sha256=side_budget,
-                                jobs=[dict(key=p.stem,phase=j['phase'],task=semantic_task(j['task'])) for p,j in pending])
+                                jobs=[dict(key=p.stem,phase=j['phase'],retry=j['state']=='failed',task=semantic_task(j['task'])) for p,j in pending])
         if pending and not claim:return 'gpu_busy',None
 
-        return self.claim_offered(dict(phase=phase,side_budget_sha256=side_budget,jobs=[dict(key=p.stem,phase=j['phase'],task=semantic_task(j['task']))
+        return self.claim_offered(dict(phase=phase,side_budget_sha256=side_budget,jobs=[dict(key=p.stem,phase=j['phase'],retry=j['state']=='failed',task=semantic_task(j['task']))
                                                        for p,j in pending]),worker,stop)
 
     def claim_offered(self,offer,worker,stop):
@@ -746,11 +746,17 @@ class Pool:
             budget=self.root.parent/'frozen/budget.json'
             if not budget.is_file() or hashlib.sha256(budget.read_bytes()).hexdigest()!=offer['side_budget_sha256']:
                 return 'stale',None
-        for item in offer['jobs']:
+        parallel=state.get('execution_order',{}).get('policy')==CONCURRENT_ORDER
+        phases=('train','extension','evaluation');items=offer['jobs']
+        if parallel:
+            cursor=state.get('ready_phase_cursor',0)
+            items=[item for _,item in sorted(enumerate(items),key=lambda pair:(pair[1].get('retry',False),
+                (phases.index(pair[1].get('phase','evaluation' if offer['phase']=='primary_evaluation' else offer['phase']))-cursor)%3,pair[0]))]
+        for item in items:
             if stop.is_set():return 'stopped',None
             path=self.root/'jobs'/(item['key']+'.json');job=read(path)
             job_phase='evaluation' if offer['phase']=='primary_evaluation' else offer['phase']
-            if state.get('execution_order',{}).get('policy')==CONCURRENT_ORDER:
+            if parallel:
                 job_phase=item.get('phase',job_phase)
                 if job_phase not in (offer['phase'],'extension','evaluation'):raise ValueError('Invalid concurrent claim phase')
             if job['phase']!=job_phase or semantic_task(job['task'])!=item['task']:
@@ -774,7 +780,13 @@ class Pool:
                 attempt['resumed_from_attempt']=job['attempts'][-1]['id']
             if job['state']=='failed':attempt['retry_of_failed_attempts']=counted_failures(job)
             job.pop('resume_not_before',None)
-            job['attempts'].append(attempt);job['state']='running';atomic(path,job)
+            job['attempts'].append(attempt);job['state']='running'
+            try:
+                atomic(path,job)
+                if parallel:
+                    state['ready_phase_cursor']=(phases.index(job['phase'])+1)%3
+                    atomic(self.root/'state.json',state)
+            except BaseException:lease.close();raise
             return 'claimed',(lease,path.stem,job['task'],attempt)
         return 'waiting',None
 
