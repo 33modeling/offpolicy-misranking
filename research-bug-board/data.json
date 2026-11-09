@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-09T22:20:14+09:00",
+  "recorded_at": "2026-11-09T23:15:04+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "e00a16d7b809fcf243f96bf55d8500b15505c282",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/e00a16d7b809fcf243f96bf55d8500b15505c282",
-    "all_available_commits": 1358,
+    "source_commit": "771dc4c96f83957bb49d8c06efcc957e1b4d5efd",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/771dc4c96f83957bb49d8c06efcc957e1b4d5efd",
+    "all_available_commits": 1365,
     "fix_commit_records": 144,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
@@ -42,7 +42,7 @@
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hang-fix-20261108:f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:e00a16d7b809fcf243f96bf55d8500b15505c282",
+      "refs/heads/master:771dc4c96f83957bb49d8c06efcc957e1b4d5efd",
       "refs/heads/v8-coord-fixes-20261108:377c256e55f80c64b484d82ef812064ed9e7c8a3",
       "refs/heads/v8-modes:6821c9c09292662008eb4f933c74bae7490358ed",
       "refs/heads/v8-nodes:3adf26925b2b1c1bf572cf0e68f75b26bbae3ddc",
@@ -55,7 +55,7 @@
       "refs/heads/v8-status-clean:2f6994f544c150e58e2e3d7f43e6e67c16ae442e",
       "refs/heads/v8-status-cohorts:8635a5dab4b6a77620a2628799718781317d4687",
       "refs/heads/v8-status-counts:212a09963ac6d926b9fb20d95c6f19d28d5c87f7",
-      "refs/heads/v8-status-exteval:a960fbe87fdf0b4de66e88d92d5d8c9a73083f86",
+      "refs/heads/v8-status-exteval:1b3236baf24fe121bcde7583f3a304b75ccb981d",
       "refs/heads/v8-status-grid:e902db8a5e5a317c9aa5c26fdd9294f3a1f50c03",
       "refs/heads/v8-status-layout:616a1e3a5ba03620144c98f7370165e0107c4a63",
       "refs/heads/v8-status-lease:f418288156a4633f243691417f1e453be9bf8c0c",
@@ -81,7 +81,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:e00a16d7b809fcf243f96bf55d8500b15505c282"
+      "refs/remotes/origin/master:771dc4c96f83957bb49d8c06efcc957e1b4d5efd"
     ]
   },
   "incidents": [
@@ -9213,6 +9213,15 @@
           "text": "V21의 오류 대기 종료가 마지막 스캔의 no-work 관찰을 그대로 사용했다. 다른 노드가 그 직후 checkpoint를 게시하면 정상 학습/eval을 실행하지 않고 worker를 종료할 수 있었다. V22는 종료 전에 원래 planner/ready/done을 다시 확인해 준비된 작업을 복구하며 대기 종료와 실제 작업 크래시를 분리해 기록한다. 기존 실패 상한·SIGSEGV 차단·원래 checkpoint는 보존한다.",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/5805be03fcdc748a5721331bc9e3b433a8dd7b1d",
           "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "evaluation_recovery_scope_correction",
+          "status": "code_fixed",
+          "text": "사용자가 eval에서도 exit-11 뒤 복구되지 않고 모두 막혔다고 보고했다. 이전 모든 native task의 첫 오류 격리는 평가에도 적용돼 복구가 차단됐다. V23은 해당 eval만 원래 checkpoint/spec로 한 번 재실행하고, 고정된 evaluation-sigsegv-recovery-v1 receipt 뒤에1회 실패하면 더 재개하지 않는다. 노드/코드 hash 변경으로 receipt를 갱신하지 않고 원래 실패9건도 보존한다. 이는 native 원인 수리 주장이 아닌 최신 사용자 요청에 따른 제한된 eval 복구다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/6397cc4856fa875ef87aeb5abb519f0303441d14",
+          "evidence_kind": "user_report_and_code_change"
         }
       ],
       "first_reported": "2026-11-09",
@@ -9408,6 +9417,173 @@
           "status": "code_fixed",
           "text": "최종462 CPU 검사0실패/0skip. 새 checkpoint의 train/eval이 각각1회 배정되고 과거 실패9회가 그대로 유지됨을 원문35파일 zip으로 보존했다. 현재 worker의합성 native fault1·done1과 이전 worker 실패9회를 분리한 검사도 통과했다. 46 coordinator/7 runner 모든 archive payload 및 원본30 trainer SHA를 확인했다. 처음 발견한 node-local 재투입 실패 및 이전 함수를 import한 중단 검사의 capture를 숨기지 않았다. 실제 H100 native 오류 검증을 의미하지 않는다.",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/e00a16d7b809fcf243f96bf55d8500b15505c282",
+          "evidence_kind": "code_test_and_limitation"
+        }
+      ]
+    },
+    {
+      "id": "V8-141",
+      "title": "eval의 exit-11을 첫 오류부터 영구 격리해 복구와 재배정이 막힘",
+      "area": "V8 native 평가 오류의 제한된 복구",
+      "severity": "high",
+      "first_reported": "2026-11-09",
+      "introduction_commit": "bd196c57f2a27b6ca77aa4f81dbbeed4a573f99c",
+      "cause": "V21/V22의 fatal_native_failure 차단을 평가에도 동일하게 적용했고 누적 과거 실패까지 영구 차단했다. 같은 고정 checkpoint 평가를 재시작할 수 없었다.",
+      "impact": "사용자는 평가 중에도 exit-11이 발생하고 복구되지 않아 모두 막혔다고 보고했다. 원래 model checkpoint와 eval spec는 남아 있지만 작업이 다시 배정되지 않았다.",
+      "attribution": "Codex의 평가 복구 범위 판단을 수정한다. 실제 H100 SIGSEGV 근본 원인은 아직 미확인이다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "고정된1회 eval native recovery receipt",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/6397cc4856fa875ef87aeb5abb519f0303441d14"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-09",
+          "actor": "user",
+          "type": "reported",
+          "status": "open",
+          "text": "야 eval 중에도 똑같은 애러가 나는데 복구가 안돼 / exit -11 이거 / 다 막혔어 빨리고쳐 좀",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "reproduced",
+          "status": "open",
+          "text": "이전 eb31224 실행기를 직접 불러 새 eval 첫SIGSEGV와 과거9회 실패 eval 모두 기본 명령이 한 번도 복구하지 못함을 before.xml의2실패로 보존했다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/6397cc4856fa875ef87aeb5abb519f0303441d14"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "검증된 입력의 eval SIGSEGV에만 고정 recovery receipt를 만들고 같은 checkpoint/spec/question set/responses/seed/task key로1회 재실행한다. 과거 실패를 지우지 않고 이번 receipt 이후 실패를1회까지 허용한다. 재시작/새 node/다른 code hash로 quota가 갱신되지 않는 검사가 통과했다. 완료된 평가 결과는 다시 실행하지 않고 원래 validator로 채택한다. 학습 native 오류와 입력/identity 오류는 이 방식으로 해제하지 않는다. source6397cc4는 원격 exact이며 관련79검사가 통과했다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/6397cc4856fa875ef87aeb5abb519f0303441d14"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "actual_cpu_signal_control",
+          "status": "code_fixed",
+          "text": "CPU torchrun2rank에서 의도적인 ctypes SIGSEGV를 낸 뒤 같은 eval job의 다음 subprocess가 정상 종료하도록 제어했다. 원래 child signal11 기록을 attempt에 보존하고 기본 worker가 자동 재실행하여done이 되는 것을 확인했다. real-cpu.xml1검사가 통과했다. H100 native 장애 재현이나 실제 모델 평가 결과는 아니다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/6397cc4856fa875ef87aeb5abb519f0303441d14"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "regression_verified",
+          "status": "code_fixed",
+          "text": "최종474 CPU 검사0실패/0skip. 실제CPU torchrun2rank의 의도적 SIGSEGV 뒤 동일eval 자동재실행done, 과거9실패 복구1회와 재시작에 의한 quota 갱신 금지, 완료결과 채택을 확인했다. zero-budget ext는 추가update0/model·optimizer·RNG hash동일, 원래실패보존을 확인했다. 부분JSON startup 재현과 atomic 수정도 검증했다.47coordinator/7runner archive 모든payload 및원본30trainer SHA일치. Native fault 원문6000자 이내를기본task출력에표시한다. 초기실패/fixture수정/10초시험deadline을기록했다. 실제H100성과와 구별한다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/771dc4c96f83957bb49d8c06efcc957e1b4d5efd",
+          "evidence_kind": "code_test_and_limitation"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "remote_verification_pending",
+          "status": "remote_verification_pending",
+          "text": "평가의 유한 복구/별도 checkpoint기록/startup경합을 소스에서 고친 상태다. 실제H100 native SIGSEGV근본원인과 수정본적용뒤실제평가진행은미확인이다. 같은오류가재발하면평가별1회재실행뒤멈추며무제한quota로전환하지않는다. 기록한학습보상과완료평가·원래checkpoint는보존한다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/771dc4c96f83957bb49d8c06efcc957e1b4d5efd",
+          "evidence_kind": "limitation"
+        }
+      ]
+    },
+    {
+      "id": "V8-142",
+      "title": "추가 update 없는 budget extension이 시작 endpoint를 저장하지 못해 finalize 실패",
+      "area": "V8 frozen runner의 checkpoint 기록 / 예산 소진 ext",
+      "severity": "high",
+      "first_reported": "2026-11-09",
+      "introduction_commit": "419072869dc1c9b280c4d3c47e5430b4e97e9d25",
+      "cause": "SHA f14d92ee... saved runner는 finalize에서 현재 engine.step의 retained snapshot index를 반드시 요구한다. 새 budget fork에서는 latest.pt가 없으므로 시작점 기록 guard가False이고, B가 추가 update를 허용하지 않으면 snapshot을 한 번도 쓰지 않은 채 finalize하여 missing[H]를 발생시킨다.",
+      "impact": "최초 전체 검사의 Qwen MATH CPU runner에서 실제로 parent75/cost_offset0.1738>B0.1484인 ext가 추가 학습 없이 retained snapshots missing[75]로 중단됐다. 이 경로는 native -11과 다른 별도 오류다.",
+      "attribution": "회귀 검사에서 발견하고 Codex가 기록-only overlay로 수정했다. 원래 도입 작성 도구나 실제 H100 native 원인은 별도 증거 없이 단정하지 않는다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "원본 SHA 고정의 budget-fork checkpoint 기록 overlay",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/192f53333e6313532c54f8676a65b3cf2b8b61ff"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "reproduced",
+          "status": "open",
+          "text": "all-before-zero-repair.xml의1실패/471통과를 보존했다. 별도 결정적 CPU control은 고정 예산0, 같은 parentH75로 원래 frozen runner가 missing[75]를 낸 뒤 같은 task를 수정 overlay로 다시 실행한다. 초기 import-path fixture 실패와 원래 terminal 이름을 과도하게 한정한 assert 실패도 raw XML에 보존했다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/192f53333e6313532c54f8676a65b3cf2b8b61ff"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "원본 f14d92ee... 파일을 수정하지 않고 audited _execute_train의 기록 guard 한 곳만 overlay한다. retained 시작점을 budget fork도 저장하게 하고, 예산/gradient/optimizer update/샘플링 결정은 그대로 둔다. 원래 _save_retained와 _finalize가 실제 model/optimizer/RNG 상태와 비용을 기록한다. 강제0-budget control은 새 optimizer update0, parent model/optimizer/RNG hash 보존, 원래 실패 이력 보존을 확인했다. production rank receipt에 원본/overlay SHA를 남기며 CPU fixture도 같은 overlay를 적용한다. 관련16검사 및 별도RNG1검사가 통과했다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/192f53333e6313532c54f8676a65b3cf2b8b61ff"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "regression_verified",
+          "status": "code_fixed",
+          "text": "최종474 CPU 검사0실패/0skip. 실제CPU torchrun2rank의 의도적 SIGSEGV 뒤 동일eval 자동재실행done, 과거9실패 복구1회와 재시작에 의한 quota 갱신 금지, 완료결과 채택을 확인했다. zero-budget ext는 추가update0/model·optimizer·RNG hash동일, 원래실패보존을 확인했다. 부분JSON startup 재현과 atomic 수정도 검증했다.47coordinator/7runner archive 모든payload 및원본30trainer SHA일치. Native fault 원문6000자 이내를기본task출력에표시한다. 초기실패/fixture수정/10초시험deadline을기록했다. 실제H100성과와 구별한다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/771dc4c96f83957bb49d8c06efcc957e1b4d5efd",
+          "evidence_kind": "code_test_and_limitation"
+        }
+      ]
+    },
+    {
+      "id": "V8-143",
+      "title": "runtime actor가 읽는 공통 plan JSON을 다시 쓰는 중 초기화가 종료됨",
+      "area": "V8 다중 cohort actor 초기화 / plan publication",
+      "severity": "high",
+      "first_reported": "2026-11-09",
+      "introduction_commit": "071ac0dfbc2df4069f3b9c50d45a5d3e3a2b973d",
+      "cause": "v8_dispatch가 per-launch runfile을 Path.write_text로 truncate/write하며 각 actor를 차례로 시작했다. 앞 actor가 plan을 읽는 중 다음 actor 준비가 같은 JSON을 다시 쓰면 partial JSONDecodeError로 actor가 초기화 전 종료될 수 있었다. 파일명도 PID만 포함했다.",
+      "impact": "정상 node에서도 runtime actor exited during initialization으로 일부 cohort가 배정되지 않거나 worker가 nonzero로 끝날 수 있었다. 전체검사에서 healthy OLMo actor가 초기화 종료한 실패를 보존했으며 별도 CPU control이 실제 unterminated JSON 예외를 재현했다. 이 Python 초기화 오류는 사용자 native exit-11과 구별한다.",
+      "attribution": "Codex가 기존 actor startup의 plan publication 경쟁 조건을 재현·수정했다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "UUID per-launch plan 및 원자적 publication",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/e21efff34d5c903a2e31fdc74223be9e19f450c4"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "reproduced",
+          "status": "open",
+          "text": "all-before-plan-repair.xml의2실패/471통과 중 healthy actor 초기화 종료1건을 보존했다. 다른1건은12worker검사의2초 join 제한이었다. plan-race-before.xml에서는 write 중간을 의도적으로 늦춰 실제 두 runtime actor가 반쪽 JSON을 읽고 JSONDecodeError로 종료함을 재현했다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/e21efff34d5c903a2e31fdc74223be9e19f450c4"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "per-launch plan 경로에 UUID를 포함하고 초기/각 cohort publication을 nodes.atomic으로 바꿔 reader가 항상 완전한 JSON만 읽게 했다. 같은 JSON/원래 task/config 값은 유지한다. plan race+node fault 격리+유한 native eval 복구23검사, 원격UI변경을 보존한status/startup47검사가 통과했다. 12worker검사는 전체10초 deadline으로 시작시간 변동을 허용하되 bad실행2회/healthy1회/새node추가시도0 및 실제종료 검증을 그대로 유지한다. production 재시도·대기 상한을 늘린 수정이 아니다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/e21efff34d5c903a2e31fdc74223be9e19f450c4"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "regression_verified",
+          "status": "code_fixed",
+          "text": "최종474 CPU 검사0실패/0skip. 실제CPU torchrun2rank의 의도적 SIGSEGV 뒤 동일eval 자동재실행done, 과거9실패 복구1회와 재시작에 의한 quota 갱신 금지, 완료결과 채택을 확인했다. zero-budget ext는 추가update0/model·optimizer·RNG hash동일, 원래실패보존을 확인했다. 부분JSON startup 재현과 atomic 수정도 검증했다.47coordinator/7runner archive 모든payload 및원본30trainer SHA일치. Native fault 원문6000자 이내를기본task출력에표시한다. 초기실패/fixture수정/10초시험deadline을기록했다. 실제H100성과와 구별한다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/771dc4c96f83957bb49d8c06efcc957e1b4d5efd",
           "evidence_kind": "code_test_and_limitation"
         }
       ]

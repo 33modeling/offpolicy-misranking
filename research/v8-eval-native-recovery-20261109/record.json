@@ -1,0 +1,244 @@
+{
+  "base_commit": "eb31224844dee238395069e654f0059476822f5f",
+  "verified_code_commit": "771dc4c96f83957bb49d8c06efcc957e1b4d5efd",
+  "user_reports": [
+    "야 eval 중에도 똑같은 애러가 나는데 복구가 안돼",
+    "exit -11 이거",
+    "다 막혔어 빨리고쳐 좀",
+    "작업 얼마나 남았니"
+  ],
+  "hypothesis": "A fixed one-failed-replay allowance restores SIGSEGV evaluation recovery without replenishing retries on node/code restart; completing zero-update extension checkpoints and atomically publishing actor plans remove separate recorded blockers.",
+  "controls": {
+    "scope": "CPU software tests only, including original ToyBackend, deterministic metadata controls and real two-rank deliberately injected ctypes SIGSEGV",
+    "models": "no H100 model measurement",
+    "unit_seeds": [
+      5
+    ],
+    "original_toy_seeds": [
+      5,
+      6,
+      7
+    ],
+    "updates": "production25/275/400 unchanged; Toy25/75/100 and zero-budget control preserved",
+    "data": "fixed original checkpoint/spec/task/question IDs/responses/seed purpose; no retry seed search or budget reselection",
+    "num_source_files_preserved": 30
+  },
+  "eval_recovery": {
+    "policy": "evaluation-sigsegv-recovery-v1",
+    "max_failed_replays": 1,
+    "old_attempts_preserved": true,
+    "new_node_or_code_hash_renews": false,
+    "old_nine_failures_can_receive_one_replay": true,
+    "finished_results_reused": true,
+    "partial_evaluation": "an unfinished evaluation reruns the same checkpoint/spec; no claim of per-question partial resume",
+    "native_root_cause_repaired": false
+  },
+  "checkpoint_recording": {
+    "original_runner_sha256": "f14d92eed0d8dd139e3ea7602112bae148a6fd860ed883c22f55512f6fe8c732",
+    "policy": "retain-initial-budget-fork-endpoint-v1",
+    "frozen_file_changed": false,
+    "extra_optimizer_updates": 0,
+    "model_optimizer_rng_hashes_preserved": true,
+    "budget_sampling_changed": false
+  },
+  "startup_plan": {
+    "atomic_publication": true,
+    "uuid_launch_path": true,
+    "partial_json_failure_reproduced": true,
+    "scientific_config_changed": false
+  },
+  "measured_software_values": {
+    "final_tests": 474,
+    "failures": 0,
+    "skipped": 0,
+    "real_cpu_eval_attempts": 2,
+    "real_cpu_eval_outcomes": [
+      "failed",
+      "done"
+    ],
+    "zero_budget_extra_updates": 0,
+    "zero_budget_model_optimizer_rng_equal": true
+  },
+  "scientific_measurements": {
+    "H100_verified": false,
+    "actual_native_SIGSEGV_cause": null,
+    "actual_accuracy": null,
+    "actual_memory": null,
+    "actual_throughput": null,
+    "reason": "H100 is on another computer and is not connected. Code tests and deliberate CPU crashes do not establish remote model success."
+  },
+  "retained_failures": {
+    "before": "before.xml:2 failures reproduce blocked fresh/old native eval",
+    "zero": "all-before-zero-repair.xml:1 failed/471 passed exposed a real frozen-runner missing retained H at a zero-update budget fork",
+    "zero_fixtures": "zero-debug.xml/zero-update.xml retain an initial import-path fixture mistake; zero-debug-fixed.xml retains a too-specific terminal-tag assertion. Final zero control preserves both original terminal tags and checks no optimizer steps and model/optimizer/RNG equality.",
+    "startup": "all-before-plan-repair.xml:2 failed/471 passed: one healthy actor died during initialization and one12-worker fixture exceeded its2s join bound. plan-race-before.xml deterministically reproduces actual partial JSON reading. Atomic publication fixes the former; the fixture now uses one10s global deadline while retaining exact2bad/1healthy/no-replenishment assertions. Production task limits were not increased."
+  },
+  "evidence": {
+    "zero-debug.xml": {
+      "tests": 1,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0
+    },
+    "plan-merge.xml": {
+      "tests": 47,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "all.xml": {
+      "tests": 474,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "zero-update.xml": {
+      "tests": 16,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0
+    },
+    "prepush.xml": {
+      "tests": 79,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "zero-final.xml": {
+      "tests": 16,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "all-before-plan-repair.xml": {
+      "tests": 473,
+      "failures": 2,
+      "errors": 0,
+      "skipped": 0
+    },
+    "plan-race-fixed.xml": {
+      "tests": 23,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "native-log.xml": {
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "zero-rng.xml": {
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "plan-race-before.xml": {
+      "tests": 1,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0
+    },
+    "before.xml": {
+      "tests": 2,
+      "failures": 2,
+      "errors": 0,
+      "skipped": 0
+    },
+    "targeted.xml": {
+      "tests": 31,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "real-cpu.xml": {
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "all-before-zero-repair.xml": {
+      "tests": 472,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0
+    },
+    "zero-debug-fixed.xml": {
+      "tests": 1,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "source_files_sha256": {
+    "scripts/srgc_v8_nodes.py": "1f8fc77cc6ad8329f874704c3833004a7043c35a91dbeb6ca14f12a0e2343db8",
+    "scripts/v8_task_entry.py": "1af90051c957f460ebebaebb734c13304e395543e10e005680d39ca0cc0bf341",
+    "scripts/v8_dispatch.py": "73957a999ad5d85fcb1f96f6e5805af3d5266f52544c517cafc890d32a8ec922",
+    "scripts/v8_runtime_worker.py": "2611f270c8e0315deeb89e8f68c27584a0d96596f6ce06825dc9273308e8518d",
+    "scripts/v8_status.py": "8cd5f3150538a5616049c3a37a8c4e7fd37c116104a91337dfc3fb13a22602ee"
+  },
+  "frozen_trainer_sha256": {
+    "srgc_rebuttal/__init__.py": "daff68712fd7115469febaaad3c782d020ad450bce6e0f883a0259cadd3a258f",
+    "srgc_rebuttal/admission.py": "befe3a6514875e24a23979b795602b281ef2ea2a9abadb01e19c9977cd7b8024",
+    "srgc_rebuttal/build_cache.py": "91a3776141b2d83eca30dc45ecc1df964b24d43d1f8baa26b8e569e80894672e",
+    "srgc_rebuttal/build_inputs.py": "59a8f3ba3f023a475fb600cc75b2ad5a26eca59c9de611adc2bf89096eef11c9",
+    "srgc_rebuttal/cluster.py": "0aa3a50fb18170a5ee4ca00f36a641ab5e3ac9c5c395cd691324c59e8387d142",
+    "srgc_rebuttal/cluster_queue.py": "960bc8a63c4ecdc3e2ae40131faf637f6e0e4af006007ef4577fe4dcc065153f",
+    "srgc_rebuttal/code_assertions.py": "51b4a2fd02664d0f02b4f154cf18172cc654931404a45515e3423da14f666e76",
+    "srgc_rebuttal/code_check.py": "38f708dcec041d9e2434c52a9b947284938acc3216fd06e99f0f9cd5b606450b",
+    "srgc_rebuttal/cost_ledger.py": "2b878384943e5e24c912884a20b71d31bca0b45e280e666d5caf81147222f5e7",
+    "srgc_rebuttal/cost_report.py": "53ceba5a2753391f46331fbedaf26e210b0d33027ddb4237bbdbf0d07bc60521",
+    "srgc_rebuttal/distributed.py": "222fd71362b442ed6c63afb3c4a2937add9ef7130be010d7b093277c2a21e265",
+    "srgc_rebuttal/existing_runtime.py": "a1702f2907da3decf7f7356fd1c68c933442a460d1fc8360ef1d2dbdcb37c7f4",
+    "srgc_rebuttal/import_pair_inputs.py": "7b5332bdba9476b86d2cbf42fb997a3b865d5547b5fc3ac6575704e8d549429f",
+    "srgc_rebuttal/objectives.py": "1e686c118c79ab5b51c7d6973ae897aaf2bfdde0824470937ef7c30e18293ba4",
+    "srgc_rebuttal/plan.py": "643ed49f1ad74297cfecec8f453a9cf3e737260b960479e6e116e48c9377dc3e",
+    "srgc_rebuttal/plan_dataset.py": "468af80b4f59e9b7f2683eaa724f308fc91872bb1918e65e127e557ee6e992b2",
+    "srgc_rebuttal/prepare_inputs.py": "71f6a8e0f1cc6df586df8bd4bd234b413a5945895d3cdf3ae0446fd9763230e1",
+    "srgc_rebuttal/prepare_rebuttal.py": "f0978d96f418bfd90fd3cd291b977b61f50b6a14d30d876e489fc65ed3073cba",
+    "srgc_rebuttal/progress.py": "d3202b65e9eb53557fb45b6b54f1cce0ae50d196486bd5bc11d0de2e8e19440f",
+    "srgc_rebuttal/reports.py": "97317b77c9f57536a34d421a70d6c57a714ad4184630253f6c41297cf21194bf",
+    "srgc_rebuttal/run_demo.py": "0f69daf7c1f255f1690b5354e40fb56a2a20bc6a11ef39a6666207392697bd7e",
+    "srgc_rebuttal/run_experiment.py": "9f2dc57536fdb5f6f5a7f5016129a6814120089bf8135431d1f8bd4da804e885",
+    "srgc_rebuttal/runtime.py": "518d37beb7c733e1497599bfe0f9131cd1caf7e9cfdea887f20060291f335e10",
+    "srgc_rebuttal/srgc.py": "d2dc8e3b83df63139f06f97574009e03b1f6bf26f47c3013dedf98e1076516e7",
+    "srgc_rebuttal/summarize.py": "0d7179717ede53de7ccebaf9f5e691bd4ea8eb954a5cd8c0803bf077bba31c49",
+    "srgc_rebuttal/timing.py": "82e53cc63751177188fa6da4abdca6dc0567f4ac27524488c643ff863b08efa5",
+    "srgc_rebuttal/torch_backend.py": "94a8d2d98b6312ee584c32674dbfc194a9e95e714b484a5a64b84b3e78631e11",
+    "srgc_rebuttal/torch_state.py": "eda68cecdd6ed5f5312a7b5f5a026d14d86db4f9f329aaf45a825a867c72e2d6",
+    "srgc_rebuttal/toy_backend.py": "159a6b72e8923620469600d3acb09bf36fb2eb629cdbee0ca6058a0cfba08272",
+    "srgc_rebuttal/verifiers.py": "5062befe4ed5a8e21f6de01a73dca4f1d3544dd033c5d2c846bff391d1148a90"
+  },
+  "archive": {
+    "through": "771dc4c96f83957bb49d8c06efcc957e1b4d5efd",
+    "coordinators": 47,
+    "runners": 7,
+    "files": 461,
+    "sha256": "32f01afacffd95d16ab3b992dc27971a2786306b94271b32ed4b62e22319a8b6",
+    "all_payload_sha256_pass": true
+  },
+  "raw_evidence_sha256": {
+    "zero-debug.xml": "800c12325e4289fa28fe457da8c0759702cca62b64333e02db1b5ee3e4867554",
+    "archive-verification.json": "e2f1f5f772ccc3fa0cffe8374cc07c2c38c3cc16eec610592fb9c3815b93adf2",
+    "plan-merge.xml": "b9368fd9ff6ca7e5b12d2867202492150e4b491ec65685cd6ae3c2680a59fefa",
+    "all.xml": "8ed2cf019159555529d75ea4b2c658598a15412a1a3c8b54b73359535af17254",
+    "zero-update.xml": "34f2ba80ffaebdb2cb5bd84d9957356c3ba256a2fa95cff6aadfb9646ff596ab",
+    "prepush.xml": "fc869f7b2717470e40bd2bc27e895d3d4eca061e7a316289d089a56f98341262",
+    "zero-final.xml": "375fb2d680bdf7584786efb1d10f531d4c454b9905c3d6b2ec19f50cd6fc6eae",
+    "all-before-plan-repair.xml": "27948c4d9160998f4174e70069b5b6341110a129dda71a55f60ff99bc3d11f91",
+    "proof.json": "752f545bd7fae3cef2f8ddc82bc8b09621f1457779b821d645c104cac62645ea",
+    "cpu-evaluation-recovery-proof.zip": "c664b91d409da9c99f10cd8aa19d5ddc8914c9863069a017850887c59e12b167",
+    "checkpoint-startup-proof.zip": "9283b191230395f5a808b423fea3011f19dfd120fda168d81d0b23f5831fcb2d",
+    "plan-race-fixed.xml": "b9928844c673672c7430e91562a34cf0055565e3f90c32ccff8412a6223672c6",
+    "native-log.xml": "ccfef07ddef7478853b82533041174925ff53d92f7315131ebbf2fff9f173760",
+    "zero-rng.xml": "af59e3c0fbef8a838129ff8bf57936b841f697e9c6c668ad26605399927549f8",
+    "plan-race-before.xml": "b27dd8fe26436011b43c3eef8752733746b3e15c405c5cc45f7928fdad003f1b",
+    "checkpoint-startup-proof.json": "7a83b8d71a73634457fd4ae19ea089336469f5193c6ff2361dc14a5dbed74b6b",
+    "before.xml": "39ed48d709fd181cbf3401e578833926eb37ca2bfa85a8ca20f160aa0552a268",
+    "targeted.xml": "fab7df2bdeae98ce35389bd2924bc3245c5704c2d476fe7356c53c07ed917da8",
+    "real-cpu.xml": "3a403acb9aed794550d492ce9f8da296673efab0581179de1565e7e20ea32a04",
+    "all-before-zero-repair.xml": "c69e1cfe50edf51579189ba5dbc2152a110706910b4772b0eb88e6489a96eec8",
+    "zero-debug-fixed.xml": "6c7b9eaa346f4ed38f0dc51e2aa8e2b589ae3df1e6c1746d6b4b3d700613f589"
+  }
+}

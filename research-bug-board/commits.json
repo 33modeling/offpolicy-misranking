@@ -14292,6 +14292,76 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "eb31224844dee238395069e654f0059476822f5f",
+      "at": "2026-11-09T22:20:15+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Retain retirement race and node-exclusion proof with 462 CPU checks",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/eb31224844dee238395069e654f0059476822f5f",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "6397cc4856fa875ef87aeb5abb519f0303441d14",
+      "at": "2026-11-09T22:44:24+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Recover SIGSEGV evaluations once without reopening unlimited task retries",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/6397cc4856fa875ef87aeb5abb519f0303441d14",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "192f53333e6313532c54f8676a65b3cf2b8b61ff",
+      "at": "2026-11-09T22:58:22+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Retain the original fork endpoint when frozen budget allows no updates",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/192f53333e6313532c54f8676a65b3cf2b8b61ff",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "d5bf005fba6662a5c44f02b7e3d00d3db15ff064",
+      "at": "2026-11-09T23:07:22+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Publish startup plans atomically so concurrent runtime actors cannot read partial JSON",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/d5bf005fba6662a5c44f02b7e3d00d3db15ff064",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "1b3236baf24fe121bcde7583f3a304b75ccb981d",
+      "at": "2026-11-09T23:07:15+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: copyable log paths, one legend instead of notes per experiment",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/1b3236baf24fe121bcde7583f3a304b75ccb981d",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "e21efff34d5c903a2e31fdc74223be9e19f450c4",
+      "at": "2026-11-09T23:07:37+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve status log-path improvements with atomic actor startup",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/e21efff34d5c903a2e31fdc74223be9e19f450c4",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "771dc4c96f83957bb49d8c06efcc957e1b4d5efd",
+      "at": "2026-11-09T23:09:24+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Surface the original native fault stack in task output instead of only its path",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/771dc4c96f83957bb49d8c06efcc957e1b4d5efd",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }
