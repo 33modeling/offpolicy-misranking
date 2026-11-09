@@ -20,6 +20,7 @@ class RuntimeProxy:
     def __init__(self,entry,plan,planfile,*,asynchronous=False):
         self.cohort=entry['cohort'];self.python=entry['python'];self.runner=Path(entry['runner'])
         self.root=Path(plan['root'])/self.cohort;self.error=None;self.process=None
+        self.gpus=list(plan['gpus'])
         self.independent_startup=asynchronous;self.initialized=False;self.pending_barrier=None;self.on_ready=None
         self.stop_event=None;self.overrides=[];self.corrected_plans=()
         self.binding=dict(schema=1,cohort=self.cohort,root=str(self.root))
@@ -164,6 +165,9 @@ def main():
                                                        native_crash_relaunch=False,quiescent_errors='exit-worker',
                                                        final_exit_check='refresh-original-ready-tasks',
                                                        evaluation_sigsegv_replay=dict(policy=nodes.EVAL_NATIVE_RECOVERY,max_failed_replays=1)),
+                            node_native_faults=dict(max_failures=nodes.NODE_NATIVE_FAILURE_LIMIT,
+                                scope='GPU-set/cohort/controller',new_pid_resets=False,
+                                shared_queue_failed=False),
                             per_rank_receipt='progress/<attempt>/runtime-repair-rank-N.json'))
             if actor.overrides:record['control_overrides']=actor.overrides
             receipt=Path(root)/'.v8-dispatch-policies'/(cohort+'-'+nodes.digest(record)+'.json')

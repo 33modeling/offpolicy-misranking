@@ -362,6 +362,16 @@ def main():
         raise ValueError('Original v8 child bytes differ from the selected runner identity')
     spec=importlib.util.spec_from_file_location('_v8_original_child',path)
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    original_diagnostics=getattr(module,'install_diagnostics',None)
+    if callable(original_diagnostics):
+        @functools.wraps(original_diagnostics)
+        def diagnostics(*args,**kwargs):
+            result=original_diagnostics(*args,**kwargs)
+            # Keep the original periodic/SIGUSR1 diagnostics, then restore the
+            # attempt's fatal-signal FD overwritten by the historical initializer.
+            install_native_fault_handler()
+            return result
+        module.install_diagnostics=diagnostics
     if hasattr(module,'install_progress'):module.install_progress=lambda *args,**kwargs:None
     install_runtime_repairs()
     install(int(os.environ.get('RANK','0')))

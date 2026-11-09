@@ -22,6 +22,16 @@ def test_actual_torchrun_sigsegv_keeps_rank_stack_and_stage(child_runtime):
     assert 'NATIVE STACK (original fault-handler dump' in log.read_text() and 'string_at' in log.read_text()
 
 
+def test_original_child_diagnostics_cannot_redirect_the_attempt_native_dump(child_runtime):
+    run,directory,log=child_runtime
+    assert run('overwritten-segfault') not in (0,75)
+    report=json.loads((directory/'child-failure.json').read_text())
+    faults=[f for f in report['failures'] if f.get('rank')==1 and f.get('signal')==11]
+    assert len(faults)==1,'original diagnostics diverted the native stack away from its attempt'
+    assert 'string_at' in faults[0]['native_python_stack']
+    assert faults[0]['last_progress']['stage']=='gradient_scoring'
+
+
 def test_signal_and_original_python_fault_are_both_preserved(tmp_path,monkeypatch):
     monkeypatch.syspath_prepend(str(ROOT/'scripts'));worker=importlib.import_module('v8_runtime_worker')
     (tmp_path/'rank-0-error.json').write_text(json.dumps(dict(rank=0,invocation='current',error={'message':'ValueError: original input fault'})))

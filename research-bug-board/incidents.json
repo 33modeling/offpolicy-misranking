@@ -9501,5 +9501,49 @@
         "evidence_kind": "code_test_and_limitation"
       }
     ]
+  },
+  {
+    "id": "V8-144",
+    "title": "작업별 native 제한 뒤 같은 노드가 다음 eval을 받아 SIGSEGV가 계속 누적됨",
+    "area": "V8 native fault recovery and diagnostics",
+    "severity": "high",
+    "first_reported": "2026-11-09",
+    "introduction_commit": "7ad703d4d16a0b327b16707699c0197496593bea",
+    "cause": "같은 작업의 고정 재시도 예산은 있지만 worker가 서로 다른 작업을 계속 받을 때의 node/cohort 누적 native 차단이 없다. 실제 H100 충돌 원인은 아직 미확인이다.",
+    "impact": "사용자가 exit -11이 계속 쌓인다고 보고했다. 실제 H100 성과와 CPU 재현을 구분한다.",
+    "attribution": "Codex의 이전 수정은 작업별 반복만 제한했고 노드별 누적과 원래 진단 함수 덮기를 놓쳤다.",
+    "evidence": [],
+    "events": [
+      {
+        "at": "2026-11-09",
+        "actor": "user",
+        "type": "reported",
+        "status": "open",
+        "text": "아이 좆 같은 새끼 아직도 exit-11 못고쳤네 계속 쌓인다고",
+        "evidence_kind": "user_report"
+      }
+    ]
+  },
+  {
+    "id": "V8-145",
+    "title": "원래 cluster_child 진단 함수가 새 native fault 저장 FD를 덮어씀",
+    "area": "V8 native fault recovery and diagnostics",
+    "severity": "high",
+    "first_reported": "2026-11-09",
+    "introduction_commit": "7ad703d4d16a0b327b16707699c0197496593bea",
+    "cause": "v8_task_entry가 faulthandler를 설정한 뒤 원래 cluster_child.install_diagnostics가 이를 다른 FD로 다시 설정한다. child_result가 확인하는 attempt별 덤프에는 실제 fatal stack이 빠질 수 있다.",
+    "impact": "사용자가 exit -11이 계속 쌓인다고 보고했다. 실제 H100 성과와 CPU 재현을 구분한다.",
+    "attribution": "Codex의 이전 수정은 작업별 반복만 제한했고 노드별 누적과 원래 진단 함수 덮기를 놓쳤다.",
+    "evidence": [],
+    "events": [
+      {
+        "at": "2026-11-09",
+        "actor": "user",
+        "type": "reported",
+        "status": "open",
+        "text": "아이 좆 같은 새끼 아직도 exit-11 못고쳤네 계속 쌓인다고",
+        "evidence_kind": "user_report"
+      }
+    ]
   }
 ]

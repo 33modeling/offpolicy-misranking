@@ -31,8 +31,9 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'bounded-native-evaluation-recovery-v23'
+DISPATCH_POLICY = 'node-native-fault-quarantine-v24'
 EVAL_NATIVE_RECOVERY = 'evaluation-sigsegv-recovery-v1'
+NODE_NATIVE_FAILURE_LIMIT = 2
 TERMINAL = {'completed_horizon', 'completed_budget'}
 PHASES = ('train', 'primary_evaluation', 'extension', 'evaluation')
 CPU_PHASES = ('prepare', 'freeze', 'primary_finalize', 'finalize')
@@ -181,6 +182,43 @@ def fatal_native_failure(job):
         for failure in (attempt.get('child_failure') or {}).get('failures',[]):
             if failure.get('signal') in (4,6,7,8,11):
                 return dict(signal=failure['signal'],attempt=attempt.get('id'))
+    return None
+
+
+def node_native_identity(pool,runtime):
+    """A new PID/worker name must not give the same GPU set another crash budget."""
+    return dict(host=socket.gethostname(),gpus=list(getattr(runtime,'gpus',())),
+                visible_devices=os.environ.get('CUDA_VISIBLE_DEVICES'),
+                binding_sha256=digest(pool.binding),controller_sha256=pool.controller_sha256)
+
+
+def node_native_path(pool,runtime):
+    return pool.root/'node-native-faults'/(digest(node_native_identity(pool,runtime))+'.json')
+
+
+def record_node_native_fault(pool,runtime,attempt):
+    """Append current native failures under the existing cohort control lease."""
+    fault=fatal_native_failure(dict(attempts=[attempt]))
+    if not fault:return
+    path=node_native_path(pool,runtime)
+    row=read(path) if path.exists() else dict(schema=1,identity=node_native_identity(pool,runtime),
+        max_native_failures=NODE_NATIVE_FAILURE_LIMIT,failures=[])
+    if not any(f.get('attempt')==attempt['id'] for f in row['failures']):
+        row['failures'].append(dict(attempt=attempt['id'],worker=attempt.get('worker'),
+            signal=fault['signal'],at=time.time(),log=str(pool.root/'logs'/(attempt['id']+'.log'))))
+        row['quarantined']=len(row['failures'])>=NODE_NATIVE_FAILURE_LIMIT
+        atomic(path,row)
+
+
+def node_native_hold(pool,runtime):
+    path=node_native_path(pool,runtime)
+    if not path.exists():return None
+    row=read(path)
+    if row.get('identity')!=node_native_identity(pool,runtime):raise NodeFailure('Node native-fault identity differs')
+    if len(row.get('failures',[]))>=NODE_NATIVE_FAILURE_LIMIT:
+        return (f'This GPU set recorded {len(row["failures"])} native crashes for this cohort/controller; '
+                f'no further tasks on this GPU set. Other nodes/cohorts and saved checkpoints are retained. '
+                f'Original evidence: {path}; underlying native cause remains unconfirmed')
     return None
 
 
@@ -1024,6 +1062,7 @@ class Pool:
             atomic(self.root/'state.json',state)
         if job['state'] in ('failed','interrupted'):self.arm_evaluation_recovery(job,attempt.get('worker'))
         atomic(path,job)
+        record_node_native_fault(self,runtime,attempt)
         return job['state']
 
     def status(self):
@@ -1444,6 +1483,11 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                     for candidate in order:
                         pool,runtime=pairs[candidate]
                         try:
+                            hold=node_native_hold(pool,runtime)
+                            if hold:
+                                offers.pop(candidate,None)
+                                give_up(candidate,pool,'native crash quarantine',NodeFailure(hold))
+                                progressed=True;continue
                             # Another node's --new-queue may be replacing this folder right now: the next
                             # phase-1 pass reports the moved/replaced queue; never recreate its state here.
                             try:state=read(pool.root/'state.json')
@@ -1508,6 +1552,9 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
             print(f'[{worker}] {time.strftime("%Y-%m-%d %H:%M:%S")} {cohort(pool)} task finished rc={rc} '
                   f'state={recorded} log={log}',flush=True)
             if node_error is not None:give_up(index,pool,'node launch',NodeFailure(node_error))
+            else:
+                hold=node_native_hold(pool,runtime)
+                if hold:give_up(index,pool,'native crash quarantine',NodeFailure(hold))
             dispatched=True
         if time.monotonic()-last_report>=60:
             try:print(f'[{worker}] '+canonical({p.binding.get('cohort','?'):p.status() for p,_ in pairs}),flush=True)

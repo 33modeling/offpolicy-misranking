@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="3" skipped="0" tests="3" time="0.186" timestamp="2026-11-09T23:26:00.512726+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_node_native_limit" name="test_different_eval_tasks_cannot_accumulate_unbounded_native_faults_on_one_node" time="0.008"><failure message="ValueError: Conflicting immutable task matrix for 431ae3a479f77cadbbead8d120f592a987f946915564e240d253503e9b0fcb2b">tests/test_srgc_v8_node_native_limit.py:21: in test_different_eval_tasks_cannot_accumulate_unbounded_native_faults_on_one_node
+    pool,runtime,checkpoint=many_evaluations(tmp_path)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_srgc_v8_node_native_limit.py:16: in many_evaluations
+    for task in tasks:pool.register(task,'evaluation')
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/srgc_v8_nodes.py:731: in register
+    raise ValueError('Conflicting immutable task matrix for '+key)
+E   ValueError: Conflicting immutable task matrix for 431ae3a479f77cadbbead8d120f592a987f946915564e240d253503e9b0fcb2b</failure></testcase><testcase classname="tests.test_srgc_v8_node_native_limit" name="test_native_failed_node_does_not_block_other_gpu_or_other_cohort" time="0.006"><failure message="ValueError: Conflicting immutable task matrix for 431ae3a479f77cadbbead8d120f592a987f946915564e240d253503e9b0fcb2b">tests/test_srgc_v8_node_native_limit.py:34: in test_native_failed_node_does_not_block_other_gpu_or_other_cohort
+    pool,runtime,checkpoint=many_evaluations(tmp_path)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_srgc_v8_node_native_limit.py:16: in many_evaluations
+    for task in tasks:pool.register(task,'evaluation')
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/srgc_v8_nodes.py:731: in register
+    raise ValueError('Conflicting immutable task matrix for '+key)
+E   ValueError: Conflicting immutable task matrix for 431ae3a479f77cadbbead8d120f592a987f946915564e240d253503e9b0fcb2b</failure></testcase><testcase classname="tests.test_srgc_v8_node_native_limit" name="test_other_cohort_still_runs_after_node_quarantine" time="0.006"><failure message="ValueError: Conflicting immutable task matrix for 431ae3a479f77cadbbead8d120f592a987f946915564e240d253503e9b0fcb2b">tests/test_srgc_v8_node_native_limit.py:48: in test_other_cohort_still_runs_after_node_quarantine
+    bad,runtime,checkpoint=many_evaluations(tmp_path/'bad')
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_srgc_v8_node_native_limit.py:16: in many_evaluations
+    for task in tasks:pool.register(task,'evaluation')
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/srgc_v8_nodes.py:731: in register
+    raise ValueError('Conflicting immutable task matrix for '+key)
+E   ValueError: Conflicting immutable task matrix for 431ae3a479f77cadbbead8d120f592a987f946915564e240d253503e9b0fcb2b</failure></testcase></testsuite></testsuites>

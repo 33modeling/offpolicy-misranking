@@ -22,6 +22,11 @@ def child_runtime(tmp_path,monkeypatch):
     script.write_text('''import os,sys,time
 from pathlib import Path
 sys.path.insert(0,REPO_RUNNER)
+def install_diagnostics(*args):
+ import faulthandler
+ handle=(Path(os.environ['SRGC_PROGRESS_DIR'])/'legacy-diagnostics.log').open('a')
+ faulthandler.enable(file=handle,all_threads=True)
+ return handle
 def main():
  from switching.runner import write_exit_marker
  mode=os.environ['FAULT_MODE'];rank=int(os.environ['RANK'])
@@ -32,8 +37,9 @@ def main():
    while not (Path(os.environ['SRGC_PROGRESS_DIR'])/'rank-1-error.json').exists():time.sleep(.01)
   raise SystemExit(75)
  if rank==1:
-  if mode=='segfault':
+  if mode in ('segfault','overwritten-segfault'):
    import ctypes,resource,json
+   if mode=='overwritten-segfault':legacy_handle=install_diagnostics()
    resource.setrlimit(resource.RLIMIT_CORE,(0,0))
    (Path(os.environ['SRGC_PROGRESS_DIR'])/'rank-1.json').write_text(json.dumps(dict(pid=os.getpid(),stage='gradient_scoring',scope='CPU synthetic crash fixture')))
    ctypes.string_at(0)

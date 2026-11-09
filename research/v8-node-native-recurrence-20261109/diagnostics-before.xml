@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="3.094" timestamp="2026-11-09T23:26:49.897070+09:00" hostname="jieun-500TGA-500SGA"><testcase classname="tests.test_srgc_v8_native_fault" name="test_original_child_diagnostics_cannot_redirect_the_attempt_native_dump" time="3.017"><failure message="AssertionError: original diagnostics diverted the native stack away from its attempt&#10;assert 0 == 1&#10; +  where 0 = len([])">tests/test_srgc_v8_native_fault.py:30: in test_original_child_diagnostics_cannot_redirect_the_attempt_native_dump
+    assert len(faults)==1,'original diagnostics diverted the native stack away from its attempt'
+E   AssertionError: original diagnostics diverted the native stack away from its attempt
+E   assert 0 == 1
+E    +  where 0 = len([])</failure></testcase></testsuite></testsuites>
