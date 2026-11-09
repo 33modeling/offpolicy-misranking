@@ -8750,5 +8750,42 @@
         "evidence_kind": "code_test_and_limitation"
       }
     ]
+  },
+  {
+    "id": "V8-133",
+    "title": "분기별 상태표시 통합에서 run_id 없는 예전 평가의 stage 이름이 물음표로 바뀜",
+    "area": "V8 읽기 전용 상태 표시",
+    "severity": "medium",
+    "first_reported": "2026-11-09",
+    "introduction_commit": "4786582848143de024d30ae9f78b75d7274952dd",
+    "cause": "다른 창의4786582가 eval 이름을 run_id의 분기로 표시하도록 바꾸면서 과거 run_id 없는 오류 기록의 eval-final stage를 물음표로 대체했다.",
+    "impact": "첫 통합 검사에서 기존 compact status 검사가1실패/52통과였다. 학습·배정·평가 계산을 바꾸는 오류는 아니지만 예전 실패의 구체적 평가 단계가 가려졌다.",
+    "attribution": "통합 검사와 보완은 Codex가 수행했다. 다른 창의 커밋 작성 도구는 별도 증거 없이 단정하지 않는다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "알려진 분기 표시와 과거 stage 이름 동시 유지",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/89efd332b036171db6b2c7a5717a8592c0e40ed6"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "reproduced",
+        "status": "open",
+        "text": "peer-status-integration.xml에1fail/52pass를 보존했다. 기존 s6 eval eval-final 이름이 새 코드에서 물음표로 바뀌었다.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "원격의 분기별 ext/eval 표와 run 기반 이름은 보존하고 run_id 없는 과거 기록에만 원래 arm/stage를 사용한다. 상태표시·복구계수53검사가0실패/0skip으로 통과했다. 상태는 읽기 전용이며 실제 H100 배정 검증을 뜻하지 않는다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/89efd332b036171db6b2c7a5717a8592c0e40ed6",
+        "evidence_kind": "code_test_and_limitation"
+      }
+    ]
   }
 ]

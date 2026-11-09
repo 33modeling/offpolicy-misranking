@@ -14022,6 +14022,46 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "3847d5222534256004916acbf4e6a3c25d0e3252",
+      "at": "2026-11-09T12:09:42+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve restart and parallel dispatch evidence with 429 passing CPU checks",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/3847d5222534256004916acbf4e6a3c25d0e3252",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "4786582848143de024d30ae9f78b75d7274952dd",
+      "at": "2026-11-09T12:08:08+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: budget extension and evaluations per branch; evaluations named by run",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/4786582848143de024d30ae9f78b75d7274952dd",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "aa9e6f7ef4bf531780d7c6b6b925b06d1677ff93",
+      "at": "2026-11-09T12:09:42+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve restart and parallel dispatch evidence with 429 passing CPU checks",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/aa9e6f7ef4bf531780d7c6b6b925b06d1677ff93",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "89efd332b036171db6b2c7a5717a8592c0e40ed6",
+      "at": "2026-11-09T12:11:46+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve legacy evaluation labels while integrating per-branch status",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/89efd332b036171db6b2c7a5717a8592c0e40ed6",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

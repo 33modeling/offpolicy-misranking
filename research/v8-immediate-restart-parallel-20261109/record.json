@@ -78,6 +78,12 @@
       "errors": 0,
       "skipped": 0
     },
+    "peer-status-integration-final.xml": {
+      "tests": 53,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
     "status-note-final.xml": {
       "tests": 34,
       "failures": 0,
@@ -105,6 +111,12 @@
     "legacy-api-before.xml": {
       "tests": 10,
       "failures": 6,
+      "errors": 0,
+      "skipped": 0
+    },
+    "peer-status-integration.xml": {
+      "tests": 53,
+      "failures": 1,
       "errors": 0,
       "skipped": 0
     },
@@ -227,6 +239,8 @@
     "legacy-api-before.xml": "aa9fb0c77c69a9d81333fa6dc2d536186b7669a0e2c84e92066e951bf8847d4d",
     "legacy-api-final.xml": "b551ebca66c8edd2042f1ddae0324c9205dbef8b2ef7e5af56ec8137ff48c90e",
     "parallel-proof.json": "f8342146b9720f1fda2414433e956ebd7f7746b1712449d192228a241deb1369",
+    "peer-status-integration-final.xml": "f191e41dc8c1b3db5d5c8bd603e62e69d6bf8100eda6d9e9aae5a91b18517510",
+    "peer-status-integration.xml": "7a7926c1d7e1c202c5d5ea2ed8149d5f48b1c414785e7494128f4870f75aba44",
     "ready-cost-before-valid.xml": "6320658cf7e7bd7dd14162825b98485c11b4b43d6b09d76c56bd6a3ccb58b35d",
     "ready-cost-before.xml": "59e367f9a33b8d12e4b8bd90f448728601a5d1ab58c2dd314b199c1e63599362",
     "ready-kind-before.xml": "b114fadecb0d60bf625308601f4e88556ab3dad6ad13f103380ef4e6d7a87bc9",
@@ -241,5 +255,18 @@
     "streaming-proof.json": "f6328e96d3995bc05986aa61886fa23e98e1369abcaa7c73e00ab78c5c1c54f1",
     "targeted-final.xml": "324f46058025052d154122368b3371a9e3806045ad309d612be5c6a695daf6e4",
     "targeted.xml": "96b027f5c3d42bbb22b39507679036cea00513335dfc35c11efbe10bb371986e"
-  }
+  },
+  "post_verification_status_integration": {
+    "peer_commit": "4786582848143de024d30ae9f78b75d7274952dd",
+    "fix_commit": "89efd332b036171db6b2c7a5717a8592c0e40ed6",
+    "tests": {
+      "tests": 53,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "core_runner_unchanged_since_429_tests": true,
+    "explanation": "최종 evidence push 전에 다른 창의 per-branch ext/eval 상태표시4786582가 원격에 올라왔다. 해당 코드를 보존해 통합했고 과거 run_id 없는 평가의 stage 이름을 유지하는 보완만 했다. 첫 통합1실패/52통과와 수정후53통과 원문을 보존한다."
+  },
+  "final_code_commit": "89efd332b036171db6b2c7a5717a8592c0e40ed6"
 }
