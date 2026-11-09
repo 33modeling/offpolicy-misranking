@@ -20,7 +20,7 @@
     "metrics": "SIGSEGV 실패4회 후5번째 완료, 실패4건 보존;24동시worker/4cohort/중복0; legacy 명시cap3/대기60 유지",
     "scientific_measurements": null
   },
-  "next_scope": "준비된 ext/eval 동시 배정과 원래 결과 수집 경로 구현·선행검증 완료. 최종 전체 회귀와 영구장부 기록을 이어서 수행한다.",
+  "next_scope": "요청된 제어 코드 변경·표시·호환 수정과 CPU 검증을 완료했다. 실제 H100 대기 원인 판별에는 아직 받지 못한 원격 status/log가 필요하다.",
   "frozen_trainer_sha256": {
     "srgc_rebuttal/__init__.py": "daff68712fd7115469febaaad3c782d020ad450bce6e0f883a0259cadd3a258f",
     "srgc_rebuttal/admission.py": "befe3a6514875e24a23979b795602b281ef2ea2a9abadb01e19c9977cd7b8024",
@@ -54,6 +54,42 @@
     "srgc_rebuttal/verifiers.py": "5062befe4ed5a8e21f6de01a73dca4f1d3544dd033c5d2c846bff391d1148a90"
   },
   "evidence": {
+    "legacy-api-final.xml": {
+      "tests": 33,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "ready-kind-before.xml": {
+      "tests": 1,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0
+    },
+    "all-final.xml": {
+      "tests": 416,
+      "failures": 2,
+      "errors": 0,
+      "skipped": 0
+    },
+    "ready-kind-final.xml": {
+      "tests": 54,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "status-note-final.xml": {
+      "tests": 34,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "status-policy-final.xml": {
+      "tests": 42,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
     "ready-rpc.xml": {
       "tests": 1,
       "failures": 0,
@@ -62,6 +98,18 @@
     },
     "ready-side-final.xml": {
       "tests": 17,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "legacy-api-before.xml": {
+      "tests": 10,
+      "failures": 6,
+      "errors": 0,
+      "skipped": 0
+    },
+    "all-v18.xml": {
+      "tests": 429,
       "failures": 0,
       "errors": 0,
       "skipped": 0
@@ -101,6 +149,12 @@
       "failures": 1,
       "errors": 0,
       "skipped": 0
+    },
+    "all-verified.xml": {
+      "tests": 419,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
     }
   },
   "ready_ext_eval_changes": [
@@ -114,9 +168,78 @@
     "미공개 V16 초안에서 다른 branch만H완료여도 아직250진행중인 selected On의부분비용을 B로고정할수있었다. 원문1fail을 보존하고 선택된 run 자체의cohort/seed/role·terminal·H를 검사하도록수정. 첫fixture의locator누락도 보존. 실제 H100 노출 없음."
   ],
   "source_files_sha256": {
-    "scripts/srgc_v8_nodes.py": "38e8853902b02f6c8859c81c1920267a03c11ab477f41ab1dec84b891d760dd3",
+    "scripts/srgc_v8_nodes.py": "c00ec621f1b52ff92c48900dbb8e9b62e1af09f4f67de6df937f121b13a2f31a",
     "scripts/v8_dispatch.py": "2651f5be26a34834d8bf064827cffbe596481d26371b98b743dab2050cfea130",
     "scripts/v8_runtime_worker.py": "bc4bee128d1ccd8187a6972e33e692e2dec55c84847bbc68722c4f6bbe6d9f63",
-    "scripts/v8_status.py": "5c72bbf73922e72a8274a913ddaaddd3ce0e95f97ab246a4c6a574245265cc6e"
+    "scripts/v8_status.py": "88c3b8e6dd0c5817e0f8c9bb73b37911b471a0f5558eab764fdbd2da20f8b79f"
+  },
+  "verified_code_commit": "643ffd1b893a1756488d37c6d2ee2f08c1ca314b",
+  "full_cpu_regression": {
+    "tests": 429,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "historical_archive_verification": {
+    "coordinators": 39,
+    "runners": 7,
+    "files": 453,
+    "archive_sha256": "0ebdae8ba00ffb1f06850411430e003ad3a68eba06eb0f9a3680511bdb5759ed",
+    "all_payload_sha256_pass": true,
+    "frozen_trainer_files_unchanged": 30,
+    "through": "643ffd1b893a1756488d37c6d2ee2f08c1ca314b"
+  },
+  "final_status": "코드·원격 소스·CPU 검증 완료. 실제 H100 적용과 진행은 미검증.",
+  "latest_changes": [
+    "V18은 구형5종을 포함한7개 freeze_budget signature를 지원한다. 원본 비용 함수와 모든 seed/선택된 endpoint 검증은 유지한다.",
+    "정확한 expected_seeds controller 오류로 남은 큐만 새 입력·binding 검증 후 이력을 보존하고 재개한다. 다른 설정·신원 오류는 자동 해제하지 않는다.",
+    "상태 화면에 원래 선택 endpoint/측정비용 대기와 예산고정 후 checkpoint 준비를 구분해 표시한다. 실행 버전은 기존 dispatch current/different 검증을 사용한다."
+  ],
+  "retained_full_test_history": [
+    "all-final.xml: 첫416검사414pass/2fail. MAX_ATTEMPTS0을 시험용 실패 개수로 사용한 옛 fixture와 즉시 retry 우선 기대를 명시적인 cap3/새 작업 우선 정책에 맞게 분리했다.",
+    "all-verified.xml:419pass/0skip. 구형 budget signature 검사는 이때 포함되지 않았다.",
+    "legacy-api-before.xml: 실제 보존 함수5종의 keyword TypeError와 이전 controller failure 재개1건을 합쳐6fail/4pass. 수정후 관련33검사 통과.",
+    "all-v18.xml: 최종429검사0fail/0skip. 모든 이전 실패는 지우지 않는다."
+  ],
+  "reward_definitions": {
+    "training": "intermediate-training-records.json은 원문 history.jsonl metrics를25-update 간격으로 그대로 추출한 실제 CPU training-batch 기록이다.",
+    "heldout": "별도 evaluations/*.json은 원래 고정 question IDs·responses·seed purpose의 final counts이다. 학습 보상을 held-out으로 바꾸지 않는다.",
+    "unmeasured": "추가25-step held-out 평가는 실행하지 않았다. 없는 held-out 값은 null/unmeasured이며 prefix25는 원래 유지된 공통 checkpoint를 재사용했다."
+  },
+  "scientific_measurements": {
+    "H100_fix_verified": false,
+    "live_dispatch_verified": false,
+    "accuracy": null,
+    "GPU_memory": null,
+    "throughput": null,
+    "reason": "H100은 다른 컴퓨터이며 파일/프로세스 접근과 실제 status/log가 없다."
+  },
+  "raw_evidence_sha256": {
+    "all-final.xml": "c59adf567a972f03662b603fe695bc797fd4d864fec64754b9beef435bbf7406",
+    "all-v18.xml": "519871cd9220ece18bd01d2043719c57ead49ccefcfdea2acad38bfdddc77952",
+    "all-verified.xml": "d3128f20af257d7b71b209842609f925081f84527c9496c2e0c45ae383d81554",
+    "archive-verification.json": "b5eeaa701876a1b7d38fbeef4a1115ffe2141222abe213c91c05988da62fdfe0",
+    "archived-budget-before.json": "5ed1243c309ef7945741690a6b58e50b7cddb2eacb3523a2cfe17dbe8d4fca8b",
+    "before.xml": "18ff5eed293d1fd721fe02608653da082543d00ddd4eac2a7d107d83971864fe",
+    "cpu-streaming-run-v18.zip": "f9c823f1e297c04b50e6171d58c54c02fa79a5208ebd1f6a20743b93bdb936f2",
+    "cpu-streaming-run.zip": "0b526b213b2a4db5b5870cecd3ebfc37256b310b097f3fc639fe6ef32846adcc",
+    "intermediate-training-records.json": "db2cc96d379130324eb93cd0e3a82cc4b0b15e18d4904ca49da62411e6f83c93",
+    "legacy-api-before.xml": "aa9fb0c77c69a9d81333fa6dc2d536186b7669a0e2c84e92066e951bf8847d4d",
+    "legacy-api-final.xml": "b551ebca66c8edd2042f1ddae0324c9205dbef8b2ef7e5af56ec8137ff48c90e",
+    "parallel-proof.json": "f8342146b9720f1fda2414433e956ebd7f7746b1712449d192228a241deb1369",
+    "ready-cost-before-valid.xml": "6320658cf7e7bd7dd14162825b98485c11b4b43d6b09d76c56bd6a3ccb58b35d",
+    "ready-cost-before.xml": "59e367f9a33b8d12e4b8bd90f448728601a5d1ab58c2dd314b199c1e63599362",
+    "ready-kind-before.xml": "b114fadecb0d60bf625308601f4e88556ab3dad6ad13f103380ef4e6d7a87bc9",
+    "ready-kind-final.xml": "785060372c733bee9482ee6ba3cc7ffe32de675f0d718c9f8e630a51e2fce6bd",
+    "ready-rpc.xml": "dda491dda8b497db3026a0af122dcf5a690149ae41a7a41068cf3f31933e59a3",
+    "ready-side-final.xml": "26341fc582a4c7675e26f63d9ac6477cfbb7c12083ddbb6648d18f2712dfe1f4",
+    "ready-side.xml": "8d73fa40e82a4190a70193936f99685b3c11a321f47232713f9498d816e733af",
+    "restart-proof.json": "e4f421545744a61cdb47648def2940336b68b97c12a95c092d16e8305a47ef14",
+    "status-note-final.xml": "e5b2f0b1775b1d588dfd25afd2b6c61a84729176fe36aa0332bcaea6ff53fb50",
+    "status-policy-final.xml": "d791fc4bad1c51c2870e7b3ee1c8394643f0d47061fe48231d52ef502058f779",
+    "streaming-proof-v18.json": "32b79687e25ac1a263484b27026a8ec313c0d1153bb4a79efeaa266af7ae0b7d",
+    "streaming-proof.json": "f6328e96d3995bc05986aa61886fa23e98e1369abcaa7c73e00ab78c5c1c54f1",
+    "targeted-final.xml": "324f46058025052d154122368b3371a9e3806045ad309d612be5c6a695daf6e4",
+    "targeted.xml": "96b027f5c3d42bbb22b39507679036cea00513335dfc35c11efbe10bb371986e"
   }
 }

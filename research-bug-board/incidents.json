@@ -7728,6 +7728,15 @@
         "text": "사용자가 OLMo MBPP torchrun SIGSEGV·exit -11을 새로 보고했다. 이는 외부 SIGKILL/TERM/INT/HUP 중단과 다르며 기존 규칙대로 failed로 남긴다. 원인 확인과 현재 rank 스택 연결은 새 V8-121, 확인된 MBPP 실행 위험 경로는 V8-122, 이번 wrapper의 원본 대조 회귀는 V8-123에 기록한다.",
         "evidence_kind": "user_report_and_limitation",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/88c019909879055e6af294a6f39730b2298fa539"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "restart_policy_changed",
+        "status": "remote_verification_pending",
+        "text": "사용자가 실패3회/60초대기 대신 즉시재시작을 명시했다. SIGKILL 등중단과 SIGSEGV 등실제실패 구분·원본종료증거는 유지한다. 기본재개는 대기0/무제한이며checkpoint를 보존한다. 실제 원격 재개 성공은 아직 확인하지못했다. V8-124를 참조한다.",
+        "evidence_kind": "user_request_and_limitation",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
       }
     ]
   },
@@ -7898,6 +7907,15 @@
         "status": "remote_verification_pending",
         "text": "직전 검증 기록의 한국어 정리: 최종 CPU 검사370개가 모두 통과했다. 첫 전체 검사369통과·1실패와 수정 후 중단 검사30개 원문을 보존했다. 원본 실행기34개·runtime7개·448파일의 SHA와 원본 trainer30파일 보존을 확인했다. 네 조합의 기본 결과가 첫 ext보다 먼저 저장됐고 기존 binding·계획·실패·살아 있는 lease를 보존했다. 실제 H100 적용은 아직 확인하지 못했다.",
         "evidence_kind": "code_test_and_limitation"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "user_order_superseded",
+        "status": "remote_verification_pending",
+        "text": "이전 ext맨뒤 요청을 수행한 기록은 그대로 보존한다. 최신 사용자는 ext/eval을 빈노드에서 바로 실행하라고 순서를 변경했다. 새 기본은 관계없는cohort의primary 보고서를 기다리지 않고 준비된 checkpoint와 원본 고정예산에 근거해 배정한다. 이전 결과·실패·source pin을 지우지 않는다. 새V8-129/130을 참조한다.",
+        "evidence_kind": "user_request_and_limitation",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
       }
     ]
   },
@@ -8138,6 +8156,597 @@
         "status": "code_fixed",
         "text": "최종 소스88c0199의 전체 CPU 검사402개가0실패/0skip으로 통과했다. 원본35 coordinator·7 runner·449파일 호환 묶음의 모든 payload SHA와 원본30 trainer 파일 보존을 확인했다. 최종 CPU 두-rank SIGSEGV의 native 스택·현재PID 진행 기록을 cpu-native-crash-final에 보존했다. 수정 전3실패·첫396검사의 범위 누락·__main__ 점수1→0 차이와 최종 대조를 모두 보존했다. 최종 원문 all-final.xml과 record.json은 research/v8-olmo-mbpp-sigsegv-20261109에 있다. 실제 H100 SIGSEGV 원인·해결 여부는 미검증이다.",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/88c019909879055e6af294a6f39730b2298fa539",
+        "evidence_kind": "code_test_and_limitation"
+      }
+    ]
+  },
+  {
+    "id": "V8-124",
+    "title": "사용자 지시 변경: 실패3회·60초 대기를 무제한 즉시 재시작으로 전환",
+    "area": "V8 작업 재개 정책",
+    "severity": "high",
+    "first_reported": "2026-11-09",
+    "introduction_commit": "",
+    "cause": "기존 기본값은 검증된 복구 이후 실패3회·재시도60초였다. 사용자가3회 시도 대신 바로 재시작하라고 변경 지시했다. 이전 제한을 임의 오류로 재해석하지 않는다.",
+    "impact": "한도 소진 작업은 새 노드에서도 멈출 수 있었고 대기 중 GPU가 비어 있었다.",
+    "attribution": "이번 재현·요구 변경에 따른 수정·검증은 Codex가 수행했다. 미공개 초안 회귀와 사용자 요구 변경을 과거 원격 버그의 확정 원인으로 바꾸지 않는다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "최종 제어 소스",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "kind": "raw_evidence",
+        "label": "수정 전 실패·수정 후 CPU 검사·checkpoint/보상 원문",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/689523adb7d1a18f1920a5805310687f709f55bf/research/v8-immediate-restart-parallel-20261109"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-09",
+        "actor": "user",
+        "type": "reported",
+        "status": "open",
+        "text": "3번 시도 하게 해놨는데 그냥 바로 재시작 하게해 .",
+        "evidence_kind": "user_report",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "max-attempts0=무제한·retry-delay0=즉시를 기본으로 기록한다. SIGSEGV 실패4회 뒤5번째 완료를 실제 CPU worker 루프에서 검증했고4실패·원래 종료코드·checkpoint bytes를 보존했다. 명시적인 양수 상한과 대기는 계속 검사한다. 입력·신원·CPU 준비 오류·실제 잠금을 우회하지 않는다.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "remote_verification_pending",
+        "status": "remote_verification_pending",
+        "text": "실제 H100은 다른 컴퓨터이며 연결되어 있지 않다. 실제 유휴 노드의 원인·현재 dispatch 적용·진행률·처리량은 미확인이다. CPU 소프트웨어 검증을 실제 모델 학습 결과로 보고하지 않는다. 실행 중인 frozen worker는 git pull만으로 바뀌지 않으며 새 제어 코드로 worker를 재시작해야 적용된다.",
+        "evidence_kind": "limitation",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "final_v18_verification",
+        "status": "remote_verification_pending",
+        "text": "최종 V18 전체 CPU 검사429개0실패/0skip. 원본39 coordinator·7 runner·453파일과 모든 payload SHA, 원본30 trainer 파일 보존을 확인했다. 원래 V8 CPU 실행기의 학습11/ext8/eval21 총40작업이 중복 없이 완료됐고 ext/eval 모두 미완료 uniform 학습보다 먼저 실행됐다. 원문 모델·optimizer·RNG checkpoint, 비용로그·학습보상·고정 최종평가를 cpu-streaming-run-v18.zip에 보존하고25-update 간격의 실제 training metrics17점을 별도 추출했다. 실제 H100 성능값이 아니다. 이전4실패·9/1편중·부분비용 초안·시험구성 실패·구형 API6실패도 모두 보존한다. 실제 원격 적용·배정은 status/log 미수신으로 확인하지 못했다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/643ffd1b893a1756488d37c6d2ee2f08c1ca314b",
+        "evidence_kind": "code_test_and_limitation"
+      }
+    ]
+  },
+  {
+    "id": "V8-125",
+    "title": "덜 바쁜 cohort의 메타데이터 잠금 때문에 다른 준비된 cohort 배정까지 중단함",
+    "area": "V8 다중 cohort 배정 / 유휴 GPU",
+    "severity": "high",
+    "first_reported": "2026-11-09",
+    "introduction_commit": "",
+    "cause": "공유 claim gate에서 후보 cohort control.lock을 얻지 못하면 후보 탐색을 break하여 다른 cohort의 유효 offer도 사용하지 않았다.",
+    "impact": "한 cohort의 장시간 DAG 검사 중 다른 모델의 준비된 작업이 있어도 GPU가 유휴 상태로 남을 수 있었다. 실제 사용자 원격 idle와의 일치는 미확인이다.",
+    "attribution": "이번 재현·요구 변경에 따른 수정·검증은 Codex가 수행했다. 미공개 초안 회귀와 사용자 요구 변경을 과거 원격 버그의 확정 원인으로 바꾸지 않는다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "최종 제어 소스",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "kind": "raw_evidence",
+        "label": "수정 전 실패·수정 후 CPU 검사·checkpoint/보상 원문",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/689523adb7d1a18f1920a5805310687f709f55bf/research/v8-immediate-restart-parallel-20261109"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-09",
+        "actor": "user",
+        "type": "reported",
+        "status": "open",
+        "text": "idle 이 늘어낫어 최대한 병렬로 처리 가능하게 해",
+        "evidence_kind": "user_report",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "짧은 메타데이터 쓰기는최대0.25초 양보하여 기존 모델 균형을 지키고 긴잠금이면 다른ready cohort를 배정한다. 대기는 공유 claim lock 밖에서 최대0.05초씩 한다. 강제로 잠긴a와 준비된b의 실제 flock CPU 재현, 기존10/14 노드5:5/7:7 균형,24 CPU worker의4cohort 중복없는 인수를 검증했다.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "remote_verification_pending",
+        "status": "remote_verification_pending",
+        "text": "실제 H100은 다른 컴퓨터이며 연결되어 있지 않다. 실제 유휴 노드의 원인·현재 dispatch 적용·진행률·처리량은 미확인이다. CPU 소프트웨어 검증을 실제 모델 학습 결과로 보고하지 않는다. 실행 중인 frozen worker는 git pull만으로 바뀌지 않으며 새 제어 코드로 worker를 재시작해야 적용된다.",
+        "evidence_kind": "limitation",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "final_v18_verification",
+        "status": "remote_verification_pending",
+        "text": "최종 V18 전체 CPU 검사429개0실패/0skip. 원본39 coordinator·7 runner·453파일과 모든 payload SHA, 원본30 trainer 파일 보존을 확인했다. 원래 V8 CPU 실행기의 학습11/ext8/eval21 총40작업이 중복 없이 완료됐고 ext/eval 모두 미완료 uniform 학습보다 먼저 실행됐다. 원문 모델·optimizer·RNG checkpoint, 비용로그·학습보상·고정 최종평가를 cpu-streaming-run-v18.zip에 보존하고25-update 간격의 실제 training metrics17점을 별도 추출했다. 실제 H100 성능값이 아니다. 이전4실패·9/1편중·부분비용 초안·시험구성 실패·구형 API6실패도 모두 보존한다. 실제 원격 적용·배정은 status/log 미수신으로 확인하지 못했다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/643ffd1b893a1756488d37c6d2ee2f08c1ca314b",
+        "evidence_kind": "code_test_and_limitation"
+      }
+    ]
+  },
+  {
+    "id": "V8-126",
+    "title": "종료된 작업의 GPU busy 관측을30초 재사용하여 빈 GPU에서 새 작업을 지연함",
+    "area": "V8 GPU 점유 확인 캐시",
+    "severity": "high",
+    "first_reported": "2026-11-09",
+    "introduction_commit": "",
+    "cause": "GpuGate가 busy 판정도 정상 판정과 같은 기본TTL30초로 재사용했다.",
+    "impact": "실제 프로세스가 종료되고 GPU memory가 해제되어도 이전 busy 상태 때문에 claim이 지연될 수 있었다.",
+    "attribution": "이번 재현·요구 변경에 따른 수정·검증은 Codex가 수행했다. 미공개 초안 회귀와 사용자 요구 변경을 과거 원격 버그의 확정 원인으로 바꾸지 않는다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "최종 제어 소스",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "kind": "raw_evidence",
+        "label": "수정 전 실패·수정 후 CPU 검사·checkpoint/보상 원문",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/689523adb7d1a18f1920a5805310687f709f55bf/research/v8-immediate-restart-parallel-20261109"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-09",
+        "actor": "user",
+        "type": "reported",
+        "status": "open",
+        "text": "idle 이 늘어낫어 최대한 병렬로 처리 가능하게 해",
+        "evidence_kind": "user_report",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "busy 판정은1초 뒤 다시 확인한다. 실제 GPU memory 임계값·외부 프로세스·GPU/native lease 검사는 유지한다. 가상시각0에서busy를 보고2초 뒤free가 된 CPU probe 재현을 수정 전 실패/수정 후 통과로 보존했다.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "remote_verification_pending",
+        "status": "remote_verification_pending",
+        "text": "실제 H100은 다른 컴퓨터이며 연결되어 있지 않다. 실제 유휴 노드의 원인·현재 dispatch 적용·진행률·처리량은 미확인이다. CPU 소프트웨어 검증을 실제 모델 학습 결과로 보고하지 않는다. 실행 중인 frozen worker는 git pull만으로 바뀌지 않으며 새 제어 코드로 worker를 재시작해야 적용된다.",
+        "evidence_kind": "limitation",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "final_v18_verification",
+        "status": "remote_verification_pending",
+        "text": "최종 V18 전체 CPU 검사429개0실패/0skip. 원본39 coordinator·7 runner·453파일과 모든 payload SHA, 원본30 trainer 파일 보존을 확인했다. 원래 V8 CPU 실행기의 학습11/ext8/eval21 총40작업이 중복 없이 완료됐고 ext/eval 모두 미완료 uniform 학습보다 먼저 실행됐다. 원문 모델·optimizer·RNG checkpoint, 비용로그·학습보상·고정 최종평가를 cpu-streaming-run-v18.zip에 보존하고25-update 간격의 실제 training metrics17점을 별도 추출했다. 실제 H100 성능값이 아니다. 이전4실패·9/1편중·부분비용 초안·시험구성 실패·구형 API6실패도 모두 보존한다. 실제 원격 적용·배정은 status/log 미수신으로 확인하지 못했다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/643ffd1b893a1756488d37c6d2ee2f08c1ca314b",
+        "evidence_kind": "code_test_and_limitation"
+      }
+    ]
+  },
+  {
+    "id": "V8-127",
+    "title": "즉시 재시작에서 실패한 On 궤적이 준비된 새 seed·분기보다 항상 우선함",
+    "area": "V8 작업 우선순위",
+    "severity": "high",
+    "first_reported": "2026-11-09",
+    "introduction_commit": "",
+    "cause": "원래 pending 정렬은 method_id on_monitored를 시도 횟수보다 우선했다. 재시도 대기를0으로 바꾸면 같은 실패 궤적이 계속 먼저 선택될 수 있었다.",
+    "impact": "독립적인 준비된 분기를 늦추고 다른 노드에서 필요한 부모 checkpoint 생성·학습 진도를 지연시킬 수 있었다.",
+    "attribution": "이번 재현·요구 변경에 따른 수정·검증은 Codex가 수행했다. 미공개 초안 회귀와 사용자 요구 변경을 과거 원격 버그의 확정 원인으로 바꾸지 않는다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "최종 제어 소스",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "kind": "raw_evidence",
+        "label": "수정 전 실패·수정 후 CPU 검사·checkpoint/보상 원문",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/689523adb7d1a18f1920a5805310687f709f55bf/research/v8-immediate-restart-parallel-20261109"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-09",
+        "actor": "user",
+        "type": "reported",
+        "status": "open",
+        "text": "idle 이 늘어낫어 최대한 병렬로 처리 가능하게 해",
+        "evidence_kind": "user_report",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "새 준비된 작업을 실패 재시작보다 먼저 배정한 뒤 궤적·시도 횟수 순서를 적용한다. 실패한primary를 즉시 재개할 수 있어도 다른ready seed/분기가 다음 claim을 받는 대조를 검증했다.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "remote_verification_pending",
+        "status": "remote_verification_pending",
+        "text": "실제 H100은 다른 컴퓨터이며 연결되어 있지 않다. 실제 유휴 노드의 원인·현재 dispatch 적용·진행률·처리량은 미확인이다. CPU 소프트웨어 검증을 실제 모델 학습 결과로 보고하지 않는다. 실행 중인 frozen worker는 git pull만으로 바뀌지 않으며 새 제어 코드로 worker를 재시작해야 적용된다.",
+        "evidence_kind": "limitation",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "final_v18_verification",
+        "status": "remote_verification_pending",
+        "text": "최종 V18 전체 CPU 검사429개0실패/0skip. 원본39 coordinator·7 runner·453파일과 모든 payload SHA, 원본30 trainer 파일 보존을 확인했다. 원래 V8 CPU 실행기의 학습11/ext8/eval21 총40작업이 중복 없이 완료됐고 ext/eval 모두 미완료 uniform 학습보다 먼저 실행됐다. 원문 모델·optimizer·RNG checkpoint, 비용로그·학습보상·고정 최종평가를 cpu-streaming-run-v18.zip에 보존하고25-update 간격의 실제 training metrics17점을 별도 추출했다. 실제 H100 성능값이 아니다. 이전4실패·9/1편중·부분비용 초안·시험구성 실패·구형 API6실패도 모두 보존한다. 실제 원격 적용·배정은 status/log 미수신으로 확인하지 못했다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/643ffd1b893a1756488d37c6d2ee2f08c1ca314b",
+        "evidence_kind": "code_test_and_limitation"
+      }
+    ]
+  },
+  {
+    "id": "V8-128",
+    "title": "첫 잠금 우회 초안이 동시 도착 노드를 Qwen9·OLMo1로 편중시킴",
+    "area": "V8 미공개 배정 초안 회귀",
+    "severity": "high",
+    "first_reported": "2026-11-09",
+    "introduction_commit": "",
+    "cause": "Codex가 break를 무조건 continue로 바꾼 미공개 초안은 매우 짧은 메타데이터 경합도 우회하여 기존 균형 테스트를 깨뜨렸다.",
+    "impact": "CPU10-worker 검사에서 기존5/5 대신9/1이 기록됐다. 실제 H100에 이 초안을 공개한 증거는 없으며 수정 전에 원격 push하지 않았다.",
+    "attribution": "이번 재현·요구 변경에 따른 수정·검증은 Codex가 수행했다. 미공개 초안 회귀와 사용자 요구 변경을 과거 원격 버그의 확정 원인으로 바꾸지 않는다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "최종 제어 소스",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "kind": "raw_evidence",
+        "label": "수정 전 실패·수정 후 CPU 검사·checkpoint/보상 원문",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/689523adb7d1a18f1920a5805310687f709f55bf/research/v8-immediate-restart-parallel-20261109"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "reported",
+        "status": "open",
+        "text": "기존 동시 도착 회귀의 targeted.xml에서1fail/51pass를 재현했다.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "짧은 경합은0.25초까지 빠르게 재확인하고 긴경합만 우회한다. 최종54 CPU 표적검사에는 기존균형과24-worker 전조합 검사도 포함한다.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "retained_failure",
+        "status": "code_fixed",
+        "text": "첫9/1 실패 원문은 targeted.xml에 보존한다. 오류 당시 초안은 미커밋 상태였으며 해당 나쁜 소스의 독립 Git snapshot은 없다. 수정 소스7acdaae와 이후689523a를 기록한다.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "remote_verification_pending",
+        "status": "remote_verification_pending",
+        "text": "실제 H100은 다른 컴퓨터이며 연결되어 있지 않다. 실제 유휴 노드의 원인·현재 dispatch 적용·진행률·처리량은 미확인이다. CPU 소프트웨어 검증을 실제 모델 학습 결과로 보고하지 않는다. 실행 중인 frozen worker는 git pull만으로 바뀌지 않으며 새 제어 코드로 worker를 재시작해야 적용된다.",
+        "evidence_kind": "limitation",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "final_v18_verification",
+        "status": "remote_verification_pending",
+        "text": "최종 V18 전체 CPU 검사429개0실패/0skip. 원본39 coordinator·7 runner·453파일과 모든 payload SHA, 원본30 trainer 파일 보존을 확인했다. 원래 V8 CPU 실행기의 학습11/ext8/eval21 총40작업이 중복 없이 완료됐고 ext/eval 모두 미완료 uniform 학습보다 먼저 실행됐다. 원문 모델·optimizer·RNG checkpoint, 비용로그·학습보상·고정 최종평가를 cpu-streaming-run-v18.zip에 보존하고25-update 간격의 실제 training metrics17점을 별도 추출했다. 실제 H100 성능값이 아니다. 이전4실패·9/1편중·부분비용 초안·시험구성 실패·구형 API6실패도 모두 보존한다. 실제 원격 적용·배정은 status/log 미수신으로 확인하지 못했다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/643ffd1b893a1756488d37c6d2ee2f08c1ca314b",
+        "evidence_kind": "code_test_and_limitation"
+      }
+    ]
+  },
+  {
+    "id": "V8-129",
+    "title": "최신 즉시 배정 요청과 충돌한 ext 전역 보고서 장벽·eval 전체학습 완료 대기",
+    "area": "V8 ext/eval 동시 배정",
+    "severity": "high",
+    "first_reported": "2026-11-09",
+    "introduction_commit": "ab65eb32907d5ec72a7d0551a8509ea21888f334",
+    "cause": "이전 사용자 ext를 가장 뒤로 해 요청에 따라 네 cohort primary 보고서의 전역 gate를 넣었다. 단일 phase 큐는 eval도 조합 내 전체 학습이 끝나야 계획했다. 사용자가 이제 남는 노드에서 ext/eval을 바로 실행하라고 순서를 변경했다.",
+    "impact": "부모 checkpoint와 비용이 준비된 작업도 관계없는 다른 분기·cohort의 완료를 기다렸다.",
+    "attribution": "이번 재현·요구 변경에 따른 수정·검증은 Codex가 수행했다. 미공개 초안 회귀와 사용자 요구 변경을 과거 원격 버그의 확정 원인으로 바꾸지 않는다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "최종 제어 소스",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "kind": "raw_evidence",
+        "label": "수정 전 실패·수정 후 CPU 검사·checkpoint/보상 원문",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/689523adb7d1a18f1920a5805310687f709f55bf/research/v8-immediate-restart-parallel-20261109"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-09",
+        "actor": "user",
+        "type": "reported",
+        "status": "open",
+        "text": "ext 랑 eval 왜 쉬고 있는거야 바로 돌리게 해야지 / 노드가 남는데 ext eval을 시작을 안하고 잇음",
+        "evidence_kind": "user_report",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "전역 primary gate를 새 기본 정책에서 제거했다. 모든 지정 seed의 선택된 srgc_current endpoint와 원래 비용이 완성되면 동일 freeze_budget 함수로 먼저B를 고정한다. 이후 원래 extension/evaluation phase와task key를 유지한 채 학습과 함께 claim한다. 예산SHA를 claim 직전 다시 검사하고 원본 eval spec·seed·checkpoint를 보존한다. 실제 원래 V8 CPU 실행기40작업(학습11/ext8/eval21)이 완료됐으며, 아직 허용하지 않은uniform학습 전에 ext/eval 모두 실행됐다. 원본 model/optimizer/RNG checkpoint와 분리된 학습보상·최종평가 및 비용로그를cpu-streaming-run.zip에 보존했다.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "retained_failure",
+        "status": "code_fixed",
+        "text": "첫ready-side 검사1fail/15pass는 단일worker 시험이 기존2-worker 검증헬퍼를 잘못 사용한 시험 구성 오류다. 기본2-worker 검증을 유지하고 새 시험에만 min_workers1을 명시했다. ready-side.xml을 보존한다.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "remote_verification_pending",
+        "status": "remote_verification_pending",
+        "text": "실제 H100은 다른 컴퓨터이며 연결되어 있지 않다. 실제 유휴 노드의 원인·현재 dispatch 적용·진행률·처리량은 미확인이다. CPU 소프트웨어 검증을 실제 모델 학습 결과로 보고하지 않는다. 실행 중인 frozen worker는 git pull만으로 바뀌지 않으며 새 제어 코드로 worker를 재시작해야 적용된다.",
+        "evidence_kind": "limitation",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "legacy_budget_followup",
+        "status": "remote_verification_pending",
+        "text": "조기 예산 준비의 구형 함수 호환 오류를 추가 발견하여 V8-132에 독립 기록했다. 최신 V18은7개 보존 함수 API를 지원하고 이미 기록된 정확한 controller 오류도 검증 후 재개한다. 실제 원격 idle 원인과의 일치는 아직 미확인이다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/643ffd1b893a1756488d37c6d2ee2f08c1ca314b",
+        "evidence_kind": "code_test_and_limitation"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "final_v18_verification",
+        "status": "remote_verification_pending",
+        "text": "최종 V18 전체 CPU 검사429개0실패/0skip. 원본39 coordinator·7 runner·453파일과 모든 payload SHA, 원본30 trainer 파일 보존을 확인했다. 원래 V8 CPU 실행기의 학습11/ext8/eval21 총40작업이 중복 없이 완료됐고 ext/eval 모두 미완료 uniform 학습보다 먼저 실행됐다. 원문 모델·optimizer·RNG checkpoint, 비용로그·학습보상·고정 최종평가를 cpu-streaming-run-v18.zip에 보존하고25-update 간격의 실제 training metrics17점을 별도 추출했다. 실제 H100 성능값이 아니다. 이전4실패·9/1편중·부분비용 초안·시험구성 실패·구형 API6실패도 모두 보존한다. 실제 원격 적용·배정은 status/log 미수신으로 확인하지 못했다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/643ffd1b893a1756488d37c6d2ee2f08c1ca314b",
+        "evidence_kind": "code_test_and_limitation"
+      }
+    ]
+  },
+  {
+    "id": "V8-130",
+    "title": "ext/eval을 조기 등록해도 학습 궤적 우선 정렬 때문에 다시 대기할 수 있음",
+    "area": "V8 작업 종류별 배정",
+    "severity": "high",
+    "first_reported": "2026-11-09",
+    "introduction_commit": "1b1acd6a03a6d820622d860fafb0d395816cd358",
+    "cause": "첫 동시 배정1b1acd6은 ext/eval을 후보에 넣었지만 기존 on_monitored 우선 정렬을 유지했다.",
+    "impact": "CPU에서 준비된train20개·ext1개·eval1개의 첫3 claim이모두 train이었다. 빈노드가 소수면 준비된 ext/eval이 다시 목록 뒤에 남을 수 있었다.",
+    "attribution": "이번 재현·요구 변경에 따른 수정·검증은 Codex가 수행했다. 미공개 초안 회귀와 사용자 요구 변경을 과거 원격 버그의 확정 원인으로 바꾸지 않는다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "최종 제어 소스",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "kind": "raw_evidence",
+        "label": "수정 전 실패·수정 후 CPU 검사·checkpoint/보상 원문",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/689523adb7d1a18f1920a5805310687f709f55bf/research/v8-immediate-restart-parallel-20261109"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "reported",
+        "status": "open",
+        "text": "ready-kind-before.xml에서 첫3 claim train/train/train을 재현했다.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "cohort control 안의 작은 ready_phase_cursor로train→extension→evaluation을 순환한다. 없는 종류는 건너뛰고 준비된일을 즉시 배정한다. 실제 job phase·task정의·budgetSHA·lease는 그대로 재검증한다. 새3-node claim은train/ext/eval이고 마지막54검사 모두통과했다.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "remote_verification_pending",
+        "status": "remote_verification_pending",
+        "text": "실제 H100은 다른 컴퓨터이며 연결되어 있지 않다. 실제 유휴 노드의 원인·현재 dispatch 적용·진행률·처리량은 미확인이다. CPU 소프트웨어 검증을 실제 모델 학습 결과로 보고하지 않는다. 실행 중인 frozen worker는 git pull만으로 바뀌지 않으며 새 제어 코드로 worker를 재시작해야 적용된다.",
+        "evidence_kind": "limitation",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "final_v18_verification",
+        "status": "remote_verification_pending",
+        "text": "최종 V18 전체 CPU 검사429개0실패/0skip. 원본39 coordinator·7 runner·453파일과 모든 payload SHA, 원본30 trainer 파일 보존을 확인했다. 원래 V8 CPU 실행기의 학습11/ext8/eval21 총40작업이 중복 없이 완료됐고 ext/eval 모두 미완료 uniform 학습보다 먼저 실행됐다. 원문 모델·optimizer·RNG checkpoint, 비용로그·학습보상·고정 최종평가를 cpu-streaming-run-v18.zip에 보존하고25-update 간격의 실제 training metrics17점을 별도 추출했다. 실제 H100 성능값이 아니다. 이전4실패·9/1편중·부분비용 초안·시험구성 실패·구형 API6실패도 모두 보존한다. 실제 원격 적용·배정은 status/log 미수신으로 확인하지 못했다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/643ffd1b893a1756488d37c6d2ee2f08c1ca314b",
+        "evidence_kind": "code_test_and_limitation"
+      }
+    ]
+  },
+  {
+    "id": "V8-131",
+    "title": "미공개 조기 예산 초안이 선택된 On의 부분 비용을 완성 비용으로 볼 수 있음",
+    "area": "V8 비용 예산 준비 검사 초안",
+    "severity": "high",
+    "first_reported": "2026-11-09",
+    "introduction_commit": "",
+    "cause": "초안은 seed마다 어느 branch든 H를 완료하면 비용rows를 검사했다. srgc_current가not_triggered인 seed에서 실제 선택된 On은250 진행중이어도 다른 branch275로 이 조건을 만족할 수 있었다.",
+    "impact": "더 진행해야 할 원래 선택 endpoint의 부분 비용으로 예산을 고정할 위험이 있었다. 미공개 초안 CPU 합성값10만 사용했고 실제 H100 실험에 노출한 증거는 없다.",
+    "attribution": "이번 재현·요구 변경에 따른 수정·검증은 Codex가 수행했다. 미공개 초안 회귀와 사용자 요구 변경을 과거 원격 버그의 확정 원인으로 바꾸지 않는다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "최종 제어 소스",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "kind": "raw_evidence",
+        "label": "수정 전 실패·수정 후 CPU 검사·checkpoint/보상 원문",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/689523adb7d1a18f1920a5805310687f709f55bf/research/v8-immediate-restart-parallel-20261109"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "reported",
+        "status": "open",
+        "text": "ready-cost-before-valid.xml에서 budget_readyTrue가 잘못 반환되고 budget파일이 생성되는 실패를 확인했다.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "선택된run 자체의 cohort/role/seed·terminal 상태·completed_updates≥H를 검증한 뒤에만 기존 비용전용 함수로B를 고정한다. 부분 endpoint는 대기 사유를 남기고 eval/ext를 만들지 않는다. 잘못된 identity는명시오류로 남긴다.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "retained_failure",
+        "status": "code_fixed",
+        "text": "첫ready-cost-before.xml에는 fixture.locator 누락도 있었다. fixture를 완성한 뒤 같은 premature-freeze를 assertion으로 다시 재현한 ready-cost-before-valid.xml과 수정후 통과를 보존한다. 잘못된 초안은 미커밋 상태여서 나쁜 소스 자체의 별도Git snapshot은 없다.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "remote_verification_pending",
+        "status": "remote_verification_pending",
+        "text": "실제 H100은 다른 컴퓨터이며 연결되어 있지 않다. 실제 유휴 노드의 원인·현재 dispatch 적용·진행률·처리량은 미확인이다. CPU 소프트웨어 검증을 실제 모델 학습 결과로 보고하지 않는다. 실행 중인 frozen worker는 git pull만으로 바뀌지 않으며 새 제어 코드로 worker를 재시작해야 적용된다.",
+        "evidence_kind": "limitation",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/689523adb7d1a18f1920a5805310687f709f55bf"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "final_v18_verification",
+        "status": "remote_verification_pending",
+        "text": "최종 V18 전체 CPU 검사429개0실패/0skip. 원본39 coordinator·7 runner·453파일과 모든 payload SHA, 원본30 trainer 파일 보존을 확인했다. 원래 V8 CPU 실행기의 학습11/ext8/eval21 총40작업이 중복 없이 완료됐고 ext/eval 모두 미완료 uniform 학습보다 먼저 실행됐다. 원문 모델·optimizer·RNG checkpoint, 비용로그·학습보상·고정 최종평가를 cpu-streaming-run-v18.zip에 보존하고25-update 간격의 실제 training metrics17점을 별도 추출했다. 실제 H100 성능값이 아니다. 이전4실패·9/1편중·부분비용 초안·시험구성 실패·구형 API6실패도 모두 보존한다. 실제 원격 적용·배정은 status/log 미수신으로 확인하지 못했다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/643ffd1b893a1756488d37c6d2ee2f08c1ca314b",
+        "evidence_kind": "code_test_and_limitation"
+      }
+    ]
+  },
+  {
+    "id": "V8-132",
+    "title": "예전 예산 함수5종에 expected_seeds를 전달해 ext/eval 준비가 TypeError로 중단됨",
+    "area": "V8 고정 runtime 호환 / controller failure 복구",
+    "severity": "high",
+    "first_reported": "2026-11-09",
+    "introduction_commit": "1b1acd6a03a6d820622d860fafb0d395816cd358",
+    "cause": "Codex가 조기 ext/eval 배정을 추가한1b1acd6에서 모든 saved freeze_budget에 expected_seeds를 전달했다. 보존된7개 runner 중5개의 함수에는 그 인자가 없다. TypeError는 TaskScan/actor 경로에서 queue failure로 남아 일반 task retry로는 해제되지 않았다.",
+    "impact": "해당 구형 runtime을 사용하는 worker의 예산 준비 검사가 실패할 수 있다. 코드만 고쳐도 이전에 기록된 controller failure가 남으면 새 worker가 idle 상태로 멈출 수 있었다. 사용자의 실제 H100에 이 오류가 있었는지는 로그 미수신으로 미확인이다.",
+    "attribution": "이 새 API 호환 회귀의 도입·발견·수정은 Codex가 수행했다. 이전 전체419통과는 모든 구형 예산 API의 검증을 포함하지 않았다.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "V18 구형 예산 API 호환과 정확한 controller 실패 복구",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/643ffd1b893a1756488d37c6d2ee2f08c1ca314b"
+      },
+      {
+        "kind": "raw_evidence",
+        "label": "구형 API6실패/4통과와 수정 후 검사",
+        "url": "https://github.com/33modeling/offpolicy-misranking/tree/643ffd1b893a1756488d37c6d2ee2f08c1ca314b/research/v8-immediate-restart-parallel-20261109"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-09",
+        "actor": "user",
+        "type": "reported",
+        "status": "open",
+        "text": "노드가 남는데 ext eval을 시작을 안하고 잇음",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "reproduced",
+        "status": "open",
+        "text": "보존된7개 runner 예산 함수의 원본 AST body를 사용한 CPU 검사에서5개가 정확히 unexpected keyword argument expected_seeds로 실패했다. 같은 known controller 실패의 자동 재개1건도 실패하여 legacy-api-before.xml은6fail/4pass다. 실제 H100 원인이 확정된 것은 아니다.",
+        "evidence_kind": "code_test"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "함수 signature를 확인해 지원할 때만 expected_seeds를 전달한다. 제어 코드의 모든 seed·선택된 endpoint·원래 비용 준비 검사는 유지한다. 예전 함수 자체·예산 규칙·동결 입력은 수정하지 않았다. 원본7종 모두 통과했고 관련33 CPU 검사0실패/0skip이다. 정확히 이 keyword 오류로 기록된 PHASES의 cohort 실패만 입력·binding 검증 후 history에 보존하고 재개한다. 검증 안 된 재시작과 다른 input identity 오류는 해제하지 않는다.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/643ffd1b893a1756488d37c6d2ee2f08c1ca314b"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "remote_verification_pending",
+        "status": "remote_verification_pending",
+        "text": "H100은 다른 컴퓨터이며 연결되지 않았다. 실제 적용과 ext/eval 배정 성공은 미확인이다. 실행 중인 frozen worker는 git pull만으로 변하지 않으며 재시작해야 한다. 체크포인트·optimizer·RNG·학습 보상·원본 실패는 보존한다.",
+        "evidence_kind": "limitation"
+      },
+      {
+        "at": "2026-11-09",
+        "actor": "Codex",
+        "type": "final_v18_verification",
+        "status": "remote_verification_pending",
+        "text": "최종 V18 전체 CPU 검사429개0실패/0skip. 원본39 coordinator·7 runner·453파일과 모든 payload SHA, 원본30 trainer 파일 보존을 확인했다. 원래 V8 CPU 실행기의 학습11/ext8/eval21 총40작업이 중복 없이 완료됐고 ext/eval 모두 미완료 uniform 학습보다 먼저 실행됐다. 원문 모델·optimizer·RNG checkpoint, 비용로그·학습보상·고정 최종평가를 cpu-streaming-run-v18.zip에 보존하고25-update 간격의 실제 training metrics17점을 별도 추출했다. 실제 H100 성능값이 아니다. 이전4실패·9/1편중·부분비용 초안·시험구성 실패·구형 API6실패도 모두 보존한다. 실제 원격 적용·배정은 status/log 미수신으로 확인하지 못했다.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/643ffd1b893a1756488d37c6d2ee2f08c1ca314b",
         "evidence_kind": "code_test_and_limitation"
       }
     ]
