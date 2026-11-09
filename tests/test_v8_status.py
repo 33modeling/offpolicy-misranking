@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import re
 import os
 from pathlib import Path
 import sys
@@ -753,3 +754,38 @@ def test_extension_and_evaluation_cells_follow_each_task_through_its_states(tmp_
     assert cells(text, "eval")["SR25"] == "✓"
     stats = status.clean_block(base, "olmo_math", now, "viewer", 220)[4]
     assert stats["ext"] == (1, 1) and stats["eval"] == (2, 2) and stats["running"] == 0
+
+def test_native_crash_says_where_the_rank_crashed(tmp_path):
+    """'exit -11 torchrun 세그폴트 에러 고쳐볼래': the why line names the crashing function, file and line from the
+    rank's own fault dump (same text as the CPU torchrun SIGSEGV evidence), and the dump path stays on one line."""
+    now = time.time()
+    base, q, m = two_cohort_base(tmp_path, now)
+    dump_path = q / "progress" / "na" / "native-fault-rank-1-64b9a24193bf3b4ad0f74e88.log"
+    dump = ('V8 native fault context {"schema": 1, "rank": 1}\nFatal Python error: Segmentation fault\n\n'
+            'Current thread 0x0000787a06d7b080 (most recent call first):\n'
+            '  File "/opt/venv/lib/python3.12/site-packages/torch/nn/functional.py", line 2551 in embedding\n'
+            '  File "/srv/code/srgc_rebuttal/torch_backend.py", line 412 in generate\n'
+            '  File "/srv/code/srgc_rebuttal/run_experiment.py", line 301 in evaluate\n'
+            '  File "/srv/code/scripts/v8_task_entry.py", line 336 in main\n\n'
+            'Thread 0x0000787a01ffe640 (most recent call first):\n  File "/usr/lib/python3.12/threading.py", line 355 in wait\n')
+    dump_path.parent.mkdir(parents=True); dump_path.write_text(dump)
+    failure = {"rank": 1, "pid": 4242, "signal": 11, "message": "SIGSEGV (exit -11): native crash; last stage=answering",
+               "native_fault_log": str(dump_path), "native_python_stack": dump, "last_progress": {"pid": 4242, "stage": "answering"}}
+    write(q / "jobs" / "n.json", {"state": "failed", "phase": "evaluation", "task": {"kind": "evaluate", "training_seed": 6,
+          "method_id": "on_monitored", "run_id": "n", "completed_update": 275},
+          "attempts": [{"id": "na", "worker": "h-n.1", "started_at": now - 900, "ended_at": now - 600, "exit_code": -11,
+                        "outcome": "failed", "error": "task exit=-11; output verified=False",
+                        "child_failure": {"failures": [failure, {"rank": 0, "message": "Signal 15 (SIGTERM) received"}]}}]})
+    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=120)
+    bottom = text.split("V8 status · ")[1]
+    why = next(line for line in bottom.splitlines() if line.startswith("      why:  "))
+    assert why.startswith("      why:  rank 1 SIGSEGV (exit -11), native crash during answering; crashed in embedding"), why
+    joined = re.sub(r"\n {12}", " ", bottom)
+    assert ("crashed in embedding (torch/nn/functional.py:2551) ← generate (srgc_rebuttal/torch_backend.py:412) ← "
+            "evaluate (srgc_rebuttal/run_experiment.py:301)") in joined, joined
+    assert "SIGTERM" not in why                       # the peers torchrun stopped are not the cause
+    assert f"      stack: {dump_path}" in bottom.splitlines()        # whole path on one line, copyable
+    no_frame = status.native_story([{"rank": 3, "signal": "11", "native_python_stack":
+        "Fatal Python error: Segmentation fault\n\nCurrent thread 0x1 (most recent call first):\n  <no Python frame>\n"}])[0]
+    assert "no Python frame (inside a native library" in no_frame
+    assert status.native_story([{"rank": 0, "message": "ValueError: x"}]) == (None, None)

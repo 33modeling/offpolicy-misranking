@@ -271,6 +271,64 @@ def counted_failures(job):
     return count
 
 
+NATIVE_SIGNALS = {4: 'SIGILL', 6: 'SIGABRT', 7: 'SIGBUS', 8: 'SIGFPE', 11: 'SIGSEGV'}
+
+
+def native_crash_frames(stack, n=3):
+    """Innermost Python frames of the crashing thread in a faulthandler dump ('Current thread ...' block).
+
+    The dump lists the thread that received the signal first as 'Current thread'; an empty block or
+    '<no Python frame>' means the crash happened in a thread that runs no Python code (a native library)."""
+    lines = str(stack or '').splitlines()
+    start = next((i for i, line in enumerate(lines)
+                  if line.startswith(('Current thread', 'Stack (most recent call first)'))), None)
+    if start is None:
+        return None
+    frames = []
+    for line in lines[start + 1:]:
+        m = re.match(r'\s+File "(.*)", line (\d+) in (.*)', line)
+        if not m:
+            break
+        path = m.group(1).replace('\\', '/')
+        short = path.split('site-packages/', 1)[1] if 'site-packages/' in path else '/'.join(path.split('/')[-2:])
+        frames.append(f"{m.group(3).strip()} ({short}:{m.group(2)})")
+        if len(frames) >= n:
+            break
+    return frames
+
+
+def native_story(ranks):
+    """(cause, dump path) for the first rank that died of a native signal, or (None, None)."""
+    for f in ranks:
+        try:
+            number = int(f.get('signal'))
+        except (TypeError, ValueError):
+            continue
+        if number not in NATIVE_SIGNALS:
+            continue
+        stack, dump = f.get('native_python_stack'), f.get('native_fault_log') or f.get('error_file')
+        if not stack and dump:
+            try:
+                stack = Path(dump).read_bytes()[:65536].decode(errors='replace')
+            except OSError:
+                stack = None
+        progress = f.get('last_progress') if isinstance(f.get('last_progress'), dict) else {}
+        stage = progress.get('stage')
+        frames = native_crash_frames(stack)
+        where = (' ← '.join(frames) if frames else
+                 'a thread with no Python frame (inside a native library: CUDA/NCCL/tokenizer etc.)' if frames == [] else
+                 'not in the dump (no fault dump was written for this rank)')
+        cause = (f"rank {f.get('rank', '?')} {NATIVE_SIGNALS[number]} (exit -{number}), native crash"
+                 + (f" during {stage}" if stage else '') + f"; crashed in {where}")
+        # torchrun stops the other ranks after one crashes (SIGTERM): only a real Python error elsewhere is news
+        others = [g for g in ranks if g is not f and re.search(r'(Error|Exception)\b', str(g.get('message') or ''))
+                  and not re.search(r'SIG(TERM|INT|KILL)|Signal (2|9|15)\b|ChildFailedError', str(g.get('message')))]
+        if others:
+            cause += f"; also rank {others[0].get('rank', '?')}: {str(others[0]['message'])[:120]}"
+        return cause, (dump if dump and str(dump).endswith('.log') and 'native-fault' in str(dump) else None)
+    return None, None
+
+
 def failure_story(row, attempt, job, task, directory, state, live_policies, now):
     """Why a task is recorded as failed, whether that is a real training error, and what happens next.
 
@@ -305,11 +363,14 @@ def failure_story(row, attempt, job, task, directory, state, live_policies, now)
         finished = (directory / 'evaluations' / f"{snap[:16]}__{spec[:12]}.json").is_file()
     at = f" at update {row['done']}/{total}" if isinstance(row.get('done'), int) and isinstance(total, int) else ''
     real = True
+    native_cause, native_dump = native_story(ranks)
     if finished:
         cause = (f"NOT a training failure: the run is complete ({manifest.get('completed_updates')}/{total} updates)"
                  if task.get('kind') == 'train' else 'NOT an evaluation failure: its result file is complete') + \
                 (f"; exit {rc} came after the work was done" if rc is not None else '')
         real = False
+    elif native_cause:
+        cause = native_cause     # where the rank crashed, from its own fault dump (user: 'exit -11 ... 고쳐볼래')
     elif ranks:
         cause = '; '.join(f"rank {f.get('rank')}: {f.get('message')}" for f in ranks)
     elif rc in (9, -9, 137) and not python_error:
@@ -378,7 +439,7 @@ def failure_story(row, attempt, job, task, directory, state, live_policies, now)
         nxt += (f'; evaluation replay failures {used}, lifetime failures {lifetime}' if eval_recovery is not None else
                 f'; current verified repair failures {used}, historical failures {lifetime}')
     return dict(failure_cause=cause[:400], failure_next=nxt, failure_real=real, failure_at=at,
-                failure_budget_used=used,failure_lifetime_count=lifetime)
+                failure_budget_used=used,failure_lifetime_count=lifetime, failure_stack=native_dump)
 
 
 def task_ready(task):
@@ -1074,6 +1135,8 @@ def clean_block(base, cohort, now, host, width):
             attention.append('      next: ' + (r.get('failure_next') or 'start one node with --retry-failed after fixing'))
             if r.get('log'):
                 attention.append('      log:  ' + r['log'])
+            if r.get('failure_stack'):
+                attention.append('      stack: ' + r['failure_stack'])
             continue
         elif r['status'] == 'interrupted':
             text = f"⏸ {label} {name} interrupted{when(r)}: reruns automatically on the next free node"
@@ -1492,7 +1555,7 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
                 import textwrap
                 m = re.match(r'(\w+:)\s+(.*)', line.lstrip())
                 label_part, text = (m.group(1), m.group(2)) if m else ('', line.strip())
-                wrapped = ([text] if label_part == 'log:' else      # a path stays on one line so it can be copied
+                wrapped = ([text] if label_part in ('log:', 'stack:') else      # a path stays on one line so it can be copied
                            textwrap.wrap(text, max(30, width - 12), break_on_hyphens=False) or [''])
                 if len(wrapped) > 3:
                     wrapped = wrapped[:3]; wrapped[-1] = wrapped[-1][:max(30, width - 13)] + '…'
