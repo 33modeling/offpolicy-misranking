@@ -1039,6 +1039,8 @@ def clean_block(base, cohort, now, host, width):
                  ext=(sum(r['status'] == 'done' for r in exts), len(exts)),
                  eval=(sum(r['status'] == 'done' for r in evals), len(evals)),
                  planned=planned_tasks,
+                 scheduler_phase=state.get('phase'),side_work=state.get('ready_side_work'),
+                 parallel_work=isinstance(state.get('execution_order'),dict) and state['execution_order'].get('policy')=='ready-checkpoint-evaluation-extension-v1',
                  updates=(done_updates, max(planned, planned_tasks.get('_train_updates_min') or 0)),
                  updates_more=any(v[2] != 'exact' for k, v in planned_tasks.items() if not k.startswith('_')))
     return lines, summary, (nodes, wanted), attention, stats
@@ -1341,8 +1343,20 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
     if fill:
         out.append(paint(' cells to fill: ' + ' · '.join(fill), None))
         if any(v[2] != 'exact' for st in stats for k, v in (st.get('planned') or {}).items() if not k.startswith('_')):
-            out.append(paint('   exact when each phase is planned: train when every On trajectory is done, '
-                             'matched-step eval before ext, budget eval after ext', 'dim'))
+            note=('   ready train/ext/eval are dispatched together; exact counts grow with available checkpoints'
+                  if any(st.get('parallel_work') for st in stats) else
+                  '   exact when each phase is planned: train when every On trajectory is done, matched-step eval before ext, budget eval after ext')
+            out.append(paint(note, 'dim'))
+    for st in stats:
+        side=st.get('side_work')
+        if not st.get('parallel_work') or not isinstance(side,dict) or st.get('scheduler_phase')=='complete':continue
+        if side.get('budget_ready'):
+            note='budget frozen; ext/eval join the rotation when their checkpoints are ready'
+        elif side.get('reason')=='reference_endpoint_unfinished':
+            note='waiting for the selected reference-policy endpoint to finish before freezing budget'
+        else:
+            note='waiting for complete reference-policy endpoints and measured costs before freezing budget'
+        out.append(paint(f" {st['label']} ext/eval: {note}", 'dim'))
 
     # 2. problems, newest failures first
     if attention:

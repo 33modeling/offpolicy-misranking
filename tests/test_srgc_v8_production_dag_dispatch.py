@@ -35,12 +35,12 @@ class ProductionPlan(nodes.Runtime):
         return 75
 
 
-def worker(root,name,stop):
+def worker(root,name,stop,max_attempts=nodes.MAX_ATTEMPTS):
     pairs=[]
     for cohort in ('olmo_math','qwen_mbpp'):
         runtime=ProductionPlan(root,cohort,stop)
         pairs.append((nodes.Pool(runtime.root/'.multi-node',runtime.binding),runtime))
-    nodes.worker_loop_many(pairs,name,stop,poll=.01)
+    nodes.worker_loop_many(pairs,name,stop,poll=.01,max_attempts=max_attempts)
 
 
 def wait_claims(root,count):
@@ -103,13 +103,14 @@ def test_five_legacy_qwen_jobs_do_not_leave_all_new_nodes_idle_after_a_task_fail
                 held=nodes.Lock(pool.root/'leases'/(key+'.lock'));assert held.acquire();legacy.append(held)
         key=nodes.task_key(failed);job=nodes.read(pool.root/'jobs'/(key+'.json'))
         job['state']='failed';job['attempts']=[dict(id='current-failure-'+str(i),exit_code=1,
-                                                 controller_sha256=pool.controller_sha256) for i in range(nodes.MAX_ATTEMPTS)]
+                                                 controller_sha256=pool.controller_sha256) for i in range(3)]
         nodes.atomic(pool.root/'jobs'/(key+'.json'),job);failed_runs.add(failed['run_id'])
         pool.fail('task exit=1; output verified=False',key)
     try:
         assert len(legacy)==5
         for i in range(12):
-            p=ctx.Process(target=worker,args=(tmp_path,'new-node-'+str(i),stop));p.start();processes.append(p)
+            # Explicit legacy cap is a separate control; the new default is immediate/unlimited.
+            p=ctx.Process(target=worker,args=(tmp_path,'new-node-'+str(i),stop),kwargs=dict(max_attempts=3));p.start();processes.append(p)
         rows=wait_claims(tmp_path,12)
         counts=collections.Counter(r['cohort'] for r in rows)
         assert counts['olmo_math']>=5 and counts['qwen_mbpp']>=1
