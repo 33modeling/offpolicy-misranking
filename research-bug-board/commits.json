@@ -14412,6 +14412,36 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "01767f6e63de87f79359360d2e05d8aef5f90a71",
+      "at": "2026-11-09T23:33:27+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Verify merged status display while preserving tested native crash controls",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/01767f6e63de87f79359360d2e05d8aef5f90a71",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "9e8aee73c8d2fca06232539d1f8c70037d91657f",
+      "at": "2026-11-10T00:00:03+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: an exit -11 failure says where the rank crashed",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/9e8aee73c8d2fca06232539d1f8c70037d91657f",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "6556c63ac1c0fb6161dcbbf1fe4fc958cd38d2a2",
+      "at": "2026-11-10T00:27:34+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V25: resume SIGSEGV tasks on another GPU set instead of leaving them failed",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/6556c63ac1c0fb6161dcbbf1fe4fc958cd38d2a2",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }
