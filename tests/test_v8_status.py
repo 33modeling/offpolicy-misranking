@@ -189,7 +189,7 @@ def test_default_screen_is_the_run_srgc_status_renderer(tmp_path, monkeypatch):
     write(q / "progress" / "att1" / "rank-1.json", {"stage": "generation", "updated": now - 9})
     text = status.render([base], now=now, host="node01", style="srgc")
     assert "SRGC V8 olmo_math · " in text and " · phase train\n" in text
-    olmo = text.split("SRGC V8 qwen_mbpp")[0]
+    olmo = text.split("SRGC V8 olmo_mbpp")[0]   # the OLMo MATH block ends where the next experiment (OLMo MBPP) starts
     assert olmo.index("seed  ") < olmo.index("running now:") < olmo.index("SRGC V8 olmo_math · ") < olmo.index("done 1 · running 1")  # summary at the bottom
     assert olmo.rstrip().splitlines()[-1].startswith("workers: ")
     assert "done 1 · running 1 · waiting 1 · needs attention 1" in text
@@ -671,15 +671,15 @@ def test_seed_table_draws_every_planned_branch_before_its_job_exists(tmp_path, m
 
 
 def test_default_screen_lists_all_four_experiments(tmp_path):
-    """'v8 status 에 olmo mbpp qwen math 추가해': OLMo MATH, Qwen MBPP, OLMo MBPP, Qwen MATH, in that order."""
+    """'v8 status 에 olmo mbpp qwen math 추가해', 'status 순서 맞춰': model, then task."""
     now = time.time()
     base = tmp_path / "v8"
     for cohort in ("olmo_mbpp", "qwen_math"):
         write(base / cohort / ".multi-node" / "state.json", {"phase": "train", "failure": None})
         (base / cohort / ".multi-node" / "jobs").mkdir(parents=True)
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
-    assert status.COHORTS == ("olmo_math", "qwen_mbpp", "olmo_mbpp", "qwen_math")
+    assert status.COHORTS == ("olmo_math", "olmo_mbpp", "qwen_math", "qwen_mbpp")
     summary = [line.split("  ")[0].strip() for line in text.split("━━ V8 status · ")[1].splitlines()
                if line.startswith((" OLMo", " Qwen"))]
-    assert summary == ["OLMo MATH", "Qwen MBPP", "OLMo MBPP", "Qwen MATH"]
+    assert summary == ["OLMo MATH", "OLMo MBPP", "Qwen MATH", "Qwen MBPP"]
     assert "OLMo MBPP · training" in text and "Qwen MATH · training" in text
