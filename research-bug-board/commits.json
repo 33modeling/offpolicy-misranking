@@ -14152,6 +14152,66 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "adeb70426c64a653f3b03b50b0052100c6bb7b62",
+      "at": "2026-11-09T15:23:51+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve bounded retry proof, 448 checks and attribution correction",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/adeb70426c64a653f3b03b50b0052100c6bb7b62",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "bd196c57f2a27b6ca77aa4f81dbbeed4a573f99c",
+      "at": "2026-11-09T15:36:51+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Stop SIGSEGV relaunches and exit idle loops with hidden failed tasks",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/bd196c57f2a27b6ca77aa4f81dbbeed4a573f99c",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "34ca5aa94679229fd6b636178c3b2ef7521a675f",
+      "at": "2026-11-09T15:26:59+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: one mark per evaluation instead of done/all",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/34ca5aa94679229fd6b636178c3b2ef7521a675f",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "c5efea91a403d8f9574556cb90190a302dd2e91d",
+      "at": "2026-11-09T15:37:01+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Keep concurrent evaluation display update with fail-stop fix",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/c5efea91a403d8f9574556cb90190a302dd2e91d",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "92105f3bde2878fbf1646eed18e950cf01726fee",
+      "at": "2026-11-09T15:40:13+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Dispatch pinned ready evaluations despite unrelated planner errors",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/92105f3bde2878fbf1646eed18e950cf01726fee",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "6e17ae96878ae05fa27e0c17cd45c2ce974f0796",
+      "at": "2026-11-09T15:46:02+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: progress percentages; no ambiguous '-' marks",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/6e17ae96878ae05fa27e0c17cd45c2ce974f0796",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

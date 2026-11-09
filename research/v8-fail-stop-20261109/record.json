@@ -1,0 +1,192 @@
+{
+  "verified_code_commit": "92105f3bde2878fbf1646eed18e950cf01726fee",
+  "base_commit": "adeb70426c64a653f3b03b50b0052100c6bb7b62",
+  "user_reports": [
+    "아 씨발 9/2 이런식 으로 똑같이 못빠져 나오고 해매고 있음",
+    "버그 원인을 몰라서 못고치면 루프라도 안돌게 하라고",
+    "a signal-killed process cannot retain a Python traceback",
+    "torchrun launcher 라고 -11 아까부터 다 이야기햇잖아 니가 원인 모른다며",
+    "왜 eval 은 전부 동그라미 대기 상태로 시작을 안하는데 ?",
+    "개 씨발 새끼야 다 고쳐놔 빨리 git push ㅐ놔"
+  ],
+  "confirmed_code_defects": [
+    "현재 계획에서 빠진9회 실패 작업을 종료 조건에서 놓쳐 waiting loop가 끝나지 않았다.",
+    "다른 cohort의 없는 부모 대기가 이미 실패한 worker를 계속 붙잡았다.",
+    "SIGSEGV -11을 수리 없이 일반 오류처럼 재실행했다.",
+    "이미 등록된 정상 immutable eval이 다른 endpoint의 planner 누락 때문에 offer에서 빠졌다.",
+    "extension planner 오류가 독립 eval도 버렸다."
+  ],
+  "hypothesis": "치명 native fault는 첫 발생부터 재실행을 금지하고, 원래 고정 eval을 개별 재발견하며, 정상 work/scan/CPU 단계/lease/native 실행 잠금이 없는 오류 대기는 worker exit1로 끝낸다.",
+  "controls": {
+    "type": "CPU software verification only",
+    "models": "ToyBackend for original V8 lifecycle; no H100 model",
+    "unit_data": "immutable checkpoint sentinel and pre-pinned synthetic task identities",
+    "seeds": [
+      5,
+      6,
+      7
+    ],
+    "updates": "metadata H275/budget300 in unit tests; original CPU Toy prefix25/H75/cap100; production25/275/400 unchanged",
+    "native_fault": "deliberate CPU ctypes.string_at(0), not a remote GPU crash",
+    "unchanged": "original30 trainer files, numerical runtime/configs, model/data identity, task keys/specs, budget formula, completed output validators and live execution locks"
+  },
+  "measured_software_values": {
+    "final_tests": 458,
+    "failures": 0,
+    "skips": 0,
+    "cpu_worker_exit_receipts": 7,
+    "cached_ready_eval_executed": true,
+    "nine_old_attempts_not_relaunched": true,
+    "first_native_crash_excluded": true,
+    "intermediate_training_metric_points": 17,
+    "separate_final_evaluations": 22
+  },
+  "scientific_measurements": {
+    "H100_verified": false,
+    "remote_native_root_cause": null,
+    "actual_accuracy": null,
+    "actual_memory": null,
+    "actual_throughput": null,
+    "reason": "The H100 computer is not connected; a -11 report identifies SIGSEGV but does not identify its native root cause."
+  },
+  "behavior": "Normal ready train/ext/eval work continues first. When none is eligible and recorded errors remain, exit this worker1 and retain worker-exits evidence. Never mark an incomplete experiment complete or poison another healthy shared queue. First fatal native4/6/7/8/11 cannot be reopened by node/controller restart.",
+  "retained_failures": {
+    "old_source": "before.xml:7 failures reproduce V20 behavior",
+    "cached_eval": "cached-eval-before.xml:1 failure",
+    "extension_planner": "extension-planner-before.xml:1 failure",
+    "superseded_suite": "all-superseded.xml:4 failed/452 passed. An intentional SIGINT to replace the obsolete run was absorbed by the test runtime and interrupted its native test, while3 old recovery fixtures lacked evidence of a live external worker. Source changed during that superseded run; it is not a final validation. Recovery fixtures now hold an actual native lease until external recovery.",
+    "local_resource": "all-local-enospc.xml:83 failed/364 passed/11 errors; each failing trace included local No space left on device. /dev/shm was full. Own CPU test folders were moved intact to /home/kms/reports/v8-fail-stop-20261109/test-runs-preserved, then final full458 passed from disk. This local storage event is not the user H100 fault."
+  },
+  "source_files_sha256": {
+    "scripts/srgc_v8_nodes.py": "598b06b2eb27c771b9468cd395edcf941af935db188be6574f9f2edc16e01f11",
+    "scripts/v8_status.py": "e3da8944403b926180a2303a33a19da8a8974b385e0021fc2a8dcb31dc94d37e",
+    "scripts/v8_dispatch.py": "9072e27afda346ce7a55e5f892f71f08573b81908999f3bfb0aa851f8904f6c1",
+    "scripts/v8_runtime_worker.py": "92157d9499f71ad68fa670bde39b5525a3be368f44a90e79e063dc4367b212b9"
+  },
+  "frozen_trainer_sha256": {
+    "srgc_rebuttal/__init__.py": "daff68712fd7115469febaaad3c782d020ad450bce6e0f883a0259cadd3a258f",
+    "srgc_rebuttal/admission.py": "befe3a6514875e24a23979b795602b281ef2ea2a9abadb01e19c9977cd7b8024",
+    "srgc_rebuttal/build_cache.py": "91a3776141b2d83eca30dc45ecc1df964b24d43d1f8baa26b8e569e80894672e",
+    "srgc_rebuttal/build_inputs.py": "59a8f3ba3f023a475fb600cc75b2ad5a26eca59c9de611adc2bf89096eef11c9",
+    "srgc_rebuttal/cluster.py": "0aa3a50fb18170a5ee4ca00f36a641ab5e3ac9c5c395cd691324c59e8387d142",
+    "srgc_rebuttal/cluster_queue.py": "960bc8a63c4ecdc3e2ae40131faf637f6e0e4af006007ef4577fe4dcc065153f",
+    "srgc_rebuttal/code_assertions.py": "51b4a2fd02664d0f02b4f154cf18172cc654931404a45515e3423da14f666e76",
+    "srgc_rebuttal/code_check.py": "38f708dcec041d9e2434c52a9b947284938acc3216fd06e99f0f9cd5b606450b",
+    "srgc_rebuttal/cost_ledger.py": "2b878384943e5e24c912884a20b71d31bca0b45e280e666d5caf81147222f5e7",
+    "srgc_rebuttal/cost_report.py": "53ceba5a2753391f46331fbedaf26e210b0d33027ddb4237bbdbf0d07bc60521",
+    "srgc_rebuttal/distributed.py": "222fd71362b442ed6c63afb3c4a2937add9ef7130be010d7b093277c2a21e265",
+    "srgc_rebuttal/existing_runtime.py": "a1702f2907da3decf7f7356fd1c68c933442a460d1fc8360ef1d2dbdcb37c7f4",
+    "srgc_rebuttal/import_pair_inputs.py": "7b5332bdba9476b86d2cbf42fb997a3b865d5547b5fc3ac6575704e8d549429f",
+    "srgc_rebuttal/objectives.py": "1e686c118c79ab5b51c7d6973ae897aaf2bfdde0824470937ef7c30e18293ba4",
+    "srgc_rebuttal/plan.py": "643ed49f1ad74297cfecec8f453a9cf3e737260b960479e6e116e48c9377dc3e",
+    "srgc_rebuttal/plan_dataset.py": "468af80b4f59e9b7f2683eaa724f308fc91872bb1918e65e127e557ee6e992b2",
+    "srgc_rebuttal/prepare_inputs.py": "71f6a8e0f1cc6df586df8bd4bd234b413a5945895d3cdf3ae0446fd9763230e1",
+    "srgc_rebuttal/prepare_rebuttal.py": "f0978d96f418bfd90fd3cd291b977b61f50b6a14d30d876e489fc65ed3073cba",
+    "srgc_rebuttal/progress.py": "d3202b65e9eb53557fb45b6b54f1cce0ae50d196486bd5bc11d0de2e8e19440f",
+    "srgc_rebuttal/reports.py": "97317b77c9f57536a34d421a70d6c57a714ad4184630253f6c41297cf21194bf",
+    "srgc_rebuttal/run_demo.py": "0f69daf7c1f255f1690b5354e40fb56a2a20bc6a11ef39a6666207392697bd7e",
+    "srgc_rebuttal/run_experiment.py": "9f2dc57536fdb5f6f5a7f5016129a6814120089bf8135431d1f8bd4da804e885",
+    "srgc_rebuttal/runtime.py": "518d37beb7c733e1497599bfe0f9131cd1caf7e9cfdea887f20060291f335e10",
+    "srgc_rebuttal/srgc.py": "d2dc8e3b83df63139f06f97574009e03b1f6bf26f47c3013dedf98e1076516e7",
+    "srgc_rebuttal/summarize.py": "0d7179717ede53de7ccebaf9f5e691bd4ea8eb954a5cd8c0803bf077bba31c49",
+    "srgc_rebuttal/timing.py": "82e53cc63751177188fa6da4abdca6dc0567f4ac27524488c643ff863b08efa5",
+    "srgc_rebuttal/torch_backend.py": "94a8d2d98b6312ee584c32674dbfc194a9e95e714b484a5a64b84b3e78631e11",
+    "srgc_rebuttal/torch_state.py": "eda68cecdd6ed5f5312a7b5f5a026d14d86db4f9f329aaf45a825a867c72e2d6",
+    "srgc_rebuttal/toy_backend.py": "159a6b72e8923620469600d3acb09bf36fb2eb629cdbee0ca6058a0cfba08272",
+    "srgc_rebuttal/verifiers.py": "5062befe4ed5a8e21f6de01a73dca4f1d3544dd033c5d2c846bff391d1148a90"
+  },
+  "evidence": {
+    "all-superseded.xml": {
+      "tests": 456,
+      "failures": 4,
+      "errors": 0,
+      "skipped": 0
+    },
+    "all.xml": {
+      "tests": 458,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "eval-targeted.xml": {
+      "tests": 30,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "prepush.xml": {
+      "tests": 55,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "extension-planner-before.xml": {
+      "tests": 1,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0
+    },
+    "eval-final-targeted.xml": {
+      "tests": 31,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "merge-targeted.xml": {
+      "tests": 16,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "all-local-enospc.xml": {
+      "tests": 458,
+      "failures": 83,
+      "errors": 11,
+      "skipped": 0
+    },
+    "cached-eval-before.xml": {
+      "tests": 1,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0
+    },
+    "before.xml": {
+      "tests": 7,
+      "failures": 7,
+      "errors": 0,
+      "skipped": 0
+    },
+    "targeted.xml": {
+      "tests": 16,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "archive": {
+    "through": "92105f3bde2878fbf1646eed18e950cf01726fee",
+    "coordinators": 44,
+    "runners": 7,
+    "files": 458,
+    "sha256": "3d76fdb5767cf76cda7dc84f1f3f9d3699f7f396741720f4c0b96ff3a3e49eb9",
+    "all_payload_sha256_pass": true,
+    "original_trainer_files_unchanged": 30
+  },
+  "raw_evidence_sha256": {
+    "all-superseded.xml": "3dc7fb08dd5f49dd4e56f3daafbea82a5b3f8c25001cd1ff64fcc9155d10e1a2",
+    "archive-verification.json": "90dff6d0adfd82070359837d7edaba0437cf437b421ea03b8964428af92a307c",
+    "all.xml": "c956786cfb51c25f9f06bbe3c569a1341b83ea404aaff82e5e9f4fcaadf5ca92",
+    "eval-targeted.xml": "aa3c422670968d3e42c33924dbc75e19ffb58284292cc5e599bd394abf3d48de",
+    "prepush.xml": "0e288c2aaa9f21e82a9c9b53045a2a1154b113ab9e9fd705394659752066764a",
+    "extension-planner-before.xml": "457a492a514861137266c1ac21e51f047dec4313e67633543a91d9921562ae6d",
+    "eval-final-targeted.xml": "af4b3bce17a39ac2edd5e9f9401ebb129905444792bdbf791f203401113e5c9b",
+    "proof.json": "b2fda4a2037c071c0a2c0e4050667b47c52bce6a45f65824f958f58a8cc57e56",
+    "merge-targeted.xml": "2f445e4f33550d1110d0cbcac3b5dbcd78ef1779fe5010b2fde730adcbe8e7c2",
+    "all-local-enospc.xml": "7d797b2d63d560c4084240df9d3969e94285421e09fb1cb0d593f2a112ad0034",
+    "cached-eval-before.xml": "08f76ee648f0089bc723f015d4445523eae742d070a1603f05117d684e34c0ad",
+    "intermediate-training-records.json": "3e88eec63cf92c97f736236c54db87b3e7989ed7f5653829d8d9344e9b6443fd",
+    "before.xml": "bb6195a595703e9f0a223c82486b569ebb11580ecafea1134f5c2a697d3a409f",
+    "targeted.xml": "926b7da685084400def0a6652102958bdca2ba07f85c3815c2a8288d3988811e",
+    "cpu-fail-stop-proof.zip": "4e4d4635294391c318691012a3b4fa3cfaa5fbe22b38eccb929fe87c405b57ee"
+  }
+}

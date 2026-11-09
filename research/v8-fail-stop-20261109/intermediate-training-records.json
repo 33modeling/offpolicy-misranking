@@ -1,0 +1,302 @@
+{
+  "scope": "CPU ToyBackend software verification, not H100 scientific measurements",
+  "points": [
+    {
+      "run_id": "olmo_math.rebuttal_bank.s6.bank_sr_t050.3550a291ee",
+      "seed": 6,
+      "arm": "bank_sr_t050",
+      "update": 75,
+      "metric_kind": "training_batch",
+      "metrics": {
+        "gradient_norm": 0.3097921379508067,
+        "sample_reward": 0.71875
+      },
+      "history": "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t050.3550a291ee/history.jsonl",
+      "checkpoint": "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t050.3550a291ee/snapshots/step-000075.pt",
+      "checkpoint_sha256": "52ea0b4ccf48d3126b5a3115a78d71ddb5f5f29cd57ede629c63f12ed965e4dc",
+      "held_out_reward": null,
+      "held_out_note": "not measured at this intermediate point; final evaluator records are separate"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s6.bank_uniform_t050.c58e7d202f",
+      "seed": 6,
+      "arm": "bank_uniform_t050",
+      "update": 75,
+      "metric_kind": "training_batch",
+      "metrics": {
+        "gradient_norm": 0.5314921167031312,
+        "sample_reward": 0.625
+      },
+      "history": "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_uniform_t050.c58e7d202f/history.jsonl",
+      "checkpoint": "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_uniform_t050.c58e7d202f/snapshots/step-000075.pt",
+      "checkpoint_sha256": "762a8970c6b0bac8b77373d73f6126b7f809662228e3793a4750986995ddf54f",
+      "held_out_reward": null,
+      "held_out_note": "not measured at this intermediate point; final evaluator records are separate"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s7.bank_sr_t025.ffb181ef25",
+      "seed": 7,
+      "arm": "bank_sr_t025",
+      "update": 50,
+      "metric_kind": "training_batch",
+      "metrics": {
+        "gradient_norm": 0.22985401433096797,
+        "sample_reward": 0.9375
+      },
+      "history": "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t025.ffb181ef25/history.jsonl",
+      "checkpoint": "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t025.ffb181ef25/snapshots/step-000050.pt",
+      "checkpoint_sha256": "539e9a1b75ee214a2938e182bc17778ecc158b0b5f4372f005c9430f4fedc620",
+      "held_out_reward": null,
+      "held_out_note": "not measured at this intermediate point; final evaluator records are separate"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s7.bank_sr_t025.ffb181ef25",
+      "seed": 7,
+      "arm": "bank_sr_t025",
+      "update": 75,
+      "metric_kind": "training_batch",
+      "metrics": {
+        "gradient_norm": 1.0498535703676835,
+        "sample_reward": 0.8125
+      },
+      "history": "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t025.ffb181ef25/history.jsonl",
+      "checkpoint": "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t025.ffb181ef25/snapshots/step-000075.pt",
+      "checkpoint_sha256": "5ce54497131ea27072117b56c52f6bf443e66161f2a6529832ef1419c93f072f",
+      "held_out_reward": null,
+      "held_out_note": "not measured at this intermediate point; final evaluator records are separate"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s5.bank_sr_t050.cecb07aeba",
+      "seed": 5,
+      "arm": "bank_sr_t050",
+      "update": 75,
+      "metric_kind": "training_batch",
+      "metrics": {
+        "gradient_norm": 0.7244368810219569,
+        "sample_reward": 0.78125
+      },
+      "history": "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t050.cecb07aeba/history.jsonl",
+      "checkpoint": "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t050.cecb07aeba/snapshots/step-000075.pt",
+      "checkpoint_sha256": "9b69c64947249d33f460600806be8f723190d84c9cfbbfb9cab889efa11dff54",
+      "held_out_reward": null,
+      "held_out_note": "not measured at this intermediate point; final evaluator records are separate"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s6.on_monitored.d09aa1afc0",
+      "seed": 6,
+      "arm": "on_monitored",
+      "update": 50,
+      "metric_kind": "training_batch",
+      "metrics": {
+        "gradient_norm": 0.0,
+        "sample_reward": 1.0
+      },
+      "history": "olmo_math/runs/olmo_math.rebuttal_bank.s6.on_monitored.d09aa1afc0/history.jsonl",
+      "checkpoint": "olmo_math/runs/olmo_math.rebuttal_bank.s6.on_monitored.d09aa1afc0/snapshots/step-000050.pt",
+      "checkpoint_sha256": "7f3827ddbd60ba541d3b678db6e1c37c4b1265532deb8030e5d77cbd10c34f8b",
+      "held_out_reward": null,
+      "held_out_note": "not measured at this intermediate point; final evaluator records are separate"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s6.on_monitored.d09aa1afc0",
+      "seed": 6,
+      "arm": "on_monitored",
+      "update": 75,
+      "metric_kind": "training_batch",
+      "metrics": {
+        "gradient_norm": 0.0,
+        "sample_reward": 1.0
+      },
+      "history": "olmo_math/runs/olmo_math.rebuttal_bank.s6.on_monitored.d09aa1afc0/history.jsonl",
+      "checkpoint": "olmo_math/runs/olmo_math.rebuttal_bank.s6.on_monitored.d09aa1afc0/snapshots/step-000075.pt",
+      "checkpoint_sha256": "6960dee1b66d5269b7d5cb8fb7682039d08479ac77408344ff08d9f86eb15a09",
+      "held_out_reward": null,
+      "held_out_note": "not measured at this intermediate point; final evaluator records are separate"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s7.on_monitored.809c1b38c7",
+      "seed": 7,
+      "arm": "on_monitored",
+      "update": 50,
+      "metric_kind": "training_batch",
+      "metrics": {
+        "gradient_norm": 0.0,
+        "sample_reward": 1.0
+      },
+      "history": "olmo_math/runs/olmo_math.rebuttal_bank.s7.on_monitored.809c1b38c7/history.jsonl",
+      "checkpoint": "olmo_math/runs/olmo_math.rebuttal_bank.s7.on_monitored.809c1b38c7/snapshots/step-000050.pt",
+      "checkpoint_sha256": "c633aa7b4097ce2c7354b888cacf6b728a45be6e20c44129ae54450ed51c129a",
+      "held_out_reward": null,
+      "held_out_note": "not measured at this intermediate point; final evaluator records are separate"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s7.on_monitored.809c1b38c7",
+      "seed": 7,
+      "arm": "on_monitored",
+      "update": 75,
+      "metric_kind": "training_batch",
+      "metrics": {
+        "gradient_norm": 0.5927104573923746,
+        "sample_reward": 0.8125
+      },
+      "history": "olmo_math/runs/olmo_math.rebuttal_bank.s7.on_monitored.809c1b38c7/history.jsonl",
+      "checkpoint": "olmo_math/runs/olmo_math.rebuttal_bank.s7.on_monitored.809c1b38c7/snapshots/step-000075.pt",
+      "checkpoint_sha256": "525782e52b38c91ba5b46cbed11e6083321daa67bf9e228041cd407d4332dd98",
+      "held_out_reward": null,
+      "held_out_note": "not measured at this intermediate point; final evaluator records are separate"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s5.bank_sr_t025.7a489620d6",
+      "seed": 5,
+      "arm": "bank_sr_t025",
+      "update": 50,
+      "metric_kind": "training_batch",
+      "metrics": {
+        "gradient_norm": 0.18965121039377436,
+        "sample_reward": 0.84375
+      },
+      "history": "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t025.7a489620d6/history.jsonl",
+      "checkpoint": "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t025.7a489620d6/snapshots/step-000050.pt",
+      "checkpoint_sha256": "d05987d5427241e4e726d4b4b157e42f14b4e38b0aafe8cc664a14bc60b2767d",
+      "held_out_reward": null,
+      "held_out_note": "not measured at this intermediate point; final evaluator records are separate"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s5.bank_sr_t025.7a489620d6",
+      "seed": 5,
+      "arm": "bank_sr_t025",
+      "update": 75,
+      "metric_kind": "training_batch",
+      "metrics": {
+        "gradient_norm": 0.5894849545615962,
+        "sample_reward": 0.84375
+      },
+      "history": "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t025.7a489620d6/history.jsonl",
+      "checkpoint": "olmo_math/runs/olmo_math.rebuttal_bank.s5.bank_sr_t025.7a489620d6/snapshots/step-000075.pt",
+      "checkpoint_sha256": "320f23605e7033f36a946d2db5696861920cd20eb0f8bafd196d3bafd33336e6",
+      "held_out_reward": null,
+      "held_out_note": "not measured at this intermediate point; final evaluator records are separate"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s7.bank_uniform_t050.572b5e443d",
+      "seed": 7,
+      "arm": "bank_uniform_t050",
+      "update": 75,
+      "metric_kind": "training_batch",
+      "metrics": {
+        "gradient_norm": 0.46027143697585515,
+        "sample_reward": 0.8125
+      },
+      "history": "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_uniform_t050.572b5e443d/history.jsonl",
+      "checkpoint": "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_uniform_t050.572b5e443d/snapshots/step-000075.pt",
+      "checkpoint_sha256": "01b545fc14bf817892b97b4bcf8a7033ca4bdc30656486bac42b0cc3ae3d08fe",
+      "held_out_reward": null,
+      "held_out_note": "not measured at this intermediate point; final evaluator records are separate"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s7.bank_sr_t050.375250696f",
+      "seed": 7,
+      "arm": "bank_sr_t050",
+      "update": 75,
+      "metric_kind": "training_batch",
+      "metrics": {
+        "gradient_norm": 0.46027143697585515,
+        "sample_reward": 0.5625
+      },
+      "history": "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t050.375250696f/history.jsonl",
+      "checkpoint": "olmo_math/runs/olmo_math.rebuttal_bank.s7.bank_sr_t050.375250696f/snapshots/step-000075.pt",
+      "checkpoint_sha256": "869a1272b0301f83c0ec5ec955216b488d7390fbc94b80ddc8f08f876a90dd6e",
+      "held_out_reward": null,
+      "held_out_note": "not measured at this intermediate point; final evaluator records are separate"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s5.on_monitored.6ecf94532d",
+      "seed": 5,
+      "arm": "on_monitored",
+      "update": 50,
+      "metric_kind": "training_batch",
+      "metrics": {
+        "gradient_norm": 0.0,
+        "sample_reward": 1.0
+      },
+      "history": "olmo_math/runs/olmo_math.rebuttal_bank.s5.on_monitored.6ecf94532d/history.jsonl",
+      "checkpoint": "olmo_math/runs/olmo_math.rebuttal_bank.s5.on_monitored.6ecf94532d/snapshots/step-000050.pt",
+      "checkpoint_sha256": "b8c0b22c56dc56239fe7ed744836d63a7f705ae65f08ea8f1f60320b3bd616b3",
+      "held_out_reward": null,
+      "held_out_note": "not measured at this intermediate point; final evaluator records are separate"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s5.on_monitored.6ecf94532d",
+      "seed": 5,
+      "arm": "on_monitored",
+      "update": 75,
+      "metric_kind": "training_batch",
+      "metrics": {
+        "gradient_norm": 0.2765824175454096,
+        "sample_reward": 0.875
+      },
+      "history": "olmo_math/runs/olmo_math.rebuttal_bank.s5.on_monitored.6ecf94532d/history.jsonl",
+      "checkpoint": "olmo_math/runs/olmo_math.rebuttal_bank.s5.on_monitored.6ecf94532d/snapshots/step-000075.pt",
+      "checkpoint_sha256": "69cff8d7e24a41de4e4af07329309648feb698b60335d62f8ba301e702d8ff8b",
+      "held_out_reward": null,
+      "held_out_note": "not measured at this intermediate point; final evaluator records are separate"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s6.bank_sr_t025.8893c219dc",
+      "seed": 6,
+      "arm": "bank_sr_t025",
+      "update": 50,
+      "metric_kind": "training_batch",
+      "metrics": {
+        "gradient_norm": 0.8072032784016683,
+        "sample_reward": 0.90625
+      },
+      "history": "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t025.8893c219dc/history.jsonl",
+      "checkpoint": "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t025.8893c219dc/snapshots/step-000050.pt",
+      "checkpoint_sha256": "9cbce7b3b9b6dff547557dff5e12694f2974daed6508a50209c07dbe3468b080",
+      "held_out_reward": null,
+      "held_out_note": "not measured at this intermediate point; final evaluator records are separate"
+    },
+    {
+      "run_id": "olmo_math.rebuttal_bank.s6.bank_sr_t025.8893c219dc",
+      "seed": 6,
+      "arm": "bank_sr_t025",
+      "update": 75,
+      "metric_kind": "training_batch",
+      "metrics": {
+        "gradient_norm": 0.0,
+        "sample_reward": 1.0
+      },
+      "history": "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t025.8893c219dc/history.jsonl",
+      "checkpoint": "olmo_math/runs/olmo_math.rebuttal_bank.s6.bank_sr_t025.8893c219dc/snapshots/step-000075.pt",
+      "checkpoint_sha256": "960e8177aea6e6ba5ee8e3c07931a17932621d1d743a1ce9f3328051453b0fee",
+      "held_out_reward": null,
+      "held_out_note": "not measured at this intermediate point; final evaluator records are separate"
+    }
+  ],
+  "separate_final_evaluation_files": [
+    "olmo_math/evaluations/01b545fc14bf8178__07b394354c2a.json",
+    "olmo_math/evaluations/24c306e4297434cd__07b394354c2a.json",
+    "olmo_math/evaluations/27aa44c890bd7225__8d0ae614c314.json",
+    "olmo_math/evaluations/2e9ed29bee0db64f__b773bf2acc62.json",
+    "olmo_math/evaluations/320f23605e7033f3__8d0ae614c314.json",
+    "olmo_math/evaluations/4d529027c1c0dd2b__b773bf2acc62.json",
+    "olmo_math/evaluations/525782e52b38c91b__07b394354c2a.json",
+    "olmo_math/evaluations/52ea0b4ccf48d312__b773bf2acc62.json",
+    "olmo_math/evaluations/5ce54497131ea270__07b394354c2a.json",
+    "olmo_math/evaluations/6960dee1b66d5269__b773bf2acc62.json",
+    "olmo_math/evaluations/69cff8d7e24a41de__8d0ae614c314.json",
+    "olmo_math/evaluations/762a8970c6b0bac8__b773bf2acc62.json",
+    "olmo_math/evaluations/79e3d854610c1e4b__8d0ae614c314.json",
+    "olmo_math/evaluations/7f3827ddbd60ba54__b773bf2acc62.json",
+    "olmo_math/evaluations/869a1272b0301f83__07b394354c2a.json",
+    "olmo_math/evaluations/960e8177aea6e6ba__b773bf2acc62.json",
+    "olmo_math/evaluations/971d05c1fc60c78d__07b394354c2a.json",
+    "olmo_math/evaluations/9b69c64947249d33__8d0ae614c314.json",
+    "olmo_math/evaluations/9dc78c34e279dd62__07b394354c2a.json",
+    "olmo_math/evaluations/b8c0b22c56dc5623__8d0ae614c314.json",
+    "olmo_math/evaluations/c633aa7b4097ce2c__07b394354c2a.json",
+    "olmo_math/evaluations/d6ecaa6784d57ddc__b773bf2acc62.json"
+  ],
+  "preserved_full_raw_bundle": "cpu-fail-stop-proof.zip"
+}
