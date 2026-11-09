@@ -1,0 +1,232 @@
+{
+  "base_commit": "e1a39c94d21fb9de879dd7166acb9266c7cd307f",
+  "verified_code_commit": "e00a16d7b809fcf243f96bf55d8500b15505c282",
+  "user_report": "뭔가 아직도 비정상적인 종료가 너무 많이 됨",
+  "hypothesis": "A final original planner/ready/done check prevents retiring on a stale no-work observation, while node-local exclusions remain excluded and old worker faults are not counted as new crashes.",
+  "confirmed_code_defects": [
+    "V21 retired after a checkpoint became ready just after its last scan, for both training and evaluation.",
+    "The first V22 refresh re-admitted node-local give_up failures; fixed in e00a16d before final462 checks."
+  ],
+  "controls": {
+    "scope": "CPU metadata/sentinel software tests, not H100 scientific experiments",
+    "models": "none in new race/diagnostic fixtures; existing original V8 CPU ToyBackend covered by regressions",
+    "data": "fixed task identity and immutable sentinel; synthetic -11 report",
+    "seeds": [
+      5,
+      6
+    ],
+    "updates": "unit metadata horizon275; production25/275/400 unchanged",
+    "optimizer_updates_in_new_fixtures": 0,
+    "numerical_changes": false,
+    "checkpoint_rng_rewards": "original sources30 and original validation/recording untouched"
+  },
+  "software_measurements": {
+    "newly_ready_training_claims": 1,
+    "newly_ready_evaluation_claims": 1,
+    "old_failed_attempts_preserved": 9,
+    "diagnostic_previous_worker_failures": 9,
+    "diagnostic_current_worker_done": 1,
+    "diagnostic_current_worker_synthetic_native_fault": 1,
+    "final_tests": 462,
+    "failures": 0,
+    "skipped": 0
+  },
+  "scientific_measurements": {
+    "actual_H100_verified": false,
+    "actual_SIGSEGV_cause": null,
+    "current_remote_crash_count": null,
+    "accuracy": null,
+    "memory": null,
+    "throughput": null,
+    "reason": "H100 is on another computer and is not connected; requested latest WORKER EXIT/RANK FAILURE text has not arrived."
+  },
+  "changes": [
+    "Reinspect only admitted cohorts and original immutable tasks under per-cohort control; claim remains under the existing dispatch gate.",
+    "A terminal cohort is refreshed only for shared task failure, never node-local admission/actor/input/deferred give_up.",
+    "Metadata lock wait during final check is finite. No unlimited retry/failed native relaunch.",
+    "blocked_work retirement is recorded separately from this worker native_crash/OOM/progress_timeout/task_error and previous-worker failure totals.",
+    "Unreadable diagnostic JSON cannot hide the original nonzero exit; original failures/checkpoints remain intact."
+  ],
+  "retained_failures": {
+    "before": "before.xml:2 stale-exit failures reproduced on previous controller",
+    "fixture_setup": "fixture-setup.xml:2 missing parent-directory setup errors, fixed before reproduction",
+    "new_regression": "exit-coordination.xml:1 failed/1 passed; node-local admission was wrongly re-admitted and eventually returned0 after another healthy worker finished. This was a V22 defect, not dismissed as a fixture failure; e00a16d fixes it.",
+    "superseded_run": "A full suite that had imported the earlier V22 controller reached the same re-admission bug at legacy extension defer and kept looping. Only that own CPU pytest process was SIGKILLed; raw capture tails remain in superseded-controller-run.json. It did not produce a final JUnit result and is not counted as a passing suite."
+  },
+  "evidence": {
+    "all.xml": {
+      "tests": 462,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "verified.xml": {
+      "tests": 30,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "prepush.xml": {
+      "tests": 30,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "exit-coordination.xml": {
+      "tests": 2,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0
+    },
+    "node-admission-fixed.xml": {
+      "tests": 16,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "merged-prepush.xml": {
+      "tests": 60,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "before.xml": {
+      "tests": 2,
+      "failures": 2,
+      "errors": 0,
+      "skipped": 0
+    },
+    "targeted.xml": {
+      "tests": 25,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "fixture-setup.xml": {
+      "tests": 2,
+      "failures": 0,
+      "errors": 2,
+      "skipped": 0
+    }
+  },
+  "source_files_sha256": {
+    "scripts/srgc_v8_nodes.py": "f7563bf7f33970f735309d14138a8c6be3cff729704e4df21845cc21e85f0674",
+    "scripts/v8_dispatch.py": "bd4baadaf303df4da3f1e9e569373ad9ded907e24e5d42d0625e7e23abc559ff",
+    "scripts/v8_runtime_worker.py": "92157d9499f71ad68fa670bde39b5525a3be368f44a90e79e063dc4367b212b9",
+    "scripts/v8_status.py": "a5ba5c40766b794fcff22e897c4f4137eaa0f904e9d29bb3fdcc7de64d13d7a3"
+  },
+  "frozen_trainer_sha256": {
+    "srgc_rebuttal/__init__.py": "daff68712fd7115469febaaad3c782d020ad450bce6e0f883a0259cadd3a258f",
+    "srgc_rebuttal/admission.py": "befe3a6514875e24a23979b795602b281ef2ea2a9abadb01e19c9977cd7b8024",
+    "srgc_rebuttal/build_cache.py": "91a3776141b2d83eca30dc45ecc1df964b24d43d1f8baa26b8e569e80894672e",
+    "srgc_rebuttal/build_inputs.py": "59a8f3ba3f023a475fb600cc75b2ad5a26eca59c9de611adc2bf89096eef11c9",
+    "srgc_rebuttal/cluster.py": "0aa3a50fb18170a5ee4ca00f36a641ab5e3ac9c5c395cd691324c59e8387d142",
+    "srgc_rebuttal/cluster_queue.py": "960bc8a63c4ecdc3e2ae40131faf637f6e0e4af006007ef4577fe4dcc065153f",
+    "srgc_rebuttal/code_assertions.py": "51b4a2fd02664d0f02b4f154cf18172cc654931404a45515e3423da14f666e76",
+    "srgc_rebuttal/code_check.py": "38f708dcec041d9e2434c52a9b947284938acc3216fd06e99f0f9cd5b606450b",
+    "srgc_rebuttal/cost_ledger.py": "2b878384943e5e24c912884a20b71d31bca0b45e280e666d5caf81147222f5e7",
+    "srgc_rebuttal/cost_report.py": "53ceba5a2753391f46331fbedaf26e210b0d33027ddb4237bbdbf0d07bc60521",
+    "srgc_rebuttal/distributed.py": "222fd71362b442ed6c63afb3c4a2937add9ef7130be010d7b093277c2a21e265",
+    "srgc_rebuttal/existing_runtime.py": "a1702f2907da3decf7f7356fd1c68c933442a460d1fc8360ef1d2dbdcb37c7f4",
+    "srgc_rebuttal/import_pair_inputs.py": "7b5332bdba9476b86d2cbf42fb997a3b865d5547b5fc3ac6575704e8d549429f",
+    "srgc_rebuttal/objectives.py": "1e686c118c79ab5b51c7d6973ae897aaf2bfdde0824470937ef7c30e18293ba4",
+    "srgc_rebuttal/plan.py": "643ed49f1ad74297cfecec8f453a9cf3e737260b960479e6e116e48c9377dc3e",
+    "srgc_rebuttal/plan_dataset.py": "468af80b4f59e9b7f2683eaa724f308fc91872bb1918e65e127e557ee6e992b2",
+    "srgc_rebuttal/prepare_inputs.py": "71f6a8e0f1cc6df586df8bd4bd234b413a5945895d3cdf3ae0446fd9763230e1",
+    "srgc_rebuttal/prepare_rebuttal.py": "f0978d96f418bfd90fd3cd291b977b61f50b6a14d30d876e489fc65ed3073cba",
+    "srgc_rebuttal/progress.py": "d3202b65e9eb53557fb45b6b54f1cce0ae50d196486bd5bc11d0de2e8e19440f",
+    "srgc_rebuttal/reports.py": "97317b77c9f57536a34d421a70d6c57a714ad4184630253f6c41297cf21194bf",
+    "srgc_rebuttal/run_demo.py": "0f69daf7c1f255f1690b5354e40fb56a2a20bc6a11ef39a6666207392697bd7e",
+    "srgc_rebuttal/run_experiment.py": "9f2dc57536fdb5f6f5a7f5016129a6814120089bf8135431d1f8bd4da804e885",
+    "srgc_rebuttal/runtime.py": "518d37beb7c733e1497599bfe0f9131cd1caf7e9cfdea887f20060291f335e10",
+    "srgc_rebuttal/srgc.py": "d2dc8e3b83df63139f06f97574009e03b1f6bf26f47c3013dedf98e1076516e7",
+    "srgc_rebuttal/summarize.py": "0d7179717ede53de7ccebaf9f5e691bd4ea8eb954a5cd8c0803bf077bba31c49",
+    "srgc_rebuttal/timing.py": "82e53cc63751177188fa6da4abdca6dc0567f4ac27524488c643ff863b08efa5",
+    "srgc_rebuttal/torch_backend.py": "94a8d2d98b6312ee584c32674dbfc194a9e95e714b484a5a64b84b3e78631e11",
+    "srgc_rebuttal/torch_state.py": "eda68cecdd6ed5f5312a7b5f5a026d14d86db4f9f329aaf45a825a867c72e2d6",
+    "srgc_rebuttal/toy_backend.py": "159a6b72e8923620469600d3acb09bf36fb2eb629cdbee0ca6058a0cfba08272",
+    "srgc_rebuttal/verifiers.py": "5062befe4ed5a8e21f6de01a73dca4f1d3544dd033c5d2c846bff391d1148a90"
+  },
+  "archive": {
+    "through": "e00a16d7b809fcf243f96bf55d8500b15505c282",
+    "coordinators": 46,
+    "runners": 7,
+    "files": 460,
+    "sha256": "5f1afc91e09c952f88915916ba232ee3196a8db07c3a4f101a83edb1177032f4",
+    "all_payload_sha256_pass": true,
+    "original_trainer_files_unchanged": 30
+  },
+  "proof": {
+    "scope": "CPU metadata and sentinel only; synthetic -11 record, no native/GPU crash or model training in these fixtures",
+    "source_commit": "e00a16d7b809fcf243f96bf55d8500b15505c282",
+    "races": [
+      {
+        "folder": "test_newly_available_checkpoin0",
+        "kind": "train",
+        "healthy_claims": 1,
+        "past_bad_attempts": 9
+      },
+      {
+        "folder": "test_newly_available_checkpoin1",
+        "kind": "evaluate",
+        "healthy_claims": 1,
+        "past_bad_attempts": 9
+      }
+    ],
+    "files": {
+      "test_newly_available_checkpoin0/.v8-dispatch.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "test_newly_available_checkpoin0/olmo_math/checkpoint.pt": "b8be93e85d3de62662b31e84486db380ab949605386c7ee63757ed2e777aacb7",
+      "test_newly_available_checkpoin0/olmo_math/.multi-node/control.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "test_newly_available_checkpoin0/olmo_math/.multi-node/state.json": "2ea8c79078178106fba791145efe2e4e987e6c10e01f90e5384fa37e6259abeb",
+      "test_newly_available_checkpoin0/olmo_math/.multi-node/binding.json": "d3e908c6813844a99c540ce0c3dab920c1f23133fe3d87295d304c29433d9bc3",
+      "test_newly_available_checkpoin0/olmo_math/.multi-node/workers/bb5039d1b63ea124c225852782d80d2d2e80f7a90687019012dc126610b24ab7.json": "34119c9be9c91d47490a9f01b569c0e3e3cb79155ca58f074407dce5ffec6280",
+      "test_newly_available_checkpoin0/olmo_math/.multi-node/leases/616ad2c98599f2d3257df753cc192efb82df687d7ad8554b131f197309de5585.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "test_newly_available_checkpoin0/olmo_math/.multi-node/leases/ee2c6de3404ed0617c34148614685a2ca3980f0d242c404e65c26616317eb896.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "test_newly_available_checkpoin0/olmo_math/.multi-node/plans/train.json": "4adc4b945a1a315f501bca2c360e161ba17886a54ff4bc89eec6a6b435a0785d",
+      "test_newly_available_checkpoin0/olmo_math/.multi-node/jobs/ee2c6de3404ed0617c34148614685a2ca3980f0d242c404e65c26616317eb896.json": "2c35667b46ade68e2953758b456b452905edb75caa7180e0855e7f6a91b852d5",
+      "test_newly_available_checkpoin0/olmo_math/.multi-node/jobs/616ad2c98599f2d3257df753cc192efb82df687d7ad8554b131f197309de5585.json": "7da0f55273913157c76992a87cb695d69b0b2721623791dc709c530384eeeeb9",
+      "test_newly_available_checkpoin0/olmo_math/.multi-node/tasks/ee2c6de3404ed0617c34148614685a2ca3980f0d242c404e65c26616317eb896.json": "012888e0d56783fa5769ce947628ee0d314b104119ac49d99c6fbe0d27735f71",
+      "test_newly_available_checkpoin0/olmo_math/.multi-node/tasks/616ad2c98599f2d3257df753cc192efb82df687d7ad8554b131f197309de5585.json": "e09079a009f1d8faf2a2858f738c0a6309beea9fb8df6f18beac3e0d3dc0dec8",
+      "test_unreadable_exit_diagnosti0/queue/state.json": "faaa5a77cf1fad84f0676e62ea725cee86014e3984bc2d59afc2af3fc54532fe",
+      "test_unreadable_exit_diagnosti0/queue/binding.json": "82069cc5afcd7f15c4ad8e62d94ee30a72c2bf49560baa0db2d34f33af346584",
+      "test_unreadable_exit_diagnosti0/queue/jobs/broken.json": "2f6af8e37fc05d859a7b9931e41f5a1377e3e4d62e1bc1fdbce56873c9aabb55",
+      "test_unreadable_exit_diagnosti0/queue/worker-exits/694df57a7909d9f9edbd3acb4ccfce5fbee156fab749383121f17fef16bbab57.json": "8098732767c03a2326b23498ad78b044b778c6e97065ef7c4bf97f0255f607b9",
+      "test_newly_available_checkpoin1/.v8-dispatch.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "test_newly_available_checkpoin1/olmo_math/checkpoint.pt": "b8be93e85d3de62662b31e84486db380ab949605386c7ee63757ed2e777aacb7",
+      "test_newly_available_checkpoin1/olmo_math/.multi-node/budget-rule.json": "0284800fb34453e0f0f1c4a43dcf69974009d4b0a7b363a7d973bc3079d20ef2",
+      "test_newly_available_checkpoin1/olmo_math/.multi-node/control.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "test_newly_available_checkpoin1/olmo_math/.multi-node/state.json": "17110941526f88f7f9fa73720f21d6b656d36f626061ad16b0d1af580d74d2d4",
+      "test_newly_available_checkpoin1/olmo_math/.multi-node/binding.json": "d3e908c6813844a99c540ce0c3dab920c1f23133fe3d87295d304c29433d9bc3",
+      "test_newly_available_checkpoin1/olmo_math/.multi-node/workers/bb5039d1b63ea124c225852782d80d2d2e80f7a90687019012dc126610b24ab7.json": "fea759123db9ee4b7732b9048e35b58f45f1ad693282e05662cdbc24bf0ba916",
+      "test_newly_available_checkpoin1/olmo_math/.multi-node/leases/616ad2c98599f2d3257df753cc192efb82df687d7ad8554b131f197309de5585.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "test_newly_available_checkpoin1/olmo_math/.multi-node/leases/1916b52b7ef599d9c30d985fd798247dffcb50666a8dc5472324694d8cc6730f.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "test_newly_available_checkpoin1/olmo_math/.multi-node/jobs/616ad2c98599f2d3257df753cc192efb82df687d7ad8554b131f197309de5585.json": "7da0f55273913157c76992a87cb695d69b0b2721623791dc709c530384eeeeb9",
+      "test_newly_available_checkpoin1/olmo_math/.multi-node/jobs/1916b52b7ef599d9c30d985fd798247dffcb50666a8dc5472324694d8cc6730f.json": "cc385029c134c65c7a9bf5f56c75915b7469e68b24259e05a662bea8e1acf457",
+      "test_newly_available_checkpoin1/olmo_math/.multi-node/tasks/616ad2c98599f2d3257df753cc192efb82df687d7ad8554b131f197309de5585.json": "e09079a009f1d8faf2a2858f738c0a6309beea9fb8df6f18beac3e0d3dc0dec8",
+      "test_newly_available_checkpoin1/olmo_math/.multi-node/tasks/1916b52b7ef599d9c30d985fd798247dffcb50666a8dc5472324694d8cc6730f.json": "b735a0d78474f9ad6360678239ee9ddc43387b63e773c1f5b563ee88c5ed23bf",
+      "test_worker_retirement_does_no0/queue/state.json": "faaa5a77cf1fad84f0676e62ea725cee86014e3984bc2d59afc2af3fc54532fe",
+      "test_worker_retirement_does_no0/queue/binding.json": "82069cc5afcd7f15c4ad8e62d94ee30a72c2bf49560baa0db2d34f33af346584",
+      "test_worker_retirement_does_no0/queue/jobs/7e3000061a6684fb9a809604a925a49a9f2a02d061ce4a1512c21fada6421ca4.json": "df1541eecd405c616cfbfba0f2d4fc55c1f17551dfb1787526e0a524a1772ae2",
+      "test_worker_retirement_does_no0/queue/worker-exits/694df57a7909d9f9edbd3acb4ccfce5fbee156fab749383121f17fef16bbab57.json": "07fd7205ed8ea50124a39a495c79fe9335d7f6fb2a1011e1574fad0fb3d79864",
+      "test_worker_retirement_does_no0/queue/tasks/7e3000061a6684fb9a809604a925a49a9f2a02d061ce4a1512c21fada6421ca4.json": "def6c7fa3ef57041148584c1689286d5811f853fd11bca303fad3cc33121938b"
+    },
+    "zip_sha256": "38a2338b1756b43461ab518deecd0c7cf9aebc38faf6be67ae28888cc7e62d46",
+    "actual_optimizer_updates": 0,
+    "H100_verified": false
+  },
+  "raw_evidence_sha256": {
+    "superseded-controller-run.json": "9b10e5cb7f4635eb578a0d06f2252eb6784fdef09e0449da98c26e4ad8bbf222",
+    "archive-verification.json": "9ef8fdf76a55e3446b178754db7dce42101f35caf6f3e95d5ea34279e0690509",
+    "all.xml": "9fde49be7e0604f0cf1a2d7c363e5e00be74f277b369c7b4c2e298f5b30d8b0f",
+    "verified.xml": "f9d5977e53cdcd3ee5a4b7f29ebed3f61f6a07ff811fd5b2b70b8cfc53efa29d",
+    "prepush.xml": "15d77d1ec86acfc8727efe75489de4ff1af8258218762ae33d353022dfe23d87",
+    "exit-coordination.xml": "ece4c821baf103098a947dc2eaea5936cdb545048748402aa808080601daa7ac",
+    "proof.json": "588e91de0c7224ac94a2e7e260c8507f3b7b312589b79a3f80fecacc253bf93c",
+    "node-admission-fixed.xml": "45ce22f83cf50beaba0cdcbf838f086b8734232177284d58fc023a238149f5ee",
+    "merged-prepush.xml": "bf86bacf4e81cd2ae920d695c7f1a2a56315ac0780ac1db4fe001e0e1b31b86a",
+    "cpu-retirement-proof.zip": "38a2338b1756b43461ab518deecd0c7cf9aebc38faf6be67ae28888cc7e62d46",
+    "before.xml": "632507fbd99a0631dcd64a3efd67a176df18d4881e092eaadbdafac8e45e5adc",
+    "targeted.xml": "1fc99b4e85e5ca43c6362656799b64f7fa1530b17c99168dee14d317909d2cb1",
+    "fixture-setup.xml": "137205a2c4d98f7d35efbe60e2a312fb9dba96fc866c610e2d045dc1f6e6032f"
+  }
+}

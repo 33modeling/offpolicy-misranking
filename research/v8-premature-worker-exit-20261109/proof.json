@@ -1,0 +1,58 @@
+{
+  "scope": "CPU metadata and sentinel only; synthetic -11 record, no native/GPU crash or model training in these fixtures",
+  "source_commit": "e00a16d7b809fcf243f96bf55d8500b15505c282",
+  "races": [
+    {
+      "folder": "test_newly_available_checkpoin0",
+      "kind": "train",
+      "healthy_claims": 1,
+      "past_bad_attempts": 9
+    },
+    {
+      "folder": "test_newly_available_checkpoin1",
+      "kind": "evaluate",
+      "healthy_claims": 1,
+      "past_bad_attempts": 9
+    }
+  ],
+  "files": {
+    "test_newly_available_checkpoin0/.v8-dispatch.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "test_newly_available_checkpoin0/olmo_math/checkpoint.pt": "b8be93e85d3de62662b31e84486db380ab949605386c7ee63757ed2e777aacb7",
+    "test_newly_available_checkpoin0/olmo_math/.multi-node/control.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "test_newly_available_checkpoin0/olmo_math/.multi-node/state.json": "2ea8c79078178106fba791145efe2e4e987e6c10e01f90e5384fa37e6259abeb",
+    "test_newly_available_checkpoin0/olmo_math/.multi-node/binding.json": "d3e908c6813844a99c540ce0c3dab920c1f23133fe3d87295d304c29433d9bc3",
+    "test_newly_available_checkpoin0/olmo_math/.multi-node/workers/bb5039d1b63ea124c225852782d80d2d2e80f7a90687019012dc126610b24ab7.json": "34119c9be9c91d47490a9f01b569c0e3e3cb79155ca58f074407dce5ffec6280",
+    "test_newly_available_checkpoin0/olmo_math/.multi-node/leases/616ad2c98599f2d3257df753cc192efb82df687d7ad8554b131f197309de5585.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "test_newly_available_checkpoin0/olmo_math/.multi-node/leases/ee2c6de3404ed0617c34148614685a2ca3980f0d242c404e65c26616317eb896.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "test_newly_available_checkpoin0/olmo_math/.multi-node/plans/train.json": "4adc4b945a1a315f501bca2c360e161ba17886a54ff4bc89eec6a6b435a0785d",
+    "test_newly_available_checkpoin0/olmo_math/.multi-node/jobs/ee2c6de3404ed0617c34148614685a2ca3980f0d242c404e65c26616317eb896.json": "2c35667b46ade68e2953758b456b452905edb75caa7180e0855e7f6a91b852d5",
+    "test_newly_available_checkpoin0/olmo_math/.multi-node/jobs/616ad2c98599f2d3257df753cc192efb82df687d7ad8554b131f197309de5585.json": "7da0f55273913157c76992a87cb695d69b0b2721623791dc709c530384eeeeb9",
+    "test_newly_available_checkpoin0/olmo_math/.multi-node/tasks/ee2c6de3404ed0617c34148614685a2ca3980f0d242c404e65c26616317eb896.json": "012888e0d56783fa5769ce947628ee0d314b104119ac49d99c6fbe0d27735f71",
+    "test_newly_available_checkpoin0/olmo_math/.multi-node/tasks/616ad2c98599f2d3257df753cc192efb82df687d7ad8554b131f197309de5585.json": "e09079a009f1d8faf2a2858f738c0a6309beea9fb8df6f18beac3e0d3dc0dec8",
+    "test_unreadable_exit_diagnosti0/queue/state.json": "faaa5a77cf1fad84f0676e62ea725cee86014e3984bc2d59afc2af3fc54532fe",
+    "test_unreadable_exit_diagnosti0/queue/binding.json": "82069cc5afcd7f15c4ad8e62d94ee30a72c2bf49560baa0db2d34f33af346584",
+    "test_unreadable_exit_diagnosti0/queue/jobs/broken.json": "2f6af8e37fc05d859a7b9931e41f5a1377e3e4d62e1bc1fdbce56873c9aabb55",
+    "test_unreadable_exit_diagnosti0/queue/worker-exits/694df57a7909d9f9edbd3acb4ccfce5fbee156fab749383121f17fef16bbab57.json": "8098732767c03a2326b23498ad78b044b778c6e97065ef7c4bf97f0255f607b9",
+    "test_newly_available_checkpoin1/.v8-dispatch.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "test_newly_available_checkpoin1/olmo_math/checkpoint.pt": "b8be93e85d3de62662b31e84486db380ab949605386c7ee63757ed2e777aacb7",
+    "test_newly_available_checkpoin1/olmo_math/.multi-node/budget-rule.json": "0284800fb34453e0f0f1c4a43dcf69974009d4b0a7b363a7d973bc3079d20ef2",
+    "test_newly_available_checkpoin1/olmo_math/.multi-node/control.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "test_newly_available_checkpoin1/olmo_math/.multi-node/state.json": "17110941526f88f7f9fa73720f21d6b656d36f626061ad16b0d1af580d74d2d4",
+    "test_newly_available_checkpoin1/olmo_math/.multi-node/binding.json": "d3e908c6813844a99c540ce0c3dab920c1f23133fe3d87295d304c29433d9bc3",
+    "test_newly_available_checkpoin1/olmo_math/.multi-node/workers/bb5039d1b63ea124c225852782d80d2d2e80f7a90687019012dc126610b24ab7.json": "fea759123db9ee4b7732b9048e35b58f45f1ad693282e05662cdbc24bf0ba916",
+    "test_newly_available_checkpoin1/olmo_math/.multi-node/leases/616ad2c98599f2d3257df753cc192efb82df687d7ad8554b131f197309de5585.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "test_newly_available_checkpoin1/olmo_math/.multi-node/leases/1916b52b7ef599d9c30d985fd798247dffcb50666a8dc5472324694d8cc6730f.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "test_newly_available_checkpoin1/olmo_math/.multi-node/jobs/616ad2c98599f2d3257df753cc192efb82df687d7ad8554b131f197309de5585.json": "7da0f55273913157c76992a87cb695d69b0b2721623791dc709c530384eeeeb9",
+    "test_newly_available_checkpoin1/olmo_math/.multi-node/jobs/1916b52b7ef599d9c30d985fd798247dffcb50666a8dc5472324694d8cc6730f.json": "cc385029c134c65c7a9bf5f56c75915b7469e68b24259e05a662bea8e1acf457",
+    "test_newly_available_checkpoin1/olmo_math/.multi-node/tasks/616ad2c98599f2d3257df753cc192efb82df687d7ad8554b131f197309de5585.json": "e09079a009f1d8faf2a2858f738c0a6309beea9fb8df6f18beac3e0d3dc0dec8",
+    "test_newly_available_checkpoin1/olmo_math/.multi-node/tasks/1916b52b7ef599d9c30d985fd798247dffcb50666a8dc5472324694d8cc6730f.json": "b735a0d78474f9ad6360678239ee9ddc43387b63e773c1f5b563ee88c5ed23bf",
+    "test_worker_retirement_does_no0/queue/state.json": "faaa5a77cf1fad84f0676e62ea725cee86014e3984bc2d59afc2af3fc54532fe",
+    "test_worker_retirement_does_no0/queue/binding.json": "82069cc5afcd7f15c4ad8e62d94ee30a72c2bf49560baa0db2d34f33af346584",
+    "test_worker_retirement_does_no0/queue/jobs/7e3000061a6684fb9a809604a925a49a9f2a02d061ce4a1512c21fada6421ca4.json": "df1541eecd405c616cfbfba0f2d4fc55c1f17551dfb1787526e0a524a1772ae2",
+    "test_worker_retirement_does_no0/queue/worker-exits/694df57a7909d9f9edbd3acb4ccfce5fbee156fab749383121f17fef16bbab57.json": "07fd7205ed8ea50124a39a495c79fe9335d7f6fb2a1011e1574fad0fb3d79864",
+    "test_worker_retirement_does_no0/queue/tasks/7e3000061a6684fb9a809604a925a49a9f2a02d061ce4a1512c21fada6421ca4.json": "def6c7fa3ef57041148584c1689286d5811f853fd11bca303fad3cc33121938b"
+  },
+  "zip_sha256": "38a2338b1756b43461ab518deecd0c7cf9aebc38faf6be67ae28888cc7e62d46",
+  "actual_optimizer_updates": 0,
+  "H100_verified": false
+}

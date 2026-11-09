@@ -14232,6 +14232,66 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "e1a39c94d21fb9de879dd7166acb9266c7cd307f",
+      "at": "2026-11-09T15:49:43+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Verify concurrent status integration without changing tested dispatcher",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/e1a39c94d21fb9de879dd7166acb9266c7cd307f",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "2872006316543ddc9c821e5726c7ac67c935ed46",
+      "at": "2026-11-09T22:10:06+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Recheck ready checkpoints before retiring workers and classify exits",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/2872006316543ddc9c821e5726c7ac67c935ed46",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "242c4aa133406f6bf3068d679febd48b18f6a78f",
+      "at": "2026-11-09T15:54:03+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: eval cell shows the update being evaluated (▶275)",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/242c4aa133406f6bf3068d679febd48b18f6a78f",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "a960fbe87fdf0b4de66e88d92d5d8c9a73083f86",
+      "at": "2026-11-09T16:05:09+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: training and extension cells show the current update (▶120)",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/a960fbe87fdf0b4de66e88d92d5d8c9a73083f86",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "5805be03fcdc748a5721331bc9e3b433a8dd7b1d",
+      "at": "2026-11-09T22:10:41+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve current update display with retirement revalidation",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/5805be03fcdc748a5721331bc9e3b433a8dd7b1d",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "e00a16d7b809fcf243f96bf55d8500b15505c282",
+      "at": "2026-11-09T22:13:43+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Keep node admission failures excluded during final readiness checks",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/e00a16d7b809fcf243f96bf55d8500b15505c282",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

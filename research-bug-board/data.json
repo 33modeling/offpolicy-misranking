@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-09T15:49:42+09:00",
+  "recorded_at": "2026-11-09T22:20:14+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "33a356d37cc5013827efc68a1733265555a939d8",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/33a356d37cc5013827efc68a1733265555a939d8",
-    "all_available_commits": 1352,
+    "source_commit": "e00a16d7b809fcf243f96bf55d8500b15505c282",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/e00a16d7b809fcf243f96bf55d8500b15505c282",
+    "all_available_commits": 1358,
     "fix_commit_records": 144,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
@@ -42,7 +42,7 @@
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hang-fix-20261108:f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:33a356d37cc5013827efc68a1733265555a939d8",
+      "refs/heads/master:e00a16d7b809fcf243f96bf55d8500b15505c282",
       "refs/heads/v8-coord-fixes-20261108:377c256e55f80c64b484d82ef812064ed9e7c8a3",
       "refs/heads/v8-modes:6821c9c09292662008eb4f933c74bae7490358ed",
       "refs/heads/v8-nodes:3adf26925b2b1c1bf572cf0e68f75b26bbae3ddc",
@@ -55,7 +55,7 @@
       "refs/heads/v8-status-clean:2f6994f544c150e58e2e3d7f43e6e67c16ae442e",
       "refs/heads/v8-status-cohorts:8635a5dab4b6a77620a2628799718781317d4687",
       "refs/heads/v8-status-counts:212a09963ac6d926b9fb20d95c6f19d28d5c87f7",
-      "refs/heads/v8-status-exteval:6e17ae96878ae05fa27e0c17cd45c2ce974f0796",
+      "refs/heads/v8-status-exteval:a960fbe87fdf0b4de66e88d92d5d8c9a73083f86",
       "refs/heads/v8-status-grid:e902db8a5e5a317c9aa5c26fdd9294f3a1f50c03",
       "refs/heads/v8-status-layout:616a1e3a5ba03620144c98f7370165e0107c4a63",
       "refs/heads/v8-status-lease:f418288156a4633f243691417f1e453be9bf8c0c",
@@ -81,7 +81,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:6e17ae96878ae05fa27e0c17cd45c2ce974f0796"
+      "refs/remotes/origin/master:e00a16d7b809fcf243f96bf55d8500b15505c282"
     ]
   },
   "incidents": [
@@ -9204,6 +9204,15 @@
           "text": "원격6e17ae9의 진척률 표시 변경을 덮지 않고 병합했다. 458개 전체 검사 때의 scheduler/actor/dispatcher SHA는 그대로이며, 병합 후 모든 status 및 실패종료/기존 eval 회귀66개가 통과했다. 두 검사수를 더해 독립 검사수처럼 보고하지 않는다.",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/33a356d37cc5013827efc68a1733265555a939d8",
           "evidence_kind": "code_test"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "premature_exit_correction",
+          "status": "code_fixed",
+          "text": "V21의 오류 대기 종료가 마지막 스캔의 no-work 관찰을 그대로 사용했다. 다른 노드가 그 직후 checkpoint를 게시하면 정상 학습/eval을 실행하지 않고 worker를 종료할 수 있었다. V22는 종료 전에 원래 planner/ready/done을 다시 확인해 준비된 작업을 복구하며 대기 종료와 실제 작업 크래시를 분리해 기록한다. 기존 실패 상한·SIGSEGV 차단·원래 checkpoint는 보존한다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/5805be03fcdc748a5721331bc9e3b433a8dd7b1d",
+          "evidence_kind": "code_test"
         }
       ],
       "first_reported": "2026-11-09",
@@ -9282,6 +9291,126 @@
       "first_reported": "2026-11-09",
       "severity": "high",
       "attribution": "Codex가 이전 수정의 남은 결함을 재현·수정했다. user가 이미 알려준 torchrun launcher exit -11을 다시 요청한 것은 불필요했다. 실제 H100 native crash 원인은 미확인이다."
+    },
+    {
+      "id": "V8-139",
+      "title": "마지막 대기 검사 직후 checkpoint가 준비돼도 정상 worker를 실패 종료",
+      "area": "V8 worker 종료 직전 배정 재검사 / 종료 원인 구분",
+      "severity": "high",
+      "first_reported": "2026-11-09",
+      "introduction_commit": "bd196c57f2a27b6ca77aa4f81dbbeed4a573f99c",
+      "cause": "V21은 모든 cohort의 실패 종료와 hidden-failure 대기 종료 때 마지막 task scan 결과를 재사용했다. no-work 검사 직후 다른 노드의 부모/평가 checkpoint가 준비돼도 원래 planner/ready를 다시 검사하지 않아 정상 작업을 놓칠 수 있었다. 또한 worker exit1에는 현재 모델 fault와 과거 다른 worker의 실패 수를 분리한 요약이 없었다.",
+      "impact": "정상 학습/eval이 실행 가능한데 worker가 비정상 종료한 것처럼 보이거나 실제로 일찍 종료될 수 있었다. 실제 원격의 반복 native -11 자체가 이 문제 때문이라는 증거는 없다.",
+      "attribution": "이 종료 조건을 추가한 Codex의 결함이다. 사용자 실제 H100의 native 오류 원인은 아직 미확인이다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "V22 종료 직전 원래 task 재발견 및 종료 사유 구분",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/5805be03fcdc748a5721331bc9e3b433a8dd7b1d"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-09",
+          "actor": "user",
+          "type": "reported",
+          "status": "open",
+          "text": "뭔가 아직도 비정상적인 종료가 너무 많이 됨",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "reproduced",
+          "status": "open",
+          "text": "첫 ready 검사 직후 다른 노드의 checkpoint가 게시되는 동일 interleaving을 CPU fixture로 고정했다. 이전 source는 train 전체 실패 경로와 hidden-failure eval 경로 모두 healthy를 한 번도 실행하지 않고 종료했다. before.xml의2실패를 보존했다. fixture-setup.xml의초기2경로설정 오류도 보존했다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/5805be03fcdc748a5721331bc9e3b433a8dd7b1d"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "종료 직전 원래 tick/planner/ready/done을 자기 cohort control lock 아래 재검사하고 새 offer나 phase 진전이 있으면 종료하지 않는다. claim은 여전히 별도 기존 dispatch gate에서 한다. 입력/identity 실패를 지우지 않으며 최종 잠금 대기는 유한하게 둔다. worker-exits와 콘솔에 blocked_work, 이번 worker의 native crash/OOM/timeout/task error, 이전 worker 실패 수와 전체 누적 수를 분리한다. 실패 exit코드를0으로 바꾸거나 task를 완료로 처리하지 않는다. 잘못된 진단 JSON도 원래 실패를 가리지 않게 한다. 30개 집중 검사와 원격의 최신 update 표시를 보존한60개 통합 검사가 통과했다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/5805be03fcdc748a5721331bc9e3b433a8dd7b1d"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "remote_verification_pending",
+          "status": "remote_verification_pending",
+          "text": "H100 computer is not connected. The reported native SIGSEGV root cause, current count of fresh model crashes vs blocked dispatcher exits, accuracy and throughput are unmeasured. Revalidating retirement does not repair a CUDA/native library fault. Original model/data/seed/checkpoint/reward/runtime sources remain unchanged.",
+          "evidence_kind": "limitation",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/5805be03fcdc748a5721331bc9e3b433a8dd7b1d"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "regression_verified",
+          "status": "code_fixed",
+          "text": "최종462 CPU 검사0실패/0skip. 새 checkpoint의 train/eval이 각각1회 배정되고 과거 실패9회가 그대로 유지됨을 원문35파일 zip으로 보존했다. 현재 worker의합성 native fault1·done1과 이전 worker 실패9회를 분리한 검사도 통과했다. 46 coordinator/7 runner 모든 archive payload 및 원본30 trainer SHA를 확인했다. 처음 발견한 node-local 재투입 실패 및 이전 함수를 import한 중단 검사의 capture를 숨기지 않았다. 실제 H100 native 오류 검증을 의미하지 않는다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/e00a16d7b809fcf243f96bf55d8500b15505c282",
+          "evidence_kind": "code_test_and_limitation"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "remote_verification_pending",
+          "status": "remote_verification_pending",
+          "text": "실제 H100의 반복 종료 원인이 이 경쟁 조건인지, native -11 자체의 원인이 무엇인지는 미확인이다. 이전 -11 보고는 유지하며 최신 WORKER EXIT/RANK FAILURE 원문을 요청했다. 진단을 위해 과거 오류를 지우거나 미완성 실험을 성공 처리하지 않았다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/e00a16d7b809fcf243f96bf55d8500b15505c282",
+          "evidence_kind": "limitation"
+        }
+      ]
+    },
+    {
+      "id": "V8-140",
+      "title": "V22 종료 재검사가 node-local admission 실패로 제외한 worker를 다시 투입",
+      "area": "V8 종료 재검사 경계 / node-local fault 격리",
+      "severity": "high",
+      "first_reported": "2026-11-09",
+      "introduction_commit": "2872006316543ddc9c821e5726c7ac67c935ed46",
+      "cause": "종료 재검사가 initialized였던 모든 cohort를 재검사하면서 node-local give_up으로 제외한 cohort까지 새 ready offer로 복구했다. queue의 복구 가능한 task 실패와 로컬 admission/actor/legacy extension defer를 구분하지 않았다.",
+      "impact": "손상된 node의 반복 admission 오류·불필요한 실행 또는 다른 node의 출력 완료를 자기 성공으로 반환할 수 있었다. 구형 primary barrier의 extension deferred도 제어 루프가 반복될 수 있었다. 이번 CPU 회귀 검사에서 발견한 새 경계 결함이며 사용자 실제 H100 native -11 원인이라고 주장하지 않는다.",
+      "attribution": "Codex가 이번 종료 재검사에서 추가한 회귀다. 발견 직후e00a16d로 원격 수정했다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "shared task failure와 node-local 제외 구분",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/e00a16d7b809fcf243f96bf55d8500b15505c282"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "reproduced",
+          "status": "open",
+          "text": "exit-coordination.xml에서 admission 제어 검사1실패/actor_exit1통과. 잘못된 node가 반복 재투입되고 다른 healthy node가 완료한 뒤0을 반환했다. 첫 전체 검사는 이전 함수를 import한 상태에서 구형 extension defer 반복에 머물렀으며 own CPU pytest만 종료하고 capture tail을 superseded-controller-run.json에 보존했다. 실제 모델/GPU가 아니다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/e00a16d7b809fcf243f96bf55d8500b15505c282"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "종료 재검사는 현재 initialized이면서 terminal이면 shared_failures에 속한 cohort만 복구한다. 로컬 node/입력/actor/extension-defer give_up은 재투입하지 않는다. 원래 node-local fault의 공유 큐 보존과 다른 healthy node의 계속 실행을 검사해16개가 통과했다. 원고·engine·입력·checkpoint·실패 이력은 보존한다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/e00a16d7b809fcf243f96bf55d8500b15505c282"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "regression_verified",
+          "status": "code_fixed",
+          "text": "최종462 CPU 검사0실패/0skip. 새 checkpoint의 train/eval이 각각1회 배정되고 과거 실패9회가 그대로 유지됨을 원문35파일 zip으로 보존했다. 현재 worker의합성 native fault1·done1과 이전 worker 실패9회를 분리한 검사도 통과했다. 46 coordinator/7 runner 모든 archive payload 및 원본30 trainer SHA를 확인했다. 처음 발견한 node-local 재투입 실패 및 이전 함수를 import한 중단 검사의 capture를 숨기지 않았다. 실제 H100 native 오류 검증을 의미하지 않는다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/e00a16d7b809fcf243f96bf55d8500b15505c282",
+          "evidence_kind": "code_test_and_limitation"
+        }
+      ]
     }
   ],
   "retention": "항목·수정·실패·기존 이벤트를 삭제하지 않는다. 정정은 새 이벤트로 추가한다.",
