@@ -1,0 +1,203 @@
+{
+  "base_commit": "e43d02a601cf598e44e64e4f62a31821d1dcab6b",
+  "verified_code_commit": "d18102ce9d7e2eec660c92a74277e70c7033014b",
+  "user_reports": [
+    "야 에러 fail 나는거 왜 무한 재시도 하면서 노드 잡고 에러 나게 하냐",
+    "아까 말한거 torchrun 왜 no limit 뜨냐고",
+    "병신 새끼야 내가 언제 무제한으로 하라고 했어",
+    "좆 같은 새끼야 빨리 고쳐"
+  ],
+  "correction": "즉시 재시작 요청을 무제한 재시도 승인으로 해석한 것은 Codex의 잘못이다. V8-124 귀속을 삭제하지 않고 정정 사건을 추가했다.",
+  "hypothesis": "작업 오류를 누적2회로 제한하고 과거 retry_epoch 환급을 없애면 같은 torchrun 오류가 새 노드를 계속 점유하지 않으며 독립적인 준비된 ext/eval은 계속 배정된다.",
+  "controls": {
+    "models": "none in synthetic fault/concurrency proof; original CPU runner coverage in regression",
+    "data": "CPU synthetic task identities and checkpoint sentinel",
+    "seeds": [
+      5
+    ],
+    "horizon_metadata": 275,
+    "actual_optimizer_updates": 0,
+    "workers": 12,
+    "task_fault": "synthetic return -11; no actual native crash",
+    "unchanged": "original numerical trainer30 files, inputs, model/data identities, checkpoint/output validators, live leases and native execution locks"
+  },
+  "policy": {
+    "name": "bounded-task-recovery-v20",
+    "default_lifetime_failures": 2,
+    "allowed_retry_after_first_fault": 1,
+    "retry_delay_seconds": 0,
+    "legacy_zero_means": 2,
+    "unlimited_supported": false,
+    "node_or_policy_join_refunds": false,
+    "genuine_interruptions_counted": false,
+    "explicit_positive_custom_cap_supported": true
+  },
+  "measured_software_values": {
+    "bad_attempts": 2,
+    "bad_state": "failed",
+    "healthy_attempts": 1,
+    "healthy_state": "done",
+    "replacement_node_extra_attempts": 0,
+    "checkpoint_sentinel_preserved": true,
+    "independent_ext_eval_claim_test_pass": true,
+    "stale_offer_budget_test_pass": true
+  },
+  "scientific_measurements": {
+    "H100_verified": false,
+    "actual_accuracy": null,
+    "actual_memory": null,
+    "actual_throughput": null,
+    "remote_rank_error_cause": null,
+    "reason": "H100 is on another computer and is not connected; CPU tests are not remote measurements"
+  },
+  "checkpoints_and_intermediate_rewards": "Synthetic diagnostic performs zero optimizer updates and stores only a sentinel. No scientific reward curve is claimed. Original experiment checkpoint/reward retention and source30 SHA remain unchanged; regression includes original CPU runner lifecycle.",
+  "retained_failures": "before.xml:6 failed old-source reproductions. targeted-compatibility.xml:1 failed/24 passed (old cooldown fixture already had2 failures under new cap2). all-compatibility.xml:2 failed/443 passed (same fixture plus legacy wording). Updated test uses explicit cap3 only to test cooldown below its cap, and asserts lifetime wording. Final448 passed with no source edits after d18102c.",
+  "evidence": {
+    "all-compatibility.xml": {
+      "tests": 445,
+      "failures": 2,
+      "errors": 0,
+      "skipped": 0
+    },
+    "all.xml": {
+      "tests": 448,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "targeted-compatibility.xml": {
+      "tests": 25,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0
+    },
+    "before.xml": {
+      "tests": 6,
+      "failures": 6,
+      "errors": 0,
+      "skipped": 0
+    },
+    "targeted.xml": {
+      "tests": 15,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "targeted-final.xml": {
+      "tests": 25,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "source_files_sha256": {
+    "scripts/srgc_v8_nodes.py": "f0320c149f96886d229752e160fdd8ecf205f20ed61f36ffc756a9d9e8959b7c",
+    "scripts/v8_status.py": "fffde3e8b66cae3c8e749d78dbb0f20f3a6aea9cbf2e404cde29bf7426974206",
+    "scripts/v8_dispatch.py": "cf1952639c6ed043b6803997d50b684b41856c183a04d2796fa09178bc32d6b7",
+    "scripts/v8_runtime_worker.py": "92157d9499f71ad68fa670bde39b5525a3be368f44a90e79e063dc4367b212b9"
+  },
+  "frozen_trainer_sha256": {
+    "srgc_rebuttal/__init__.py": "daff68712fd7115469febaaad3c782d020ad450bce6e0f883a0259cadd3a258f",
+    "srgc_rebuttal/admission.py": "befe3a6514875e24a23979b795602b281ef2ea2a9abadb01e19c9977cd7b8024",
+    "srgc_rebuttal/build_cache.py": "91a3776141b2d83eca30dc45ecc1df964b24d43d1f8baa26b8e569e80894672e",
+    "srgc_rebuttal/build_inputs.py": "59a8f3ba3f023a475fb600cc75b2ad5a26eca59c9de611adc2bf89096eef11c9",
+    "srgc_rebuttal/cluster.py": "0aa3a50fb18170a5ee4ca00f36a641ab5e3ac9c5c395cd691324c59e8387d142",
+    "srgc_rebuttal/cluster_queue.py": "960bc8a63c4ecdc3e2ae40131faf637f6e0e4af006007ef4577fe4dcc065153f",
+    "srgc_rebuttal/code_assertions.py": "51b4a2fd02664d0f02b4f154cf18172cc654931404a45515e3423da14f666e76",
+    "srgc_rebuttal/code_check.py": "38f708dcec041d9e2434c52a9b947284938acc3216fd06e99f0f9cd5b606450b",
+    "srgc_rebuttal/cost_ledger.py": "2b878384943e5e24c912884a20b71d31bca0b45e280e666d5caf81147222f5e7",
+    "srgc_rebuttal/cost_report.py": "53ceba5a2753391f46331fbedaf26e210b0d33027ddb4237bbdbf0d07bc60521",
+    "srgc_rebuttal/distributed.py": "222fd71362b442ed6c63afb3c4a2937add9ef7130be010d7b093277c2a21e265",
+    "srgc_rebuttal/existing_runtime.py": "a1702f2907da3decf7f7356fd1c68c933442a460d1fc8360ef1d2dbdcb37c7f4",
+    "srgc_rebuttal/import_pair_inputs.py": "7b5332bdba9476b86d2cbf42fb997a3b865d5547b5fc3ac6575704e8d549429f",
+    "srgc_rebuttal/objectives.py": "1e686c118c79ab5b51c7d6973ae897aaf2bfdde0824470937ef7c30e18293ba4",
+    "srgc_rebuttal/plan.py": "643ed49f1ad74297cfecec8f453a9cf3e737260b960479e6e116e48c9377dc3e",
+    "srgc_rebuttal/plan_dataset.py": "468af80b4f59e9b7f2683eaa724f308fc91872bb1918e65e127e557ee6e992b2",
+    "srgc_rebuttal/prepare_inputs.py": "71f6a8e0f1cc6df586df8bd4bd234b413a5945895d3cdf3ae0446fd9763230e1",
+    "srgc_rebuttal/prepare_rebuttal.py": "f0978d96f418bfd90fd3cd291b977b61f50b6a14d30d876e489fc65ed3073cba",
+    "srgc_rebuttal/progress.py": "d3202b65e9eb53557fb45b6b54f1cce0ae50d196486bd5bc11d0de2e8e19440f",
+    "srgc_rebuttal/reports.py": "97317b77c9f57536a34d421a70d6c57a714ad4184630253f6c41297cf21194bf",
+    "srgc_rebuttal/run_demo.py": "0f69daf7c1f255f1690b5354e40fb56a2a20bc6a11ef39a6666207392697bd7e",
+    "srgc_rebuttal/run_experiment.py": "9f2dc57536fdb5f6f5a7f5016129a6814120089bf8135431d1f8bd4da804e885",
+    "srgc_rebuttal/runtime.py": "518d37beb7c733e1497599bfe0f9131cd1caf7e9cfdea887f20060291f335e10",
+    "srgc_rebuttal/srgc.py": "d2dc8e3b83df63139f06f97574009e03b1f6bf26f47c3013dedf98e1076516e7",
+    "srgc_rebuttal/summarize.py": "0d7179717ede53de7ccebaf9f5e691bd4ea8eb954a5cd8c0803bf077bba31c49",
+    "srgc_rebuttal/timing.py": "82e53cc63751177188fa6da4abdca6dc0567f4ac27524488c643ff863b08efa5",
+    "srgc_rebuttal/torch_backend.py": "94a8d2d98b6312ee584c32674dbfc194a9e95e714b484a5a64b84b3e78631e11",
+    "srgc_rebuttal/torch_state.py": "eda68cecdd6ed5f5312a7b5f5a026d14d86db4f9f329aaf45a825a867c72e2d6",
+    "srgc_rebuttal/toy_backend.py": "159a6b72e8923620469600d3acb09bf36fb2eb629cdbee0ca6058a0cfba08272",
+    "srgc_rebuttal/verifiers.py": "5062befe4ed5a8e21f6de01a73dca4f1d3544dd033c5d2c846bff391d1148a90"
+  },
+  "archive": {
+    "through": "d18102ce9d7e2eec660c92a74277e70c7033014b",
+    "coordinators": 42,
+    "runners": 7,
+    "files": 456,
+    "sha256": "5b377566707a1d851b5cb0b258a7d4c4981a17e77f0d066b0a9782032e3128fb",
+    "all_payload_sha256_pass": true,
+    "original_trainer_files_unchanged": 30
+  },
+  "proof": {
+    "source_commit": "d18102ce9d7e2eec660c92a74277e70c7033014b",
+    "scope": "CPU synthetic scheduling only; no H100/model/paid API",
+    "workers": 12,
+    "bad_fault": "synthetic rc -11, not an actual native crash",
+    "bad_attempts": 2,
+    "bad_state": "failed",
+    "healthy_attempts": 1,
+    "healthy_state": "done",
+    "new_node_did_not_refund": true,
+    "checkpoint_sha256": "d0d9144e6de913ca891fcc3e1449a4f3fbbb1ea30d198f6ff4dad25882d05679",
+    "files": {
+      "bounded-proof.json": "ad3d06cd03b1b5da309a883548ffbd9c3cc261d9601d17f6299eeca215953eba",
+      "node-6.rc": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+      "node-11.rc": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+      "node-2.rc": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+      "node-3.rc": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+      "node-5.rc": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+      "node-0.rc": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+      "node-8.rc": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+      "node-1.rc": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+      "node-4.rc": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+      "node-7.rc": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+      "node-10.rc": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+      "node-9.rc": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+      "done-healthy": "80618360afdab2df28295315fa69b6540b246e065fc9f7a3ca76ad0d8331330f",
+      "checkpoint.pt": "d0d9144e6de913ca891fcc3e1449a4f3fbbb1ea30d198f6ff4dad25882d05679",
+      ".multi-node/state.json": "33b3d2408890ae64a19ddcc5d2d6c9c1b42a56e1796e651c27d5231bc6423c81",
+      ".multi-node/control.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      ".multi-node/binding.json": "82069cc5afcd7f15c4ad8e62d94ee30a72c2bf49560baa0db2d34f33af346584",
+      ".multi-node/leases/ee2c6de3404ed0617c34148614685a2ca3980f0d242c404e65c26616317eb896.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      ".multi-node/leases/616ad2c98599f2d3257df753cc192efb82df687d7ad8554b131f197309de5585.lock": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      ".multi-node/jobs/616ad2c98599f2d3257df753cc192efb82df687d7ad8554b131f197309de5585.json": "2141499cd3a53c5a03cd6ddce9e2f151b38e50e28658caff36b8ffaf98955fec",
+      ".multi-node/jobs/ee2c6de3404ed0617c34148614685a2ca3980f0d242c404e65c26616317eb896.json": "9ed537060faebcfcfc97ff4983d8faf6a2683ca3ce3268b0d8649eb1d9a6282d",
+      ".multi-node/tasks/ee2c6de3404ed0617c34148614685a2ca3980f0d242c404e65c26616317eb896.json": "a81de0ab92ef7ff0522d27a44d7525ac2c2be59e7101f150739308cf3987400d",
+      ".multi-node/tasks/616ad2c98599f2d3257df753cc192efb82df687d7ad8554b131f197309de5585.json": "af65e25800977236e957814d0dbeebe82c6e5d735d88d74a382e9c5406ec7b56",
+      ".multi-node/plans/train.json": "a2828df7267fd2edefd9f4657e3a066426b4fc6767c152e28fdea32c13d13d6f",
+      ".multi-node/workers/60f81909e946ce711ebf12d52e2040fb451a9fb0de8599a3a6bdada29769b542.json": "32a3c25f5d3f9afd9d025ba320f4082702d476cb6a2ae123d34ad106e5576050",
+      ".multi-node/workers/90ff6fb3780c2a4ee9ec27dfdca70e35c3112001712f18c3491c53914242004b.json": "007b4999d31d44e415d2b7906f73c6ddb05ed83cc435afaa0920cc7700458fdb",
+      ".multi-node/workers/61651c4ec3b54cca6b522fdb76054758b7f9bcbb134ad4e09e3f6254d67b8cde.json": "3c7f3224e0797ed3d501619c1de95ce28c25d77206351f0ac044c1306912e351",
+      ".multi-node/workers/0225ae9e6be2197cc6f6a45a5b7ebc473f83422d6bfcadeb478659daf0474ffd.json": "0341a44de56bd3069220295f07e9d642ee216c758c8a58d1caab02a4f7ea62fb",
+      ".multi-node/workers/99003348269e7aff32f4265e252ecfd06a4870e99a5a6ab10ef61000b975d330.json": "e160246565353db5db72563772c2a6768a181fcea063dceb69af9e2b3d68cee2",
+      ".multi-node/workers/332ac78c8bea6e843f3ee13ed1d7e8c54c3c5acdc9e155e47adedc183ef62c31.json": "cc42585e6a5b8cd3df64b46ce2b0c01d63c3960048627debab694a758ef85e18",
+      ".multi-node/workers/fe72ac83f063f394ce8841c8feadedb5b790215d25ef800014c36a23cea1bfd7.json": "ca06fcc8eb573dd3a52b3c3ac3437f07307f464e13daa886abec017d643757ac",
+      ".multi-node/workers/b845cc499bfda68a6a381be28503c826ae6ad5705bf0053f2af73b661b81935b.json": "8015a4bde8ed89144ab4817bd975568078a7f9082a93c411f9a0ab9408b0cf01",
+      ".multi-node/workers/cc077d6a32f9f6ac5dce37011ecdc870e4dd420377907ab48e66be71ca0dc3af.json": "eaadd998a1df7252f4563ef625700df7d6bf62387bc93abc184602b0a9d08c12",
+      ".multi-node/workers/b5c65c8aae1b4b3dcb95a87a9aa8bfdfc7b763b0946a953dd36c192feaae2649.json": "25b4c6769866aed557d20ded38e5211fff0ba12c544c4294521fbcab1c22226c",
+      ".multi-node/workers/86863666ea7b3b92800c1cade4d439f97b8828ab1645439b23aaeb8d115fc256.json": "a2ff626715b70200812811d3bd799d789d2c18c32239ad7d0255111051180a20",
+      ".multi-node/workers/788b4a088d64ada1622ddc629dfacc5b16f485d87cb5d4cf905fb8c70828f1ba.json": "9873697e77249347481f57bd7175222ecf85da8ca4ccec52c9127d16834ba0c6"
+    },
+    "zip_sha256": "bffc97260f0dd92c782bbdc02a5f673aab8b513bca7c887661557a1d8c9fc3cd"
+  },
+  "raw_evidence_sha256": {
+    "cpu-bounded-proof.zip": "bffc97260f0dd92c782bbdc02a5f673aab8b513bca7c887661557a1d8c9fc3cd",
+    "archive-verification.json": "cd8f7c54aac85580a3d1045d7ef04a496f5e40f042befd140903989d99b9519d",
+    "all-compatibility.xml": "78b659904ae60785a2661b8c3499b01dd6e5b46bf07a9c71e42c6a3dca759f67",
+    "all.xml": "56d8b485d4140702677ec2c8fde70ff5dc8a1a62bcb0d783b65053eda823262c",
+    "proof.json": "4a95a8172d00bc1a45a8c03d292e2095ce7b29f68ca08a122fffe13f062d16c4",
+    "targeted-compatibility.xml": "cce42462e7e7225abdff7eec56979489f7297193e98c4a9b19d4618e83073e27",
+    "before.xml": "0619403904735b60c5d856cc21cfe93ab5d90836bf2179c05f1a81d36b6fd821",
+    "targeted.xml": "ba2c99cece5cf9ad914e8ac907bbfd7481f18ad3c7dc5e55d06e25006227952b",
+    "targeted-final.xml": "8f067345074c0b842b91e59e4fdad1ee4ed5689c3050aab71129ff5dcb89d96a"
+  }
+}

@@ -159,7 +159,7 @@ def test_failed_task_is_retried_only_within_max_attempts_and_after_delay(tmp_pat
     assert nodes.worker_loop(pool,runtime,'n',threading.Event(),poll=.002,retry=True,retry_delay=0,max_attempts=2)==1
     job=next(nodes.read(p) for p in queue.glob('jobs/*.json') if nodes.read(p)['task']['run_id']=='branch0')
     assert [a['outcome'] for a in job['attempts']]==['failed','failed']
-    assert 'at most 2 failures in this verified repair' in nodes.read(queue/'state.json')['failure']['detail']
+    assert 'at most 2 failures over this task lifetime' in nodes.read(queue/'state.json')['failure']['detail']
     # A long --retry-delay keeps a retryable failure waiting instead of relaunching it immediately.
     later=nodes.Pool(queue,runtime.binding,retry_failed=True,max_attempts=3,retry_delay=3600)
     assert later.retry_later(job) and not later.retryable(job)

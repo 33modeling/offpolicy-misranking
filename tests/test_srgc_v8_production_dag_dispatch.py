@@ -109,7 +109,7 @@ def test_five_legacy_qwen_jobs_do_not_leave_all_new_nodes_idle_after_a_task_fail
     try:
         assert len(legacy)==5
         for i in range(12):
-            # Explicit legacy cap is a separate control; the new default is immediate/unlimited.
+            # Explicit legacy cap is a separate control; the default is two lifetime failures.
             p=ctx.Process(target=worker,args=(tmp_path,'new-node-'+str(i),stop),kwargs=dict(max_attempts=3));p.start();processes.append(p)
         rows=wait_claims(tmp_path,12)
         counts=collections.Counter(r['cohort'] for r in rows)

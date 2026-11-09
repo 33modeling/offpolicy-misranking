@@ -14132,6 +14132,26 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "e43d02a601cf598e44e64e4f62a31821d1dcab6b",
+      "at": "2026-11-09T13:00:20+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Preserve proof of evaluation before reference budget and 438 CPU checks",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/e43d02a601cf598e44e64e4f62a31821d1dcab6b",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "d18102ce9d7e2eec660c92a74277e70c7033014b",
+      "at": "2026-11-09T15:17:39+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Stop repeated torchrun failures after one retry across all nodes",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/d18102ce9d7e2eec660c92a74277e70c7033014b",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

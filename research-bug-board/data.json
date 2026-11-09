@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-09T13:00:20+09:00",
+  "recorded_at": "2026-11-09T15:23:51+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "6fc56407d286e86dea86ce7cfa7ac5abc9f87daa",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/6fc56407d286e86dea86ce7cfa7ac5abc9f87daa",
-    "all_available_commits": 1342,
+    "source_commit": "d18102ce9d7e2eec660c92a74277e70c7033014b",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/d18102ce9d7e2eec660c92a74277e70c7033014b",
+    "all_available_commits": 1344,
     "fix_commit_records": 143,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
@@ -42,7 +42,7 @@
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hang-fix-20261108:f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:dbd28e7613b50d1535c5a77e55546e338bea18fb",
+      "refs/heads/master:d18102ce9d7e2eec660c92a74277e70c7033014b",
       "refs/heads/v8-coord-fixes-20261108:377c256e55f80c64b484d82ef812064ed9e7c8a3",
       "refs/heads/v8-modes:6821c9c09292662008eb4f933c74bae7490358ed",
       "refs/heads/v8-nodes:3adf26925b2b1c1bf572cf0e68f75b26bbae3ddc",
@@ -81,7 +81,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:dbd28e7613b50d1535c5a77e55546e338bea18fb"
+      "refs/remotes/origin/master:d18102ce9d7e2eec660c92a74277e70c7033014b"
     ]
   },
   "incidents": [
@@ -7533,6 +7533,15 @@
           "text": "수정 전 재현 실패, 전체335·최종117·병합48·archive65 CPU 검사와 검사 순서·한계를 원격에 보존했다. 실제 H100의 idle 원인 일치·SR25 재개·OOM 해결은 아직 확인하지 못했다.",
           "url": "https://github.com/33modeling/offpolicy-misranking/blob/5212fd4518dcfefe01b1ed9f346b1557fdf61ceb/research/v8-idle-retry-debug-20261108/record.json",
           "evidence_kind": "code_test_and_limitation"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "policy_correction",
+          "status": "superseded",
+          "text": "V20부터 새 controller의 자동 복구가 과거 실패를 차감해 새 예산을 주는 방식을 중단한다. retry_epoch와 원래 실패/체크포인트는 보존하되 누적 작업 오류를 모두 합산한다. 수정 확인 없이 신규 노드가 같은 오류를 무한 재개하지 않게 한다. 원인을 실제로 고친 뒤 사용자 선택으로 양수 누적 상한을 늘리는 경로만 남는다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/d18102ce9d7e2eec660c92a74277e70c7033014b",
+          "evidence_kind": "code_change"
         }
       ]
     },
@@ -8304,6 +8313,15 @@
           "text": "최종 V18 전체 CPU 검사429개0실패/0skip. 원본39 coordinator·7 runner·453파일과 모든 payload SHA, 원본30 trainer 파일 보존을 확인했다. 원래 V8 CPU 실행기의 학습11/ext8/eval21 총40작업이 중복 없이 완료됐고 ext/eval 모두 미완료 uniform 학습보다 먼저 실행됐다. 원문 모델·optimizer·RNG checkpoint, 비용로그·학습보상·고정 최종평가를 cpu-streaming-run-v18.zip에 보존하고25-update 간격의 실제 training metrics17점을 별도 추출했다. 실제 H100 성능값이 아니다. 이전4실패·9/1편중·부분비용 초안·시험구성 실패·구형 API6실패도 모두 보존한다. 실제 원격 적용·배정은 status/log 미수신으로 확인하지 못했다.",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/643ffd1b893a1756488d37c6d2ee2f08c1ca314b",
           "evidence_kind": "code_test_and_limitation"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "attribution_correction",
+          "status": "superseded",
+          "text": "사용자는 즉시 재시작을 요구했지만 무제한 재시도를 지시하지 않았다고 명확히 정정했다. 이전 제목의 사용자 지시 변경 및 무제한 전환이라는 귀속은 잘못된 해석이었다. max-attempts0 무제한 기본값을 선택한 책임은 Codex에 있으며, 과거 기록은 지우지 않고 이 정정을 추가한다. V20에서 작업당 누적 실패2회로 바꾸고 새 노드/새 정책/과거 retry_epoch로 횟수를 초기화하지 않는다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/d18102ce9d7e2eec660c92a74277e70c7033014b",
+          "evidence_kind": "user_report_and_attribution_correction"
         }
       ]
     },
@@ -9029,6 +9047,84 @@
           "text": "실제 원격 오류는 상태 출력 미수신으로 확인하지 못했다. 이 수정은 다른 정상 작업의 배정을 허용하며 누락된 예산 endpoint 자체의 문제를 해결했다고 주장하지 않는다.",
           "evidence_kind": "limitation",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/6fc56407d286e86dea86ce7cfa7ac5abc9f87daa"
+        }
+      ]
+    },
+    {
+      "id": "V8-136",
+      "title": "무제한 torchrun 바깥 재실행과 수정본별 실패 횟수 환급이 같은 오류를 반복 배정",
+      "area": "V8 작업 오류 재시도 / 노드 낭비",
+      "severity": "high",
+      "first_reported": "2026-11-09",
+      "introduction_commit": "7acdaae",
+      "cause": "MAX_ATTEMPTS0을 무제한으로 해석해 바깥 scheduler가 실패한 torchrun을 계속 새로 띄웠다. torchrun 내부 max_restarts0은 내부 재시작만 끄므로 이 반복을 막지 못했다. 이전 controller 복구가 retry_epoch 이후만 실패로 세는 경로도 노드/정책 변경 뒤 반복을 허용했다.",
+      "impact": "완료되지 않는 오류 작업이 빈 노드를 계속 점유할 수 있었다. 사용자는 torchrun no limit과 반복 fail 및 노드 낭비를 보고했고 무제한을 지시하지 않았다고 정정했다. 실제 H100 실행 횟수와 과금/시간은 측정하지 않았다.",
+      "attribution": "무제한 기본값과 이전 사용자 지시 귀속 오류는 Codex의 구현/해석 잘못이다. 실제 원격 rank 오류 원인은 현재 로그 없이는 단정하지 않는다.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "V20 작업당 유한 실패 상한",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/d18102ce9d7e2eec660c92a74277e70c7033014b"
+        },
+        {
+          "kind": "raw_evidence",
+          "label": "원본 실패 재현/12프로세스 동시 검증",
+          "url": "https://github.com/33modeling/offpolicy-misranking/tree/d18102ce9d7e2eec660c92a74277e70c7033014b/research/v8-bounded-retry-20261109"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-09",
+          "actor": "user",
+          "type": "reported",
+          "status": "open",
+          "text": "야 에러 fail 나는거 왜 무한 재시도 하면서 노드 잡고 에러 나게 하냐 / 아까 말한거 torchrun 왜 no limit 뜨냐고 / 병신 새끼야 내가 언제 무제한으로 하라고 했어",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "reproduced",
+          "status": "open",
+          "text": "수정 전 e43d02a 실행기를 직접 불러 재시도2회 초과·과거 retry_epoch·pending/interrupted/running 환급·기존 max-attempts0을 검사했고6개 모두 실패했다. before.xml에 원문을 보존했다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/d18102ce9d7e2eec660c92a74277e70c7033014b"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "기본 누적 실패2회(최초 실행+재시도1회), legacy0도 유한2회, 노드/정책/명시적 retry-failed로 환급하지 않음. 원본 실패/로그/binding/checkpoint/optimizer/RNG는 보존한다. 12개 동시 작업자에서 bad는 총2회만 실패하고 healthy는1회 완료했다. 추가 노드도 bad를 다시 인수하지 않았다. 실제 완료 출력과 살아 있는 lease/native 실행 잠금은 상한보다 먼저 검증한다. 15개 집중 검사를 통과한 소스가 원격에 반영됐다.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/d18102ce9d7e2eec660c92a74277e70c7033014b"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "remote_verification_pending",
+          "status": "remote_verification_pending",
+          "text": "현재 원격 H100은 연결되지 않아 실제 반복이 멈췄는지는 미확인이다. 이미 실행 중인 구형 worker는 git push나 status 새로고침만으로 정책이 바뀌지 않는다. 모든 worker를 새 유한 정책으로 실행해야 한다. 구형 무제한 정책은 상태 화면에 UNBOUNDED legacy 경고로 구분한다.",
+          "evidence_kind": "limitation",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/d18102ce9d7e2eec660c92a74277e70c7033014b"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "regression_verified",
+          "status": "code_fixed",
+          "text": "최종448 CPU 검사0실패/0skip. 12개 worker의 실제 claim/exit 메타데이터와 체크포인트 sentinel을 cpu-bounded-proof.zip에 보존했다. 반복 오류는 failed로 남고 독립 정상 ext/eval 배정과 오래된 offer의 상한 재검사가 통과했다. 원본30 trainer SHA 및42 coordinator/7 runner archive 모든 payload를 확인했다. 초기 호환 검사2실패/443통과와 별도 fixture1실패/24통과는 보존하고 누적 상한 계약에 맞춘 시험 변경을 명시했다. 실제 H100 검증은 아니다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/d18102ce9d7e2eec660c92a74277e70c7033014b",
+          "evidence_kind": "code_test_and_limitation"
+        },
+        {
+          "at": "2026-11-09",
+          "actor": "Codex",
+          "type": "source_provenance",
+          "status": "code_fixed",
+          "text": "기존 짧은 도입 커밋 표기는 보존한다. 해당 전체 SHA는 7acdaae9967f61cf6a292fc0d47d28fd2968eb0d 이다.",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/7acdaae9967f61cf6a292fc0d47d28fd2968eb0d",
+          "evidence_kind": "provenance"
         }
       ]
     }

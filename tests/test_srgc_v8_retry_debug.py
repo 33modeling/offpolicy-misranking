@@ -29,32 +29,20 @@ def failed(pool,key,count,policy):
     return path
 
 
-def test_old_source_failures_do_not_exhaust_the_verified_repair_budget(tmp_path):
+def test_old_source_failures_stay_exhausted_across_verified_node_joins(tmp_path):
     pool,runtime,task,key,saved=prepared(tmp_path)
-    pool.max_attempts=3  # explicit bounded policy remains available
+    pool.max_attempts=3
     path=failed(pool,key,5,'older-runtime-policy')
+    before=nodes.read(path)
     pool.fail('1 task(s) failed; no independent ready/running work remains.')
-    pool.initialize(worker='new-node',recover=pool.controller_sha256)
-    stop=threading.Event()
-    for i in range(3):
-        action,claim=pool.tick(runtime,'node-'+str(i),stop)
-        assert action=='claimed';lease,claimed_key,*_=claim
-        assert claimed_key==key
-        pool.finish(key,1,runtime,stop);lease.close()
-        job=nodes.read(path)
-        assert pool.retryable(job)==(i<2),'old broken-source attempts consumed the new repair retry budget'
-    assert len(nodes.read(path)['attempts'])==8
-    assert saved.read_bytes()==b'original step25 optimizer RNG rewards'
-    # New nodes/status-only code hashes cannot buy another retry epoch.
-    exhausted=nodes.read(path)
     for i in range(4):
         joined=nodes.Pool(pool.root,pool.binding,retry_delay=0,max_attempts=3);joined.automatic_retry=True
         joined.controller_sha256='another-status-hash-'+str(i)
         joined.initialize(worker='restart-'+str(i),recover=joined.controller_sha256)
         assert not joined.retryable(nodes.read(path))
-    assert nodes.read(path)['attempts']==exhausted['attempts']
-    assert nodes.read(path)['retry_epoch']==exhausted['retry_epoch']
-    assert len(nodes.read(path)['recovery_history'])==1
+        assert joined.tick(runtime,'node',threading.Event())[0]=='failed'
+    assert nodes.read(path)==before
+    assert saved.read_bytes()==b'original step25 optimizer RNG rewards'
 
 
 @pytest.mark.parametrize('aggregate',[False,True])
@@ -102,21 +90,20 @@ def test_unverified_or_broken_retry_boundary_does_not_refund_failures():
     assert nodes.retry_budget_failures(job)==1
 
 
-def test_status_counts_the_same_verified_retry_budget_as_the_dispatcher(tmp_path):
+def test_status_counts_the_same_lifetime_retry_budget_as_the_dispatcher(tmp_path):
     from test_v8_status import status
     pool,runtime,task,key,saved=prepared(tmp_path);path=failed(pool,key,5,'older-runtime-policy')
     pool.max_attempts=3
     pool.initialize(worker='node',recover=pool.controller_sha256)
-    stop=threading.Event();_,claim=pool.tick(runtime,'node',stop)
-    pool.finish(key,1,runtime,stop);claim[0].close();job=nodes.read(path)
+    job=nodes.read(path)
     row=dict(_log_lines=[],_manifest={},kind='train',total=275,done=25)
     story=status.failure_story(row,job['attempts'][-1],job,task,runtime.root,pool.queue_state(),{nodes.DISPATCH_POLICY},1000)
-    assert story['failure_budget_used']==1 and story['failure_lifetime_count']==6
-    assert 'attempt 2/3' in story['failure_next'] and 'no more automatic' not in story['failure_next']
+    assert story['failure_budget_used']==5 and story['failure_lifetime_count']==5
+    assert 'no more automatic' in story['failure_next']
 
 
 def test_cooldown_uses_the_last_attempt_instead_of_an_older_nodes_future_timestamp(tmp_path):
-    pool,runtime,task,key,saved=prepared(tmp_path);pool.retry_delay=60
+    pool,runtime,task,key,saved=prepared(tmp_path);pool.retry_delay=60;pool.max_attempts=3
     job=dict(state='failed',attempts=[dict(id='old',outcome='failed',ended_at=10000),
                                     dict(id='new',outcome='failed',ended_at=100)],
              retry_epoch=dict(policy='verified-repair',after_attempt='old'),

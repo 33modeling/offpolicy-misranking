@@ -11,23 +11,24 @@ from test_srgc_v8_task_failure_isolation import setup,claim
 from test_srgc_v8_fair_dispatch import Runtime,wait_claims,cleanup
 
 
-def test_default_restart_has_no_failure_cap_or_cooldown(tmp_path):
+def test_default_restart_is_finite_without_cooldown(tmp_path):
     pool=nodes.Pool(tmp_path/'queue',dict(cohort='olmo_math'));pool.automatic_retry=True
     job=dict(state='failed',attempts=[dict(id=str(i),outcome='failed',ended_at=10000) for i in range(8)])
-    assert pool.max_attempts==0 and pool.retry_delay==0
-    assert pool.retryable(job,now=100),'old failure count or another node clock delayed immediate restart'
+    assert pool.max_attempts==2 and pool.retry_delay==0
+    assert not pool.retryable(job,now=100),'historical failures incorrectly received another retry budget'
+    job['attempts']=[]
     job.update(state='interrupted',resume_not_before=10000)
     assert pool.retryable(job,now=100),'legacy cooldown blocked the new immediate policy'
 
 
-def test_actual_worker_restarts_four_sigsegv_failures_then_completes_without_erasing_checkpoint(tmp_path):
+def test_actual_worker_stops_after_two_sigsegv_failures_without_erasing_checkpoint(tmp_path):
     from test_srgc_v8_retry_debug import prepared
     pool,runtime,task,key,saved=prepared(tmp_path);stop=threading.Event();calls=[]
     runtime.done=lambda _:bool(calls and calls[-1]==0)
     original=saved.read_bytes()
     def execute(task,matrix,fd,stop,device_fds,attempt):
         assert saved.read_bytes()==original
-        rc=-11 if len(calls)<4 else 0;calls.append(rc)
+        rc=-11;calls.append(rc)
         if rc:
             nodes.atomic(pool.root/'progress'/attempt['id']/'child-failure.json',
                          dict(attempt_id=attempt['id'],exit_code=rc,failures=[dict(rank=1,signal=11,message='CPU synthetic SIGSEGV result')]))
@@ -36,21 +37,21 @@ def test_actual_worker_restarts_four_sigsegv_failures_then_completes_without_era
     runtime.execute=execute
     nodes.worker_loop(pool,runtime,'cpu-restart',stop,poll=.001,retry_delay=0)
     job=nodes.read(pool.root/'jobs'/(key+'.json'))
-    assert calls==[-11,-11,-11,-11,0] and job['state']=='done'
-    assert [a['outcome'] for a in job['attempts']]==['failed']*4+['done']
-    assert nodes.counted_failures(job)==4 and saved.read_bytes()==original
+    assert calls==[-11,-11] and job['state']=='failed'
+    assert [a['outcome'] for a in job['attempts']]==['failed']*2
+    assert nodes.counted_failures(job)==2 and saved.read_bytes()==original
     (tmp_path/'restart-proof.json').write_text(json.dumps(dict(scope='CPU metadata only; no actual GPU SIGSEGV',job=job,checkpoint_preserved=True)))
 
 
-def test_status_displays_unlimited_immediate_restart_after_many_failures(tmp_path):
+def test_status_displays_exhausted_finite_cap_after_many_failures(tmp_path):
     from test_v8_status import status
     from test_srgc_v8_retry_debug import prepared,failed
     pool,runtime,task,key,saved=prepared(tmp_path);path=failed(pool,key,8,nodes.DISPATCH_POLICY)
     pool.enable_automatic_retry('node');job=nodes.read(path)
     row=dict(_log_lines=[],_manifest={},kind='train',total=275,done=25)
     story=status.failure_story(row,job['attempts'][-1],job,task,runtime.root,pool.queue_state(),{nodes.DISPATCH_POLICY},1000)
-    assert 'no limit' in story['failure_next'] and 'immediate checkpoint restart' in story['failure_next']
-    assert 'no more automatic' not in story['failure_next'] and story['failure_lifetime_count']==8
+    assert 'no limit' not in story['failure_next'] and '8/2 failures used' in story['failure_next']
+    assert 'no more automatic' in story['failure_next'] and story['failure_lifetime_count']==8
 
 
 def test_ready_new_work_is_not_starved_by_immediately_retryable_primary(tmp_path):

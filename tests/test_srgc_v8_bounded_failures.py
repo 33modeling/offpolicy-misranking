@@ -42,6 +42,52 @@ def test_first_error_can_retry_but_second_error_stops(tmp_path):
     assert pool.retryable(dict(state='interrupted',attempts=[dict(outcome='node_lost',exit_code=-9)]))
 
 
+def test_status_distinguishes_new_finite_policy_from_old_live_unlimited_workers(tmp_path):
+    from test_v8_status import status
+    pool=nodes.Pool(tmp_path/'.multi-node',dict(cohort='fixture'));pool.initialize()
+    job=dict(state='failed',attempts=history(2))
+    row=dict(_log_lines=[],_manifest={},kind='train',total=275,done=25)
+    task=dict(kind='train',horizon=275)
+    old=dict(automatic_retry_policy=dict(max_failed_attempts=0,retry_delay=0))
+    story=status.failure_story(row,job['attempts'][-1],job,task,tmp_path,old,set(),100)
+    assert 'UNBOUNDED legacy retry policy' in story['failure_next']
+    pool.enable_automatic_retry('new-node')
+    story=status.failure_story(row,job['attempts'][-1],job,task,tmp_path,pool.queue_state(),{nodes.DISPATCH_POLICY},100)
+    assert '2/2 failures used' in story['failure_next'] and 'no more automatic' in story['failure_next']
+    assert 'no limit' not in story['failure_next']
+
+
+def test_stale_ready_offer_cannot_claim_a_now_exhausted_task(tmp_path):
+    runtime=Runtime(tmp_path);pool=nodes.Pool(tmp_path/'.multi-node',runtime.binding);pool.initialize()
+    state=pool.queue_state();state['phase']='train';nodes.atomic(pool.root/'state.json',state)
+    action,offer=pool.tick(runtime,'inspector',threading.Event(),claim=False,offer=True)
+    assert action=='ready'
+    bad=next(t for t in runtime.plan('train')[0] if t['run_id']=='bad');key=nodes.task_key(bad)
+    path=pool.root/'jobs'/(key+'.json');job=nodes.read(path);job.update(state='pending',attempts=history(2))
+    nodes.atomic(path,job)
+    action,claim=pool.claim_offered(offer,'next-node',threading.Event())
+    try:assert action=='claimed' and claim[2]['run_id']=='healthy'
+    finally:
+        if claim:claim[0].close()
+    assert nodes.read(path)['attempts']==job['attempts']
+
+
+def test_exhausted_primary_still_allows_independent_ready_ext_and_eval(tmp_path):
+    from test_srgc_v8_ready_eval_ext import prepared
+    pool,runtime,budget=prepared(tmp_path);base=runtime.plan('train')[0][0]
+    key=pool.register(base,'train');path=pool.root/'jobs'/(key+'.json');job=nodes.read(path)
+    job.update(state='failed',attempts=history(8));nodes.atomic(path,job)
+    claims=[]
+    try:
+        for i in range(2):
+            action,claim=pool.tick(runtime,f'free-node-{i}',threading.Event())
+            assert action=='claimed';claims.append(claim)
+        assert {nodes.read(pool.root/'jobs'/(c[1]+'.json'))['phase'] for c in claims}=={'extension','evaluation'}
+        assert nodes.read(path)==job and pool.queue_state()['phase']=='train'
+    finally:
+        for claim in claims:claim[0].close()
+
+
 class Runtime:
     binding=dict(cohort='fixture')
     def __init__(self,root):self.root=Path(root)
