@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "base_commit": "4a1d2cf34385429fe22c9c7c0cdafe8ba8a116c0",
+  "policy": "complete-one-cohort-before-next-v27",
+  "hypothesis": "Invalidate a cached completion if the shared sequential cohort is reopened, so workers recheck its original tasks instead of idling forever.",
+  "reproduction": {
+    "scope": "CPU fixture, no remote GPU observation",
+    "before_fix_failed_tests": 1,
+    "reason": "Worker retained terminal=complete after a different worker restored an earlier shared phase; stopped only by fixture watchdog.",
+    "log": "before-fix.log"
+  },
+  "verification": {
+    "control_passed": 77,
+    "control_skipped": 2,
+    "control_failed": 0,
+    "sequential_cases": 15,
+    "logs": [
+      "control-regression.log",
+      "after-fix.log",
+      "stop-final.log"
+    ],
+    "stop_final_passed": 1,
+    "observations": [
+      "Reopened cohort finishes by adopting old completed outputs, with no duplicate task execution.",
+      "A reopened cohort with a permanent failure exits instead of waiting or starting later cohorts.",
+      "A live lease keeps later cohorts queued, and a stop request returns75.",
+      "Existing lifetime retry caps and checkpoint sentinels remain intact."
+    ]
+  },
+  "unchanged": {
+    "numerical_sources_inputs_configs": true,
+    "checkpoint_reward_and_failure_records": true,
+    "previous_coordinator_sha256": "7c018225d7c45ca339a4549759c240688430d7ca9bd9c7dc1f0f8021f0c2f6ba",
+    "previous_coordinator_archived": true
+  },
+  "scientific_measurements": {
+    "H100_runtime": "unverified",
+    "model_performance": "unmeasured",
+    "note": "CPU scheduler tests are not scientific learning results."
+  },
+  "operations": {
+    "remote_GPU_nodes_contacted": 0,
+    "new_GPU_experiments": 0,
+    "paid_API_calls_initiated": 0,
+    "servers_started": 0,
+    "deployments": 0
+  },
+  "file_sha256": {
+    "scripts/srgc_v8_nodes.py": "fb547956f1699de4b23c6ed8d5757f55577cae49f97011ad727539ae757440b9",
+    "tests/test_srgc_v8_sequential_cohorts.py": "0b4fb8656f01545506816978f012dfba4a1cf53de6bf551ce8317096e22eeb99",
+    "docs/V8_MULTINODE_H100.md": "47a473719ed41c6c7995fa7c123a016c17d74fe8bc4b6e919a07108545e49955",
+    "v8/queue-runtimes.zip": "b6e431975d8621b02f7e8640ddea2c17af2956c24b293e360c29515b00baf0fc"
+  }
+}

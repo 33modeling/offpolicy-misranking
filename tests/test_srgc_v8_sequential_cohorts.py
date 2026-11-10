@@ -166,3 +166,56 @@ def test_quiescent_failure_in_active_cohort_is_not_hidden_by_unstarted_future_co
     assert not stop.is_set()
     assert path.read_bytes()==before
     assert not events(tmp_path)
+
+
+@pytest.mark.parametrize('reopened_failure',[False,True])
+def test_reopened_completed_cohort_does_not_leave_worker_waiting_on_its_cached_completion(tmp_path,reopened_failure):
+    rows=pairs(tmp_path)
+    later=rows[1][1];barrier=later.barrier;reopened=[];startup_checks=[]
+    def startup_ready():
+        startup_checks.append(True)
+        return len(startup_checks)>1  # let the worker cache the earlier complete phase first
+    later.startup_ready=startup_ready
+    def reopen(stage,*args):
+        barrier(stage,*args)
+        if stage=='prepare' and not reopened:
+            # A joining historical worker can restore an earlier phase while
+            # checking its missing primary-results receipt. Keep every task and
+            # checkpoint; this worker must recheck shared state, not its cache.
+            pool=rows[0][0];state=pool.queue_state()
+            assert state['phase']=='complete'
+            state['phase']='train'
+            if reopened_failure:state['failure']=dict(detail='invalid frozen inputs after recheck',task=None)
+            nodes.atomic(pool.root/'state.json',state)
+            reopened.append(True)
+    later.barrier=reopen
+    keep=tmp_path/'olmo_math/step-000025.pt';keep.write_bytes(b'optimizer RNG reward checkpoint sentinel')
+    stop=threading.Event();timer=threading.Timer(1,stop.set);timer.start()
+    try:
+        rc=nodes.worker_loop_many(rows,'cpu-node',stop,poll=.001,cohort_order=nodes.DEFAULT_COHORTS)
+    finally:timer.cancel();timer.join()
+    assert reopened
+    assert rc==(1 if reopened_failure else 0) and not stop.is_set(),'stale completed cache kept a reopened cohort idle forever'
+    assert keep.read_bytes()==b'optimizer RNG reward checkpoint sentinel'
+    claims=[(row['cohort'],row['task']) for row in events(tmp_path) if row['stage']=='execute']
+    if reopened_failure:
+        assert rows[0][0].queue_state()['failure']['detail']=='invalid frozen inputs after recheck'
+        assert len(claims)==len(set(claims))==4
+        assert {name for name,_ in claims}=={'olmo_math'}
+    else:
+        assert all(pool.queue_state()['phase']=='complete' for pool,_ in rows)
+        assert len(claims)==len(set(claims))==16,'adopt existing completed outputs instead of rerunning them'
+
+
+def test_live_lease_after_complete_keeps_next_cohort_waiting_and_accepts_stop(tmp_path):
+    rows=pairs(tmp_path);pool=rows[0][0];pool.initialize()
+    state=pool.queue_state();state['phase']='complete';nodes.atomic(pool.root/'state.json',state)
+    stop=threading.Event();timer=threading.Timer(.15,stop.set)
+    with nodes.Lock(pool.root/'leases/still-running.lock'):
+        timer.start()
+        try:rc=nodes.worker_loop_many(rows,'cpu-node',stop,poll=.005,cohort_order=nodes.DEFAULT_COHORTS)
+        finally:timer.cancel();timer.join()
+    assert rc==75 and stop.is_set()
+    recorded=events(tmp_path)
+    assert recorded and all(row['cohort']=='olmo_math' and row['stage']=='verify' for row in recorded)
+    assert not (rows[1][0].root/'state.json').exists()

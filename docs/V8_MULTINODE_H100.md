@@ -19,6 +19,11 @@ sh scripts/run_v8_nodes.sh
 원본 Runtime의 작업 목록·체크포인트·완료 여부 검사와 모델 로딩·학습·준비 중에는 잡지 않는다. 모델별 고정 노드 할당이나 GPU 분할은
 하지 않는다.
 
+다른 worker가 과거 조합의 공유 큐를 다시 열면 이 worker의 완료 캐시를 무효화하고
+입력 신원·현재 단계·준비된 작업을 다시 확인한다. 완료된 출력은 그대로 인수하며
+실패 이력과 재시도 상한을 초기화하지 않는다. 실행 중인 lease가 남아 있으면
+다음 조합은 기다리고 중지 신호에 응답한다.
+
 OLMo MBPP·Qwen MATH도 기존 seed5–9의25-step prefix와 원래 MBPP 입력·학습 환경을 검증한 뒤
 On 궤적·SR 분기·Uniform 비교·예산 연장·최종 평가·수집·분석을 같은 경로로 수행한다.
 기존 조합의 큐와 source binding은 그대로 재사용한다. OLMo MBPP의 기본 Python은
@@ -175,7 +180,7 @@ worker는60초마다 현황을 출력한다. 자식 출력은 터미널과 각 c
 정책 버전이 나온다. 표 형식 `status`는 `dispatch current <hash>`(현재 checkout과
 같음), `dispatch different <hash>`(다름), `dispatch unverified`(기록 없음)를 구분한다.
 정책 파일이 디스크에 있다는 것만으로 실행 중인 worker에 적용됐다고 판단하지 않는다.
-현재 배정 정책은 `complete-one-cohort-before-next-v26`이다. 작업 검사는 해당 cohort의
+현재 배정 정책은 `complete-one-cohort-before-next-v27`이다. 작업 검사는 해당 cohort의
 control lease만 잡고 별도로 수행한다. 검사 결과가 준비되면 공유 잠금 안에서 현재
 binding·phase·실패 상태·작업 정의·작업 lease를 다시 확인한 뒤 claim한다.
 검사와 claim 사이에 다른 노드가 가져간 작업이나 실패한 작업은 가져오지 않는다.

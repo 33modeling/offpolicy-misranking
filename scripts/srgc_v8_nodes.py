@@ -31,7 +31,7 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'complete-one-cohort-before-next-v26'
+DISPATCH_POLICY = 'complete-one-cohort-before-next-v27'
 COHORT_ORDER = 'complete-one-cohort-before-next-v1'
 EVAL_NATIVE_RECOVERY = 'evaluation-sigsegv-recovery-v1'
 NODE_NATIVE_FAILURE_LIMIT = 2
@@ -1413,6 +1413,17 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                 active=unfinished_cohort(pairs,cohort_order)
             finally:gate.close()
         if cohort_order:
+            for i,(pool,_) in enumerate(pairs):
+                if terminal.get(i)!='complete' or cohort(pool)!=active:continue
+                try:state=read(pool.root/'state.json')
+                except FileNotFoundError:state={}
+                if state.get('phase')!='complete' or state.get('failure'):
+                    # Another verified worker may reopen a historical phase.
+                    # Local completion is only a cache: recheck identity/readiness
+                    # normally, retaining finished outputs and failure budgets.
+                    terminal.pop(i);offers.pop(i,None)
+                    print(f'[{worker}] {active}: shared queue is no longer complete; '
+                          'rechecking it before later cohorts',flush=True)
             # An offer can outlive its phase when another worker finishes the cohort.
             # Drop it so discovery can observe 'complete', rather than waiting forever
             # with a stale offer that the sequential claim gate will never admit.
