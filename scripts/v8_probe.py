@@ -1,5 +1,6 @@
 """Read-only V8 node snapshot: no Torch import, model load, signals or queue edits."""
 import json
+import hashlib
 import os
 from pathlib import Path
 import socket
@@ -10,6 +11,12 @@ import time
 def read(path):
     try:return json.loads(Path(path).read_text())
     except (OSError,ValueError):return None
+
+
+def worker_status(base,worker):
+    key=hashlib.sha256(json.dumps(worker,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+    value=read(Path(base)/'.v8-worker-status'/(key+'.json'))
+    return value if isinstance(value,dict) and value.get('worker')==worker and isinstance(value.get('at'),(int,float)) else None
 
 
 def tail(path,limit=32768):

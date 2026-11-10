@@ -18,6 +18,20 @@ STAGES={
 COHORTS={'olmo_math':'OLMo / MATH','qwen_mbpp':'Qwen / MBPP','olmo_mbpp':'OLMo / MBPP','qwen_math':'Qwen / MATH'}
 
 
+def scheduler_text(record,now):
+    import time
+    age=max(0,now-record['at']);state=record['state']
+    if age>=120 and state in ('ASSIGNED','CHECKING','CPU_STAGE','RECORDING_RESULT','STARTING'):
+        state='NO_PROGRESS ('+state+')'
+    parts=['state='+state,'experiment='+COHORTS.get(record.get('cohort'),record.get('cohort') or '-'),record['reason']]
+    for key in ('phase','kind','method','seed','ready','leased','native_busy','dependencies','failed'):
+        if record.get(key) is not None:parts.append(f'{key}={record[key]}')
+    if record.get('checked_at') is not None:parts.append(f'task inspection {max(0,now-record["checked_at"]):.0f}s ago')
+    parts.append(f'same state {max(0,now-record.get("since",record["at"])):.0f}s')
+    parts.append('scheduler checked '+time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime(record['at']))+f' ({age:.0f}s ago)')
+    return ' | '.join(parts)
+
+
 def describe(stage,details):
     parts=[STAGES.get(stage,'Recorded work: '+str(stage))]
     if details.get('cohort'):parts.insert(0,COHORTS.get(details['cohort'],details['cohort']))

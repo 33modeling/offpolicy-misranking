@@ -39,10 +39,13 @@ def test_supervisor_reads_current_attempt_progress_and_excludes_other_launch(tmp
     (foreign/'rank-0.json').write_text(json.dumps(dict(stage='foreign',updated=time.time())))
     ours=row(1,'a',tag='ours');ours['env']['SRGC_PROGRESS_DIR']=str(current)
     other=row(1,'b',tag='other');other['env']['SRGC_PROGRESS_DIR']=str(foreign)
+    ours['kind']=other['kind']='task'
     events=supervisor.work_events({10:ours,20:other},'ours',tmp_path/'fallback')
     assert len(events)==1 and 'Optimizer update completed' in events[0] and 'foreign' not in events[0]
-    # Older coordinator inherits the supervisor's directory instead of making an attempt directory.
-    assert supervisor.work_events({},'ours',current)==events
+    assert supervisor.work_events({},'ours',current)==[]
+    # Older coordinator inherits the supervisor directory, but still needs a live task.
+    legacy=row(1,'c',tag='ours');legacy['kind']='task'
+    assert supervisor.work_events({11:legacy},'ours',current)==events
 
 
 def test_missing_model_work_shows_assigned_task_or_actual_blocker_not_preparing(tmp_path,monkeypatch):

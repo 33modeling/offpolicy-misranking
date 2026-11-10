@@ -103,11 +103,12 @@ def test_supervisor_shows_decode_counts_and_distinguishes_entered_event(tmp_path
     from scripts import v8_supervisor
     event=dict(stage='generation',updated=time.time(),generation_call=2,sequence_tokens=91,decode_steps=88)
     (tmp_path/'rank-0.json').write_text(json.dumps(event))
-    line=v8_supervisor.work_events({},'fixture',tmp_path)[0]
+    rows={42:dict(kind='task',state='S',env={'V8_LAUNCH_ID':'fixture','SRGC_PROGRESS_DIR':str(tmp_path)})}
+    line=v8_supervisor.work_events(rows,'fixture',tmp_path)[0]
     assert 'Writing model answers' in line and 'sequence length 91 tokens including input' in line
     event.update(stage='generation_start',progress_kind='entered_only')
     (tmp_path/'rank-0.json').write_text(json.dumps(event))
-    assert 'no newly decoded token recorded yet' in v8_supervisor.work_events({},'fixture',tmp_path)[0]
+    assert 'no newly decoded token recorded yet' in v8_supervisor.work_events(rows,'fixture',tmp_path)[0]
 
 
 @pytest.mark.parametrize('has_progress',[False,True])

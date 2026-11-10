@@ -21,7 +21,8 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from v8_probe import active_roots, last_row, read, root, tail  # noqa: E402
+from v8_probe import active_roots, last_row, read, root, tail, worker_status  # noqa: E402
+from v8_progress_text import scheduler_text
 from srgc_v8_nodes import retry_budget_failures, fatal_native_failure, evaluation_recovery_attempts, native_failure_blocks, native_crash_hosts
 
 COHORTS = ('olmo_math', 'olmo_mbpp', 'qwen_math', 'qwen_mbpp')   # model, then task (user 11-09: 'status 순서 맞춰')
@@ -1341,6 +1342,9 @@ def node_table(bases, cohorts, now, this_host=None):
                 e = entry(w['worker'], w['host'])
                 e['beats'][cohort] = (w['age'], w['task'])
                 e['complete'] = e['complete'] and phase == 'complete'
+                diagnosis=worker_status(base,w['worker'])
+                if diagnosis and diagnosis.get('controller_sha256')==w.get('controller_sha256'):
+                    e['diagnosis']=diagnosis
             for r in rows:
                 if r['status'] in ('running', 'unconfirmed') and r.get('worker') and not r.get('lost'):
                     e = entry(r['worker'], r.get('host') or str(r['worker']).rsplit('.', 1)[0])
@@ -1398,6 +1402,14 @@ def node_table(bases, cohorts, now, this_host=None):
         if not live:
             out.append(dict(base, state='finished' if e['complete'] else 'gone',
                             doing='queue complete' if e['complete'] else 'stopped, crashed or removed; nothing waits for it'))
+            continue
+        diagnosis=e.get('diagnosis')
+        if diagnosis and now-diagnosis['at']<=ALIVE_SECONDS:
+            code=diagnosis['state']
+            state=('gone' if code in ('BLOCKED','STOPPED') else 'finished' if code=='COMPLETE' else
+                   'starting' if code=='STARTING' else 'busy' if code in ('CHECKING','CPU_STAGE','RECORDING_RESULT') else 'idle')
+            out.append(dict(base,state=state,experiment=COHORT_LABEL.get(diagnosis.get('cohort'),''),
+                            doing=scheduler_text(diagnosis,now)))
             continue
         if any(task == 'runtime_initialization' for _, task in live.values()):
             out.append(dict(base, state='starting', doing='loading runtime / checking node'))

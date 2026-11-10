@@ -12,23 +12,35 @@ import time
 import uuid
 
 from v8_processes import TAG,select,progress_every,stop,stop_grace,table
-from v8_probe import read,root,snapshot,tail
+from v8_probe import read,root,snapshot,tail,worker_status
 from v8_control_output import emit,run_control
-from v8_progress_text import describe
+from v8_progress_text import describe,scheduler_text
 
 
 def work_events(rows,launch,fallback):
     """Read the active launch's actual per-attempt directory, never another launch's progress."""
-    directories={Path(row['env']['SRGC_PROGRESS_DIR']) for row in rows.values()
-                 if row['env'].get(TAG)==launch and row['env'].get('SRGC_PROGRESS_DIR')}
+    tasks=[row for row in rows.values() if row['env'].get(TAG)==launch and row.get('kind')=='task' and row.get('state')!='Z']
+    if not tasks:return []  # launch/control processes do not prove a training child is still alive
+    directories={}
+    for row in tasks:
+        directory=Path(row['env'].get('SRGC_PROGRESS_DIR') or fallback)
+        started=row.get('started_at')
+        if not isinstance(started,(int,float)):
+            try:started=time.time()-time.clock_gettime(time.CLOCK_BOOTTIME)+float(row['start'])/os.sysconf('SC_CLK_TCK')
+            except (KeyError,ValueError,TypeError,AttributeError,OSError):started=None
+        directories.setdefault(directory,[]).append(started)
     parts=[]
-    for directory in sorted(directories or {Path(fallback)}):
+    for directory,starts in sorted(directories.items()):
+        valid_starts=[value for value in starts if value is not None]
         for rank in range(4):
             event=read(directory/f'rank-{rank}.json')
             if isinstance(event,dict) and isinstance(event.get('updated'),(int,float)):
+                if valid_starts and event['updated']<min(valid_starts):continue
                 age=time.time()-event['updated']
                 kind='stage entered' if event.get('progress_kind')=='entered_only' else 'last new token' if event.get('progress_kind')=='returned_decode_steps' else 'last work record'
-                parts.append(f'GPU process {rank} | {describe(event.get("stage","?"),event)} | {kind} {age:.0f}s ago')
+                state='NO_PROGRESS' if age>=120 else 'STARTING_TASK' if event.get('progress_kind')=='entered_only' else 'RUNNING'
+                stamp=time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime(event['updated']))
+                parts.append(f'state={state} | GPU process {rank} | {describe(event.get("stage","?"),event)} | {kind} {stamp} ({age:.0f}s ago)')
     return parts
 
 
@@ -39,6 +51,16 @@ def before_model_work(rows,launch,base,console,host=None):
     bases={Path(row['env']['V8_ROOT']) for row in owned.values() if row['env'].get('V8_ROOT')} or {Path(base)}
     lines=[]
     for folder in sorted(bases):
+        diagnoses=[]
+        for pid in owned:
+            record=worker_status(folder,host+'.'+pid)
+            if record and record.get('launch_id')==launch:
+                diagnoses.append(record)
+        if diagnoses:
+            record=max(diagnoses,key=lambda r:r['at'])
+            lines.append('NODE '+host+': '+scheduler_text(record,time.time()))
+            if record.get('log'):lines.append('TASK LOG: '+record['log'])
+            continue
         for item in snapshot(folder,host):
             label=item['cohort'];failure=item.get('failure')
             for error in item.get('record_errors',[]):lines.append('STATUS ERROR '+label+': '+error)
@@ -47,8 +69,12 @@ def before_model_work(rows,launch,base,console,host=None):
                 lines.append(f'BLOCKED {label}: {detail}; queue={folder/label/".multi-node/state.json"}')
             mine=[job for job in item['local_jobs'] if job.get('worker','').rsplit('.',1)[-1] in owned]
             for job in mine:
+                age=max(0,time.time()-job['attempt_started']) if isinstance(job.get('attempt_started'),(int,float)) else None
+                status='NO_PROGRESS' if age is not None and age>=120 else 'ASSIGNED'
                 lines.append(f'ASSIGNED {label} seed={job.get("seed")} method={job.get("method")}; '
-                             f'no model token/update record for this launch yet; run state={job["run_manifest"]}; log={job["log"]}')
+                             f'state={status}; no model token/update record for this launch yet'
+                             +(f' ({age:.0f}s since assignment)' if age is not None else '')+
+                             f'; run state={job["run_manifest"]}; log={job["log"]}')
                 if job['last_log_lines']:lines.append('TASK OUTPUT: '+job['last_log_lines'][-1])
             if not mine and not failure:
                 counts=', '.join(f'{k}={v}' for k,v in sorted(item['recorded_job_counts'].items())) or 'no recorded jobs'
@@ -86,7 +112,7 @@ def main():
                 try:parts=before_model_work(rows,launch,root(env),log)
                 except (OSError,ValueError,TypeError,KeyError) as exc:
                     parts=[f'STATUS ERROR: cannot read this launch state: {type(exc).__name__}: {exc}; console log={log}']
-            try:print('[Training status] '+' | '.join(parts),flush=True)
+            try:print('[V8 STATUS] '+' | '.join(parts),flush=True)
             except (OSError,ValueError):return  # disconnected console must not stop its independent child
     def relay(log):
         with log.open('rb') as reader:

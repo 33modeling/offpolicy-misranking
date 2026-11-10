@@ -31,7 +31,7 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'complete-one-cohort-before-next-v27'
+DISPATCH_POLICY = 'explicit-worker-wait-and-progress-v28'
 COHORT_ORDER = 'complete-one-cohort-before-next-v1'
 EVAL_NATIVE_RECOVERY = 'evaluation-sigsegv-recovery-v1'
 NODE_NATIVE_FAILURE_LIMIT = 2
@@ -70,6 +70,28 @@ def atomic(path, value):
         os.replace(temporary,path)
     finally:
         if temporary.exists():temporary.unlink()
+
+
+class WorkerStatus:
+    """Diagnostic receipts only: scheduler activity is never training progress."""
+    def __init__(self,base,worker,controller):
+        self.path=Path(base)/'.v8-worker-status'/(digest(worker)+'.json')
+        self.worker=worker;self.controller=controller;self.last=None;self.written=-float('inf');self.since=time.time()
+
+    def publish(self,state,cohort,reason,**details):
+        now=time.time();signature=(state,cohort,reason)
+        if signature!=self.last:self.since=now
+        elif time.monotonic()-self.written<15:return
+        self.last=signature;self.written=time.monotonic()
+        record=dict(schema=1,worker=self.worker,pid=os.getpid(),launch_id=os.environ.get('V8_LAUNCH_ID'),
+                    controller_sha256=self.controller,at=now,since=self.since,state=state,cohort=cohort,
+                    reason=reason,**details)
+        try:atomic(self.path,record)
+        except OSError as exc:print(f'[V8 STATUS ERROR] cannot save worker diagnosis: {exc}',flush=True)
+        counts=' '.join(f'{k}={details[k]}' for k in ('phase','kind','method','seed','ready','leased','native_busy','dependencies','failed') if k in details)
+        stamp=time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime(now))
+        print(f'[V8 STATUS] {stamp} node={self.worker} state={state} experiment={cohort or "-"} '
+              f'{reason}; {counts} same_state={now-self.since:.0f}s',flush=True)
 
 
 class Lock:
@@ -961,13 +983,18 @@ class Pool:
             if (job['phase']==job_phase and (not (phase=='primary_evaluation' or deferred_base or base_error) or path.stem in selected)) or path.stem in side_keys:
                 jobs.append((path,job))
         if not jobs and phase!='extension':
-            if deferred_base or base_error:return 'waiting',None
+            if deferred_base or base_error:
+                self.observation=dict(checked_at=time.time(),phase=phase,ready=0,leased=0,native_busy=0,
+                                      dependencies=0,failed=0,planning_error=base_error,
+                                      deferred_budget=deferred_base)
+                return 'waiting',None
             raise ValueError('No tasks produced for '+phase+'; refusing to declare an empty experiment complete')
         pending=[];all_done=True;active=False;failed=[];later=False
+        leased=native_count=dependencies=0
         for path,job in jobs:
             lease=Lock(self.root/'leases'/(path.stem+'.lock'))
             if not lease.acquire():
-                all_done=False;active=True;continue
+                all_done=False;active=True;leased+=1;continue
             try:
                 native_busy=runtime.native_busy(job['task'])
                 active=active or native_busy
@@ -978,7 +1005,7 @@ class Pool:
                     continue
                 all_done=False
                 if job['state']=='done':raise ValueError('Previously completed output disappeared or became inconsistent: '+path.stem)
-                if native_busy:active=True;continue
+                if native_busy:active=True;native_count+=1;continue
                 if (native_failure_blocks(job) or self.retry_limit_reached(job)) and job['state']!='failed':
                     # Old controllers may have reset a failed job to pending/running.
                     # Only migrate it after its lease/native lock is free and outputs
@@ -987,9 +1014,13 @@ class Pool:
                 if not self.retryable(job,state=state):
                     if job['state']=='failed':failed.append(path.stem)
                     later=later or self.retry_later(job,state);continue
-                if not runtime.ready(job['task']):continue
+                if not runtime.ready(job['task']):dependencies+=1;continue
                 pending.append((path,job))
             finally:lease.close()
+        self.observation=dict(checked_at=time.time(),phase=phase,ready=len(pending),leased=leased,
+                              native_busy=native_count,dependencies=dependencies,failed=len(failed),
+                              recovery_wait=later,planning_error=base_error,deferred_budget=deferred_base,
+                              planning_errors=(state.get('ready_side_work') or {}).get('planning_errors'))
         if aggregate and (all_done or active or later or pending):
             # Only validated completed/active/eligible work invalidates an old
             # aggregate exhaustion record. Input/setup failures never reach here.
@@ -1325,6 +1356,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
     roots=[p.root.parent.parent if p.root.name=='.multi-node' else p.root.parent for p,_ in pairs]
     dispatch_lock=Path(os.path.commonpath([str(p.resolve()) for p in roots]))/'.v8-dispatch.lock'
     controller_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    diagnostic=WorkerStatus(dispatch_lock.parent,worker,controller_sha256)
     cohort_order=tuple(cohort_order)
     sequence_report=None
     for pool,runtime in pairs:
@@ -1371,6 +1403,29 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                         'primary_finalize':'extension','finalize':'complete'}[action]
         atomic(pool.root/'state.json',state)
         print(f'[{worker}] {cohort(pool)}: CPU stage finished; phase={state["phase"]}',flush=True)
+    def report_wait(active,claim_ok,busy):
+        candidates=[i for i,(p,_) in enumerate(pairs) if cohort(p)==active] if cohort_order else [i for i in range(len(pairs)) if i not in terminal]
+        if not candidates:return
+        i=candidates[0];pool,runtime=pairs[i];name=cohort(pool)
+        facts=dict(getattr(pool,'observation',{}));facts['order']=list(cohort_order)
+        if not claim_ok:diagnostic.publish('WAIT_GPU',name,str(busy),**facts)
+        elif i in scans:
+            diagnostic.publish('CHECKING',name,scans[i].kind+' pending; no GPU task assigned',**facts)
+        elif getattr(runtime,'pending_barrier',None) is not None:
+            diagnostic.publish('CPU_STAGE',name,'CPU stage '+runtime.pending_barrier[0]+' pending',**facts)
+        elif i not in initialized:diagnostic.publish('STARTING',name,'runtime initialization or node verification pending',**facts)
+        elif i in offers:diagnostic.publish('WAIT_CLAIM',name,'ready offer found; waiting to acquire or revalidate its lease',**facts)
+        elif facts.get('planning_error') or facts.get('planning_errors'):
+            diagnostic.publish('BLOCKED_INPUT',name,'planner reported unresolved input: '+canonical(facts.get('planning_error') or facts['planning_errors']),**facts)
+        elif facts.get('leased') or facts.get('native_busy'):
+            diagnostic.publish('WAIT_OTHER_WORKERS',name,'tasks hold execution leases; this node has no task',**facts)
+        elif facts.get('dependencies'):
+            diagnostic.publish('WAIT_CHECKPOINT',name,'parent checkpoint or evaluation snapshot is not ready',**facts)
+        elif facts.get('deferred_budget'):
+            diagnostic.publish('WAIT_BUDGET',name,'reference endpoint costs have not produced the frozen budget',**facts)
+        elif facts.get('recovery_wait'):
+            diagnostic.publish('WAIT_RECOVERY',name,'failed work is waiting for retry eligibility or another GPU host',**facts)
+        else:diagnostic.publish('WAIT_UNEXPLAINED',name,'no ready task observed; no proven wait reason; inspect queue and task logs',**facts)
     def refresh_before_exit():
         """Recheck original readiness after the stale scan; never claim under this check."""
         refreshed=False
@@ -1409,7 +1464,9 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
             # preparation of the next cohort, not just its GPU claims.
             gate=Lock(dispatch_lock)
             try:
-                if not gate.acquire():stop.wait(min(poll,.05));continue
+                if not gate.acquire():
+                    diagnostic.publish('WAIT_DISPATCH_LOCK',None,'another worker holds the shared dispatch lock',order=list(cohort_order))
+                    stop.wait(min(poll,.05));continue
                 active=unfinished_cohort(pairs,cohort_order)
             finally:gate.close()
         if cohort_order:
@@ -1435,6 +1492,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                 sequence_report=active
             available={cohort(pool) for pool,_ in pairs}
             if active is not None and active not in available:
+                diagnostic.publish('BLOCKED',active,'required earlier runtime is unavailable; later cohorts remain queued',order=list(cohort_order))
                 print(f'[{worker}] BLOCKED: {active} is unavailable on this node; '
                       'later cohorts are not started; queues/checkpoints retained',flush=True)
                 return 1
@@ -1556,6 +1614,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                                 if action=='ready':offers[index]=offer
                             # Original actor scans never hold the cross-cohort dispatch lock.
                         if action in CPU_PHASES:
+                            diagnostic.publish('CPU_STAGE',cohort(pool),'CPU stage '+action,phase=action,order=list(cohort_order))
                             print(f'[{worker}] {cohort(pool)}: CPU stage {action} started',flush=True)
                             if getattr(runtime,'independent_startup',False):
                                 runtime.begin_barrier(action,control.fd,stop,device_fds);action='waiting'
@@ -1669,6 +1728,9 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
             pool,runtime=pairs[index]
             lease,key,task,attempt=claimed;cursor=(index+1)%len(pairs)
             log=pool.root/'logs'/(attempt['id']+'.log')
+            diagnostic.publish('ASSIGNED',cohort(pool),'task lease acquired; waiting for child work records',
+                               task=key,kind=task['kind'],run_id=task.get('run_id'),seed=task.get('training_seed'),
+                               method=task.get('method_id'),log=str(log),order=list(cohort_order))
             print(f'[{worker}] {time.strftime("%Y-%m-%d %H:%M:%S")} {cohort(pool)} {task["kind"]} '
                   f'{task.get("method_id",task.get("task_id"))} seed={task.get("training_seed")} log={log}',flush=True)
             node_error=None
@@ -1680,6 +1742,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                     # this node before a training result exists: never a task failure or a queue failure.
                     rc=None;node_error=f'{type(exc).__name__}: {exc} (node {worker})'
                     print(f'[{worker}] launch failure on this node: {node_error}',flush=True)
+                diagnostic.publish('RECORDING_RESULT',cohort(pool),'child exited; recording and validating its result',exit_code=rc,task=key)
                 recorded=None
                 while recorded is None:
                     try:
@@ -1689,7 +1752,9 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                         node_error=node_error or f'{type(exc).__name__}: {exc}';recorded='unrecorded'
                         print(f'[{worker}] could not record the attempt ({exc}); the released lease lets another '
                               'node adopt or rerun it',flush=True)
-                    if recorded is None:time.sleep(min(poll,.2))
+                    if recorded is None:
+                        diagnostic.publish('RECORDING_RESULT',cohort(pool),'child exited; waiting for queue control lock to record its result',exit_code=rc,task=key)
+                        time.sleep(min(poll,.2))
             finally:lease.close()
             print(f'[{worker}] {time.strftime("%Y-%m-%d %H:%M:%S")} {cohort(pool)} task finished rc={rc} '
                   f'state={recorded} log={log}',flush=True)
@@ -1707,6 +1772,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
             failed=[i for i,(pool,_) in enumerate(pairs) if cohort(pool)==current and terminal.get(i)=='failed']
             if failed:
                 if refresh_before_exit():continue
+                diagnostic.publish('BLOCKED',current,reasons.get(current,'active cohort cannot proceed'),order=list(cohort_order))
                 print(f'[{worker}] STOPPED: {current} is not complete; later cohorts remain queued; '
                       f'{reasons.get(current,"see queue logs")}',flush=True)
                 record_worker_retirement(pairs,worker,'active sequential cohort unavailable on this node',
@@ -1733,6 +1799,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
             if done:print(f'[{worker}] complete: {", ".join(done)}',flush=True)
             if failed:record_worker_retirement(pairs,worker,'no eligible work after final readiness check',
                                                [dict(cohort=name,detail=reasons.get(name)) for name in failed])
+            diagnostic.publish('BLOCKED' if failed else 'COMPLETE',None,'; '.join(failed) if failed else 'all selected cohorts finalized')
             return 1 if failed else 0
         if (not dispatched and not progressed and not offers and not scans and not pending_setup
                 and all(i in initialized or i in terminal for i in eligible)
@@ -1744,10 +1811,14 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                 blocked=quiescent_failure(inspected)
                 if not blocked:continue
                 record_worker_retirement(pairs,worker,blocked['reason'],blocked['faults'])
+                diagnostic.publish('BLOCKED',active,blocked['reason'],faults=blocked['faults'])
                 print(f'[{worker}] STOPPED: {blocked["reason"]}; '+canonical(blocked['faults'])+
                       '; failed checkpoints/logs retained; no torchrun relaunch',flush=True)
                 return 1
-        if not dispatched and not progressed:stop.wait(min(poll,.05) if short_claim_wait else poll)
+        if not dispatched and not progressed:
+            report_wait(active,claim_ok,busy)
+            stop.wait(min(poll,.05) if short_claim_wait else poll)
+    diagnostic.publish('STOPPED',None,'stop requested; checkpoints and queue retained')
     return 75
 
 
