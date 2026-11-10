@@ -173,6 +173,8 @@ def _collect(base, cohort, now):
             if row['status'] == 'running' and not shown_worker:
                 row['status'] = 'unconfirmed'
                 row['error'] = 'marked running but no worker is recorded for it'
+                if lease_held(queue, path.stem) is not True:
+                    row['lost'] = True     # srgc_v8_nodes claim takes a running job whose lease is free
             rid = task.get('run_id')
             if rid:
                 manifest = read(directory / 'runs' / rid / 'manifest.json')
@@ -447,8 +449,11 @@ def failure_story(row, attempt, job, task, directory, state, live_policies, now)
     if lifetime != used:
         nxt += (f'; evaluation replay failures {used}, lifetime failures {lifetime}' if eval_recovery is not None else
                 f'; current verified repair failures {used}, historical failures {lifetime}')
+    # A person is needed only when the dispatcher will not retry it by itself (user 11-10: 'needs attention 은 노드가
+    # 날아갔는데도 왜 남아있는거냐. 현재 노드 정보나 뿌려').
     return dict(failure_cause=cause[:400], failure_next=nxt, failure_real=real, failure_at=at,
-                failure_budget_used=used,failure_lifetime_count=lifetime, failure_stack=native_dump)
+                failure_budget_used=used,failure_lifetime_count=lifetime, failure_stack=native_dump,
+                failure_needs_person=nxt.startswith('BLOCKED') and not finished)
 
 
 def task_ready(task):
@@ -1113,7 +1118,14 @@ def clean_block(base, cohort, now, host, width):
         lines.append('  (no tasks yet)')
     # Only what needs a person: a lost or interrupted task is resumed by the next free node on its own
     # (user: '새노드 할당되면 알아서 거기에 시작하면 되지 왜 표시를 해놓는거냐'), so it shows only in its cell.
-    problems = [r for r in rows if r['status'] in ATTENTION and not r.get('lost') and r['status'] != 'interrupted']
+    problems = [r for r in rows if r['status'] in ATTENTION and not r.get('lost') and r['status'] != 'interrupted'
+                and (r['status'] != 'failed' or r.get('failure_needs_person'))]
+    auto_failed = [r for r in rows if r['status'] == 'failed' and not r.get('failure_needs_person')]
+    native_hits = []   # (signal text, crash frames) of auto-retried native crashes, newest first
+    for r in sorted(auto_failed, key=lambda r: -(r['ended'] if isinstance(r.get('ended'), (int, float)) else 0)):
+        m = re.search(r'(SIG[A-Z]+ \(exit -\d+\)).*?; crashed in ([^;]+)', r.get('failure_cause') or '')
+        if m:
+            native_hits.append(m.groups())
     unreadable = access_problems(queue)
     if state.get('_unreadable_jobs'):
         unreadable.append(f"{len(state['_unreadable_jobs'])} unreadable job record(s)")
@@ -1219,7 +1231,10 @@ def clean_block(base, cohort, now, host, width):
                  base_planning_error=state.get('base_planning_error'),
                  parallel_work=isinstance(state.get('execution_order'),dict) and state['execution_order'].get('policy')=='ready-checkpoint-evaluation-extension-v1',
                  updates=(done_updates, max(planned, planned_tasks.get('_train_updates_min') or 0)),
-                 updates_more=any(v[2] != 'exact' for k, v in planned_tasks.items() if not k.startswith('_')))
+                 updates_more=any(v[2] != 'exact' for k, v in planned_tasks.items() if not k.startswith('_')),
+                 auto_failed=len(auto_failed),
+                 last_native=native_hits[0][0] if native_hits else None,
+                 last_native_where=native_hits[0][1] if native_hits else None)
     return lines, summary, (nodes, wanted), attention, stats
 
 
@@ -1531,6 +1546,16 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
         total = f"{lo}" if exact else f"{lo}-{hi}" if hi is not None and hi != lo else f"≥{lo}" if hi is None else f"{lo}"
         parts = ' + '.join(f"{k} {cells_text(0, v).split('/', 1)[1]}" for k, v in plan.items())
         fill.append(f"{st['label']} {total} ({parts})")
+    auto = [st for st in stats if st.get('auto_failed')]
+    if auto:
+        import textwrap
+        text = (' auto-retry, nothing to do: ' + ' · '.join(f"{st['label']} {st['auto_failed']}" for st in auto) +
+                ' failed task(s) restart from their checkpoints on the next free node (✗ cells)')
+        native = next((st for st in auto if st.get('last_native')), None)
+        if native:
+            text += f"; latest {native['last_native']} crashed in {native['last_native_where']}"
+        for part in textwrap.wrap(text, max(60, width - 2), break_on_hyphens=False, subsequent_indent='   ')[:3]:
+            out.append(paint(part, 'dim'))
     if fill:
         out.append(paint(' cells to fill: ' + ' · '.join(fill), None))
         if any(v[2] != 'exact' for st in stats for k, v in (st.get('planned') or {}).items() if not k.startswith('_')):

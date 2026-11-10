@@ -221,6 +221,14 @@ def test_simple_view_also_puts_summary_at_the_bottom(tmp_path):
 
 
 
+def failure_notes(base, cohort, now):
+    """Per job key: the failure note text (at / why / next) that status keeps for every failed task, also when the
+    task retries by itself and is therefore not drawn under needs attention (user 11-10)."""
+    rows = status.collect(base, cohort, now)[1]
+    return {r['key']: f"{r.get('failure_at', '')}\n      why:  {r.get('failure_cause', '')}\n      next: {r.get('failure_next', '')}"
+            for r in rows if r['status'] == 'failed'}
+
+
 def test_clean_view_is_compact_with_summary_last(tmp_path):
     """'status 좀 보기 좋게 정리하라고': short columns, one symbol per cell, summary at the bottom."""
     now = time.time()
@@ -241,8 +249,8 @@ def test_clean_view_is_compact_with_summary_last(tmp_path):
     header = next(norm(line) for line in bottom.splitlines() if norm(line).startswith("phase progress"))
     assert header == "phase progress train ext eval run wait fail updates"
     assert norm(next(line for line in bottom.splitlines() if line.startswith(" Qwen MBPP"))) == "Qwen MBPP not started"
-    assert " needs attention (1)" in bottom and "  ✗ OLMo MATH s6 eval eval-final FAILED" in bottom
-    assert "      why:  CUDA out of memory" in bottom
+    # the OOM evaluation retries by itself: one auto-retry line, no needs attention (user 11-10)
+    assert "needs attention" not in bottom and " auto-retry, nothing to do: OLMo MATH 1 failed task(s)" in bottom
     assert " nodes (1 host)  1 running" in bottom and "DEAD" not in bottom
     row = next(line for line in bottom.splitlines() if line.startswith(" ▶ node01"))
     for cell in (" running ", " OLMo ", " s5 On ", " 37/275 ", "answering 3/40, 812 tok (5s ago)"):
@@ -496,12 +504,9 @@ def test_healthy_nodes_never_get_an_x_and_attention_is_at_the_bottom(tmp_path):
     stats = status.clean_block(base, "olmo_math", now, "viewer", 200)[4]
     assert stats["running"] == 4 and stats["dead"] == 0 and "on dead node" not in text and "DEAD" not in text
     top, bottom = text.split("V8 status · ")
-    assert "needs attention" not in top and " needs attention (1)" in bottom
-    lines = bottom.splitlines()
-    i = lines.index(" needs attention (1)")
-    assert lines[i + 1].startswith("  ✗ OLMo MATH s9 SR50 FAILED ") and lines[i + 1].endswith("(attempt 1)")
-    assert lines[i + 2].startswith("      why:  ") and lines[i + 3].startswith("      next: ")
-    assert lines[i + 4].startswith("      log:  ")
+    # its first failure retries by itself, so nothing needs a person (user 11-10: 'needs attention 은 노드가
+    # 날아갔는데도 왜 남아있는거냐. 현재 노드 정보나 뿌려')
+    assert "needs attention" not in text and " auto-retry, nothing to do: OLMo MATH 1 failed task(s)" in bottom
     # interrupted reruns on the next free node by itself: only its ⏸ cell and the intr count show it
     assert "⏸ OLMo MATH s8 On" not in bottom
     assert stats["failed"] == 1 and stats["interrupted"] == 1
@@ -544,10 +549,14 @@ def test_failed_tasks_say_why_and_whether_it_is_a_real_failure(tmp_path):
           {"worker": "h-new.1", "at": now - 2, "task": None, "dispatch_policy": "new-v10"})
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
     bottom = text.split("━━ V8 status · ")[1]
+    notes = failure_notes(base, "olmo_math", now)
+    names = {"  ! OLMo MATH s5 SR25 marked failed ": "kill", "  ✗ OLMo MATH s6 SR50 FAILED ": "oom",
+             "  ! OLMo MATH s7 On marked failed ": "fin", "  ✗ OLMo MATH s8 U50 FAILED ": "rank",
+             "  ✗ OLMo MATH s9 SR25 FAILED ": "stall", "  ✗ OLMo MATH s4 SR50 FAILED ": "old", "  ✗ OLMo MATH s3 SR25 FAILED ": "rfile"}
     def block(head):
-        lines = bottom.splitlines()
-        i = next(k for k, line in enumerate(lines) if line.startswith(head))
-        return "\n".join(lines[i:i + 6])
+        return notes[names[head]]
+    # every one of them retries by itself (or is already complete): nothing under needs attention
+    assert "needs attention" not in bottom and " auto-retry, nothing to do: OLMo MATH 7 failed task(s)" in bottom
     k = block("  ! OLMo MATH s5 SR25 marked failed ")
     assert "at update 120/275" in k and "NOT a training error: killed from outside (SIGKILL, exit 9)" in k
     assert "check dmesg on h-kill first" in k and "not retried yet: a node started with the current bundle retries" in k
@@ -583,9 +592,13 @@ def test_failure_next_step_follows_the_default_retry_rule(tmp_path):
     job("ready", 6, [a(30), a(300)])
     job("spent", 7, [a(900), a(600), a(300)])
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
-    assert "retried automatically: attempt 2/3 starts in 40s" in text
-    assert "retried automatically: attempt 3/3 is waiting for the next free node" in text
+    notes = failure_notes(base, "olmo_math", now)
+    assert "retried automatically: attempt 2/3 starts in 40s" in notes["soon"]
+    assert "retried automatically: attempt 3/3 is waiting for the next free node" in notes["ready"]
     assert "BLOCKED: failure cap reached (3 recorded; limit 3); no more automatic retries; failed checkpoints/logs retained; repair required" in text
+    bottom = text.split("━━ V8 status · ")[1]
+    assert " needs attention (1)" in bottom and "  ✗ OLMo MATH s7 SR25 FAILED" in bottom and " s5 SR25 FAILED" not in bottom
+    assert " auto-retry, nothing to do: OLMo MATH 2 failed task(s)" in bottom
 
 
 
@@ -613,11 +626,11 @@ def test_summary_numbers_add_up_and_updates_count_each_job_once(tmp_path, monkey
     assert stats["done"] + stats["running"] + stats["ready"] + stats["waiting"] + stats["failed"] + stats["marked"] + \
         stats["interrupted"] + stats["dead"] + stats["other"] == stats["total"]
     assert stats["updates"] == (100, 50 + 50 + 25 + 45 + 25 + 75)   # was 75*5 + 120 = 495 before (each job from 0)
-    assert stats["dead"] == 1 and stats["other"] == 1 and stats["running"] == 0
+    assert stats["dead"] == 0 and stats["other"] == 1 and stats["running"] == 0 and stats["ready"] >= 1   # ghost: next node resumes it
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
-    assert "marked running but no worker is recorded for it" in text and "unknown job state 'weird'" in text
+    assert "marked running but no worker is recorded for it" not in text and "unknown job state 'weird'" in text
     head = next(line for line in text.splitlines() if line.split()[:2] == ["phase", "progress"])
-    assert " stuck " in head and " other " in head and " train " in head and " eval " in head
+    assert " stuck " not in head and " other " in head and " train " in head and " eval " in head
 
 
 
@@ -777,7 +790,18 @@ def test_native_crash_says_where_the_rank_crashed(tmp_path):
                         "outcome": "failed", "error": "task exit=-11; output verified=False",
                         "child_failure": {"failures": [failure, {"rank": 0, "message": "Signal 15 (SIGTERM) received"}]}}]})
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=120)
+    auto = re.sub(r"\n {3}", " ", text.split("V8 status · ")[1])
+    assert "needs attention" not in auto
+    assert ("auto-retry, nothing to do: OLMo MATH 1 failed task(s) restart from their checkpoints on the next free node (✗ cells); "
+            "latest SIGSEGV (exit -11) crashed in embedding (torch/nn/functional.py:2551) ← generate") in auto
+    # the same task after a second crash on another node: blocked, so it is listed with why and the dump path
+    job = json.loads((q / "jobs" / "n.json").read_text())
+    job["attempts"].insert(0, dict(job["attempts"][0], id="na0", host="h-m", worker="h-m.1", child_failure=None))
+    job["attempts"][1].update(host="h-n")
+    write(q / "jobs" / "n.json", job)
+    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=120)
     bottom = text.split("V8 status · ")[1]
+    assert " needs attention (1)" in bottom and "BLOCKED: SIGSEGV (exit -11) on 2 different nodes (h-m, h-n)" in re.sub(r"\n {12}", " ", bottom)
     why = next(line for line in bottom.splitlines() if line.startswith("      why:  "))
     assert why.startswith("      why:  rank 1 SIGSEGV (exit -11), native crash during answering; crashed in embedding"), why
     joined = re.sub(r"\n {12}", " ", bottom)
