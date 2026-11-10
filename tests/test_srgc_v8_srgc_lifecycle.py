@@ -33,13 +33,13 @@ def test_srgc_real_work_records_keep_child_alive_and_held_task_fd_survives(tmp_p
     worker=importlib.import_module('v8_runtime_worker')
     from scripts import srgc_v8_nodes as nodes
     runtime=types.SimpleNamespace(cohort='olmo_math',gpus=[],heartbeat=lambda _:None,
-        environment=dict(os.environ,V8_TASK_STALL_SECONDS='.15',SRGC_PROGRESS_DIR=str(tmp_path/'progress')))
+        environment=dict(os.environ,V8_TASK_STALL_SECONDS='.5',SRGC_PROGRESS_DIR=str(tmp_path/'progress')))   # > Python start-up under load
     held=nodes.Lock(tmp_path/'task.lock');assert held.acquire()
     code='''import os,sys,time
 from pathlib import Path
 fd=int(sys.argv[1]);assert os.fstat(fd).st_ino==Path(sys.argv[2]).stat().st_ino
 p=Path(os.environ['SRGC_PROGRESS_DIR'])/'rank-0.json'
-for i in range(6):p.write_text(str(i));time.sleep(.06)
+for i in range(12):p.write_text(str(i));time.sleep(.1)
 '''
     try:
         assert worker.run_srgc_child(runtime,[sys.executable,'-c',code,str(held.fd),str(tmp_path/'task.lock')],

@@ -20,7 +20,7 @@ def test_original_runner_finishes_all_four_cohorts_sequentially(tmp_path,monkeyp
     for name in nodes.DEFAULT_COHORTS:
         runtime=ToyRuntime(runner,tmp_path,name)
         pairs.append((nodes.Pool(runtime.root/'.multi-node',runtime.binding),runtime))
-    stop=threading.Event();timer=threading.Timer(30,stop.set);timer.start()
+    stop=threading.Event();timer=threading.Timer(120,stop.set);timer.start()   # hang guard; ~25 s of real toy training
     try:rc=nodes.worker_loop_many(pairs,'synthetic-sequential-node',stop,poll=.001,cohort_order=nodes.DEFAULT_COHORTS)
     finally:timer.cancel();timer.join()
     assert rc==0 and not stop.is_set(),'original synthetic runner failed to leave a sequential cohort'

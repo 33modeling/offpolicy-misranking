@@ -24,7 +24,7 @@ def dispatcher_stub(scripts):
     file(scripts/'v8_rpc.py','# IPC stub is not executed in this startup-only fixture\n')
     file(scripts/'v8_task_entry.py','# task entry stub\n')
     file(scripts/'v8_generation_probe.py','# decode observer stub\n')
-    file(scripts/'v8_progress_text.py','def describe(stage,details):return str(stage)\n')
+    file(scripts/'v8_progress_text.py','def describe(stage,details):return str(stage)\ndef scheduler_text(record,now):return ""\n')   # v8_supervisor imports both
     file(scripts/'srgc_verifier_fallback.py','# frozen verifier stub\n')
 
 

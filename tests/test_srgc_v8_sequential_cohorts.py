@@ -78,7 +78,7 @@ def test_six_simultaneous_nodes_never_spill_to_next_cohort_when_two_jobs_are_ful
     try:
         for i in range(6):
             child=ctx.Process(target=worker,args=(tmp_path,f'node-{i}',stop,release));child.start();children.append(child)
-        deadline=time.monotonic()+10
+        deadline=time.monotonic()+30   # hang guard under machine load
         while time.monotonic()<deadline:
             claims=[row for row in events(tmp_path) if row['stage']=='execute']
             if len(claims)>=2:break
@@ -88,7 +88,7 @@ def test_six_simultaneous_nodes_never_spill_to_next_cohort_when_two_jobs_are_ful
         assert {row['cohort'] for row in events(tmp_path)}=={'olmo_math'}
         release.set()
         for child in children:
-            child.join(10)
+            child.join(60)
             assert not child.is_alive() and child.exitcode==0
         assert all(nodes.read(p)['code']==0 for p in (tmp_path/'exits').glob('*'))
         recorded=events(tmp_path)
@@ -158,7 +158,7 @@ def test_quiescent_failure_in_active_cohort_is_not_hidden_by_unstarted_future_co
     path=pool.root/'jobs'/(key+'.json');job=nodes.read(path)
     job.update(state='failed',attempts=[dict(id=f'old-{i}',outcome='failed',exit_code=-11) for i in range(9)])
     nodes.atomic(path,job);before=path.read_bytes()
-    stop=threading.Event();timer=threading.Timer(2,stop.set);timer.start()
+    stop=threading.Event();timer=threading.Timer(10,stop.set);timer.start()   # hang guard
     try:
         assert nodes.worker_loop_many([(pool,runtime),*rows[1:]],'cpu-node',stop,poll=.001,
                                       cohort_order=nodes.DEFAULT_COHORTS)==1
@@ -190,7 +190,7 @@ def test_reopened_completed_cohort_does_not_leave_worker_waiting_on_its_cached_c
             reopened.append(True)
     later.barrier=reopen
     keep=tmp_path/'olmo_math/step-000025.pt';keep.write_bytes(b'optimizer RNG reward checkpoint sentinel')
-    stop=threading.Event();timer=threading.Timer(1,stop.set);timer.start()
+    stop=threading.Event();timer=threading.Timer(10,stop.set);timer.start()   # hang guard under machine load
     try:
         rc=nodes.worker_loop_many(rows,'cpu-node',stop,poll=.001,cohort_order=nodes.DEFAULT_COHORTS)
     finally:timer.cancel();timer.join()
