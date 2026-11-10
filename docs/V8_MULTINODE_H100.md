@@ -180,7 +180,7 @@ worker는60초마다 현황을 출력한다. 자식 출력은 터미널과 각 c
 정책 버전이 나온다. 표 형식 `status`는 `dispatch current <hash>`(현재 checkout과
 같음), `dispatch different <hash>`(다름), `dispatch unverified`(기록 없음)를 구분한다.
 정책 파일이 디스크에 있다는 것만으로 실행 중인 worker에 적용됐다고 판단하지 않는다.
-현재 배정 정책은 `current-attempt-stop-accounting-v30`이다. 작업 검사는 해당 cohort의
+현재 배정 정책은 `bounded-json-metadata-errors-v31`이다. 작업 검사는 해당 cohort의
 control lease만 잡고 별도로 수행한다. 검사 결과가 준비되면 공유 잠금 안에서 현재
 binding·phase·실패 상태·작업 정의·작업 lease를 다시 확인한 뒤 claim한다.
 검사와 claim 사이에 다른 노드가 가져간 작업이나 실패한 작업은 가져오지 않는다.

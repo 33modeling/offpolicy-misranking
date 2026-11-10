@@ -260,7 +260,11 @@ def main():
                 result=getattr(runtime,method)(*args)
             else:raise ValueError('unsupported runtime actor method')
             reply=dict(ok=True,result=result,interrupted=stop.is_set())
-        except Exception as exc:reply=dict(ok=False,type=type(exc).__name__,error=str(exc),interrupted=stop.is_set())
+        except Exception as exc:
+            reply=dict(ok=False,type=type(exc).__name__,error=str(exc),interrupted=stop.is_set())
+            if isinstance(exc,json.JSONDecodeError):
+                from srgc_v8_nodes import metadata_error_path
+                reply.update(filename=metadata_error_path(exc),line=exc.lineno,column=exc.colno)
         finally:
             for fd in fds:os.close(fd)
         try:send(channel,reply)

@@ -82,7 +82,12 @@ class RuntimeProxy:
             for event in (stop,self.stop_event):
                 if event is not None:event.set()
         if not reply.get('ok'):
-            if reply.get('type')=='JSONDecodeError':raise json.JSONDecodeError(reply['error'],'',0)
+            if reply.get('type')=='JSONDecodeError':
+                error=json.JSONDecodeError(reply['error'],'',0)
+                error.filename=reply.get('filename')
+                error.lineno=reply.get('line',1);error.colno=reply.get('column',1)
+                error.args=(reply['error'],)
+                raise error
             if reply.get('type')=='PermissionError':
                 raise nodes.NodeFailure(f'{self.cohort}: this account cannot access queue/run files: {reply.get("error")}')
             raise ValueError(f'{self.cohort}: {reply.get("type")}: {reply.get("error")}')

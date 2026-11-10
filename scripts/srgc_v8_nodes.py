@@ -31,7 +31,7 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'current-attempt-stop-accounting-v30'
+DISPATCH_POLICY = 'bounded-json-metadata-errors-v31'
 COHORT_ORDER = 'complete-one-cohort-before-next-v1'
 EVAL_NATIVE_RECOVERY = 'evaluation-sigsegv-recovery-v1'
 NODE_NATIVE_FAILURE_LIMIT = 2
@@ -58,7 +58,21 @@ def digest(value):
 
 
 def read(path):
-    return json.loads(Path(path).read_text())
+    try:return json.loads(Path(path).read_text())
+    except json.JSONDecodeError as exc:
+        error=json.JSONDecodeError(f'{path}: {exc.msg}',exc.doc,exc.pos)
+        error.filename=str(path)
+        raise error from exc
+
+
+def metadata_error_path(error):
+    if getattr(error,'filename',None):return str(error.filename)
+    trace=error.__traceback__;found=None
+    while trace is not None:
+        value=trace.tb_frame.f_locals.get('path')
+        if isinstance(value,(str,Path)) and Path(value).suffix in ('.json','.jsonl'):found=str(value)
+        trace=trace.tb_next
+    return found
 
 
 def atomic(path, value):
@@ -656,6 +670,24 @@ class Pool:
         """Task restarts admitted on this node; keep the existing shared retry marker."""
         return self.automatic_retry or self.retry_failed or bool((state or {}).get('retry_failed_requested_at'))
 
+    def metadata_wait(self,error):
+        """Only a known append-only file may be transient, for at most 30 unchanged seconds."""
+        path=metadata_error_path(error)
+        active=bool(self.held_leases())
+        detail=f'file={path or "unidentified"}; {error}'
+        if not active:raise ValueError('Invalid run metadata with no active writer; '+detail) from error
+        if not path or Path(path).suffix!='.jsonl':
+            raise ValueError('Invalid fixed JSON; an unrelated running task cannot repair it; '+detail) from error
+        try:Path(path).stat();signature=(path,error.lineno)
+        except OSError:raise ValueError('Unreadable append-only metadata; '+detail) from error
+        now=time.monotonic();previous=getattr(self,'metadata_error_wait',None)
+        if previous is None or previous[0]!=signature:self.metadata_error_wait=(signature,now)
+        elif now-previous[1]>=30:
+            raise ValueError('The same JSONL line has remained invalid for 30 seconds despite a live lease; '+detail) from error
+        self.observation=dict(checked_at=time.time(),phase=self.queue_state()['phase'],metadata_error=detail,
+                              metadata_wait_seconds=now-self.metadata_error_wait[1])
+        return 'waiting',None
+
     def place(self):
         return (getattr(self,'host',None) or socket.gethostname(),tuple(str(g) for g in getattr(self,'gpus',()) or ()))
 
@@ -1021,16 +1053,8 @@ class Pool:
                 tasks,sealed=runtime.plan(phase)
                 if sealed and (tasks or phase=='extension'):
                     atomic(cached,dict(tasks=tasks,sealed=True,**({'planner':CORRECTED_PLANNER} if corrected else {})))
-        except json.JSONDecodeError:
-            # Only incomplete append-only metadata with an active writer is
-            # transient. Broken completed metadata must fail visibly.
-            active=False
-            for path in self.root.glob('jobs/*.json'):
-                probe=Lock(self.root/'leases'/(path.stem+'.lock'))
-                if not probe.acquire():active=True
-                probe.close()
-            if active:return 'waiting',None
-            raise ValueError('Invalid run metadata with no active writer')
+        except json.JSONDecodeError as exc:
+            return self.metadata_wait(exc)
         except ValueError as exc:
             if not getattr(runtime,'streaming_ready_tasks',False) or phase not in ('extension','evaluation','primary_evaluation'):raise
             tasks,sealed=[],False;base_error=f'{type(exc).__name__}: {exc}'
@@ -1043,9 +1067,8 @@ class Pool:
         side_keys=set();side_budget=None;side_rule=None
         if getattr(runtime,'streaming_ready_tasks',False):
             try:side=runtime.side_tasks()
-            except json.JSONDecodeError:
-                if self.held_leases():return 'waiting',None
-                raise
+            except json.JSONDecodeError as exc:
+                return self.metadata_wait(exc)
             summary={k:v for k,v in side.items() if k!='tasks'}
             if state.get('ready_side_work')!=summary:
                 state['ready_side_work']=summary;atomic(self.root/'state.json',state)
@@ -1056,6 +1079,7 @@ class Pool:
                 if not side_budget and (item['phase']=='extension' or not side_rule):
                     raise ValueError('Ready side work has no frozen budget or precommitted evaluation rule')
                 side_keys.add(self.register(item['task'],item['phase']))
+        self.metadata_error_wait=None
         jobs=[];side_rule_record=read(self.root/'budget-rule.json') if side_rule else None
         for path in sorted(self.root.glob('jobs/*.json')):
             job=read(path)
@@ -1503,6 +1527,8 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
             diagnostic.publish('CPU_STAGE',name,'CPU stage '+runtime.pending_barrier[0]+' pending',**facts)
         elif i not in initialized:diagnostic.publish('STARTING',name,'runtime initialization or node verification pending',**facts)
         elif i in offers:diagnostic.publish('WAIT_CLAIM',name,'ready offer found; waiting to acquire or revalidate its lease',**facts)
+        elif facts.get('metadata_error'):
+            diagnostic.publish('WAIT_METADATA',name,'append-only JSONL is being written; bounded metadata retry: '+facts['metadata_error'],**facts)
         elif facts.get('planning_error') or facts.get('planning_errors'):
             diagnostic.publish('BLOCKED_INPUT',name,'planner reported unresolved input: '+canonical(facts.get('planning_error') or facts['planning_errors']),**facts)
         elif facts.get('leased') or facts.get('native_busy'):
@@ -1860,10 +1886,6 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                 if hold:give_up(index,pool,'native crash quarantine',NodeFailure(hold))
                 elif fatal_native_failure(read(pool.root/'jobs'/(key+'.json'))):node_rechecks.discard(index)
             dispatched=True
-        if time.monotonic()-last_report>=60:
-            try:print(f'[{worker}] '+canonical({p.binding.get('cohort','?'):p.status() for p,_ in pairs}),flush=True)
-            except NODE_LOCAL as exc:print(f'[{worker}] status unavailable: {exc}',flush=True)
-            last_report=time.monotonic()
         if cohort_order:
             current=unfinished_cohort(pairs,cohort_order,check_leases=False)
             failed=[i for i,(pool,_) in enumerate(pairs) if cohort(pool)==current and terminal.get(i)=='failed']
