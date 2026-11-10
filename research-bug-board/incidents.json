@@ -10211,7 +10211,7 @@
     "introduction_commit": "81695de0323e600f65c9fbb6a5f515981fe5e721",
     "cause": "독립 시작(TaskScan verify)은 큐 control.lock 의 dup fd 를 쥔 채 runtime.verify_node()(동결 trainer·입력 해시)를 한다. 그래서 여러 노드가 동시에 시작하면 한 노드씩 줄 서서 확인한다(WAIT_QUEUE_LOCK). Codex 커밋 81695de(11-10 23:47)는 이 확인에 runtime.timeout(V8_RUNTIME_INIT_TIMEOUT, 기본 120초, 원래 런타임 기동용)을 제한으로 걸었고, 583fea8(23:57)은 작업 검사에 300초 제한을 걸었다. 넘으면 give_up 으로 그 cohort 를 포기하는데, ef9c95d(18:55, 사용자 지시 '일단 1개를 완전히 끝내고 다른거를 시작하게 해저')의 순차 모드에서는 다음 실험이 eligible 이 아니어서 그 노드는 종료도 재시도도 없이 idle 로 남는다. 작업 검사 시간 초과 때는 멈춘 검사 스레드가 control.lock dup fd 를 계속 쥐어 다른 노드도 막는다.",
     "impact": "사용자 보고(11-11): 'v8 코드 지금 lock 걸려서 아무것도 시작못해', '모든 시작노드가 idle임', '노드 다 날아감', 'block_work current worker outcomes exit1 does not identify a new model crash', 'state BLOCED', 'inspected task definition changed before claim'. CPU 재현(6 노드 순차, 노드 확인 25초·제한 20초): 70초 동안 작업 0개, 6 노드 모두 시간 초과(3개 BLOCKED 종료, 3개 idle). 확인 8초일 때도 이론치 120개 중 16개.",
-    "attribution": "Codex 의 81695de·583fea8(제한)과 ef9c95d(순차 포기 후 대기). Claude 가 27371f0(검사 제한 1800초)와 af8c04f(잠금 없는 노드 확인·포기 시 종료)로 수정.",
+    "attribution": "Codex 의 81695de·583fea8(제한)과 ef9c95d(순차 포기 후 대기). 검사 제한은 Claude 27371f0 에서 1800초로 늘림. 잠금 없는 노드 확인·포기 시 종료 수정은 준비됨(미배포).",
     "evidence": [
       {
         "kind": "source",
@@ -10232,11 +10232,6 @@
         "kind": "source",
         "label": "검사 제한 완화 27371f0 (Claude)",
         "url": "https://github.com/33modeling/offpolicy-misranking/commit/27371f0de0ee328ca2509f4db8fb4e13cf2e46fd"
-      },
-      {
-        "kind": "source",
-        "label": "수정 커밋 af8c04f (Claude)",
-        "url": "https://github.com/33modeling/offpolicy-misranking/commit/af8c04f0e88bed5313e439c20736166f9c83090c"
       }
     ],
     "events": [
