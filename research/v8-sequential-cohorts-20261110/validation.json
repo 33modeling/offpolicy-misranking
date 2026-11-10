@@ -1,0 +1,170 @@
+{
+  "schema": 1,
+  "date": "2026-11-10",
+  "base_commit": "6beb84101d0461706a29525756ddbd5971898fa3",
+  "hypothesis": "Sequential cohort admission prevents spill without changing numerical computations.",
+  "policy": "complete-one-cohort-before-next-v26",
+  "order": [
+    "olmo_math",
+    "qwen_mbpp",
+    "olmo_mbpp",
+    "qwen_math"
+  ],
+  "spill_to_next": false,
+  "final_control_tests": {
+    "passed": 74,
+    "skipped": 2,
+    "failed": 0,
+    "new_sequential_cases": 12,
+    "log": "final-control-regression.log"
+  },
+  "earlier_attempts": [
+    {
+      "log": "system-python-broad.log",
+      "passed": 441,
+      "skipped": 49,
+      "failed": 5,
+      "note": "Four torch-dependent failures (including missing diagnostic receipt); one obsolete mock signature corrected and retested."
+    },
+    {
+      "log": "focused-regression.log",
+      "passed": 46,
+      "skipped": 2
+    },
+    {
+      "log": "venv-broad-interrupted.log",
+      "status": "interrupted_IO_wait",
+      "note": "CPU integration timed out in kernel filesystem waits; owned tests stopped, full success not claimed."
+    },
+    {
+      "log": "memory-integration-partial.log",
+      "status": "two_CPU_integrations_passed",
+      "note": "Both tmpfs integration summaries emitted after assertions; optional unchanged model-memory continuation blocked on filesystem reads and was stopped, not claimed complete."
+    }
+  ],
+  "preserved": {
+    "numerical_sources_inputs_configs_unchanged": true,
+    "previous_coordinator_archived": "0c95f4f64d0c91c06b86ec5b21d4ba96e1261c25ce5af033a63cb6cd19318c79",
+    "archive_coordinators": 49,
+    "archive_runners": 7,
+    "checkpoints_rewards_task_identities_unchanged": true
+  },
+  "cpu_integration_summaries": {
+    "test_real_v8_cpu_three_worker_0.json": {
+      "all_tasks_done": true,
+      "budget_endpoint_changed_run_cases": 18,
+      "budget_selected_checkpoints": 13,
+      "matched_updates": 75,
+      "new_GPU_jobs": 0,
+      "no_duplicate_execution": true,
+      "safety_cap": 100,
+      "scope": "CPU multi-process software integration; not scientific RLVR results",
+      "tasks": 49,
+      "training_seeds": [
+        5,
+        6,
+        7
+      ],
+      "workers": 3
+    },
+    "test_real_v8_three_workers_aut0.json": {
+      "cohorts": {
+        "olmo_math": {
+          "all_tasks_done": true,
+          "budget_endpoint_changed_run_cases": 17,
+          "budget_selected_checkpoints": 13,
+          "matched_updates": 75,
+          "new_GPU_jobs": 0,
+          "no_duplicate_execution": true,
+          "safety_cap": 100,
+          "scope": "CPU multi-process software integration; not scientific RLVR results",
+          "tasks": 48,
+          "training_seeds": [
+            5,
+            6,
+            7
+          ],
+          "workers": 3
+        },
+        "olmo_mbpp": {
+          "all_tasks_done": true,
+          "budget_endpoint_changed_run_cases": 16,
+          "budget_selected_checkpoints": 13,
+          "matched_updates": 75,
+          "new_GPU_jobs": 0,
+          "no_duplicate_execution": true,
+          "safety_cap": 100,
+          "scope": "CPU multi-process software integration; not scientific RLVR results",
+          "tasks": 48,
+          "training_seeds": [
+            5,
+            6,
+            7
+          ],
+          "workers": 3
+        },
+        "qwen_math": {
+          "all_tasks_done": true,
+          "budget_endpoint_changed_run_cases": 13,
+          "budget_selected_checkpoints": 14,
+          "matched_updates": 75,
+          "new_GPU_jobs": 0,
+          "no_duplicate_execution": true,
+          "safety_cap": 100,
+          "scope": "CPU multi-process software integration; not scientific RLVR results",
+          "tasks": 49,
+          "training_seeds": [
+            5,
+            6,
+            7
+          ],
+          "workers": 3
+        },
+        "qwen_mbpp": {
+          "all_tasks_done": true,
+          "budget_endpoint_changed_run_cases": 18,
+          "budget_selected_checkpoints": 13,
+          "matched_updates": 75,
+          "new_GPU_jobs": 0,
+          "no_duplicate_execution": true,
+          "safety_cap": 100,
+          "scope": "CPU multi-process software integration; not scientific RLVR results",
+          "tasks": 49,
+          "training_seeds": [
+            5,
+            6,
+            7
+          ],
+          "workers": 3
+        }
+      },
+      "new_GPU_jobs": 0,
+      "no_duplicate_execution": true,
+      "no_overlapping_jobs_per_worker": true,
+      "scope": "CPU multi-cohort software verification, not scientific RLVR measurements",
+      "total_tasks": 194,
+      "workers": 3
+    }
+  },
+  "scientific_measurements": {
+    "H100_runtime": "unverified",
+    "performance": "unmeasured",
+    "note": "Synthetic CPU tests, no new paper results. Failures retained."
+  },
+  "operations": {
+    "remote_GPU_nodes_contacted": 0,
+    "new_GPU_experiments": 0,
+    "paid_API_calls_initiated": 0,
+    "servers_started": 0,
+    "deployments": 0
+  },
+  "changed_file_sha256": {
+    "scripts/srgc_v8_nodes.py": "7c018225d7c45ca339a4549759c240688430d7ca9bd9c7dc1f0f8021f0c2f6ba",
+    "scripts/v8_dispatch.py": "30c6cb499ba854729f47131e711f6180bff2b2dd75be904fbff92ab5898c183b",
+    "tests/test_srgc_v8_sequential_cohorts.py": "5e9b36d14a6e2b503c5fad7cf0e76402d051364eb2ca8dea002afaab533e7110",
+    "tests/test_srgc_v8_dispatch_runtime.py": "4870344a3aefb710f725ef6884342950bad811b42e432e641219b851cbb4f0ee",
+    "tests/test_srgc_v8_olmo_mbpp.py": "c677039b7da7d733cfbb2b99d12041cc8496043739ffac980358afba6f465767",
+    "docs/V8_MULTINODE_H100.md": "7ad543be6a28b0d6580ac6e80a8ce5369a018244b34c49207aeaed83559c8bc1",
+    "v8/queue-runtimes.zip": "f64bb52c4c4d2a4404b31efe2b7abbcf9f4e235e15014b74747b7f02fb5af160"
+  }
+}

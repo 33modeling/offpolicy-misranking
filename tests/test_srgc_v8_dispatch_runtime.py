@@ -120,11 +120,15 @@ def test_existing_cohort_bindings_and_checkpoints_survive_new_dispatcher(tmp_pat
     assert all(path.read_bytes()==data for path,data in checkpoints.items())
     for entry in entries:
         queue=root/entry['cohort']/'.multi-node'
-        assert dispatch.nodes.read(queue/'state.json')['phase']=='complete'
-        assert len(list((root/entry['cohort']/'snapshots').glob('*.pt')))==3
+        # An unavailable earlier cohort now blocks later work, rather than
+        # silently borrowing these workers for the next model/data combination.
+        expected_phase=('train' if old_failed else 'prepare') if partial else 'complete'
+        assert dispatch.nodes.read(queue/'state.json')['phase']==expected_phase
+        assert len(list((root/entry['cohort']/'snapshots').glob('*.pt')))==(1 if partial else 3)
     receipts=list((root/'.v8-dispatch-policies').glob('*.json'))
-    assert len(receipts)==len(entries)
+    assert len(receipts)==(0 if partial else len(entries))
     assert all(json.loads(p.read_text())['numerical_source_changed'] is False for p in receipts)
+    assert all(json.loads(p.read_text())['cohort_order']['cohorts']==['olmo_math','qwen_mbpp'] for p in receipts)
 
 
 @pytest.mark.parametrize('cohort',['olmo_math','qwen_mbpp'])
@@ -151,7 +155,7 @@ def test_actor_uses_real_frozen_runtime_identity_without_loading_models(tmp_path
 
 @pytest.mark.parametrize('stage',['initialization','prepare','verify_node','plan','native_busy','done','ready'])
 @pytest.mark.parametrize('blocked',['qwen_mbpp','olmo_math'])
-def test_other_cohort_starts_before_blocked_initialization_or_prepare_finishes(tmp_path,blocked,stage):
+def test_historical_fair_worker_keeps_independent_runtime_preparation(tmp_path,blocked,stage):
     other='olmo_math' if blocked=='qwen_mbpp' else 'qwen_mbpp'
     wait=f'''\n  if self.cohort=={blocked!r}:\n   import time\n   while not (self.root.parent/{('started-'+other)!r}).exists():time.sleep(.01)\n'''
     script=FAKE.replace('__TAG__',repr('original fixture')).replace(
@@ -176,6 +180,8 @@ d.nodes.gpu_lock_root=lambda:lease_root
 original_loop=d.nodes.worker_loop_many
 blocked=sys.argv[3]
 def blocked_first(pairs,worker,stop,**kwargs):
+ # Exercise the retained historical fair worker, not the production sequential policy.
+ kwargs.pop('cohort_order',None)
  target=next(i for i,(pool,_) in enumerate(pairs) if pool.binding['cohort']==blocked)
  while int(d.nodes.digest(worker)[:8],16)%len(pairs)!=target:worker+='x'
  return original_loop(pairs,worker,stop,**kwargs)

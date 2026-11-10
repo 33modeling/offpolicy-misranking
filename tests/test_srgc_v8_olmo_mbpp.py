@@ -29,12 +29,12 @@ def test_dispatch_passes_available_entries_instead_of_defaulting_to_a_missing_co
         entries=[dict(cohort=c,script=str(ROOT/'scripts/srgc_v8_nodes.py'),runner=str(ROOT/'v8/experiments'),python=sys.executable)
                  for c in ('qwen_mbpp','olmo_mbpp')])))
     seen=[]
-    def main(args,*,selected_cohorts):
-        seen.append(selected_cohorts);return 0
+    def main(args,*,selected_cohorts,cohort_order):
+        seen.append((selected_cohorts,cohort_order));return 0
     monkeypatch.setattr(dispatch.nodes,'main',main)
     monkeypatch.setattr(sys,'argv',['v8_dispatch.py',str(path)])
     assert dispatch.main()==1  # preserve the unavailable cohort's reported error
-    assert seen==[('qwen_mbpp','olmo_mbpp')]
+    assert seen==[(('qwen_mbpp','olmo_mbpp'),('olmo_math','qwen_mbpp','olmo_mbpp'))]
 
 
 def test_olmo_mbpp_keeps_the_original_mbpp_interpreter():
