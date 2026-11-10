@@ -10028,5 +10028,89 @@
         "text": "v27: 다른 worker가 완료된 큐를 다시 열었을 때 이 worker의 완료 캐시를 무효화하고 원래 입력 신원·단계·작업을 재확인한다. 기존 완료 출력을 재사용하며 재시도 상한과 실패·checkpoint·reward 기록을 초기화하지 않는다. 수정 전 watchdog으로만 끝나는 CPU 무한대기 재현1개 실패, 수정 후 관련77검사 통과·환경조건2개 건너뜀. 실패 재개 시 exit1, 정상 재개 시 중복 실행 없이 전체 완료, 실행 lease 대기 중 중지 시 exit75 확인. H100 진행은 미검증이며 학습 성능 수치를 보고하지 않는다."
       }
     ]
+  },
+  {
+    "id": "V8-155",
+    "title": "V8 로그가 끝난 작업의 rank 기록을 현재 진행으로 재사용하고 대기 원인을 구분하지 않음",
+    "area": "V8 로그·노드 복구",
+    "severity": "high",
+    "first_reported": "2026-11-10",
+    "introduction_commit": null,
+    "cause": "supervisor는 살아 있는 task가 없어도 launch 디렉터리를 다시 읽었고 새 process 시작 전 기록도 표시했다. dispatcher의 실제 lease·checkpoint·배정 잠금 대기 원인은 NOT ASSIGNED로만 보였다.",
+    "impact": "진행과 대기를 구분하기 어렵고 기존 명령으로 복구된 노드의 작업 재참여가 막혔다.",
+    "attribution": "기존 코드에서 확인. 이번 수정·CPU 검증: Codex.",
+    "evidence": [
+      {
+        "kind": "commit",
+        "label": "수정 코드",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/378d39cc113c8a4181d8744c1710df2d225912a4"
+      },
+      {
+        "kind": "source",
+        "label": "검증·미측정·보존 근거",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/master/research/v8-log-states-node-reentry-20261110/validation.json"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-10",
+        "actor": "사용자",
+        "type": "reported",
+        "status": "open",
+        "text": "로그로 idle·무한루프를 구분하기 어렵다. Ctrl+C로 재실행해도 한번 고장난 노드는 돌아오지 않는다. git push부터 하라.",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-10",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "대기 이유별 진단, 실제 검사 시각과 상태 유지 시간, 살아 있는 task의 새 기록만 표시,120초 실제 기록 부재는 NO_PROGRESS로 구분.189검사 통과·3환경조건 건너뜀. 진단 실패가 학습을 실패 처리하지 않음을 검사. 임계값은 표시만 하며 재시도·종료 정책을 바꾸지 않음.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/378d39cc113c8a4181d8744c1710df2d225912a4",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "V8-156",
+    "title": "Ctrl+C 재실행 후 같은 GPU 묶음의 native 충돌 이력 때문에 복귀할 수 없음",
+    "area": "V8 로그·노드 복구",
+    "severity": "high",
+    "first_reported": "2026-11-10",
+    "introduction_commit": null,
+    "cause": "같은 place의 native 이력은 PID 변경 후에도 재시도를 차단하고, 노드의2회 충돌 격리에는 재검증 복귀 경로가 없었다. 기존 eval 복구가 작업을 pending으로 바꾼 경우도 남은 native 이력으로 배정되지 않았다.",
+    "impact": "진행과 대기를 구분하기 어렵고 기존 명령으로 복구된 노드의 작업 재참여가 막혔다.",
+    "attribution": "기존 코드에서 확인. 이번 수정·CPU 검증: Codex.",
+    "evidence": [
+      {
+        "kind": "commit",
+        "label": "수정 코드",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/3a6f207fa45abd87d769f0fc06a185792b1f593e"
+      },
+      {
+        "kind": "source",
+        "label": "검증·미측정·보존 근거",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/master/research/v8-log-states-node-reentry-20261110/validation.json"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-10",
+        "actor": "사용자",
+        "type": "reported",
+        "status": "open",
+        "text": "로그로 idle·무한루프를 구분하기 어렵다. Ctrl+C로 재실행해도 한번 고장난 노드는 돌아오지 않는다. git push부터 하라.",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-10",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "원본 GPU/NCCL admission을 새로 수행하고 passed 영수증을 검증한 노드에 같은 place의 남은 재시도 한도를 허용. 작업별 누적 실패·평가 재생 한도와 checkpoint·task·이력 유지. 실패/중단 검사 총2회, 통과 후 native 재충돌 시 반복 복구 중단.27노드·101통합·5원본 actor/FD 전달 검사 통과. 원격 H100 성공이나 SIGSEGV 원인 해결은 미확인.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/3a6f207fa45abd87d769f0fc06a185792b1f593e",
+        "evidence_kind": "code_test"
+      }
+    ]
   }
 ]

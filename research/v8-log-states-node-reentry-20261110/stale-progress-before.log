@@ -1,0 +1,37 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+____ test_completed_task_progress_is_not_reported_as_work_of_an_idle_launch ____
+
+tmp_path = PosixPath('/dev/shm/v8-logs-baseline-20261110/test_completed_task_progress_i0')
+supervisor = <module 'v8_supervisor' from '/home/kms/dev/offpolicy-misranking/scripts/v8_supervisor.py'>
+
+    def test_completed_task_progress_is_not_reported_as_work_of_an_idle_launch(tmp_path,supervisor):
+        (tmp_path/'rank-0.json').write_text(json.dumps(dict(stage='generation',updated=time.time())))
+        control=dict(kind=None,state='S',env={'V8_LAUNCH_ID':'L','SRGC_PROGRESS_DIR':str(tmp_path)})
+>       assert supervisor.work_events({42:control},'L',tmp_path)==[]
+E       AssertionError: assert ['GPU process...ecord 0s ago'] == []
+E         
+E         Left contains one more item: 'GPU process 0 | Writing model answers for the current question | last work record 0s ago'
+E         Use -v to get more diff
+
+tests/test_srgc_v8_log_states.py:22: AssertionError
+________ test_resumed_child_does_not_inherit_previous_attempt_progress _________
+
+tmp_path = PosixPath('/dev/shm/v8-logs-baseline-20261110/test_resumed_child_does_not_in0')
+supervisor = <module 'v8_supervisor' from '/home/kms/dev/offpolicy-misranking/scripts/v8_supervisor.py'>
+
+    def test_resumed_child_does_not_inherit_previous_attempt_progress(tmp_path,supervisor):
+        started=time.time()
+        (tmp_path/'rank-0.json').write_text(json.dumps(dict(stage='policy_update',updated=started-600)))
+        child=dict(kind='task',state='S',started_at=started,env={'V8_LAUNCH_ID':'L','SRGC_PROGRESS_DIR':str(tmp_path)})
+>       assert supervisor.work_events({42:child},'L',tmp_path)==[]
+E       AssertionError: assert ['GPU process...ord 600s ago'] == []
+E         
+E         Left contains one more item: 'GPU process 0 | Optimizer update completed | last work record 600s ago'
+E         Use -v to get more diff
+
+tests/test_srgc_v8_log_states.py:29: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_srgc_v8_log_states.py::test_completed_task_progress_is_not_reported_as_work_of_an_idle_launch
+FAILED tests/test_srgc_v8_log_states.py::test_resumed_child_does_not_inherit_previous_attempt_progress
+2 failed in 0.13s

@@ -1,0 +1,47 @@
+.F.........................                                              [100%]
+=================================== FAILURES ===================================
+_ test_failed_probe_claims_no_training_and_plain_restart_has_finite_probe_budget _
+
+tmp_path = PosixPath('/dev/shm/v8-node-reentry-fixed-20261110/test_failed_probe_claims_no_tr0')
+
+    def test_failed_probe_claims_no_training_and_plain_restart_has_finite_probe_budget(tmp_path):
+        pool,runtime,path,checkpoint,result,checks=recovered(tmp_path,passes=False)
+        before=path.read_bytes();saved=checkpoint.read_bytes()
+        for i in range(3):
+            joined=nodes.Pool(pool.root,pool.binding);joined.host=pool.host
+            assert run(joined,runtime,'restart-'+str(i))==1
+>       assert len(checks)==2 and not runtime.calls and path.read_bytes()==before
+E       assert (2 == 2 and not [] and b'{"attempts"...g_seed":5}}\n' == b'{"attempts"...g_seed":5}}\n'
+E        +  where 2 = len([True, True])
+E        +  and   [] = <test_srgc_v8_eval_native_recovery.prepared.<locals>.Runtime object at 0x77f3d998f320>.calls
+E         
+E         At index 156 diff: b'e' != b'p'
+E         Use -v to get more diff)
+
+tests/test_srgc_v8_node_reentry.py:47: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[v8] evaluation recovery armed once: 431ae3a479f77cadbbead8d120f592a987f946915564e240d253503e9b0fcb2b; 1 original failures retained; identical checkpoint/spec; not unlimited
+[v8] olmo_math: resumed 1 older-controller failed task(s) after node verification; original attempts/checkpoints retained; no retry flag needed
+[V8 STATUS] 2026-11-10T13:57:56Z node=restart-0 state=CHECKING experiment=olmo_math rechecking four-GPU NCCL after a native crash; no task claimed;  same_state=0s
+[restart-0] olmo_math: GPU re-admission failed: NodeFailure: GPU re-admission failed; no training task was claimed: synthetic failed NCCL admission
+[restart-0] olmo_math: this node stops serving olmo_math. The shared queue was NOT marked failed and the other nodes continue. Fix this node (message above), then start the same command here again.
+[restart-0] {"olmo_math":{"dispatch_workers":[{"controller_sha256":"c0fb00122a83b1b965cf2f9cae2710b5a1ef0e3c3c410a540c136c376c2f2106","dispatch_policy":"verified-node-reentry-and-readable-waits-v29","heartbeat_age_seconds":0,"worker":"restart-0"}],"failure":null,"known_task_counts":{"pending":1},"leased_tasks":[],"phase":"evaluation"}}
+[restart-0] olmo_math: FAILED: NodeFailure: GPU re-admission failed; no training task was claimed: synthetic failed NCCL admission
+[restart-0] WORKER EXIT: blocked_work; current worker outcomes={}; previous-worker failed attempts=1; lifetime failed attempts=1; exit1 does not identify a new model crash; no eligible work after final readiness check
+[V8 STATUS] 2026-11-10T13:57:56Z node=restart-0 state=BLOCKED experiment=- olmo_math;  same_state=0s
+[V8 STATUS] 2026-11-10T13:57:56Z node=restart-1 state=CHECKING experiment=olmo_math rechecking four-GPU NCCL after a native crash; no task claimed;  same_state=0s
+[restart-1] olmo_math: GPU re-admission failed: NodeFailure: GPU re-admission failed; no training task was claimed: synthetic failed NCCL admission
+[restart-1] olmo_math: this node stops serving olmo_math. The shared queue was NOT marked failed and the other nodes continue. Fix this node (message above), then start the same command here again.
+[restart-1] {"olmo_math":{"dispatch_workers":[{"controller_sha256":"c0fb00122a83b1b965cf2f9cae2710b5a1ef0e3c3c410a540c136c376c2f2106","dispatch_policy":"verified-node-reentry-and-readable-waits-v29","heartbeat_age_seconds":0,"worker":"restart-1"},{"controller_sha256":"c0fb00122a83b1b965cf2f9cae2710b5a1ef0e3c3c410a540c136c376c2f2106","dispatch_policy":"verified-node-reentry-and-readable-waits-v29","heartbeat_age_seconds":0,"worker":"restart-0"}],"failure":null,"known_task_counts":{"pending":1},"leased_tasks":[],"phase":"evaluation"}}
+[restart-1] olmo_math: FAILED: NodeFailure: GPU re-admission failed; no training task was claimed: synthetic failed NCCL admission
+[restart-1] WORKER EXIT: blocked_work; current worker outcomes={}; previous-worker failed attempts=1; lifetime failed attempts=1; exit1 does not identify a new model crash; no eligible work after final readiness check
+[V8 STATUS] 2026-11-10T13:57:56Z node=restart-1 state=BLOCKED experiment=- olmo_math;  same_state=0s
+[restart-2] olmo_math: GPU re-admission failed: NodeFailure: GPU/NCCL re-admission reached its two-probe limit; evidence: /dev/shm/v8-node-reentry-fixed-20261110/test_failed_probe_claims_no_tr0/olmo_math/.multi-node/node-native-reentry/213aadf9fd9ea56b8e57a3a12bd7dc351811137b4b9d28fc739b516e407d62a3.json
+[restart-2] olmo_math: this node stops serving olmo_math. The shared queue was NOT marked failed and the other nodes continue. Fix this node (message above), then start the same command here again.
+[restart-2] {"olmo_math":{"dispatch_workers":[{"controller_sha256":"c0fb00122a83b1b965cf2f9cae2710b5a1ef0e3c3c410a540c136c376c2f2106","dispatch_policy":"verified-node-reentry-and-readable-waits-v29","heartbeat_age_seconds":0,"worker":"restart-2"},{"controller_sha256":"c0fb00122a83b1b965cf2f9cae2710b5a1ef0e3c3c410a540c136c376c2f2106","dispatch_policy":"verified-node-reentry-and-readable-waits-v29","heartbeat_age_seconds":0,"worker":"restart-1"},{"controller_sha256":"c0fb00122a83b1b965cf2f9cae2710b5a1ef0e3c3c410a540c136c376c2f2106","dispatch_policy":"verified-node-reentry-and-readable-waits-v29","heartbeat_age_seconds":0,"worker":"restart-0"}],"failure":null,"known_task_counts":{"pending":1},"leased_tasks":[],"phase":"evaluation"}}
+[restart-2] olmo_math: FAILED: NodeFailure: GPU/NCCL re-admission reached its two-probe limit; evidence: /dev/shm/v8-node-reentry-fixed-20261110/test_failed_probe_claims_no_tr0/olmo_math/.multi-node/node-native-reentry/213aadf9fd9ea56b8e57a3a12bd7dc351811137b4b9d28fc739b516e407d62a3.json
+[restart-2] WORKER EXIT: blocked_work; current worker outcomes={}; previous-worker failed attempts=1; lifetime failed attempts=1; exit1 does not identify a new model crash; no eligible work after final readiness check
+[V8 STATUS] 2026-11-10T13:57:56Z node=restart-2 state=BLOCKED experiment=- olmo_math;  same_state=0s
+=========================== short test summary info ============================
+FAILED tests/test_srgc_v8_node_reentry.py::test_failed_probe_claims_no_training_and_plain_restart_has_finite_probe_budget
+1 failed, 26 passed in 1.10s

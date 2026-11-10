@@ -1,0 +1,43 @@
+....F                                                                    [100%]
+=================================== FAILURES ===================================
+___ test_original_runtime_actor_rechecks_admission_with_inherited_gpu_lease ____
+
+tmp_path = PosixPath('/dev/shm/v8-reentry-rpc-20261110/test_original_runtime_actor_re0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x72fdab2938f0>
+
+    def test_original_runtime_actor_rechecks_admission_with_inherited_gpu_lease(tmp_path,monkeypatch):
+        monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]/'scripts'))
+        from v8_dispatch import RuntimeProxy
+        from test_srgc_v8_dispatch_runtime import FAKE
+        original=tmp_path/'original.py'
+        original.write_text(FAKE.replace('__TAG__',repr('admission CPU fixture'))+'''
+     def admit(self,device_fds):
+      assert self.admitted is None
+      assert len(device_fds)==1
+      os.fstat(device_fds[0])
+      self.root.mkdir(parents=True,exist_ok=True)
+      receipt=self.root/'admission.json'
+      receipt.write_text(json.dumps(dict(state='passed',scope='CPU FD transfer fixture')))
+      self.admitted=dict(receipt=str(receipt));return self.admitted
+    ''')
+        entry=dict(cohort='olmo_math',script=str(original),runner=str(tmp_path),python=sys.executable)
+        plan=dict(root=str(tmp_path/'runs'),gpus=['0','1','2','3'],worker='host.42',entries=[entry])
+        planfile=tmp_path/'plan.json';planfile.write_text(json.dumps(plan))
+        actor=RuntimeProxy(entry,plan,planfile)
+        try:
+            assert actor.error is None
+            with nodes.Lock(tmp_path/'gpu.lock') as lease:
+                report=actor.fresh_admission((lease.fd,))
+                assert nodes.read(report['receipt'])['state']=='passed'
+                probe=nodes.Lock(tmp_path/'gpu.lock');assert not probe.acquire()
+        finally:actor.close()
+>       joined=nodes.Pool(pool.root,pool.binding);joined.host=pool.host
+                          ^^^^
+E       NameError: name 'pool' is not defined
+
+tests/test_srgc_v8_node_reentry.py:96: NameError
+----------------------------- Captured stdout call -----------------------------
+[v8] olmo_math: opening original runtime with /usr/bin/python3; startup timeout=120s
+=========================== short test summary info ============================
+FAILED tests/test_srgc_v8_node_reentry.py::test_original_runtime_actor_rechecks_admission_with_inherited_gpu_lease
+1 failed, 4 passed in 0.19s

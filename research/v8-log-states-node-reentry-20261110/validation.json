@@ -1,0 +1,71 @@
+{
+  "schema": 1,
+  "date": "2026-11-10",
+  "log_code_commit": "378d39cc113c8a4181d8744c1710df2d225912a4",
+  "reentry_code_commit": "3a6f207fa45abd87d769f0fc06a185792b1f593e",
+  "policy": "verified-node-reentry-and-readable-waits-v29",
+  "hypothesis": "Separate current task progress from scheduler waiting, and admit recovered GPU sets after a fresh verified NCCL probe without renewing task failure caps.",
+  "scope": {
+    "cohorts": [
+      "olmo_math",
+      "qwen_mbpp",
+      "olmo_mbpp",
+      "qwen_math"
+    ],
+    "scientific_models_data_seeds_updates_and_reward_protocols": "unchanged",
+    "training_rewards_vs_heldout": "unchanged, never relabelled"
+  },
+  "reproduction": {
+    "stale_progress_baseline_failed": 2,
+    "issues": [
+      "Idle control processes reused rank records after their task ended.",
+      "A restarted task reused old records from before the current process started.",
+      "Persistent place exclusion and node quarantine had no verified same-GPU recovery path, including native recovery jobs already migrated back to pending."
+    ]
+  },
+  "verification": {
+    "log_controls_passed": 189,
+    "log_controls_skipped": 3,
+    "reentry_controls_passed": 27,
+    "merged_controls_passed": 101,
+    "runtime_RPC_tests_passed": 5,
+    "tests_are_synthetic_CPU_controls": true,
+    "fixtures_corrected": [
+      "Compare retained attempts/task, not queue bookkeeping added by original bounded recovery.",
+      "RPC fixture assertion was initially attached to the wrong test; corrected before committing."
+    ]
+  },
+  "rules": {
+    "node_reentry": "Fresh original four-GPU NCCL admission required; verify passed receipt before allowing same-place retries.",
+    "task_failure_caps": "Original lifetime caps and evaluation replay caps retained.",
+    "probe_limit": "At most two failed/interrupted probes per GPU/binding/controller; successful recovery followed by a native crash stops further recovery.",
+    "same_command": true,
+    "no_reset_or_delete": true,
+    "NO_PROGRESS": "120 seconds without a new record from a live task; display only, no automatic kill or retry."
+  },
+  "unmeasured": {
+    "H100_runtime": "unverified",
+    "native_fault_root_cause": "unverified",
+    "model_performance": "not_measured",
+    "throughput": "not_measured"
+  },
+  "operations": {
+    "remote_GPU_nodes_contacted": 0,
+    "new_GPU_experiments": 0,
+    "paid_API_calls_initiated": 0,
+    "servers_started": 0,
+    "deployments": 0
+  },
+  "file_sha256": {
+    "scripts/srgc_v8_nodes.py": "c0fb00122a83b1b965cf2f9cae2710b5a1ef0e3c3c410a540c136c376c2f2106",
+    "scripts/v8_dispatch.py": "bd3a011be008cec817f8f9fe272964499256bb4f2f075aeb9a9f0a1ddf6f33ba",
+    "scripts/v8_runtime_worker.py": "a70f9ae333cf034af6ec43c5dc1a7bca57ddcee528bcaa2987e2c11229398548",
+    "scripts/v8_supervisor.py": "dab02754cedbcd6642f3e4d2954507c1002f41177d390953227d282445c90c5c",
+    "scripts/v8_probe.py": "012db4ab37699b177af9ad127b823638098e21a040cb5017030d78e8e8986db1",
+    "scripts/v8_status.py": "e8e310b5a50fb07215539d0c6f82cf7e591811f97482925b5c4336ceda61341c",
+    "scripts/v8_progress_text.py": "ba5fec34c0444734c94dd9817280a15d24017982fe9c12c959600448606e1e66",
+    "tests/test_srgc_v8_node_reentry.py": "edbd0800f47fcc894fb1e4e27c389eaabd3aa4db3c038b0a9dbad629b5b2d633",
+    "tests/test_srgc_v8_log_states.py": "aa54d1e7441007e1fcb74d76369edb6ff480198643c6d97a731722c6703b67bd",
+    "v8/queue-runtimes.zip": "bbe3f9e03fee708f5aaf1a9061ba122db032c781844b97b9ddfa4d3ecf647184"
+  }
+}

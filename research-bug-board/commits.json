@@ -14482,6 +14482,46 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "2f3eff81743f4f4f8a8c15fb96a93abb444fd7f7",
+      "at": "2026-11-10T22:17:55+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Retain the reproduced V8 completion-cache loop and verified repair",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/2f3eff81743f4f4f8a8c15fb96a93abb444fd7f7",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "378d39cc113c8a4181d8744c1710df2d225912a4",
+      "at": "2026-11-10T22:54:39+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Show actual V8 wait reasons and reject stale task progress",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/378d39cc113c8a4181d8744c1710df2d225912a4",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "fd34048dd4bc9f7b40f01eba70f67d26bf6205e0",
+      "at": "2026-11-10T22:54:50+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: needs attention lists only what no automatic step fixes",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/fd34048dd4bc9f7b40f01eba70f67d26bf6205e0",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "3a6f207fa45abd87d769f0fc06a185792b1f593e",
+      "at": "2026-11-10T22:58:46+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Re-admit recovered V8 GPU nodes without renewing task retry limits",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/3a6f207fa45abd87d769f0fc06a185792b1f593e",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

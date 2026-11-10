@@ -1,6 +1,9 @@
 """Recovered-node eligibility with synthetic admission receipts, never an H100 claim."""
 import socket
 import threading
+import json
+from pathlib import Path
+import sys
 
 import pytest
 
@@ -65,3 +68,31 @@ def test_post_readmission_native_crash_does_not_loop_on_the_same_node(tmp_path):
     joined=nodes.Pool(pool.root,pool.binding);joined.host=pool.host
     assert run(joined,runtime,'another-pid')==1
     assert len(checks)==1 and len(nodes.read(path)['attempts'])==2
+
+
+def test_original_runtime_actor_rechecks_admission_with_inherited_gpu_lease(tmp_path,monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]/'scripts'))
+    from v8_dispatch import RuntimeProxy
+    from test_srgc_v8_dispatch_runtime import FAKE
+    original=tmp_path/'original.py'
+    original.write_text(FAKE.replace('__TAG__',repr('admission CPU fixture'))+'''
+ def admit(self,device_fds):
+  assert self.admitted is None
+  assert len(device_fds)==1
+  os.fstat(device_fds[0])
+  self.root.mkdir(parents=True,exist_ok=True)
+  receipt=self.root/'admission.json'
+  receipt.write_text(json.dumps(dict(state='passed',scope='CPU FD transfer fixture')))
+  self.admitted=dict(receipt=str(receipt));return self.admitted
+''')
+    entry=dict(cohort='olmo_math',script=str(original),runner=str(tmp_path),python=sys.executable)
+    plan=dict(root=str(tmp_path/'runs'),gpus=['0','1','2','3'],worker='host.42',entries=[entry])
+    planfile=tmp_path/'plan.json';planfile.write_text(json.dumps(plan))
+    actor=RuntimeProxy(entry,plan,planfile)
+    try:
+        assert actor.error is None
+        with nodes.Lock(tmp_path/'gpu.lock') as lease:
+            report=actor.fresh_admission((lease.fd,))
+            assert nodes.read(report['receipt'])['state']=='passed'
+            probe=nodes.Lock(tmp_path/'gpu.lock');assert not probe.acquire()
+    finally:actor.close()
