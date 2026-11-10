@@ -31,7 +31,7 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'verified-node-reentry-and-readable-waits-v29'
+DISPATCH_POLICY = 'current-attempt-stop-accounting-v30'
 COHORT_ORDER = 'complete-one-cohort-before-next-v1'
 EVAL_NATIVE_RECOVERY = 'evaluation-sigsegv-recovery-v1'
 NODE_NATIVE_FAILURE_LIMIT = 2
@@ -168,6 +168,25 @@ def counted_failures(job):
     return count
 
 
+def misclassified_stops(job):
+    """Recognize the old whole-history SIGSEGV check; retain every original field."""
+    prior_native=False;corrected=[]
+    for attempt in job.get('attempts',[]):
+        native=fatal_native_failure(dict(attempts=[attempt]))
+        if (prior_native and not native and attempt.get('id') and attempt.get('outcome')=='failed'
+                and attempt.get('exit_code')==75 and not attempt.get('output_validation_error')
+                and not (attempt.get('child_failure') or {}).get('failures')
+                and str(attempt.get('error','')).startswith('task exit=75; output verified=')):
+            corrected.append(attempt['id'])
+        prior_native=prior_native or bool(native)
+    return corrected
+
+
+def budget_attempts(job,attempts):
+    ignored=set(misclassified_stops(job))
+    return [a for a in attempts if a.get('id') not in ignored]
+
+
 def retry_budget_failures(job):
     """Lifetime task faults, except the single user-requested native evaluation replay.
 
@@ -176,8 +195,8 @@ def retry_budget_failures(job):
     Native crashes count once per host (v25): relaunches on one crashing node are one node fault.
     """
     recovery=evaluation_recovery_attempts(job)
-    if recovery is not None:return counted_failures(dict(attempts=recovery))
-    attempts=[a for a in job.get('attempts',[]) if isinstance(a,dict)]
+    if recovery is not None:return counted_failures(dict(attempts=budget_attempts(job,recovery)))
+    attempts=budget_attempts(job,[a for a in job.get('attempts',[]) if isinstance(a,dict)])
     other=[a for a in attempts if not fatal_native_failure(dict(attempts=[a]))]
     return counted_failures(dict(attempts=other))+native_crash_count(job)
 
@@ -247,7 +266,7 @@ def native_failure_blocks(job,place=None):
     replay=evaluation_recovery_attempts(job)
     if replay is None:return native_crash_count(job)>=TASK_NATIVE_HOST_LIMIT
     # A replay crash, including one mislabelled as an interruption, never buys more work.
-    return bool(fatal_native_failure(dict(attempts=replay))) or counted_failures(dict(attempts=replay))>=1
+    return bool(fatal_native_failure(dict(attempts=replay))) or counted_failures(dict(attempts=budget_attempts(job,replay)))>=1
 
 
 def fatal_native_failure(job):
@@ -749,6 +768,20 @@ class Pool:
         state_path=self.root/'state.json'
         if not state_path.exists():atomic(state_path,dict(phase='prepare',failure=None,actions=[],failure_history=[]))
         state=read(state_path)
+        for job_path in self.root.glob('jobs/*.json'):
+            job=read(job_path);corrected=misclassified_stops(job)
+            if not corrected or (job.get('stop_accounting_correction') or {}).get('attempts')==corrected:continue
+            lease=Lock(self.root/'leases'/(job_path.stem+'.lock'))
+            if not lease.acquire():continue
+            try:
+                job=read(job_path);corrected=misclassified_stops(job)
+                if not corrected:continue
+                job['stop_accounting_correction']=dict(policy=DISPATCH_POLICY,attempts=corrected,worker=worker,at=time.time(),
+                    reason='exit75 after an older native crash was incorrectly counted as a new failure; raw attempts retained')
+                atomic(job_path,job)
+                print(f'[v8] REFUNDED_EXIT75 {job_path.stem}: {len(corrected)} old stop(s) were miscounted; '
+                      'original failures, attempts and checkpoints retained',flush=True)
+            finally:lease.close()
         failure=state.get('failure')
         # Original SRGC keeps a failed task separate from independent ready work.
         # Older V8 finish() promoted any single task exit into a cohort-wide stop.
@@ -1199,7 +1232,8 @@ class Pool:
             attempt.update(outcome='interrupted',termination=termination,
                            error='Forced process termination; origin unconfirmed; resume from last saved checkpoint')
             job.update(state='interrupted',resume_not_before=time.time()+self.retry_delay)
-        elif (rc==75 or stop.is_set()) and not fatal_native_failure(job):attempt['outcome']='interrupted';job['state']='interrupted'
+        elif (rc==75 or stop.is_set()) and not fatal_native_failure(dict(attempts=[attempt])):
+            attempt['outcome']='interrupted';job['state']='interrupted'
         else:
             attempt.update(outcome='failed',error=f'task exit={rc}; output verified={done}'+
                            (f"; {attempt['output_validation_error']}" if attempt.get('output_validation_error') else ''))

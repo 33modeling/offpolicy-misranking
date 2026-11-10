@@ -96,3 +96,71 @@ def test_original_runtime_actor_rechecks_admission_with_inherited_gpu_lease(tmp_
             assert nodes.read(report['receipt'])['state']=='passed'
             probe=nodes.Lock(tmp_path/'gpu.lock');assert not probe.acquire()
     finally:actor.close()
+
+
+@pytest.mark.parametrize('kind',['train','evaluate'])
+def test_ctrl_c_after_historical_native_failure_does_not_consume_another_failure(tmp_path,kind):
+    pool,runtime,path,checkpoint,result,checks=recovered(tmp_path)
+    job=nodes.read(path);job['task']['kind']=kind;old=dict(job['attempts'][0])
+    job['attempts'].append(dict(id='intentional-stop',worker='host.2',started_at=0));job['state']='running'
+    nodes.atomic(path,job)
+    before=nodes.retry_budget_failures(job);saved=checkpoint.read_bytes()
+    stop=threading.Event();stop.set()
+    assert pool.finish(path.stem,75,runtime,stop)=='interrupted'
+    after=nodes.read(path)
+    assert after['attempts'][0]==old and after['attempts'][-1]['outcome']=='interrupted'
+    assert nodes.retry_budget_failures(after)==before
+    assert checkpoint.read_bytes()==saved
+
+
+def test_real_current_native_failure_is_retained_even_when_stop_is_requested(tmp_path):
+    pool,runtime,path,checkpoint,result,checks=recovered(tmp_path)
+    job=nodes.read(path);job['attempts'].append(dict(id='new-crash',worker='host.2',started_at=0));job['state']='running'
+    nodes.atomic(path,job);stop=threading.Event();stop.set()
+    assert pool.finish(path.stem,-11,runtime,stop)=='failed'
+    assert nodes.read(path)['attempts'][-1]['outcome']=='failed'
+
+
+@pytest.mark.parametrize('kind',['train','evaluate'])
+def test_already_poisoned_exit75_history_is_refunded_without_rewriting_attempts(tmp_path,kind):
+    pool,runtime,path,checkpoint,result,checks=recovered(tmp_path)
+    job=nodes.read(path);job['task']['kind']=kind
+    if kind=='evaluate':assert pool.arm_evaluation_recovery(job,'old-worker')
+    job['attempts'].append(dict(id='old-misclassified-stop',worker='host.2',started_at=0,exit_code=75,
+        outcome='failed',error='task exit=75; output verified=False'))
+    original=[dict(a) for a in job['attempts']];nodes.atomic(path,job)
+    saved=checkpoint.read_bytes()
+    if kind=='train':pool.initialize(worker='correct-existing-training-stop')
+    else:assert run(pool,runtime,'continue-without-reset')==0
+    after=nodes.read(path)
+    assert after['attempts'][:2]==original
+    assert after['state']==('failed' if kind=='train' else 'done')
+    assert after['stop_accounting_correction']['attempts']==['old-misclassified-stop']
+    assert len(runtime.calls)==(0 if kind=='train' else 1)
+    assert len(checks)==(0 if kind=='train' else 1) and checkpoint.read_bytes()==saved
+    assert nodes.counted_failures(after)==2
+    assert nodes.retry_budget_failures(after)==(1 if kind=='train' else 0)
+
+
+def test_poisoned_olmo_stop_is_corrected_and_qwen_mbpp_is_actually_assigned(tmp_path):
+    from test_srgc_v8_sequential_cohorts import Runtime as Plan,events
+    pool,olmo,path,checkpoint,result,checks=recovered(tmp_path)
+    job=nodes.read(path);assert pool.arm_evaluation_recovery(job,'old-worker')
+    job['attempts'].append(dict(id='old-misclassified-stop',worker='old.2',exit_code=75,
+        outcome='failed',error='task exit=75; output verified=False'))
+    original=[dict(a) for a in job['attempts']];nodes.atomic(path,job)
+    qwen=Plan(tmp_path,'qwen_mbpp');later=nodes.Pool(qwen.root/'.multi-node',qwen.binding)
+    execute=qwen.execute
+    def verify_handoff(*args):
+        assert pool.queue_state()['phase']=='complete'
+        return execute(*args)
+    qwen.execute=verify_handoff
+    stop=threading.Event();timer=threading.Timer(2,stop.set);timer.start()
+    try:rc=nodes.worker_loop_many([(pool,olmo),(later,qwen)],'handoff-node',stop,poll=.001,
+                                  cohort_order=('olmo_math','qwen_mbpp'))
+    finally:timer.cancel();timer.join()
+    assert rc==0 and not stop.is_set()
+    assert pool.queue_state()['phase']==later.queue_state()['phase']=='complete'
+    assert len(olmo.calls)==1 and len(checks)==1 and result.is_file()
+    assert nodes.read(path)['attempts'][:2]==original
+    assert len([row for row in events(tmp_path) if row['stage']=='execute' and row['cohort']=='qwen_mbpp'])==4
