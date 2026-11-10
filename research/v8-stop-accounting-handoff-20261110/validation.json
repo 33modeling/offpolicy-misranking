@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "date": "2026-11-10",
+  "code_commit": "2c55bbcd613b9d891e8f17c22e535980e887ca0d",
+  "introduction_commit": "bd196c57f2a27b6ca77aa4f81dbbeed4a573f99c",
+  "policy": "current-attempt-stop-accounting-v30",
+  "hypothesis": "A previous attempt SIGSEGV must not turn a later intentional exit75 into a new failure or exhaust an evaluation replay, preventing OLMo completion and Qwen handoff.",
+  "before_fix": {
+    "failed_cases": 2,
+    "positive_native_case_passed": 1,
+    "log": "before-fix.log"
+  },
+  "verification": {
+    "control_passed": 82,
+    "control_skipped": 1,
+    "stop_and_error_cases_passed": 15,
+    "original_planner_runner_four_cohorts_passed": 1,
+    "scope": "Synthetic CPU controls, not H100 scientific measurements",
+    "observed": [
+      "Past native error followed by intentional stop is interrupted for train/eval.",
+      "Already poisoned exit75 history is corrected without rewriting old outcomes or exit codes.",
+      "Poisoned OLMo evaluation resumes then Qwen MBPP receives four distinct fixture tasks.",
+      "Positive current SIGSEGV, Python/OOM child evidence and output validation errors are not refunded.",
+      "Original synthetic planner/runner/collection/evaluation finishes all four cohorts in order."
+    ]
+  },
+  "retention": {
+    "raw_attempts_outcomes_exit_codes": true,
+    "checkpoint_hashes": true,
+    "task_failures_not_reset": true,
+    "only_verified_misclassified_stops_excluded": true,
+    "numerical_models_data_updates_rewards_unchanged": true
+  },
+  "scheduling_policy": "Existing successful-completion-before-next order retained. User preference for handing off terminally failed cohorts is pending; do not claim this policy was changed.",
+  "reported_loss": {
+    "source": "user report",
+    "description": "GPU nodes lost; time and financial cost incurred",
+    "amount": "not_provided",
+    "duration": "not_provided",
+    "independent_remote_measurement": "unavailable"
+  },
+  "unmeasured": {
+    "current_H100_progress": "unverified",
+    "same_cause_for_current_remote_Qwen_block": "not_yet_verified_without_logs",
+    "model_performance": "not_measured"
+  },
+  "operations": {
+    "remote_GPU_nodes_contacted": 0,
+    "new_GPU_experiments": 0,
+    "paid_API_calls_initiated": 0,
+    "servers_started": 0,
+    "deployments": 0
+  },
+  "file_sha256": {
+    "scripts/srgc_v8_nodes.py": "f278de17fb5fbf639c798897048ff4d7037d38eab80c2617d822b5499e43a101",
+    "tests/test_srgc_v8_node_reentry.py": "7716ead88529d9b408a08c95d264a2b4f3c1d8b381413df570a51c0d700c67bf",
+    "tests/test_srgc_v8_sequential_real_runner.py": "d12d6c56939481f1e44d9cd7431e08a6ebf31d36ca2aa85d1f349e6dc4940d06",
+    "docs/V8_MULTINODE_H100.md": "b3238f9cedfa11cb74c9f8fc0b1844f62b4c4fb1a0079ffb49b14682dfc57bcd",
+    "v8/queue-runtimes.zip": "1843120eedd378da968d381828ed0477666db661a19a3449305cbd90bd305683"
+  }
+}

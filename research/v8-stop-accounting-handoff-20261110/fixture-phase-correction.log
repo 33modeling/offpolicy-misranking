@@ -1,0 +1,32 @@
+........F..............................s................................ [ 87%]
+..........                                                               [100%]
+=================================== FAILURES ===================================
+_ test_already_poisoned_exit75_history_is_refunded_without_rewriting_attempts[train] _
+
+tmp_path = PosixPath('/dev/shm/v8-stop-history-refund-20261110/test_already_poisoned_exit75_h0')
+kind = 'train'
+
+    @pytest.mark.parametrize('kind',['train','evaluate'])
+    def test_already_poisoned_exit75_history_is_refunded_without_rewriting_attempts(tmp_path,kind):
+        pool,runtime,path,checkpoint,result,checks=recovered(tmp_path)
+        job=nodes.read(path);job['task']['kind']=kind
+        if kind=='evaluate':assert pool.arm_evaluation_recovery(job,'old-worker')
+        job['attempts'].append(dict(id='old-misclassified-stop',worker='host.2',started_at=0,exit_code=75,
+            outcome='failed',error='task exit=75; output verified=False'))
+        original=[dict(a) for a in job['attempts']];nodes.atomic(path,job)
+        saved=checkpoint.read_bytes()
+>       assert run(pool,runtime,'continue-without-reset')==0
+E       AssertionError: assert 1 == 0
+E        +  where 1 = run(<scripts.srgc_v8_nodes.Pool object at 0x706fc46d3ec0>, <test_srgc_v8_eval_native_recovery.prepared.<locals>.Runtime object at 0x706fc46d10d0>, 'continue-without-reset')
+
+tests/test_srgc_v8_node_reentry.py:133: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[continue-without-reset] olmo_math: stage failed: ValueError: Conflicting task definition for 431ae3a479f77cadbbead8d120f592a987f946915564e240d253503e9b0fcb2b
+[continue-without-reset] olmo_math: no new work is taken for this cohort; the other cohort continues. Logs: /dev/shm/v8-stop-history-refund-20261110/test_already_poisoned_exit75_h0/olmo_math/.multi-node/logs. Inspect the cause; the plain launcher recovers older-controller failed tasks once after verification.
+[continue-without-reset] {"olmo_math":{"dispatch_workers":[],"failure":{"at":1794320180.6976848,"detail":"ValueError: Conflicting task definition for 431ae3a479f77cadbbead8d120f592a987f946915564e240d253503e9b0fcb2b","task":null},"known_task_counts":{"failed":1},"leased_tasks":[],"phase":"evaluation"}}
+[continue-without-reset] olmo_math: FAILED: ValueError: Conflicting task definition for 431ae3a479f77cadbbead8d120f592a987f946915564e240d253503e9b0fcb2b
+[continue-without-reset] WORKER EXIT: blocked_work; current worker outcomes={}; previous-worker failed attempts=2; lifetime failed attempts=2; exit1 does not identify a new model crash; no eligible work after final readiness check
+[V8 STATUS] 2026-11-10T14:16:20Z node=continue-without-reset state=BLOCKED experiment=- olmo_math;  same_state=0s
+=========================== short test summary info ============================
+FAILED tests/test_srgc_v8_node_reentry.py::test_already_poisoned_exit75_history_is_refunded_without_rewriting_attempts[train]
+1 failed, 80 passed, 1 skipped in 3.84s

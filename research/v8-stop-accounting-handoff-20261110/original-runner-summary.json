@@ -1,0 +1,82 @@
+{
+  "scope": "synthetic CPU integration, no scientific measurements",
+  "workers": 1,
+  "cohorts": {
+    "olmo_math": {
+      "scope": "CPU multi-process software integration; not scientific RLVR results",
+      "workers": 1,
+      "training_seeds": [
+        5,
+        6,
+        7
+      ],
+      "matched_updates": 75,
+      "safety_cap": 100,
+      "tasks": 48,
+      "no_duplicate_execution": true,
+      "all_tasks_done": true,
+      "new_GPU_jobs": 0,
+      "budget_selected_checkpoints": 13,
+      "budget_endpoint_changed_run_cases": 17
+    },
+    "qwen_mbpp": {
+      "scope": "CPU multi-process software integration; not scientific RLVR results",
+      "workers": 1,
+      "training_seeds": [
+        5,
+        6,
+        7
+      ],
+      "matched_updates": 75,
+      "safety_cap": 100,
+      "tasks": 49,
+      "no_duplicate_execution": true,
+      "all_tasks_done": true,
+      "new_GPU_jobs": 0,
+      "budget_selected_checkpoints": 13,
+      "budget_endpoint_changed_run_cases": 18
+    },
+    "olmo_mbpp": {
+      "scope": "CPU multi-process software integration; not scientific RLVR results",
+      "workers": 1,
+      "training_seeds": [
+        5,
+        6,
+        7
+      ],
+      "matched_updates": 75,
+      "safety_cap": 100,
+      "tasks": 49,
+      "no_duplicate_execution": true,
+      "all_tasks_done": true,
+      "new_GPU_jobs": 0,
+      "budget_selected_checkpoints": 13,
+      "budget_endpoint_changed_run_cases": 18
+    },
+    "qwen_math": {
+      "scope": "CPU multi-process software integration; not scientific RLVR results",
+      "workers": 1,
+      "training_seeds": [
+        5,
+        6,
+        7
+      ],
+      "matched_updates": 75,
+      "safety_cap": 100,
+      "tasks": 49,
+      "no_duplicate_execution": true,
+      "all_tasks_done": true,
+      "new_GPU_jobs": 0,
+      "budget_selected_checkpoints": 13,
+      "budget_endpoint_changed_run_cases": 18
+    }
+  },
+  "order": [
+    "olmo_math",
+    "qwen_mbpp",
+    "olmo_mbpp",
+    "qwen_math"
+  ],
+  "all_complete": true,
+  "new_GPU_jobs": 0
+}

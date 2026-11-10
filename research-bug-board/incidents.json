@@ -10112,5 +10112,47 @@
         "evidence_kind": "code_test"
       }
     ]
+  },
+  {
+    "id": "V8-157",
+    "title": "과거 SIGSEGV 때문에 이번 Ctrl+C 정상 중지를 새 실패로 세어 재개·후속 배정을 막음",
+    "area": "V8 종료·실패 한도·순차 배정",
+    "severity": "high",
+    "first_reported": "2026-11-10",
+    "introduction_commit": "bd196c57f2a27b6ca77aa4f81dbbeed4a573f99c",
+    "cause": "Pool.finish가 현재 attempt가 아니라 job 전체의 native 이력을 검사했다. 과거 SIGSEGV가 있으면 현재 exit75 중지를 failed로 기록해 작업 실패·평가 재생 한도를 소진했다.",
+    "impact": "CPU에서 train/eval 오분류를 재현했다. 잘못된 중지 기록으로 막힌 OLMo의 완료와 Qwen MBPP 후속 배정을 검증했다. 사용자는 GPU 노드·시간·비용 손실을 보고했으며 규모·원격 인과관계는 별도 측정되지 않았다.",
+    "attribution": "도입 코드 커밋 확인. 도입 작성 도구 미확인. 이번 재현·수정과 불완전한 기존 검증 보완: Codex.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "수정 전 실패 재현",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/master/research/v8-stop-accounting-handoff-20261110/before-fix.log"
+      },
+      {
+        "kind": "commit",
+        "label": "현재 attempt 기준 수정 및 기존 오분류 정정",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/2c55bbcd613b9d891e8f17c22e535980e887ca0d"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-10",
+        "actor": "사용자",
+        "type": "reported",
+        "status": "open",
+        "evidence_kind": "user_report",
+        "text": "Qwen MBPP에 할당되지 않고 무한루프가 생긴다. GPU 노드·시간·비용 손실을 보고했다. 실제 반복 로그는 이 작업폴더에 연결되지 않았다."
+      },
+      {
+        "at": "2026-11-10",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/2c55bbcd613b9d891e8f17c22e535980e887ca0d",
+        "text": "현재 attempt의 native 실패만 확인한다. 이전 오분류 중 exit75·이전 native·정형 오류·현재 실패 증거 없음이 확인된 건만 실패 한도에서 제외하고 원문 attempts/outcome/exit를 유지한 채 정정 근거를 추가한다.82검사 통과·1조건 건너뜀, 정지/진짜 오류 보존15검사 통과, 원래 계획·실행기의 합성CPU4조합 완주1검사 통과. OLMo 완료→Qwen MBPP 배정까지 CPU에서 확인했다. 원격H100 정상화나 실패 실험 건너뛰기 정책 변경은 주장하지 않는다."
+      }
+    ]
   }
 ]

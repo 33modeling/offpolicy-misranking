@@ -3,14 +3,18 @@ import json
 import os
 from pathlib import Path
 import threading
+import pytest
 
 from scripts import srgc_v8_nodes as nodes
 
 
 def test_original_runner_finishes_all_four_cohorts_sequentially(tmp_path,monkeypatch):
+    pytest.importorskip('torch')
+    pytest.importorskip('transformers')
     from test_srgc_v8_nodes import ToyRuntime,verify_toy_complete
     root=Path(__file__).resolve().parents[1]
     monkeypatch.setenv('V8_CODE_ROOT',str(root));monkeypatch.setenv('V8_FSYNC','0')
+    monkeypatch.setenv('CUDA_VISIBLE_DEVICES','')
     runner=str(root/'v8/experiments')
     pairs=[]
     for name in nodes.DEFAULT_COHORTS:

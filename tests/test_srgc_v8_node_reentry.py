@@ -164,3 +164,17 @@ def test_poisoned_olmo_stop_is_corrected_and_qwen_mbpp_is_actually_assigned(tmp_
     assert len(olmo.calls)==1 and len(checks)==1 and result.is_file()
     assert nodes.read(path)['attempts'][:2]==original
     assert len([row for row in events(tmp_path) if row['stage']=='execute' and row['cohort']=='qwen_mbpp'])==4
+
+
+@pytest.mark.parametrize('evidence',[
+    dict(exit_code=1),
+    dict(output_validation_error='checkpoint identity differs'),
+    dict(child_failure=dict(failures=[dict(message='CUDA OOM')])),
+    dict(child_failure=dict(failures=[dict(signal=11,message='current SIGSEGV')]))])
+def test_stop_correction_does_not_refund_positive_failure_evidence(tmp_path,evidence):
+    pool,runtime,path,checkpoint,result,checks=recovered(tmp_path)
+    job=nodes.read(path)
+    attempt=dict(id='real-error',exit_code=75,outcome='failed',error='task exit=75; output verified=False')
+    attempt.update(evidence);job['attempts'].append(attempt)
+    assert nodes.misclassified_stops(job)==[]
+    assert nodes.retry_budget_failures(job)>=2

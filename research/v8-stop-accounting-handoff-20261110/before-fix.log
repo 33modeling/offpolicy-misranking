@@ -1,0 +1,46 @@
+FF.                                                                      [100%]
+=================================== FAILURES ===================================
+_ test_ctrl_c_after_historical_native_failure_does_not_consume_another_failure[train] _
+
+tmp_path = PosixPath('/dev/shm/v8-stop-history-baseline-20261110/test_ctrl_c_after_historical_n0')
+kind = 'train'
+
+    @pytest.mark.parametrize('kind',['train','evaluate'])
+    def test_ctrl_c_after_historical_native_failure_does_not_consume_another_failure(tmp_path,kind):
+        pool,runtime,path,checkpoint,result,checks=recovered(tmp_path)
+        job=nodes.read(path);job['task']['kind']=kind;old=dict(job['attempts'][0])
+        job['attempts'].append(dict(id='intentional-stop',worker='host.2',started_at=0));job['state']='running'
+        nodes.atomic(path,job)
+        before=nodes.retry_budget_failures(job);saved=checkpoint.read_bytes()
+        stop=threading.Event();stop.set()
+>       assert pool.finish(path.stem,75,runtime,stop)=='interrupted'
+E       AssertionError: assert 'failed' == 'interrupted'
+E         
+E         - interrupted
+E         + failed
+
+tests/test_srgc_v8_node_reentry.py:109: AssertionError
+_ test_ctrl_c_after_historical_native_failure_does_not_consume_another_failure[evaluate] _
+
+tmp_path = PosixPath('/dev/shm/v8-stop-history-baseline-20261110/test_ctrl_c_after_historical_n1')
+kind = 'evaluate'
+
+    @pytest.mark.parametrize('kind',['train','evaluate'])
+    def test_ctrl_c_after_historical_native_failure_does_not_consume_another_failure(tmp_path,kind):
+        pool,runtime,path,checkpoint,result,checks=recovered(tmp_path)
+        job=nodes.read(path);job['task']['kind']=kind;old=dict(job['attempts'][0])
+        job['attempts'].append(dict(id='intentional-stop',worker='host.2',started_at=0));job['state']='running'
+        nodes.atomic(path,job)
+        before=nodes.retry_budget_failures(job);saved=checkpoint.read_bytes()
+        stop=threading.Event();stop.set()
+>       assert pool.finish(path.stem,75,runtime,stop)=='interrupted'
+E       AssertionError: assert 'failed' == 'interrupted'
+E         
+E         - interrupted
+E         + failed
+
+tests/test_srgc_v8_node_reentry.py:109: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_srgc_v8_node_reentry.py::test_ctrl_c_after_historical_native_failure_does_not_consume_another_failure[train]
+FAILED tests/test_srgc_v8_node_reentry.py::test_ctrl_c_after_historical_native_failure_does_not_consume_another_failure[evaluate]
+2 failed, 1 passed, 5 deselected in 0.13s
