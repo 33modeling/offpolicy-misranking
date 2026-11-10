@@ -248,6 +248,11 @@ def main():
             method=request['method'];args=request.get('args',[])
             if method=='barrier':
                 runtime.barrier(args[0],fds[0],stop,fds[1:]);result=None
+            elif method=='fresh_admission':
+                runtime.verify_node()
+                if not hasattr(runtime,'admit'):raise ValueError('Original runtime has no GPU admission verifier')
+                runtime.admitted=None
+                result=runtime.admit(fds)
             elif method=='execute':
                 task,matrix,attempt=args
                 result=runtime.execute(task,Path(matrix),fds[0],stop,fds[1:],attempt)

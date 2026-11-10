@@ -89,6 +89,7 @@ class RuntimeProxy:
         return reply.get('result')
 
     def verify_node(self):return self.call('verify_node')
+    def fresh_admission(self,device_fds):return self.call('fresh_admission',fds=device_fds)
     def plan(self,phase):return self.call('plan',phase)
     def side_tasks(self):return self.call('side_tasks')
     def ready(self,task):return self.call('ready',task)

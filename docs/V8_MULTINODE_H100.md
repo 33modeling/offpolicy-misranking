@@ -180,7 +180,7 @@ worker는60초마다 현황을 출력한다. 자식 출력은 터미널과 각 c
 정책 버전이 나온다. 표 형식 `status`는 `dispatch current <hash>`(현재 checkout과
 같음), `dispatch different <hash>`(다름), `dispatch unverified`(기록 없음)를 구분한다.
 정책 파일이 디스크에 있다는 것만으로 실행 중인 worker에 적용됐다고 판단하지 않는다.
-현재 배정 정책은 `explicit-worker-wait-and-progress-v28`이다. 작업 검사는 해당 cohort의
+현재 배정 정책은 `verified-node-reentry-and-readable-waits-v29`이다. 작업 검사는 해당 cohort의
 control lease만 잡고 별도로 수행한다. 검사 결과가 준비되면 공유 잠금 안에서 현재
 binding·phase·실패 상태·작업 정의·작업 lease를 다시 확인한 뒤 claim한다.
 검사와 claim 사이에 다른 노드가 가져간 작업이나 실패한 작업은 가져오지 않는다.
@@ -521,6 +521,11 @@ Ctrl-C는 즉시 정리를 요청한다. 자식 출력 pipe의 EOF를 기다리�
 해당 cohort의 새 작업을 배정하지 않는다. 작업을 바꾸거나 worker PID를 바꿔도
 제한을 초기화하지 않는다. 다른 GPU 묶음은 현재 cohort의 정상 작업을 계속 처리한다.
 다음 cohort는 현재 cohort의 완료까지 기다린다.
+기존 명령은 같은 GPU 묶음에서 native 충돌 이력이 있는 미완료 작업을 발견하면,
+작업을 claim하기 전에 원본4GPU NCCL 검사를 새로 수행한다. 통과한 영수증을 보존한 뒤
+해당 묶음의 재참여를 허용한다. 작업별 누적 실패 상한은 유지하며 실패·checkpoint를 지우지 않는다.
+검사 실패·중단 후 재실행 시 검사 기회는 같은 GPU 묶음·실행기에서 총2회다.
+검사 통과 후 다시 native 충돌이 나면 반복 복구를 멈춘다. Ctrl+C나 PID 변경으로 한도가 늘지 않는다.
 공유 큐 전체를 실패로 바꾸거나 기존 실패·checkpoint·완료 평가를 삭제하지 않는다.
 기록은 각 cohort의 `.multi-node/node-native-faults/`에 남는다.
 

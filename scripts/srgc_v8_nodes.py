@@ -31,7 +31,7 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'explicit-worker-wait-and-progress-v28'
+DISPATCH_POLICY = 'verified-node-reentry-and-readable-waits-v29'
 COHORT_ORDER = 'complete-one-cohort-before-next-v1'
 EVAL_NATIVE_RECOVERY = 'evaluation-sigsegv-recovery-v1'
 NODE_NATIVE_FAILURE_LIMIT = 2
@@ -292,11 +292,64 @@ def node_native_hold(pool,runtime):
     if not path.exists():return None
     row=read(path)
     if row.get('identity')!=node_native_identity(pool,runtime):raise NodeFailure('Node native-fault identity differs')
+    if getattr(pool,'readmitted',False):
+        if len(row.get('failures',[]))<=pool.readmit_fault_baseline:return None
+        return 'A new native crash followed successful GPU re-admission; stop this node instead of repeating recovery'
     if len(row.get('failures',[]))>=NODE_NATIVE_FAILURE_LIMIT:
         return (f'This GPU set recorded {len(row["failures"])} native crashes for this cohort/controller; '
                 f'no further tasks on this GPU set. Other nodes/cohorts and saved checkpoints are retained. '
                 f'Original evidence: {path}; underlying native cause remains unconfirmed')
     return None
+
+
+def recheck_crashed_node(pool,runtime,device_fds,worker,diagnostic):
+    """One fresh verified admission after a native fault; never renew task failure budgets."""
+    if not hasattr(runtime,'fresh_admission'):return
+    identity=node_native_identity(pool,runtime)
+    path=pool.root/'node-native-reentry'/(digest(identity)+'.json')
+    faults=node_native_path(pool,runtime)
+    count=len(read(faults).get('failures',[])) if faults.exists() else 0
+    previous=read(path) if path.exists() else None
+    if previous and previous.get('state')=='passed' and previous.get('fault_count')==count:
+        receipt=Path(previous['receipt'])
+        if receipt.is_file() and hashlib.sha256(receipt.read_bytes()).hexdigest()==previous['receipt_sha256']:
+            pool.readmitted=True;pool.readmit_fault_baseline=count;return
+    if previous and previous.get('state')=='passed' and previous.get('fault_count')!=count:
+        raise NodeFailure('A new native crash followed verified re-admission; stop repeated recovery; evidence: '+str(path))
+    needed=count>=NODE_NATIVE_FAILURE_LIMIT
+    for source in pool.root.glob('jobs/*.json'):
+        job=read(source)
+        if job.get('state')!='done' and crashed_here(job,pool.place()) and not native_failure_blocks(job) and not pool.retry_limit_reached(job):
+            needed=True;break
+    if not needed:return
+    if previous and previous.get('state')=='passed':
+        raise NodeFailure('A new native crash followed verified re-admission; stop repeated recovery; evidence: '+str(path))
+    history=list((previous or {}).get('attempts',[]))
+    if previous and not history:history=[dict(state=previous.get('state'),at=previous.get('at'))]
+    if len(history)>=2:raise NodeFailure('GPU/NCCL re-admission reached its two-probe limit; evidence: '+str(path))
+    lease=Lock(path.with_suffix('.lock'))
+    if not lease.acquire():raise NodeFailure('GPU re-admission is already in progress on this GPU set')
+    try:
+        if (read(path) if path.exists() else None)!=previous:raise NodeFailure('GPU re-admission record changed on another worker')
+        if read(pool.root/'binding.json')!=pool.binding:raise BindingMismatch('Queue identity changed before GPU re-admission')
+        history.append(dict(state='checking',worker=worker,at=time.time()))
+        record=dict(schema=1,identity=identity,state='checking',worker=worker,at=time.time(),fault_count=count,attempts=history)
+        atomic(path,record)
+        diagnostic.publish('CHECKING',pool.binding['cohort'],'rechecking four-GPU NCCL after a native crash; no task claimed')
+        try:
+            result=runtime.fresh_admission(device_fds)
+            receipt=Path(result['receipt']);checked=read(receipt)
+            if checked.get('state')!='passed':raise NodeFailure('Fresh GPU/NCCL admission did not pass')
+            if read(pool.root/'binding.json')!=pool.binding:raise BindingMismatch('Queue identity changed during GPU re-admission')
+            record.update(state='passed',receipt=str(receipt),receipt_sha256=hashlib.sha256(receipt.read_bytes()).hexdigest(),completed_at=time.time())
+            record['attempts'][-1].update(state='passed',completed_at=record['completed_at'])
+            atomic(path,record);pool.readmitted=True;pool.readmit_fault_baseline=count
+            diagnostic.publish('RECOVERED',pool.binding['cohort'],'fresh four-GPU NCCL admission passed; existing task failure caps retained')
+        except Exception as exc:
+            record.update(state='failed',error=f'{type(exc).__name__}: {exc}',completed_at=time.time());atomic(path,record)
+            record['attempts'][-1].update(state='failed',error=record['error']);atomic(path,record)
+            raise NodeFailure('GPU re-admission failed; no training task was claimed: '+str(exc)) from exc
+    finally:lease.close()
 
 
 def aggregate_task_failure(failure):
@@ -595,7 +648,8 @@ class Pool:
         """One immediate retry by default; repeated faults stay excluded across joins."""
         receipt=job.get('evaluation_native_recovery')
         if receipt and receipt.get('binding_sha256')!=digest(self.binding):return False
-        if native_failure_blocks(job,self.place()) or self.retry_limit_reached(job):return False
+        place=None if getattr(self,'readmitted',False) else self.place()
+        if native_failure_blocks(job,place) or self.retry_limit_reached(job):return False
         if job.get('state')=='interrupted' and job.get('resume_not_before'):
             return self.retry_delay<=0 or (time.time() if now is None else now)>=job['resume_not_before']
         if job.get('state')!='failed':return True
@@ -1351,7 +1405,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
     if not pairs:raise ValueError('At least one cohort is required')
     if stop.is_set():return 75
     initialized=set();terminal={};offers={};scans={};last_report=0;reasons={};busy_report=0;setup_report=0
-    shared_failures=set();recovery_checked={};claim_contention_since={};exit_recheck_started={}
+    shared_failures=set();recovery_checked={};claim_contention_since={};exit_recheck_started={};node_rechecks=set()
     cursor=int(digest(worker)[:8],16)%len(pairs)
     roots=[p.root.parent.parent if p.root.name=='.multi-node' else p.root.parent for p,_ in pairs]
     dispatch_lock=Path(os.path.commonpath([str(p.resolve()) for p in roots]))/'.v8-dispatch.lock'
@@ -1649,6 +1703,14 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                 if action=='failed':shared_failures.add(index)
                 terminal[index]=action;progressed=True;continue
             if action=='advance':progressed=True
+        if claim_ok:
+            for i,(pool,runtime) in enumerate(pairs):
+                if i not in eligible or i not in initialized or i in terminal or i in node_rechecks or i in scans:continue
+                if getattr(runtime,'pending_barrier',None) is not None:continue
+                node_rechecks.add(i)
+                try:recheck_crashed_node(pool,runtime,device_fds,worker,diagnostic)
+                except Exception as exc:
+                    give_up(i,pool,'GPU re-admission',exc);offers.pop(i,None);progressed=True
         pending_setup=[]
         for index,(pool,runtime) in enumerate(pairs):
             if index not in eligible:continue
@@ -1762,6 +1824,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
             else:
                 hold=node_native_hold(pool,runtime)
                 if hold:give_up(index,pool,'native crash quarantine',NodeFailure(hold))
+                elif fatal_native_failure(read(pool.root/'jobs'/(key+'.json'))):node_rechecks.discard(index)
             dispatched=True
         if time.monotonic()-last_report>=60:
             try:print(f'[{worker}] '+canonical({p.binding.get('cohort','?'):p.status() for p,_ in pairs}),flush=True)
@@ -2161,6 +2224,10 @@ class Runtime:
         self.environment.update(added)
         print(f'[v8] admission passed; overrides {sorted(added)}',flush=True)
         self.admitted=report;return report
+
+    def fresh_admission(self,device_fds):
+        self.verify_node();self.admitted=None
+        return self.admit(device_fds)
 
     def execute(self,task,matrix,fd,stop,device_fds,attempt):
         self.verify_node()
