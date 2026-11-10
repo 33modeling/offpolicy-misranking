@@ -11,7 +11,7 @@ started. The launcher uses torchrun only when the user runs a worker command.
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 import errno
 import fcntl
 import hashlib
@@ -31,7 +31,7 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'bounded-metadata-inspection-and-explicit-lock-waits-v33'
+DISPATCH_POLICY = 'retain-ready-offer-control-until-sequential-claim-v34'
 COHORT_ORDER = 'complete-one-cohort-before-next-v1'
 EVAL_NATIVE_RECOVERY = 'evaluation-sigsegv-recovery-v1'
 NODE_NATIVE_FAILURE_LIMIT = 2
@@ -1410,8 +1410,8 @@ def record_worker_retirement(pairs,worker,reason,faults=()):
 
 class TaskScan:
     """One original actor's metadata scan, holding only its own cohort control lease."""
-    def __init__(self,pool,runtime,worker,stop,fd,*,verify=False,retry=False):
-        held=os.dup(fd);self.finished=threading.Event();self.result=None;self.error=None
+    def __init__(self,pool,runtime,worker,stop,fd,*,verify=False,retry=False,retain_offer=False):
+        self.offer_control=os.fdopen(os.dup(fd),'rb');self.finished=threading.Event();self.result=None;self.error=None
         self.cancelled=threading.Event()
         self.started=self.reported=time.monotonic();self.kind='node verification' if verify else 'task inspection'
         def scan():
@@ -1429,10 +1429,13 @@ class TaskScan:
                 if not verify and not stop.is_set() and not isinstance(exc,(BindingMismatch,*NODE_LOCAL)):
                     try:pool.fail(f'{type(exc).__name__}: {exc}')
                     except Exception as record_error:self.error=record_error
-            finally:os.close(held);self.finished.set()
+            finally:
+                if not (retain_offer and self.error is None and self.result and self.result[0]=='ready'
+                        and not self.cancelled.is_set() and not stop.is_set()):self.offer_control.close()
+                self.finished.set()
         self.thread=threading.Thread(target=scan,name='v8-scan-'+pool.binding.get('cohort','unknown'),daemon=True)
         try:self.thread.start()
-        except BaseException:os.close(held);raise
+        except BaseException:self.offer_control.close();raise
 
 
 def unfinished_cohort(pairs,order,*,check_leases=True):
@@ -1464,11 +1467,25 @@ def unfinished_cohort(pairs,order,*,check_leases=True):
 
 def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_gate=None,
                      max_attempts=MAX_ATTEMPTS,retry_delay=RETRY_DELAY,automatic_retry=True,cohort_order=()):
+    # Only finished inspection leases enter this stack. A still-running scan
+    # keeps its own lease until its thread exits, even during worker retirement.
+    with ExitStack() as offer_cleanup:
+        return _worker_loop_many(pairs,worker,stop,poll=poll,device_fds=device_fds,retry=retry,gpu_gate=gpu_gate,
+            max_attempts=max_attempts,retry_delay=retry_delay,automatic_retry=automatic_retry,
+            cohort_order=cohort_order,offer_cleanup=offer_cleanup)
+
+
+def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
+                     max_attempts,retry_delay,automatic_retry,cohort_order,offer_cleanup):
     """Schedule within cohort_order; an empty order retains archival fair dispatch."""
     if not pairs:raise ValueError('At least one cohort is required')
     if stop.is_set():return 75
     initialized=set();terminal={};offers={};scans={};last_report=0;reasons={};busy_report=0;setup_report=0
-    shared_failures=set();recovery_checked={};claim_contention_since={};exit_recheck_started={};node_rechecks=set();control_waits={}
+    shared_failures=set();recovery_checked={};claim_contention_since={};exit_recheck_started={};node_rechecks=set();control_waits={};offer_controls={}
+    def discard_offer(i):
+        offers.pop(i,None)
+        owned=offer_controls.pop(i,None)
+        if owned is not None:owned.close()
     cursor=int(digest(worker)[:8],16)%len(pairs)
     roots=[p.root.parent.parent if p.root.name=='.multi-node' else p.root.parent for p,_ in pairs]
     dispatch_lock=Path(os.path.commonpath([str(p.resolve()) for p in roots]))/'.v8-dispatch.lock'
@@ -1493,6 +1510,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
     def cohort(pool):
         return pool.binding.get('cohort','?')
     def give_up(index,pool,kind,exc):
+        discard_offer(index)
         shared_failures.discard(index)  # node/source faults need fresh admission, not automatic rejoining
         terminal[index]='failed';reasons[cohort(pool)]=f'{type(exc).__name__}: {exc}'
         print(f'[{worker}] {cohort(pool)}: {kind} failed: {type(exc).__name__}: {exc}',flush=True)
@@ -1606,14 +1624,14 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                     # Another verified worker may reopen a historical phase.
                     # Local completion is only a cache: recheck identity/readiness
                     # normally, retaining finished outputs and failure budgets.
-                    terminal.pop(i);offers.pop(i,None)
+                    terminal.pop(i);discard_offer(i)
                     print(f'[{worker}] {active}: shared queue is no longer complete; '
                           'rechecking it before later cohorts',flush=True)
             # An offer can outlive its phase when another worker finishes the cohort.
             # Drop it so discovery can observe 'complete', rather than waiting forever
             # with a stale offer that the sequential claim gate will never admit.
             for i in tuple(offers):
-                if cohort(pairs[i][0])!=active:offers.pop(i)
+                if cohort(pairs[i][0])!=active:discard_offer(i)
             if active!=sequence_report:
                 print(f'[{worker}] cohort order: {" -> ".join(cohort_order)}; '
                       f'active={active or "all complete"}; next cohort waits for full completion',flush=True)
@@ -1645,12 +1663,14 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                     if state.get('failure'):continue
                     shared_failures.discard(index);reasons.pop(cohort(pool),None)
                     if state['phase']=='complete':terminal[index]='complete';continue
-                    terminal.pop(index,None);initialized.discard(index);offers.pop(index,None)
+                    terminal.pop(index,None);initialized.discard(index);discard_offer(index)
                     print(f'[{worker}] {cohort(pool)}: shared queue recovered on another node; '
                           'rechecking original inputs before taking ready work',flush=True)
                     progressed=True
             except Exception as exc:give_up(index,pool,'queue recovery check',exc)
         claim_ok,busy=(True,None) if gpu_gate is None else gpu_gate()
+        if not claim_ok:
+            for index in tuple(offer_controls):discard_offer(index)
         if not claim_ok and time.monotonic()-busy_report>=300:
             print(f'[{worker}] waiting before new GPU work: {busy}',flush=True);busy_report=time.monotonic()
         # Discovery/preparation is outside the global dispatch lock. Sequential
@@ -1678,8 +1698,17 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                 if scan.error is not None:
                     give_up(index,pool,scan.kind,scan.error);progressed=True;continue
                 action,offer=scan.result
-                if action=='verified':initialized.add(index);progressed=True
-                if action=='ready':offers[index]=offer
+                if action=='verified':
+                    initialized.add(index);progressed=True
+                    if claim_ok:
+                        try:
+                            recheck_crashed_node(pool,runtime,device_fds,worker,diagnostic);node_rechecks.add(index)
+                        except Exception as exc:give_up(index,pool,'GPU re-admission',exc)
+                if action=='ready':
+                    offers[index]=offer
+                    if not scan.offer_control.closed:
+                        offer_controls[index]=offer_cleanup.enter_context(scan.offer_control)
+                        control_waits.pop(index,None)
                 if action in ('advance','ready'):progressed=True
                 if action in ('failed','complete'):
                     terminal[index]=action
@@ -1744,7 +1773,8 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                         if state['phase'] in PHASES and (not state.get('failure') or aggregate_task_failure(state['failure'])):
                             action='waiting'
                             if getattr(runtime,'independent_startup',False):
-                                scans[index]=TaskScan(pool,runtime,worker,stop,control.fd)
+                                scans[index]=TaskScan(pool,runtime,worker,stop,control.fd,
+                                    retain_offer=bool(cohort_order and claim_ok and index in node_rechecks))
                             else:
                                 action,offer=pool.tick(runtime,worker,stop,claim=False,offer=True)
                                 if action=='ready':offers[index]=offer
@@ -1792,7 +1822,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                 node_rechecks.add(i)
                 try:recheck_crashed_node(pool,runtime,device_fds,worker,diagnostic)
                 except Exception as exc:
-                    give_up(i,pool,'GPU re-admission',exc);offers.pop(i,None);progressed=True
+                    give_up(i,pool,'GPU re-admission',exc);progressed=True
         pending_setup=[]
         for index,(pool,runtime) in enumerate(pairs):
             if index not in eligible:continue
@@ -1830,17 +1860,22 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                         try:
                             hold=node_native_hold(pool,runtime)
                             if hold:
-                                offers.pop(candidate,None)
+                                discard_offer(candidate)
                                 give_up(candidate,pool,'native crash quarantine',NodeFailure(hold))
                                 progressed=True;continue
                             # Another node's --new-queue may be replacing this folder right now: the next
                             # phase-1 pass reports the moved/replaced queue; never recreate its state here.
                             try:state=read(pool.root/'state.json')
                             except FileNotFoundError:
-                                offers.pop(candidate,None);continue
+                                discard_offer(candidate);continue
                             if state.get('phase') not in PHASES or state.get('failure'):
-                                offers.pop(candidate,None);continue
-                            control_context=pool.control();control=control_context.__enter__()
+                                discard_offer(candidate);continue
+                            # A ready inspector retains this exact control lease.
+                            # Reuse it instead of letting another whole DAG scan
+                            # overtake the claim between close() and reacquisition.
+                            owned=offer_controls.pop(candidate,None)
+                            control_context=owned if owned is not None else pool.control()
+                            control=control_context.__enter__()
                         except NODE_LOCAL as exc:
                             give_up(candidate,pool,'queue access',exc);progressed=True;continue
                         try:

@@ -181,7 +181,7 @@ worker는 대기 원인이 바뀌면 읽을 수 있는 상태 줄을 출력하�
 정책 버전이 나온다. 표 형식 `status`는 `dispatch current <hash>`(현재 checkout과
 같음), `dispatch different <hash>`(다름), `dispatch unverified`(기록 없음)를 구분한다.
 정책 파일이 디스크에 있다는 것만으로 실행 중인 worker에 적용됐다고 판단하지 않는다.
-현재 배정 정책은 `bounded-metadata-inspection-and-explicit-lock-waits-v33`이다. 작업 검사는 해당 cohort의
+현재 배정 정책은 `retain-ready-offer-control-until-sequential-claim-v34`이다. 작업 검사는 해당 cohort의
 control lease만 잡고 별도로 수행한다. 검사 결과가 준비되면 공유 잠금 안에서 현재
 binding·phase·실패 상태·작업 정의·작업 lease를 다시 확인한 뒤 claim한다.
 검사와 claim 사이에 다른 노드가 가져간 작업이나 실패한 작업은 가져오지 않는다.
@@ -194,6 +194,10 @@ binding·phase·실패 상태·작업 정의·작업 lease를 다시 확인한 �
 가져가지 않고 검사 중이던 함수·run ID와 함께 종료하며 공유 큐를 실패 처리하지 않는다.
 다른 노드가 `control.lock`을 쥐고 있으면 `WAIT_QUEUE_LOCK`과 실제 잠금 경로를 표시한다.
 미확정 계획은 `WAIT_PLANNER`, 앞선 결과 영수증 대기는 `WAIT_PRIMARY_RESULTS`로 구분한다.
+순차 배정의 비동기 검사는 준비된 작업을 찾으면 같은 `control.lock` 파일 디스크립터를
+배정 단계로 넘긴다. 검사와 배정 사이에 잠금을 반납했다가 다시 얻지 않으므로 다른
+노드의 전체 검사가 그 틈에 끼어들지 않는다. 작업 배정 직후 잠금을 닫고 GPU 실행을 시작한다.
+중지·GPU 점유·오류·실험 전환 시에도 보유한 검사 잠금을 닫는다. 잠금 파일을 삭제하거나 교체하지 않는다.
 
 개별 작업 실패는 그 작업에만 남긴다. V20부터 기본 상한은 작업당 누적 실패2회다.
 첫 실패 뒤 체크포인트에서 즉시 한 번만 재시도하고, 두 번째 실패 뒤에는 그 작업을
