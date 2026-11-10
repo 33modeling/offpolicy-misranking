@@ -9935,5 +9935,47 @@
         "evidence_kind": "code_test"
       }
     ]
+  },
+  {
+    "id": "V8-153",
+    "title": "사용자 지시에 따라 V8 네 실험을 한 조합씩 완주하도록 변경",
+    "area": "V8 배정·실행 순서",
+    "severity": "medium",
+    "first_reported": "2026-11-10",
+    "introduction_commit": null,
+    "cause": "기존 균등 병렬 배정은 당시 요구에 따른 정책이었다. 사용자가 OLMo MATH부터 한 실험의 학습·평가·수집을 끝내고 다음 실험을 시작하도록 순서를 변경했다.",
+    "impact": "현재 조합의 작업이 모두 실행 중이어도 빈 노드를 다음 조합에 넘기지 않는다. 실패·누락·훈련 진척률만으로 완료를 판단하지 않는다.",
+    "attribution": "기존 정책을 새 요구와 구분해 기록. 이번 제어 정책 변경과 CPU 검증: Codex.",
+    "evidence": [
+      {
+        "kind": "commit",
+        "label": "순차 완주 배정 코드",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/ef9c95db70bcf81c9c531ce8c8a7908fc9980c03"
+      },
+      {
+        "kind": "source",
+        "label": "검증 기록과 실패·미측정 구분",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/ef9c95db70bcf81c9c531ce8c8a7908fc9980c03/research/v8-sequential-cohorts-20261110/validation.json"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-10",
+        "actor": "사용자",
+        "type": "reported",
+        "status": "open",
+        "text": "일단 1개를 완전히 끝내고 다른거를 시작하게 해저",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-10",
+        "actor": "Codex",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/ef9c95db70bcf81c9c531ce8c8a7908fc9980c03",
+        "evidence_kind": "code_test",
+        "text": "OLMo MATH → Qwen MBPP → OLMo MBPP → Qwen MATH. 공유 complete와 실제 lease를 확인하고 다음 조합을 배정한다. 시작 오류가 난 앞 조합도 순서에서 제거하지 않는다. 같은 조합 내 학습·ext·eval 병렬 처리와 기존 실패 상한·체크포인트를 유지한다. 배정 관련74검사 통과·원본 runner 조건2검사 건너뜀. 별도 tmpfs CPU 통합2검사 통과. 기본 Python의 torch 누락·옛 mock 서명 실패, 디스크 I/O 대기로 중단한 넓은 검사와 선택적 모델 메모리 검사도 원문 보존. 실제 H100 진행·처리량은 미측정이며 SIGSEGV 원인 해결로 주장하지 않는다."
+      }
+    ]
   }
 ]

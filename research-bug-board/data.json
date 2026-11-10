@@ -1,13 +1,13 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-10T08:29:16+09:00",
+  "recorded_at": "2026-11-10T18:55:48+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "6556c63ac1c0fb6161dcbbf1fe4fc958cd38d2a2",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/6556c63ac1c0fb6161dcbbf1fe4fc958cd38d2a2",
-    "all_available_commits": 1373,
-    "fix_commit_records": 144,
+    "source_commit": "ef9c95db70bcf81c9c531ce8c8a7908fc9980c03",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/ef9c95db70bcf81c9c531ce8c8a7908fc9980c03",
+    "all_available_commits": 1375,
+    "fix_commit_records": 145,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
     "first_commit_at": "2026-08-07T05:56:48+09:00",
@@ -42,7 +42,7 @@
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hang-fix-20261108:f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:01767f6e63de87f79359360d2e05d8aef5f90a71",
+      "refs/heads/master:ef9c95db70bcf81c9c531ce8c8a7908fc9980c03",
       "refs/heads/v8-coord-fixes-20261108:377c256e55f80c64b484d82ef812064ed9e7c8a3",
       "refs/heads/v8-modes:6821c9c09292662008eb4f933c74bae7490358ed",
       "refs/heads/v8-nodes:3adf26925b2b1c1bf572cf0e68f75b26bbae3ddc",
@@ -55,7 +55,7 @@
       "refs/heads/v8-status-clean:2f6994f544c150e58e2e3d7f43e6e67c16ae442e",
       "refs/heads/v8-status-cohorts:8635a5dab4b6a77620a2628799718781317d4687",
       "refs/heads/v8-status-counts:212a09963ac6d926b9fb20d95c6f19d28d5c87f7",
-      "refs/heads/v8-status-exteval:6556c63ac1c0fb6161dcbbf1fe4fc958cd38d2a2",
+      "refs/heads/v8-status-exteval:6beb84101d0461706a29525756ddbd5971898fa3",
       "refs/heads/v8-status-grid:e902db8a5e5a317c9aa5c26fdd9294f3a1f50c03",
       "refs/heads/v8-status-layout:616a1e3a5ba03620144c98f7370165e0107c4a63",
       "refs/heads/v8-status-lease:f418288156a4633f243691417f1e453be9bf8c0c",
@@ -81,7 +81,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:6556c63ac1c0fb6161dcbbf1fe4fc958cd38d2a2"
+      "refs/remotes/origin/master:ef9c95db70bcf81c9c531ce8c8a7908fc9980c03"
     ]
   },
   "incidents": [
@@ -10019,6 +10019,48 @@
           "text": "v25(native-crash-retry-other-host-v25): native 충돌 작업은 노드 합류 없이 바로 다시 배정, 마지막 checkpoint 부터, 충돌한 GPU 묶음(호스트+GPU 집합)만 제외(같은 호스트의 다른 묶음 가능). 서로 다른 곳에서 2번 충돌하면 멈춤(status 'BLOCKED: SIGSEGV (exit -11) on 2 different nodes'). v25 전 한 노드의 반복 충돌은 노드당 1회, v25 시도는 attempt 마다 host·gpus 기록해 하나씩 셈(무한 재실행 방지). 충돌한 묶음의 worker 는 큐 전체 실패를 쓰지 않음. 노드 격리·작업당 실패 상한 2·checkpoint 는 그대로. 시험: v8 452개·runner 157개 통과, CPU worker loop 에서 노드 A 충돌 → A 재시도 없음·큐 실패 없음 → 노드 B 가 이어 완료. v1.0.36 묶음 시작 확인. H100 실측 전이며 SIGSEGV 원인 수정은 아님.",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/6556c63",
           "evidence_kind": "code_test"
+        }
+      ]
+    },
+    {
+      "id": "V8-153",
+      "title": "사용자 지시에 따라 V8 네 실험을 한 조합씩 완주하도록 변경",
+      "area": "V8 배정·실행 순서",
+      "severity": "medium",
+      "first_reported": "2026-11-10",
+      "introduction_commit": null,
+      "cause": "기존 균등 병렬 배정은 당시 요구에 따른 정책이었다. 사용자가 OLMo MATH부터 한 실험의 학습·평가·수집을 끝내고 다음 실험을 시작하도록 순서를 변경했다.",
+      "impact": "현재 조합의 작업이 모두 실행 중이어도 빈 노드를 다음 조합에 넘기지 않는다. 실패·누락·훈련 진척률만으로 완료를 판단하지 않는다.",
+      "attribution": "기존 정책을 새 요구와 구분해 기록. 이번 제어 정책 변경과 CPU 검증: Codex.",
+      "evidence": [
+        {
+          "kind": "commit",
+          "label": "순차 완주 배정 코드",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/ef9c95db70bcf81c9c531ce8c8a7908fc9980c03"
+        },
+        {
+          "kind": "source",
+          "label": "검증 기록과 실패·미측정 구분",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/ef9c95db70bcf81c9c531ce8c8a7908fc9980c03/research/v8-sequential-cohorts-20261110/validation.json"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-10",
+          "actor": "사용자",
+          "type": "reported",
+          "status": "open",
+          "text": "일단 1개를 완전히 끝내고 다른거를 시작하게 해저",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-11-10",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/ef9c95db70bcf81c9c531ce8c8a7908fc9980c03",
+          "evidence_kind": "code_test",
+          "text": "OLMo MATH → Qwen MBPP → OLMo MBPP → Qwen MATH. 공유 complete와 실제 lease를 확인하고 다음 조합을 배정한다. 시작 오류가 난 앞 조합도 순서에서 제거하지 않는다. 같은 조합 내 학습·ext·eval 병렬 처리와 기존 실패 상한·체크포인트를 유지한다. 배정 관련74검사 통과·원본 runner 조건2검사 건너뜀. 별도 tmpfs CPU 통합2검사 통과. 기본 Python의 torch 누락·옛 mock 서명 실패, 디스크 I/O 대기로 중단한 넓은 검사와 선택적 모델 메모리 검사도 원문 보존. 실제 H100 진행·처리량은 미측정이며 SIGSEGV 원인 해결로 주장하지 않는다."
         }
       ]
     }

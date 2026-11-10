@@ -14442,6 +14442,26 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "6beb84101d0461706a29525756ddbd5971898fa3",
+      "at": "2026-11-10T08:29:28+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Bug board: record V8 status fixes V8-146..V8-152 through 6556c63",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/6beb84101d0461706a29525756ddbd5971898fa3",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "ef9c95db70bcf81c9c531ce8c8a7908fc9980c03",
+      "at": "2026-11-10T18:55:12+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Finish each V8 cohort before dispatching the next",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/ef9c95db70bcf81c9c531ce8c8a7908fc9980c03",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

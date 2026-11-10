@@ -166,5 +166,6 @@
     "tests/test_srgc_v8_olmo_mbpp.py": "c677039b7da7d733cfbb2b99d12041cc8496043739ffac980358afba6f465767",
     "docs/V8_MULTINODE_H100.md": "7ad543be6a28b0d6580ac6e80a8ce5369a018244b34c49207aeaed83559c8bc1",
     "v8/queue-runtimes.zip": "f64bb52c4c4d2a4404b31efe2b7abbcf9f4e235e15014b74747b7f02fb5af160"
-  }
+  },
+  "code_commit": "ef9c95db70bcf81c9c531ce8c8a7908fc9980c03"
 }

@@ -1,0 +1,173 @@
+.......................sssss..........................................ss [ 14%]
+ssss..................................sssssss..........................s [ 29%]
+............................................s.......................ssss [ 43%]
+sss.....sss..F........................ss................................ [ 58%]
+..s................................sss.......ssssss......s........F.ssFF [ 72%]
+sF...............................ss..................................... [ 87%]
+...............s...............................................          [100%]
+=================================== FAILURES ===================================
+_ test_other_cuda_runtime_error_is_retained_with_context_and_not_silently_fixed _
+
+tmp_path = PosixPath('/tmp/pytest-of-kms/pytest-321/test_other_cuda_runtime_error_0')
+
+    def test_other_cuda_runtime_error_is_retained_with_context_and_not_silently_fixed(tmp_path):
+        result,path=entry(tmp_path," raise RuntimeError('RegisterCUDA SymIntArrayRef: original CUDA diagnostic')\n")
+        assert result.returncode!=0
+>       record=json.loads((tmp_path/'progress/cuda-failure-rank-0.json').read_text())
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_srgc_v8_legacy_training_guards.py:118: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/lib/python3.12/pathlib.py:1029: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PosixPath('/tmp/pytest-of-kms/pytest-321/test_other_cuda_runtime_error_0/progress/cuda-failure-rank-0.json')
+mode = 'r', buffering = -1, encoding = 'locale', errors = None, newline = None
+
+    def open(self, mode='r', buffering=-1, encoding=None,
+             errors=None, newline=None):
+        """
+        Open the file pointed by this path and return a file object, as
+        the built-in open() function does.
+        """
+        if "b" not in mode:
+            encoding = io.text_encoding(encoding)
+>       return io.open(self, mode, buffering, encoding, errors, newline)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: '/tmp/pytest-of-kms/pytest-321/test_other_cuda_runtime_error_0/progress/cuda-failure-rank-0.json'
+
+/usr/lib/python3.12/pathlib.py:1015: FileNotFoundError
+_ test_dispatch_passes_available_entries_instead_of_defaulting_to_a_missing_cohort _
+
+tmp_path = PosixPath('/tmp/pytest-of-kms/pytest-321/test_dispatch_passes_available0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73bbc30b0ec0>
+
+    def test_dispatch_passes_available_entries_instead_of_defaulting_to_a_missing_cohort(tmp_path,monkeypatch):
+        monkeypatch.syspath_prepend(str(ROOT/'scripts'))
+        spec=importlib.util.spec_from_file_location('mbpp_dispatch',ROOT/'scripts/v8_dispatch.py')
+        dispatch=importlib.util.module_from_spec(spec);spec.loader.exec_module(dispatch)
+        path=tmp_path/'plan.json'
+        path.write_text(json.dumps(dict(root=str(tmp_path/'queue'),argv=[],errors={'olmo_math':'unavailable source'},
+            entries=[dict(cohort=c,script=str(ROOT/'scripts/srgc_v8_nodes.py'),runner=str(ROOT/'v8/experiments'),python=sys.executable)
+                     for c in ('qwen_mbpp','olmo_mbpp')])))
+        seen=[]
+        def main(args,*,selected_cohorts):
+            seen.append(selected_cohorts);return 0
+        monkeypatch.setattr(dispatch.nodes,'main',main)
+        monkeypatch.setattr(sys,'argv',['v8_dispatch.py',str(path)])
+>       assert dispatch.main()==1  # preserve the unavailable cohort's reported error
+               ^^^^^^^^^^^^^^^
+
+tests/test_srgc_v8_olmo_mbpp.py:36: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def main():
+        planfile=Path(sys.argv[1]);plan=json.loads(planfile.read_text());actors=[]
+        plan['worker']=socket.gethostname()+'.'+str(os.getpid())
+        # The actor receives this private per-launch plan, with paths already frozen by bootstrap.
+        runfile=planfile.with_name(planfile.stem+'-'+str(os.getpid())+'-'+uuid.uuid4().hex+'.json')
+        nodes.atomic(runfile,plan)
+        entries={entry['cohort']:entry for entry in plan['entries']}
+        requested=set(entries)|set(plan['errors'])
+        cohort_order=tuple(c for c in nodes.DEFAULT_COHORTS if c in requested)+tuple(sorted(requested-set(nodes.DEFAULT_COHORTS)))
+        controls={name:hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
+                  for name in ('v8_dispatch.py','v8_runtime_worker.py','v8_rpc.py','srgc_v8_nodes.py',
+                               'v8_task_entry.py','v8_generation_probe.py','v8_progress_text.py','srgc_verifier_fallback.py')}
+        plan['dispatch_policy']=nodes.DISPATCH_POLICY
+        plan['controller_sha256']=controls['srgc_v8_nodes.py']
+        print(f'[v8] dispatch policy={nodes.DISPATCH_POLICY} controller={controls["srgc_v8_nodes.py"][:12]}',flush=True)
+        def factory(runner,root,cohort,python,gpus):
+            plan['root']=str(Path(root).resolve());plan['gpus']=gpus
+            nodes.atomic(runfile,plan)
+            def record_policy(actor):
+                record=dict(schema=1,policy=nodes.DISPATCH_POLICY,controller_source=controls,
+                            original_runtime_binding=actor.binding,numerical_source_changed=False,
+                            cohort_order=dict(policy=nodes.COHORT_ORDER,cohorts=list(cohort_order),spill_to_next=False),
+                            execution_order=nodes.CONCURRENT_ORDER if actor.streaming_ready_tasks else
+                                            nodes.PRIMARY_ORDER if actor.primary_results_first else 'original-runtime-order',
+                            conditional_runtime_repairs=dict(strict_math_verifier='recorded-seed-fallback',
+                                mbpp_subprocess='hash-pinned-limits-after-exec',native_fault='per-rank-invocation-stack',
+                                checkpoint_evaluation='matched-horizon-before-numeric-budget-with-precommitted-cost-rule',
+                                rollout_memory='cache-release-and-one-identical-retry',
+                                legacy_dense_memory='hash-pinned-per-prompt-release-and-host-optimizer-snapshot',
+                                olmo_memory='zero-dropout-activation-recomputation-and-generation-last-logit',
+                                default_task_recovery=dict(max_counted_failures=nodes.MAX_ATTEMPTS,retry_delay=nodes.RETRY_DELAY,
+                                                           unlimited_failures=False,retry_count_scope='task-lifetime',
+                                                           native_crash_relaunch=False,quiescent_errors='exit-worker',
+                                                           final_exit_check='refresh-original-ready-tasks',
+                                                           evaluation_sigsegv_replay=dict(policy=nodes.EVAL_NATIVE_RECOVERY,max_failed_replays=1)),
+                                node_native_faults=dict(max_failures=nodes.NODE_NATIVE_FAILURE_LIMIT,
+                                    scope='GPU-set/cohort/controller',new_pid_resets=False,
+                                    shared_queue_failed=False),
+                                per_rank_receipt='progress/<attempt>/runtime-repair-rank-N.json'))
+                if actor.overrides:record['control_overrides']=actor.overrides
+                receipt=Path(root)/'.v8-dispatch-policies'/(cohort+'-'+nodes.digest(record)+'.json')
+                if receipt.exists():
+                    if nodes.read(receipt)!=record:raise ValueError('dispatch policy receipt changed')
+                else:nodes.atomic(receipt,record)
+            actor=RuntimeProxy(entries[cohort],plan,runfile,asynchronous=True);actors.append(actor)
+            actor.primary_cohort_scope=tuple(dict.fromkeys([*entries,*plan['errors']]))
+            actor.primary_unavailable_cohorts=tuple(plan['errors'])
+            actor.on_ready=record_policy
+            return actor
+        original=nodes.Runtime;nodes.Runtime=factory
+        args=[];i=0
+        while i<len(plan['argv']):
+            token=plan['argv'][i]
+            if token in ('--root','--runner-root','--python','--gpus','--poll-seconds','--max-attempts','--retry-delay'):
+                if token!='--runner-root':args.extend(plan['argv'][i:i+2])
+                i+=2;continue
+            if token.startswith('-') and not token.startswith('--runner-root='):args.append(token)
+            i+=1
+        if len(entries)==1:args.insert(0,next(iter(entries)))
+        for cohort,error in plan['errors'].items():print(f'V8 startup: {cohort} blocked: {error}',file=sys.stderr,flush=True)
+        try:
+>           result=nodes.main(args,selected_cohorts=tuple(entries),cohort_order=cohort_order)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           TypeError: test_dispatch_passes_available_entries_instead_of_defaulting_to_a_missing_cohort.<locals>.main() got an unexpected keyword argument 'cohort_order'
+
+scripts/v8_dispatch.py:197: TypeError
+----------------------------- Captured stdout call -----------------------------
+[v8] dispatch policy=complete-one-cohort-before-next-v26 controller=02febdfca532
+----------------------------- Captured stderr call -----------------------------
+V8 startup: olmo_math blocked: unavailable source
+_ test_checkpointed_real_olmo_preserves_outputs_gradients_rng_and_reduces_saved_activation_storage _
+
+tmp_path = PosixPath('/tmp/pytest-of-kms/pytest-321/test_checkpointed_real_olmo_pr0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73bbc43efe90>
+
+    def test_checkpointed_real_olmo_preserves_outputs_gradients_rng_and_reduces_saved_activation_storage(tmp_path,monkeypatch):
+>       import torch
+E       ModuleNotFoundError: No module named 'torch'
+
+tests/test_srgc_v8_olmo_memory.py:52: ModuleNotFoundError
+_______ test_generation_keeps_all_eight_answers_tokens_rng_and_eval_mode _______
+
+tmp_path = PosixPath('/tmp/pytest-of-kms/pytest-321/test_generation_keeps_all_eigh0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73bbc4410680>
+
+    def test_generation_keeps_all_eight_answers_tokens_rng_and_eval_mode(tmp_path,monkeypatch):
+>       import torch
+E       ModuleNotFoundError: No module named 'torch'
+
+tests/test_srgc_v8_olmo_memory.py:67: ModuleNotFoundError
+________ test_real_grpo_optimizer_update_matches_with_checkpointed_olmo ________
+
+tmp_path = PosixPath('/tmp/pytest-of-kms/pytest-321/test_real_grpo_optimizer_updat0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x73bbc32c3770>
+
+    def test_real_grpo_optimizer_update_matches_with_checkpointed_olmo(tmp_path,monkeypatch):
+        import numpy as np
+>       import torch
+E       ModuleNotFoundError: No module named 'torch'
+
+tests/test_srgc_v8_olmo_memory.py:93: ModuleNotFoundError
+=========================== short test summary info ============================
+FAILED tests/test_srgc_v8_legacy_training_guards.py::test_other_cuda_runtime_error_is_retained_with_context_and_not_silently_fixed
+FAILED tests/test_srgc_v8_olmo_mbpp.py::test_dispatch_passes_available_entries_instead_of_defaulting_to_a_missing_cohort
+FAILED tests/test_srgc_v8_olmo_memory.py::test_checkpointed_real_olmo_preserves_outputs_gradients_rng_and_reduces_saved_activation_storage
+FAILED tests/test_srgc_v8_olmo_memory.py::test_generation_keeps_all_eight_answers_tokens_rng_and_eval_mode
+FAILED tests/test_srgc_v8_olmo_memory.py::test_real_grpo_optimizer_update_matches_with_checkpointed_olmo
+5 failed, 441 passed, 49 skipped in 160.41s (0:02:40)

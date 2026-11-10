@@ -1,0 +1,143 @@
+........................................................................ [ 14%]
+.......................................................................s [ 29%]
+............................................s........................... [ 43%]
+........................................................................ [ 58%]
+.............................................FF.
+=================================== FAILURES ===================================
+__________________ test_real_v8_cpu_three_worker_branch_bank ___________________
+
+tmp_path = PosixPath('/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7845ef0870b0>
+
+    def test_real_v8_cpu_three_worker_branch_bank(tmp_path,monkeypatch):
+        runner=os.environ.get('V8_NODES_TEST_RUNTIME')
+        if not runner:pytest.skip('Set V8_NODES_TEST_RUNTIME to v8/experiments for the actual CPU runner integration')
+        ctx=mp.get_context('fork')
+        processes=[ctx.Process(target=toy_worker,args=(runner,tmp_path,'node'+str(i))) for i in range(3)]
+        for process in processes:process.start()
+        for process in processes:
+            process.join(60)
+>           if process.is_alive():process.terminate();process.join();pytest.fail('real V8 CPU worker did not finish')
+                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: real V8 CPU worker did not finish
+
+tests/test_srgc_v8_nodes.py:612: Failed
+----------------------------- Captured stdout call -----------------------------
+[node2] waiting for cohort setup: olmo_math (node verification); no GPU jobs claimed until healthy setup is ready
+[node1] waiting for cohort setup: olmo_math (node verification); no GPU jobs claimed until healthy setup is ready
+[node2] {"olmo_math":{"dispatch_workers":[{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":0,"worker":"node2"},{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":0,"worker":"node1"}],"failure":null,"known_task_counts":{},"leased_tasks":[],"phase":"not_started"}}
+[node1] {"olmo_math":{"dispatch_workers":[{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":0,"worker":"node2"},{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":0,"worker":"node1"}],"failure":null,"known_task_counts":{},"leased_tasks":[],"phase":"not_started"}}
+[node0] olmo_math: CPU stage prepare started
+[node0] olmo_math: CPU stage finished; phase=train
+[node0] {"olmo_math":{"dispatch_workers":[{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":0,"worker":"node0"},{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":0,"worker":"node2"},{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":0,"worker":"node1"}],"execution_order":{"cohorts":["olmo_math"],"policy":"matched-results-before-extension-v1"},"failure":null,"known_task_counts":{},"leased_tasks":[],"phase":"train"}}
+[node1] 2026-11-10 18:49:47 olmo_math train on_monitored seed=5 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/0dbbf34c2fb54db1a119e191bd45fa95.log
+[node2] 2026-11-10 18:49:47 olmo_math train on_monitored seed=6 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/8639f88c820947baaa4374a385f30e7d.log
+[node0] 2026-11-10 18:49:47 olmo_math train on_monitored seed=7 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/baec5998e4ce411298b12fbf3a61eb93.log
+[node1] 2026-11-10 18:49:51 olmo_math task finished rc=0 state=done log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/0dbbf34c2fb54db1a119e191bd45fa95.log
+[node2] 2026-11-10 18:49:51 olmo_math task finished rc=0 state=done log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/8639f88c820947baaa4374a385f30e7d.log
+[node0] 2026-11-10 18:49:51 olmo_math task finished rc=0 state=done log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/baec5998e4ce411298b12fbf3a61eb93.log
+[node0] 2026-11-10 18:49:51 olmo_math train bank_uniform_t050 seed=6 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/cc7b914a1baa4ab4996cc1397642ff92.log
+[node2] 2026-11-10 18:49:51 olmo_math train bank_sr_t025 seed=5 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/65f97d8a241f4254913f88bcb7af6e50.log
+[node1] 2026-11-10 18:49:51 olmo_math train bank_sr_t025 seed=7 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/fd8f32e77d7043fda3a80d627ccac4b7.log
+[node0] 2026-11-10 18:49:54 olmo_math task finished rc=0 state=done log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/cc7b914a1baa4ab4996cc1397642ff92.log
+[node0] 2026-11-10 18:49:55 olmo_math train bank_uniform_t050 seed=7 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/b7ac73d1889a4f80a9a7ae5951291be9.log
+[node1] 2026-11-10 18:49:57 olmo_math task finished rc=0 state=done log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/fd8f32e77d7043fda3a80d627ccac4b7.log
+[node1] 2026-11-10 18:49:58 olmo_math train bank_sr_t050 seed=7 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/d31d4910a98d41dca7f8374397ede5ed.log
+[node0] 2026-11-10 18:49:58 olmo_math task finished rc=0 state=done log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/b7ac73d1889a4f80a9a7ae5951291be9.log
+[node0] 2026-11-10 18:49:58 olmo_math train bank_sr_t025 seed=6 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/c7b8c4c6c47e488886c86e941a684ef4.log
+[node2] 2026-11-10 18:49:58 olmo_math task finished rc=0 state=done log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/65f97d8a241f4254913f88bcb7af6e50.log
+[node2] 2026-11-10 18:49:58 olmo_math train bank_sr_t050 seed=5 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/b53160d5b04e4a519213db44d9aede66.log
+[node1] 2026-11-10 18:49:59 olmo_math task finished rc=0 state=done log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/d31d4910a98d41dca7f8374397ede5ed.log
+[node2] 2026-11-10 18:49:59 olmo_math task finished rc=0 state=done log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/b53160d5b04e4a519213db44d9aede66.log
+[node2] 2026-11-10 18:49:59 olmo_math train bank_sr_t050 seed=6 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/2db3869ead0b4ec6a097a79b15d73501.log
+[node2] 2026-11-10 18:50:00 olmo_math task finished rc=0 state=done log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/2db3869ead0b4ec6a097a79b15d73501.log
+[node0] 2026-11-10 18:50:01 olmo_math task finished rc=0 state=done log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/c7b8c4c6c47e488886c86e941a684ef4.log
+[node1] olmo_math: CPU stage freeze started
+[node1] olmo_math: CPU stage finished; phase=primary_evaluation
+[node0] 2026-11-10 18:50:01 olmo_math evaluate eval.7f3324a8fd1d.07b39435 seed=7 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/769b09aa19be42cc9fbf68dad5bea208.log
+[node1] 2026-11-10 18:50:01 olmo_math evaluate eval.ddd99418bba4.07b39435 seed=7 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/0d783dbe133f48e7a044c4fe473cd040.log
+[node2] 2026-11-10 18:50:01 olmo_math evaluate eval.a147d60a1dfe.8d0ae614 seed=5 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/f6613df7161d4b418ea5ce1d52910419.log
+[node0] 2026-11-10 18:50:01 olmo_math task finished rc=0 state=done log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/769b09aa19be42cc9fbf68dad5bea208.log
+[node1] 2026-11-10 18:50:02 olmo_math task finished rc=0 state=done log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/0d783dbe133f48e7a044c4fe473cd040.log
+[node2] 2026-11-10 18:50:02 olmo_math task finished rc=0 state=done log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/f6613df7161d4b418ea5ce1d52910419.log
+[node0] 2026-11-10 18:50:02 olmo_math evaluate eval.326b2c4f46fd.8d0ae614 seed=5 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/de2d9b85a1774b3a80913e4410cc3478.log
+[node2] 2026-11-10 18:50:02 olmo_math evaluate eval.5c8ec095db86.b773bf2a seed=6 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/639369ad95fd4a2f963e101f3ba87846.log
+[node1] 2026-11-10 18:50:02 olmo_math evaluate eval.664e84066524.b773bf2a seed=6 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/f5bea062298c46e5b75bf7cc1814c86b.log
+[node2] 2026-11-10 18:50:03 olmo_math task finished rc=0 state=done log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/639369ad95fd4a2f963e101f3ba87846.log
+[node0] 2026-11-10 18:50:03 olmo_math task finished rc=0 state=done log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/de2d9b85a1774b3a80913e4410cc3478.log
+[node1] 2026-11-10 18:50:04 olmo_math task finished rc=0 state=done log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/f5bea062298c46e5b75bf7cc1814c86b.log
+[node1] 2026-11-10 18:50:04 olmo_math evaluate eval.03bf287bb94d.07b39435 seed=7 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/3e82d1d09afb4002b8d0823cc84f246f.log
+[node2] 2026-11-10 18:50:04 olmo_math evaluate eval.b2aee54af8c6.07b39435 seed=7 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/086dd9532e3c41a89333993c250ef017.log
+[node0] 2026-11-10 18:50:04 olmo_math evaluate eval.1a3aaff6b1eb.b773bf2a seed=6 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/f754bf495bbc4b00b0f6f59b2d351561.log
+[node1] 2026-11-10 18:50:04 olmo_math task finished rc=0 state=done log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/3e82d1d09afb4002b8d0823cc84f246f.log
+[node2] 2026-11-10 18:50:05 olmo_math task finished rc=0 state=done log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/086dd9532e3c41a89333993c250ef017.log
+[node0] 2026-11-10 18:50:06 olmo_math task finished rc=0 state=done log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/f754bf495bbc4b00b0f6f59b2d351561.log
+[node1] 2026-11-10 18:50:06 olmo_math evaluate eval.4ea97cea248a.8d0ae614 seed=5 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/5a1ea37375d5440e90050948966f5cb0.log
+[node0] 2026-11-10 18:50:06 olmo_math evaluate eval.dad70944b0d5.b773bf2a seed=6 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/c680986b1c174e87889926d534be2e7d.log
+[node1] 2026-11-10 18:50:07 olmo_math task finished rc=0 state=done log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/5a1ea37375d5440e90050948966f5cb0.log
+[node0] 2026-11-10 18:50:08 olmo_math task finished rc=0 state=done log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/c680986b1c174e87889926d534be2e7d.log
+[node1] olmo_math: CPU stage primary_finalize started
+{
+  "bank_rows": 46
+}
+{
+  "written": "/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/analysis"
+}
+[node1] olmo_math: CPU stage finished; phase=extension
+[node0] 2026-11-10 18:50:13 olmo_math train bank_uniform_t050 seed=7 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/1e4ad596eb1443b7a39f988a3123d776.log
+[node2] 2026-11-10 18:50:14 olmo_math train bank_uniform_t050 seed=6 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/f31616e428a248608421e6dacab50859.log
+[node1] 2026-11-10 18:50:15 olmo_math train bank_sr_t050 seed=6 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/1af0c853e417403fbd71a868b9f25c9a.log
+[node2] 2026-11-10 18:50:30 olmo_math task finished rc=0 state=done log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/f31616e428a248608421e6dacab50859.log
+[node2] 2026-11-10 18:50:30 olmo_math train bank_sr_t025 seed=7 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/1bc510c97d3545c1bcd42d6b0d58294b.log
+_________ test_real_v8_three_workers_automatically_finish_four_cohorts _________
+
+tmp_path = PosixPath('/tmp/pytest-of-kms/pytest-323/test_real_v8_three_workers_aut0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7845ef612900>
+
+    def test_real_v8_three_workers_automatically_finish_four_cohorts(tmp_path,monkeypatch):
+        runner=os.environ.get('V8_NODES_TEST_RUNTIME')
+        if not runner:pytest.skip('V8 runtime source required for mixed-cohort integration')
+        ctx=mp.get_context('fork')
+        processes=[ctx.Process(target=toy_mixed_worker,args=(runner,tmp_path,'node'+str(i))) for i in range(3)]
+        for process in processes:process.start()
+        for process in processes:
+            process.join(60)
+>           if process.is_alive():process.terminate();process.join();pytest.fail('mixed V8 CPU worker did not finish')
+                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: mixed V8 CPU worker did not finish
+
+tests/test_srgc_v8_nodes.py:679: Failed
+----------------------------- Captured stdout call -----------------------------
+[node2] qwen_mbpp: CPU stage prepare started
+[node0] olmo_math: CPU stage prepare started
+[node1] olmo_mbpp: CPU stage prepare started
+[node2] 2026-11-10 18:51:07 olmo_math task finished rc=0 state=done log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/1bc510c97d3545c1bcd42d6b0d58294b.log
+[node2] {"olmo_math":{"dispatch_workers":[{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":55,"worker":"node0"},{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":37,"worker":"node2"},{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":53,"worker":"node1"}],"execution_order":{"cohorts":["olmo_math"],"policy":"matched-results-before-extension-v1"},"failure":null,"known_task_counts":{"done":24,"pending":4,"running":2},"leased_tasks":[{"kind":"train","method":"bank_sr_t050","seed":6,"task":"5fa0b63008988dee074ab27c9a0d3e6fe145155ecee1b896ee3d2c745a94e0c3","worker":"node1"}],"phase":"extension","primary_results_receipt_sha256":"cab0e5d1f6e9d4fd2e825b193f4bd03651647290053e42bb2141301f791ef958"}}
+[node2] 2026-11-10 18:51:09 olmo_math train bank_sr_t050 seed=5 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/bfa6a6836cb14cc0965599e647f6d3dc.log
+[node1] 2026-11-10 18:51:09 olmo_math task finished rc=0 state=done log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/1af0c853e417403fbd71a868b9f25c9a.log
+[node1] {"olmo_math":{"dispatch_workers":[{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":57,"worker":"node0"},{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":2,"worker":"node2"},{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":56,"worker":"node1"}],"execution_order":{"cohorts":["olmo_math"],"policy":"matched-results-before-extension-v1"},"failure":null,"known_task_counts":{"done":26,"pending":3,"running":1},"leased_tasks":[{"kind":"train","method":"bank_sr_t050","seed":5,"task":"d48cbe561314a438822008f95a6570790810a67fcb4f587324538c5a2cb22bac","worker":"node2"}],"phase":"extension","primary_results_receipt_sha256":"cab0e5d1f6e9d4fd2e825b193f4bd03651647290053e42bb2141301f791ef958"}}
+[node1] 2026-11-10 18:51:10 olmo_math train bank_sr_t025 seed=6 log=/tmp/pytest-of-kms/pytest-323/test_real_v8_cpu_three_worker_0/olmo_math/.multi-node/logs/7901e6b2a6bc4a5f9ea5d7fcaeb306d0.log
+[node2] qwen_mbpp: CPU stage finished; phase=train
+[node1] olmo_mbpp: CPU stage finished; phase=train
+[node2] qwen_math: CPU stage prepare started
+[node0] olmo_math: CPU stage finished; phase=train
+[node1] waiting for cohort setup: olmo_math (node verification), qwen_math (node verification); no GPU jobs claimed until healthy setup is ready
+[node1] {"olmo_math":{"dispatch_workers":[{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":0,"worker":"node0"},{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":2,"worker":"node1"}],"execution_order":{"cohorts":["olmo_math","qwen_mbpp","olmo_mbpp","qwen_math"],"policy":"matched-results-before-extension-v1"},"failure":null,"known_task_counts":{},"leased_tasks":[],"phase":"train"},"olmo_mbpp":{"dispatch_workers":[{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":4,"worker":"node2"},{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":2,"worker":"node1"}],"execution_order":{"cohorts":["olmo_math","qwen_mbpp","olmo_mbpp","qwen_math"],"policy":"matched-results-before-extension-v1"},"failure":null,"known_task_counts":{"pending":2},"leased_tasks":[],"phase":"train"},"qwen_math":{"dispatch_workers":[{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":2,"worker":"node1"}],"execution_order":{"cohorts":["olmo_math","qwen_mbpp","olmo_mbpp","qwen_math"],"policy":"matched-results-before-extension-v1"},"failure":null,"known_task_counts":{},"leased_tasks":[],"phase":"prepare"},"qwen_mbpp":{"dispatch_workers":[{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":0,"worker":"node0"},{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":4,"worker":"node2"},{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":0,"worker":"node1"}],"execution_order":{"cohorts":["olmo_math","qwen_mbpp","olmo_mbpp","qwen_math"],"policy":"matched-results-before-extension-v1"},"failure":null,"known_task_counts":{"pending":6},"leased_tasks":[],"phase":"train"}}
+[node0] waiting for cohort setup: qwen_mbpp (node verification), qwen_math (node verification); no GPU jobs claimed until healthy setup is ready
+[node0] {"olmo_math":{"dispatch_workers":[{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":2,"worker":"node0"},{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":4,"worker":"node1"}],"execution_order":{"cohorts":["olmo_math","qwen_mbpp","olmo_mbpp","qwen_math"],"policy":"matched-results-before-extension-v1"},"failure":null,"known_task_counts":{"pending":2},"leased_tasks":[],"phase":"train"},"olmo_mbpp":{"dispatch_workers":[{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":1,"worker":"node0"},{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":6,"worker":"node2"},{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":2,"worker":"node1"}],"execution_order":{"cohorts":["olmo_math","qwen_mbpp","olmo_mbpp","qwen_math"],"policy":"matched-results-before-extension-v1"},"failure":null,"known_task_counts":{"pending":6},"leased_tasks":[],"phase":"train"},"qwen_math":{"dispatch_workers":[{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":0,"worker":"node0"},{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":2,"worker":"node1"}],"execution_order":{"cohorts":["olmo_math","qwen_mbpp","olmo_mbpp","qwen_math"],"policy":"matched-results-before-extension-v1"},"failure":null,"known_task_counts":{},"leased_tasks":[],"phase":"prepare"},"qwen_mbpp":{"dispatch_workers":[{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":2,"worker":"node0"},{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":6,"worker":"node2"},{"controller_sha256":"af5970ee399b533d0c20316489f79987f4678a6faef149771bee0739c58ebea5","dispatch_policy":"complete-one-cohort-before-next-v26","heartbeat_age_seconds":2,"worker":"node1"}],"execution_order":{"cohorts":["olmo_math","qwen_mbpp","olmo_mbpp","qwen_math"],"policy":"matched-results-before-extension-v1"},"failure":null,"known_task_counts":{"pending":6},"leased_tasks":[],"phase":"train"}}
+=============================== warnings summary ===============================
+tests/test_srgc_v8_fair_dispatch.py: 22 warnings
+tests/test_srgc_v8_immediate_restart.py: 24 warnings
+tests/test_srgc_v8_node_disconnect.py: 2 warnings
+tests/test_srgc_v8_nodes.py: 25 warnings
+  /usr/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=3974620) is multi-threaded, use of fork() may lead to deadlocks in the child.
+    self.pid = os.fork()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_srgc_v8_nodes.py::test_real_v8_cpu_three_worker_branch_bank
+FAILED tests/test_srgc_v8_nodes.py::test_real_v8_three_workers_automatically_finish_four_cohorts
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! KeyboardInterrupt !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+/home/kms/dev/offpolicy-misranking/scripts/srgc_v8_nodes.py:69: KeyboardInterrupt
+(to show a full traceback on KeyboardInterrupt use --full-trace)
+2 failed, 332 passed, 2 skipped, 73 warnings in 260.71s (0:04:20)
