@@ -121,7 +121,7 @@ def test_wedged_verification_has_finite_exit_and_cannot_initialize_after_retirem
     pool=nodes.Pool(tmp_path/'olmo_math/.multi-node',dict(cohort='olmo_math'))
     release=threading.Event()
     class Runtime:
-        independent_startup=True;timeout=.05;pending_barrier=None
+        independent_startup=True;timeout=.05;verify_timeout=.05;pending_barrier=None   # V8-159: own verification limit
         verification_stage='saving shared dispatch policy receipt'
         def verify_node(self):release.wait(1)
     runtime=Runtime();start=time.monotonic()

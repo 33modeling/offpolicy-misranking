@@ -62,4 +62,19 @@ def test_changed_source_binding_or_task_is_rejected_after_inspection(tmp_path):
         nodes.atomic(pool.root/'binding.json',pool.binding)
         path=pool.root/'jobs'/(offer['jobs'][0]['key']+'.json');job=nodes.read(path)
         job['task']['horizon']=400;nodes.atomic(path,job)
-        with pytest.raises(ValueError,match='definition changed'):pool.claim_offered(offer,'late-node',stop)
+        # V8-158: a stale offer is skipped, never a queue failure (it used to stop every node)
+        action,claimed=pool.claim_offered(offer,'late-node',stop)
+        if claimed is not None:claimed[0].close()             # the next valid item of the same offer may be taken
+        assert claimed is None or claimed[1]!=offer['jobs'][0]['key']
+        assert nodes.read(path)['state']=='pending' and not pool.queue_state().get('failure')
+
+
+def test_recorded_stale_claim_failure_is_cleared_when_a_node_starts(tmp_path):
+    """V8-158: queues failed by the old ValueError resume once a node with this code checks them."""
+    pool,runtime,stop,offer=prepared(tmp_path)
+    pool.fail('ValueError: Inspected task definition changed before claim: '+offer['jobs'][0]['key'])
+    assert pool.queue_state()['failure']
+    assert pool.recover_budget_api_failure(pool.controller_sha256,'restarted-node')
+    state=pool.queue_state()
+    assert state['failure'] is None and state['actions'][-1]['action']=='recover_stale_offer_claim_failure'
+    assert 'Inspected task definition changed before claim' in state['failure_history'][-1]['detail']

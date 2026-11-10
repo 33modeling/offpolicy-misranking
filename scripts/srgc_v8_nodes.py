@@ -35,6 +35,10 @@ DISPATCH_POLICY = 'retain-ready-offer-control-until-sequential-claim-v34'
 COHORT_ORDER = 'complete-one-cohort-before-next-v1'
 EVAL_NATIVE_RECOVERY = 'evaluation-sigsegv-recovery-v1'
 NODE_NATIVE_FAILURE_LIMIT = 2
+# Node verification hashes this node's frozen trainer and inputs; on a shared volume with many nodes starting
+# together it takes minutes. It runs without the queue control.lock and has its own limit (user 11-11:
+# 'v8 코드 지금 lock 걸려서 아무것도 시작못해', '모든 시작노드가 idle임'); the 120 s runtime-start timeout is not it.
+NODE_VERIFY_TIMEOUT = float(os.environ.get('V8_NODE_VERIFY_TIMEOUT', '1800'))
 # A task that died of a native signal (SIGSEGV etc.) is retried from its last checkpoint on a host where it has
 # not crashed (user 11-10: 'failed로 된거 복구 되는거지? ... 디버깅 계속 해보고 수정해'). Repeated crashes on one
 # GPU node (V8-144) say nothing about the task; crashes on this many different hosts point at the task itself.
@@ -1417,7 +1421,8 @@ def record_worker_retirement(pairs,worker,reason,faults=()):
 class TaskScan:
     """One original actor's metadata scan, holding only its own cohort control lease."""
     def __init__(self,pool,runtime,worker,stop,fd,*,verify=False,retry=False,retain_offer=False):
-        self.offer_control=os.fdopen(os.dup(fd),'rb');self.finished=threading.Event();self.result=None;self.error=None
+        self.offer_control=os.fdopen(os.dup(fd),'rb') if fd is not None else None
+        self.finished=threading.Event();self.result=None;self.error=None
         self.cancelled=threading.Event()
         self.started=self.reported=time.monotonic();self.kind='node verification' if verify else 'task inspection'
         def scan():
@@ -1425,7 +1430,20 @@ class TaskScan:
                 if verify:
                     runtime.verify_node()
                     if self.cancelled.is_set() or stop.is_set():raise NodeFailure('node verification cancelled before queue initialization')
-                    pool.initialize(retry=retry,worker=worker,recover=pool.controller_sha256)
+                    if self.offer_control is not None:
+                        pool.initialize(retry=retry,worker=worker,recover=pool.controller_sha256)
+                    else:
+                        # Verified without the queue lock; take it only for the short initialize() write.
+                        # Waiting for that lock is ordinary contention, not slow hashing: the verification
+                        # limit stops here and the (longer) inspection limit covers the wait.
+                        self.kind='queue initialization';self.started=time.monotonic()
+                        while True:
+                            with pool.control() as control:
+                                if control is not None:
+                                    pool.initialize(retry=retry,worker=worker,recover=pool.controller_sha256);break
+                            if self.cancelled.is_set() or stop.is_set():
+                                raise NodeFailure('node verification cancelled before queue initialization')
+                            time.sleep(.05)
                     self.result=('verified',None)
                 else:self.result=pool.tick(runtime,worker,stop,claim=False,offer=True)
             except BaseException as exc:
@@ -1436,12 +1454,15 @@ class TaskScan:
                     try:pool.fail(f'{type(exc).__name__}: {exc}')
                     except Exception as record_error:self.error=record_error
             finally:
-                if not (retain_offer and self.error is None and self.result and self.result[0]=='ready'
-                        and not self.cancelled.is_set() and not stop.is_set()):self.offer_control.close()
+                if self.offer_control is not None and not (retain_offer and self.error is None and self.result
+                        and self.result[0]=='ready' and not self.cancelled.is_set() and not stop.is_set()):
+                    self.offer_control.close()
                 self.finished.set()
         self.thread=threading.Thread(target=scan,name='v8-scan-'+pool.binding.get('cohort','unknown'),daemon=True)
         try:self.thread.start()
-        except BaseException:self.offer_control.close();raise
+        except BaseException:
+            if self.offer_control is not None:self.offer_control.close()
+            raise
 
 
 def unfinished_cohort(pairs,order,*,check_leases=True):
@@ -1648,6 +1669,17 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                 print(f'[{worker}] BLOCKED: {active} is unavailable on this node; '
                       'later cohorts are not started; queues/checkpoints retained',flush=True)
                 return 1
+            # Node-local give-ups only; a shared queue failure keeps waiting for recovery by another node.
+            stuck=[i for i,(pool,_) in enumerate(pairs) if cohort(pool)==active and terminal.get(i)=='failed'
+                   and i not in shared_failures]
+            if active is not None and stuck:
+                # Later cohorts are not eligible until the active one completes, so this node would only idle.
+                why=reasons.get(active,'see the messages above')
+                diagnostic.publish('BLOCKED',active,'this node cannot serve the active cohort: '+why,order=list(cohort_order))
+                print(f'[{worker}] EXIT: this node cannot serve the active experiment {active} ({why}); later '
+                      'experiments wait for it, so this worker exits instead of idling. Fix the cause and start the '
+                      'same command again; queues and checkpoints are kept.',flush=True)
+                return 1
             active_rank=cohort_order.index(active) if active is not None else len(cohort_order)
             eligible={i for i,(pool,_) in enumerate(pairs) if cohort_order.index(cohort(pool))<=active_rank}
         else:eligible=set(range(len(pairs)))
@@ -1689,11 +1721,21 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                 scan=scans[index]
                 if not scan.finished.is_set():
                     now=time.monotonic()
-                    limit=getattr(runtime,'timeout',120) if scan.kind=='node verification' else getattr(runtime,'scan_timeout',300)
+                    limit=(getattr(runtime,'verify_timeout',NODE_VERIFY_TIMEOUT) if scan.kind=='node verification'
+                           else getattr(runtime,'scan_timeout',300))
                     if now-scan.started>=limit:
                         scan.cancelled.set();del scans[index]
                         detail=getattr(runtime,'verification_stage','checking node inputs') if scan.kind=='node verification' else getattr(runtime,'inspection_stage','original planner/ready/done metadata')
                         give_up(index,pool,scan.kind,NodeFailure(f'{scan.kind} timed out after {limit:g}s at {detail}; no GPU task claimed'))
+                        if scan.kind!='node verification':
+                            # The stuck inspection thread still holds this queue's control.lock (dup'd fd).
+                            # Staying alive would keep every other node waiting on it; exiting releases it.
+                            if scan.offer_control is not None:scan.offer_control.close()
+                            print(f'[{worker}] EXIT: {cohort(pool)} {scan.kind} did not finish in {limit:g}s at {detail}; '
+                                  'this worker exits so the queue lock is released for the other nodes. '
+                                  'Start the same command again on this node.',flush=True)
+                            diagnostic.publish('BLOCKED',cohort(pool),f'{scan.kind} timed out; worker exited to release the queue lock')
+                            return 1
                         progressed=True;continue
                     if now-scan.reported>=30:
                         print(f'[{worker}] {cohort(pool)}: {scan.kind} pending {now-scan.started:.0f}s; '
@@ -1740,6 +1782,11 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                 except Exception as exc:
                     pool.fail(f'{type(exc).__name__}: {exc}');give_up(index,pool,'CPU stage',exc)
                 finally:os.close(held)
+                continue
+            if index not in initialized and getattr(runtime,'independent_startup',False):
+                # Hashing this node's own inputs needs no queue lock. Holding control.lock here made every
+                # starting node verify one after another behind it (WAIT_QUEUE_LOCK) and time out.
+                scans[index]=TaskScan(pool,runtime,worker,stop,None,verify=True,retry=retry)
                 continue
             try:
                 control_context=pool.control();control=control_context.__enter__()
