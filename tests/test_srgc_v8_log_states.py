@@ -132,3 +132,51 @@ def test_wedged_verification_has_finite_exit_and_cannot_initialize_after_retirem
     finally:release.set()
     time.sleep(.03)
     assert not (pool.root/'binding.json').exists() and not (pool.root/'state.json').exists()
+
+
+def test_queue_control_contention_is_reported_and_ready_work_resumes_after_release(tmp_path,capsys,monkeypatch):
+    from contextlib import contextmanager
+    from test_srgc_v8_sequential_cohorts import pairs,events
+    rows=pairs(tmp_path);pool,runtime=rows[0];original=pool.control
+    verified=threading.Event();verify=runtime.verify_node
+    def verify_node():verify();verified.set()
+    runtime.verify_node=verify_node
+    @contextmanager
+    def contended():
+        if verified.is_set():yield None
+        else:
+            with original() as control:yield control
+    monkeypatch.setattr(pool,'control',contended)
+    stop=threading.Event();timer=threading.Timer(.08,stop.set);timer.start()
+    try:
+        assert nodes.worker_loop_many(rows,'waiting-node',stop,poll=.002,cohort_order=nodes.DEFAULT_COHORTS)==75
+    finally:timer.cancel();timer.join()
+    text=capsys.readouterr().out
+    assert 'state=WAIT_QUEUE_LOCK' in text and str(pool.root/'control.lock') in text
+    assert 'state=WAIT_UNEXPLAINED' not in text
+    assert not any(row['stage']=='execute' for row in events(tmp_path))
+    monkeypatch.setattr(pool,'control',original)
+    assert nodes.worker_loop_many(rows,'waiting-node',threading.Event(),poll=.002,
+                                  cohort_order=nodes.DEFAULT_COHORTS)==0
+
+
+def test_wedged_task_inspection_exits_without_claiming_or_failing_shared_queue(tmp_path):
+    from test_srgc_v8_sequential_cohorts import pairs,events
+    rows=pairs(tmp_path);pool,runtime=rows[0]
+    pool.initialize();state=pool.queue_state();state['phase']='train';nodes.atomic(pool.root/'state.json',state)
+    runtime.independent_startup=True;runtime.scan_timeout=.04
+    release=threading.Event();plan=runtime.plan
+    def wedged(phase):release.wait(1);return plan(phase)
+    runtime.plan=wedged
+    stop=threading.Event();timer=threading.Timer(.5,stop.set);timer.start()
+    try:
+        assert nodes.worker_loop_many(rows,'wedged-inspector',stop,poll=.002,
+                                      cohort_order=nodes.DEFAULT_COHORTS)==1
+        assert not stop.is_set()
+    finally:
+        release.set();timer.cancel();timer.join()
+    time.sleep(.03)
+    assert pool.queue_state()['phase']=='train' and pool.queue_state()['failure'] is None
+    assert not any(row['stage']=='execute' for row in events(tmp_path))
+    assert all(not nodes.read(p)['attempts'] for p in (pool.root/'jobs').glob('*.json'))
+    assert not (rows[1][0].root/'state.json').exists()

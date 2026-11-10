@@ -31,7 +31,7 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'bounded-nonblocking-runtime-startup-v32'
+DISPATCH_POLICY = 'bounded-metadata-inspection-and-explicit-lock-waits-v33'
 COHORT_ORDER = 'complete-one-cohort-before-next-v1'
 EVAL_NATIVE_RECOVERY = 'evaluation-sigsegv-recovery-v1'
 NODE_NATIVE_FAILURE_LIMIT = 2
@@ -1035,6 +1035,7 @@ class Pool:
                 if state.get('extension_waiting_for')!=blocked:
                     state['extension_waiting_for']=blocked;atomic(self.root/'state.json',state)
                     print(f'[{worker}] {self.binding["cohort"]}: extension deferred; matched-step results pending: '+', '.join(blocked),flush=True)
+                self.observation=dict(checked_at=time.time(),phase=phase,extension_waiting_for=blocked)
                 return 'waiting',None
             if state.pop('extension_waiting_for',None):atomic(self.root/'state.json',state)
         base_error=None;deferred_base=(getattr(runtime,'streaming_ready_tasks',False) and phase in ('extension','evaluation')
@@ -1131,7 +1132,8 @@ class Pool:
         self.observation=dict(checked_at=time.time(),phase=phase,ready=len(pending),leased=leased,
                               native_busy=native_count,dependencies=dependencies,failed=len(failed),
                               recovery_wait=later,planning_error=base_error,deferred_budget=deferred_base,
-                              planning_errors=(state.get('ready_side_work') or {}).get('planning_errors'))
+                              planning_errors=(state.get('ready_side_work') or {}).get('planning_errors'),
+                              unsealed_plan=all_done and not sealed)
         if aggregate and (all_done or active or later or pending):
             # Only validated completed/active/eligible work invalidates an old
             # aggregate exhaustion record. Input/setup failures never reach here.
@@ -1466,7 +1468,7 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
     if not pairs:raise ValueError('At least one cohort is required')
     if stop.is_set():return 75
     initialized=set();terminal={};offers={};scans={};last_report=0;reasons={};busy_report=0;setup_report=0
-    shared_failures=set();recovery_checked={};claim_contention_since={};exit_recheck_started={};node_rechecks=set()
+    shared_failures=set();recovery_checked={};claim_contention_since={};exit_recheck_started={};node_rechecks=set();control_waits={}
     cursor=int(digest(worker)[:8],16)%len(pairs)
     roots=[p.root.parent.parent if p.root.name=='.multi-node' else p.root.parent for p,_ in pairs]
     dispatch_lock=Path(os.path.commonpath([str(p.resolve()) for p in roots]))/'.v8-dispatch.lock'
@@ -1525,10 +1527,13 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
         facts=dict(getattr(pool,'observation',{}));facts['order']=list(cohort_order)
         if not claim_ok:diagnostic.publish('WAIT_GPU',name,str(busy),**facts)
         elif i in scans:
-            detail=getattr(runtime,'verification_stage',scans[i].kind) if scans[i].kind=='node verification' else scans[i].kind
+            detail=getattr(runtime,'verification_stage',scans[i].kind) if scans[i].kind=='node verification' else getattr(runtime,'inspection_stage',scans[i].kind)
             diagnostic.publish('CHECKING',name,detail+'; no GPU task assigned',**facts)
         elif getattr(runtime,'pending_barrier',None) is not None:
             diagnostic.publish('CPU_STAGE',name,'CPU stage '+runtime.pending_barrier[0]+' pending',**facts)
+        elif i in control_waits:
+            diagnostic.publish('WAIT_QUEUE_LOCK',name,'another worker holds queue control lock: '+str(pool.root/'control.lock'),
+                               lock_wait_seconds=round(time.monotonic()-control_waits[i],1),**facts)
         elif i not in initialized:
             diagnostic.publish('STARTING',name,getattr(runtime,'startup_stage','node verification pending'),**facts)
         elif i in offers:diagnostic.publish('WAIT_CLAIM',name,'ready offer found; waiting to acquire or revalidate its lease',**facts)
@@ -1542,8 +1547,12 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
             diagnostic.publish('WAIT_CHECKPOINT',name,'parent checkpoint or evaluation snapshot is not ready',**facts)
         elif facts.get('deferred_budget'):
             diagnostic.publish('WAIT_BUDGET',name,'reference endpoint costs have not produced the frozen budget',**facts)
+        elif facts.get('extension_waiting_for'):
+            diagnostic.publish('WAIT_PRIMARY_RESULTS',name,'extension waits for matched-step result receipt: '+', '.join(facts['extension_waiting_for']),**facts)
         elif facts.get('recovery_wait'):
             diagnostic.publish('WAIT_RECOVERY',name,'failed work is waiting for retry eligibility or another GPU host',**facts)
+        elif facts.get('unsealed_plan'):
+            diagnostic.publish('WAIT_PLANNER',name,'observed jobs are done but original planner has not sealed this phase',**facts)
         else:diagnostic.publish('WAIT_UNEXPLAINED',name,'no ready task observed; no proven wait reason; inspect queue and task logs',**facts)
     def refresh_before_exit():
         """Recheck original readiness after the stale scan; never claim under this check."""
@@ -1654,10 +1663,11 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                 scan=scans[index]
                 if not scan.finished.is_set():
                     now=time.monotonic()
-                    if scan.kind=='node verification' and now-scan.started>=getattr(runtime,'timeout',120):
+                    limit=getattr(runtime,'timeout',120) if scan.kind=='node verification' else getattr(runtime,'scan_timeout',300)
+                    if now-scan.started>=limit:
                         scan.cancelled.set();del scans[index]
-                        detail=getattr(runtime,'verification_stage','checking node inputs')
-                        give_up(index,pool,'node verification',NodeFailure(f'verification timed out at {detail}; no GPU task claimed'))
+                        detail=getattr(runtime,'verification_stage','checking node inputs') if scan.kind=='node verification' else getattr(runtime,'inspection_stage','original planner/ready/done metadata')
+                        give_up(index,pool,scan.kind,NodeFailure(f'{scan.kind} timed out after {limit:g}s at {detail}; no GPU task claimed'))
                         progressed=True;continue
                     if now-scan.reported>=30:
                         print(f'[{worker}] {cohort(pool)}: {scan.kind} pending {now-scan.started:.0f}s; '
@@ -1701,6 +1711,8 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
             except NODE_LOCAL as exc:
                 give_up(index,pool,'queue access',exc);progressed=True;continue
             try:
+                if control is None:control_waits.setdefault(index,time.monotonic())
+                else:control_waits.pop(index,None)
                 if control is not None:
                     if index not in initialized:
                         # A mismatched joining node must not poison healthy workers: no pool.fail here.
@@ -1836,10 +1848,12 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                                 # Give short metadata writes a chance to preserve model balance.
                                 # A prolonged scan must not idle this GPU when another cohort is ready.
                                 since=claim_contention_since.setdefault(candidate,time.monotonic())
+                                control_waits.setdefault(candidate,since)
                                 if time.monotonic()-since<.25:
                                     short_claim_wait=True;break
                                 continue
                             claim_contention_since.pop(candidate,None)
+                            control_waits.pop(candidate,None)
                             try:
                                 action,claimed=pool.claim_offered(offers.pop(candidate),worker,stop)
                             except BindingMismatch as exc:
