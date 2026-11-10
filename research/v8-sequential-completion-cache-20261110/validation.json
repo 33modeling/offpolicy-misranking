@@ -50,5 +50,6 @@
     "tests/test_srgc_v8_sequential_cohorts.py": "0b4fb8656f01545506816978f012dfba4a1cf53de6bf551ce8317096e22eeb99",
     "docs/V8_MULTINODE_H100.md": "47a473719ed41c6c7995fa7c123a016c17d74fe8bc4b6e919a07108545e49955",
     "v8/queue-runtimes.zip": "b6e431975d8621b02f7e8640ddea2c17af2956c24b293e360c29515b00baf0fc"
-  }
+  },
+  "code_commit": "94e3edb7501d503b72d7d018e38a1556d0888090"
 }

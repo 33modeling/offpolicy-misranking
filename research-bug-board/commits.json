@@ -14462,6 +14462,26 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "4a1d2cf34385429fe22c9c7c0cdafe8ba8a116c0",
+      "at": "2026-11-10T18:56:10+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Record V8 sequential policy and retain complete test evidence",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/4a1d2cf34385429fe22c9c7c0cdafe8ba8a116c0",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "94e3edb7501d503b72d7d018e38a1556d0888090",
+      "at": "2026-11-10T22:17:29+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Recheck reopened V8 cohorts instead of waiting on cached completion",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/94e3edb7501d503b72d7d018e38a1556d0888090",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }

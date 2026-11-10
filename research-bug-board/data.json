@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-10T18:55:48+09:00",
+  "recorded_at": "2026-11-10T22:17:55+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "ef9c95db70bcf81c9c531ce8c8a7908fc9980c03",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/ef9c95db70bcf81c9c531ce8c8a7908fc9980c03",
-    "all_available_commits": 1375,
+    "source_commit": "94e3edb7501d503b72d7d018e38a1556d0888090",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/94e3edb7501d503b72d7d018e38a1556d0888090",
+    "all_available_commits": 1377,
     "fix_commit_records": 145,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
@@ -42,7 +42,7 @@
       "refs/heads/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/heads/hang-fix-20261108:f1bb211e57dd6ba9f0972a96107d4d180e6934e4",
       "refs/heads/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/heads/master:ef9c95db70bcf81c9c531ce8c8a7908fc9980c03",
+      "refs/heads/master:94e3edb7501d503b72d7d018e38a1556d0888090",
       "refs/heads/v8-coord-fixes-20261108:377c256e55f80c64b484d82ef812064ed9e7c8a3",
       "refs/heads/v8-modes:6821c9c09292662008eb4f933c74bae7490358ed",
       "refs/heads/v8-nodes:3adf26925b2b1c1bf572cf0e68f75b26bbae3ddc",
@@ -81,7 +81,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:ef9c95db70bcf81c9c531ce8c8a7908fc9980c03"
+      "refs/remotes/origin/master:94e3edb7501d503b72d7d018e38a1556d0888090"
     ]
   },
   "incidents": [
@@ -10061,6 +10061,57 @@
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/ef9c95db70bcf81c9c531ce8c8a7908fc9980c03",
           "evidence_kind": "code_test",
           "text": "OLMo MATH → Qwen MBPP → OLMo MBPP → Qwen MATH. 공유 complete와 실제 lease를 확인하고 다음 조합을 배정한다. 시작 오류가 난 앞 조합도 순서에서 제거하지 않는다. 같은 조합 내 학습·ext·eval 병렬 처리와 기존 실패 상한·체크포인트를 유지한다. 배정 관련74검사 통과·원본 runner 조건2검사 건너뜀. 별도 tmpfs CPU 통합2검사 통과. 기본 Python의 torch 누락·옛 mock 서명 실패, 디스크 I/O 대기로 중단한 넓은 검사와 선택적 모델 메모리 검사도 원문 보존. 실제 H100 진행·처리량은 미측정이며 SIGSEGV 원인 해결로 주장하지 않는다."
+        },
+        {
+          "at": "2026-11-10",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/94e3edb7501d503b72d7d018e38a1556d0888090",
+          "evidence_kind": "code_test",
+          "text": "v27: 다른 worker가 완료된 큐를 다시 열었을 때 이 worker의 완료 캐시를 무효화하고 원래 입력 신원·단계·작업을 재확인한다. 기존 완료 출력을 재사용하며 재시도 상한과 실패·checkpoint·reward 기록을 초기화하지 않는다. 수정 전 watchdog으로만 끝나는 CPU 무한대기 재현1개 실패, 수정 후 관련77검사 통과·환경조건2개 건너뜀. 실패 재개 시 exit1, 정상 재개 시 중복 실행 없이 전체 완료, 실행 lease 대기 중 중지 시 exit75 확인. H100 진행은 미검증이며 학습 성능 수치를 보고하지 않는다."
+        }
+      ]
+    },
+    {
+      "id": "V8-154",
+      "title": "순차 배정에서 다시 열린 큐를 완료 캐시로 건너뛰어 무한 대기",
+      "area": "V8 실행 순서·상태 캐시",
+      "severity": "high",
+      "first_reported": "2026-11-10",
+      "introduction_commit": "ef9c95db70bcf81c9c531ce8c8a7908fc9980c03",
+      "cause": "공유 state가 complete에서 이전 phase로 돌아가도 worker의 terminal[cohort]=complete 캐시가 남았다. 배정 기준은 앞 조합으로 돌아오지만 discovery는 그 조합을 계속 건너뛰어 준비된 작업도 처리하지 않았다. 다른 worker의 큐 재개를 CPU fixture로 재현했다.",
+      "impact": "해당 worker가 앞 조합의 완료를 계속 기다려 뒤 조합도 진행하지 못할 수 있다. 원격 H100에서의 실제 발생 여부는 확인하지 않았다.",
+      "attribution": "Codex의 v26 순차 배정 변경에서 발견. 사용자 지적 후 재점검·수정.",
+      "evidence": [
+        {
+          "kind": "source",
+          "label": "수정 전 재현 원문",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/94e3edb7501d503b72d7d018e38a1556d0888090/research/v8-sequential-completion-cache-20261110/before-fix.log"
+        },
+        {
+          "kind": "source",
+          "label": "수정 후 검사와 보존 근거",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/94e3edb7501d503b72d7d018e38a1556d0888090/research/v8-sequential-completion-cache-20261110/validation.json"
+        }
+      ],
+      "events": [
+        {
+          "at": "2026-11-10",
+          "actor": "사용자",
+          "type": "reported",
+          "status": "open",
+          "text": "너 그거 순서 지정하다가 에러 낸적 있으니까 조심해. 무한루프 빠지겠어",
+          "evidence_kind": "user_report"
+        },
+        {
+          "at": "2026-11-10",
+          "actor": "Codex",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/94e3edb7501d503b72d7d018e38a1556d0888090",
+          "evidence_kind": "code_test",
+          "text": "v27: 다른 worker가 완료된 큐를 다시 열었을 때 이 worker의 완료 캐시를 무효화하고 원래 입력 신원·단계·작업을 재확인한다. 기존 완료 출력을 재사용하며 재시도 상한과 실패·checkpoint·reward 기록을 초기화하지 않는다. 수정 전 watchdog으로만 끝나는 CPU 무한대기 재현1개 실패, 수정 후 관련77검사 통과·환경조건2개 건너뜀. 실패 재개 시 exit1, 정상 재개 시 중복 실행 없이 전체 완료, 실행 lease 대기 중 중지 시 exit75 확인. H100 진행은 미검증이며 학습 성능 수치를 보고하지 않는다."
         }
       ]
     }
