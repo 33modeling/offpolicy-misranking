@@ -24,7 +24,7 @@ class RuntimeProxy:
         self.independent_startup=asynchronous;self.initialized=False;self.pending_barrier=None;self.on_ready=None
         self.stop_event=None;self.overrides=[];self.corrected_plans=()
         self.policy_recorded=False;self.verification_stage='checking original node inputs'
-        self.scan_timeout=300;self.inspection_stage='checking original task metadata'
+        self.scan_timeout=float(os.environ.get('V8_SCAN_TIMEOUT','1800'));self.inspection_stage='checking original task metadata'
         self.startup_file=Path(planfile).with_name(Path(planfile).name+'.'+self.cohort+'.startup.json')
         self.startup_stage='starting selected Python interpreter'
         self.binding=dict(schema=1,cohort=self.cohort,root=str(self.root))

@@ -850,10 +850,12 @@ class Pool:
         detail=str(failure.get('detail',''))
         api=bool(re.search(r'''freeze_budget\(\) got an unexpected keyword argument ['"]expected_seeds['"]''',detail))
         evaluation='Selected budget checkpoint is missing or changed:' in detail
-        if not api and not evaluation:return False
+        stale_claim='Inspected task definition changed before claim:' in detail   # controller defect, v35
+        if not api and not evaluation and not stale_claim:return False
         state.setdefault('failure_history',[]).append(failure);state['failure']=None
         if evaluation:state['unresolved_evaluation_planner_failure']=failure
-        state.setdefault('actions',[]).append(dict(action='recover_verified_legacy_budget_keyword_failure' if api else 'resume_independent_work_with_blocked_evaluation_plan',
+        state.setdefault('actions',[]).append(dict(action=('recover_stale_offer_claim_failure' if stale_claim else
+            'recover_verified_legacy_budget_keyword_failure' if api else 'resume_independent_work_with_blocked_evaluation_plan'),
             controller_sha256=controller,controller_policy=DISPATCH_POLICY,worker=worker,at=time.time()))
         atomic(self.root/'state.json',state)
         print(f'[v8] {self.binding.get("cohort")}: resumed independent work after verified controller recovery; '
@@ -1199,7 +1201,11 @@ class Pool:
                 job_phase=item.get('phase',job_phase)
                 if job_phase not in (offer['phase'],'extension','evaluation'):raise ValueError('Invalid concurrent claim phase')
             if job['phase']!=job_phase or semantic_task(job['task'])!=item['task']:
-                raise ValueError('Inspected task definition changed before claim: '+item['key'])
+                # The offer is older than this job record, or names side work this phase cannot claim here.
+                # A stale offer is not a queue failure: raising here made the claim loop write pool.fail()
+                # and every node left the queue (user 11-11: 'inspected task definition changed before
+                # claim', 'state BLOCKED', '노드 다 날아감'). Skip it; the next inspection is current.
+                continue
             if parallel and not offer.get('side_budget_sha256') and job_phase in ('extension','evaluation'):
                 t=job['task']
                 if (job_phase=='extension' or not early_rule or t.get('kind')!='evaluate' or t.get('split')!='final'
