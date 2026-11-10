@@ -30,6 +30,16 @@ def test_actual_worker_path_is_found_without_exposing_unrelated_environment(tmp_
     assert probe.active_roots(tmp_path)==[Path('/existing/live-data')]
 
 
+def test_orphaned_cpu_launch_root_is_found_without_marker_in_command_line(tmp_path):
+    child=tmp_path/'123';child.mkdir()
+    (child/'cmdline').write_bytes(b'python3\0-m\0switching.cli\0profile\0')
+    (child/'environ').write_bytes(b'V8_ROOT=/existing/orphan-root\0V8_LAUNCH_ID=old-launch\0')
+    other=tmp_path/'456';other.mkdir()
+    (other/'cmdline').write_bytes(b'python3\0unrelated.py\0')
+    (other/'environ').write_bytes(b'V8_ROOT=/unrelated\0V8_LAUNCH_ID=\0')
+    assert probe.active_roots(tmp_path)==[Path('/existing/orphan-root')]
+
+
 def test_latest_attempt_only_and_partial_line_never_becomes_checkpoint_proof(tmp_path):
     q=tmp_path/'olmo_math/.multi-node';run=tmp_path/'olmo_math/runs/r'
     save(q/'state.json',{'phase':'train'})

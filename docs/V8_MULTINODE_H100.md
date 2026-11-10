@@ -506,8 +506,10 @@ sh scripts/v8_probe.sh
 sh scripts/v8_stop.sh
 ```
 
-원래 checkpoint/queue/lock 파일은 지우지 않는다. 종료 신호 뒤10초 동안 기다리고
-남아 있는 해당 실행의 프로세스만 강제 정리한다. 다른 UID·root·launch 또는 재사용된
+원래 checkpoint/queue/lock 파일은 지우지 않는다. 기본 종료 유예는900초이며
+`V8_STOP_WAIT_SECONDS`로 지정한다. 유예 뒤 남아 있는 해당 노드·실험 root의 V8
+프로세스만 강제 정리한다. 부모가 종료된 뒤 잠금을 상속한 launch-tag CPU 자식도 포함한다.
+다른 UID·root의 프로세스 또는 재사용된
 PID는 신호 대상에서 제외한다. kernel의 중단 불가능한 I/O 대기는 남은 PID로 출력하며
 GPU가 해제됐다고 성공 처리하지 않는다.
 
@@ -553,6 +555,24 @@ git pull && sh scripts/run_v8_nodes.sh stop && sh scripts/run_v8_nodes.sh
 
 `stop`은 해당 노드의 기존 V8 실행만 종료한다. 새 명령은 기존 큐와 checkpoint를
 사용하며, 실패 숫자를 지워서 성공으로 보이게 처리하지 않는다.
+
+여러 노드가 같은 `control.lock`을 기다릴 때는 살아 있는 V8 노드들에서 먼저 아래
+정리를 일괄 실행한다. gone 노드 목록을 하나씩 조회할 필요는 없다.
+
+```sh
+git pull --ff-only origin master && V8_STOP_WAIT_SECONDS=10 sh scripts/run_v8_nodes.sh stop
+```
+
+10초 뒤에도 남은 해당 V8 프로세스는 강제 종료된다. 저장하지 않은 현재 update는
+잃을 수 있으며 저장된 checkpoint·큐·원문 로그는 삭제하지 않는다. 모든 기존 V8
+노드의 정리가 끝난 뒤 새 워커들을 같은 명령으로 시작한다.
+
+```sh
+sh scripts/run_v8_nodes.sh
+```
+
+`stop`에서 아직 살아 있는 PID를 보고하면 그 노드는 정리 완료로 취급하지 않는다.
+잠금 파일 자체는 남겨 두며, 실제 보유 프로세스의 파일 디스크립터가 닫혀야 잠금이 풀린다.
 
 ### native 충돌 작업은 다른 GPU 묶음에서 이어 받음 (v25, 2026-11-10)
 

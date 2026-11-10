@@ -24,6 +24,61 @@ def test_only_owned_launch_and_descendants_are_selected():
     assert proc.select(rows,tag='ours')=={10:'a',11:'b'}
 
 
+def test_orphaned_tagged_cpu_child_is_selected_by_root_without_selecting_unrelated_python():
+    rows={10:row(1,'orphan',tag='old-launch'),20:row(1,'unrelated'),
+          30:row(1,'other-root',root='/other',tag='old-launch')}
+    assert proc.select(rows,root='/job')=={10:'orphan'}
+
+
+def test_stop_command_releases_control_lock_inherited_by_orphaned_cpu_child(tmp_path):
+    import fcntl
+    root=tmp_path/'experiments';queue=root/'olmo_math/.multi-node';queue.mkdir(parents=True)
+    lock=queue/'control.lock';lock.touch();inode=lock.stat().st_ino
+    saved=queue/'checkpoint-sentinel';saved.write_bytes(b'optimizer RNG and reward records retained')
+    child_script=tmp_path/'cpu-stage.py';pidfile=tmp_path/'cpu.pid'
+    child_script.write_text('import os,signal,time,sys\nfrom pathlib import Path\n'
+        'signal.signal(signal.SIGTERM,signal.SIG_IGN)\n'
+        'Path(sys.argv[2]).write_text(str(os.getpid()))\n'
+        'while True:time.sleep(.02)\n')
+    launcher=tmp_path/'v8_dispatch.py'
+    launcher.write_text('import os,fcntl,subprocess,sys\n'
+        'fd=os.open(sys.argv[1],os.O_RDWR)\nfcntl.flock(fd,fcntl.LOCK_EX)\n'
+        'subprocess.Popen([sys.executable,sys.argv[2],str(fd),sys.argv[3]],pass_fds=(fd,),'
+        'stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)\nos.close(fd)\n')
+    scripts=Path(__file__).resolve().parents[1]/'scripts';childpid=None;foreign=None
+    env=dict(os.environ,V8_ROOT=str(root),V8_LAUNCH_ID='orphan-control-fixture')
+    try:
+        subprocess.run([sys.executable,str(launcher),str(lock),str(child_script),str(pidfile)],env=env,check=True,timeout=3)
+        deadline=time.monotonic()+3
+        while not pidfile.exists() and time.monotonic()<deadline:time.sleep(.005)
+        childpid=int(pidfile.read_text())
+        foreign_env=dict(os.environ,V8_ROOT=str(root));foreign_env.pop(proc.TAG,None)
+        foreign=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'],env=foreign_env)
+        targets=proc.select(proc.table(),root=root)
+        assert childpid in targets and foreign.pid not in targets
+        # The launching V8 parent has exited. This file's inherited flock is
+        # the sole remaining blocker, not its mere existence on disk.
+        fd=os.open(lock,os.O_RDONLY)
+        try:
+            with pytest.raises(BlockingIOError):fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        finally:os.close(fd)
+        result=subprocess.run(['sh',str(scripts/'v8_stop.sh')],capture_output=True,text=True,timeout=5,
+            env=dict(os.environ,V8_ROOT=str(root),V8_STOP_WAIT_SECONDS='.05',PYTHONDONTWRITEBYTECODE='1'))
+        assert result.returncode==0,result.stdout+result.stderr
+        assert 'V8 processes stopped' in result.stdout
+        fd=os.open(lock,os.O_RDONLY)
+        try:fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        finally:os.close(fd)
+        assert lock.stat().st_ino==inode and saved.read_bytes()==b'optimizer RNG and reward records retained'
+        assert foreign.poll() is None
+    finally:
+        if childpid is not None:
+            try:os.kill(childpid,signal.SIGKILL)
+            except ProcessLookupError:pass
+        if foreign is not None:
+            foreign.kill();foreign.wait()
+
+
 def test_reused_pid_and_unrelated_process_are_never_signalled():
     seen=[];rows={10:row(1,'new'),20:row(1,'safe')}
     proc.send({10:'old'},signal.SIGKILL,rows=rows,killer=lambda *args:seen.append(args))

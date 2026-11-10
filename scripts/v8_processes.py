@@ -53,7 +53,8 @@ def table(proc=Path('/proc')):
 
 def select(rows,*,root=None,tag=None):
     selected={pid for pid,row in rows.items() if
-              (row['env'].get(TAG)==tag if tag else row['v8'] and row['env'].get('V8_ROOT')==str(root))}
+              (row['env'].get(TAG)==tag if tag else
+               (row['v8'] or row['env'].get(TAG)) and row['env'].get('V8_ROOT')==str(root))}
     while True:
         added={pid for pid,row in rows.items() if row['ppid'] in selected}
         if added<=selected:break

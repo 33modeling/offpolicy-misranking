@@ -44,7 +44,7 @@ def root(environment):
 
 
 def active_roots(proc=Path('/proc')):
-    """Read only the V8_ROOT field of this user's existing V8 process environment."""
+    """Find this user's V8 roots, including launch-tagged CPU children whose parent exited."""
     found=set()
     try:entries=list(Path(proc).iterdir())
     except OSError:return []
@@ -53,10 +53,12 @@ def active_roots(proc=Path('/proc')):
         try:
             if entry.stat().st_uid!=os.getuid():continue
             args=(entry/'cmdline').read_bytes().split(b'\0')
-            if not any(Path(a.decode(errors='replace')).name in ('srgc_v8_nodes.py','cluster_child.py','v8_dispatch.py','v8_runtime_worker.py') for a in args if a):continue
+            marked=any(Path(a.decode(errors='replace')).name in ('srgc_v8_nodes.py','cluster_child.py','v8_dispatch.py','v8_runtime_worker.py') for a in args if a)
+            saved_root=None;launch=None
             for field in (entry/'environ').read_bytes().split(b'\0'):
-                if field.startswith(b'V8_ROOT='):
-                    found.add(field[len(b'V8_ROOT='):].decode(errors='replace'))
+                if field.startswith(b'V8_ROOT='):saved_root=field[len(b'V8_ROOT='):].decode(errors='replace')
+                elif field.startswith(b'V8_LAUNCH_ID='):launch=field[len(b'V8_LAUNCH_ID='):]
+            if saved_root and (marked or launch):found.add(saved_root)
         except (OSError,ValueError):continue
     return sorted(Path(p) for p in found if p)
 
