@@ -1147,17 +1147,15 @@ def clean_block(base, cohort, now, host, width):
     for r in sorted(problems, key=lambda r: (rank(r), -stamp(r))):
         name = task_name(r, runs)
         if r['status'] == 'failed':
-            real = r.get('failure_real', True)
-            where = f" on {r['host']}" if r.get('host') else ''
-            head = (f"{'✗' if real else '!'} {label} {name} {'FAILED' if real else 'marked failed'}{when(r)}{where}"
-                    f"{r.get('failure_at', '')} (attempt {r['attempt']})")
-            attention.append('  ' + head)
-            attention.append('      why:  ' + (r.get('failure_cause') or r.get('error') or 'no error recorded; see its log'))
-            attention.append('      next: ' + (r.get('failure_next') or 'start one node with --retry-failed after fixing'))
-            if r.get('log'):
-                attention.append('      log:  ' + r['log'])
-            if r.get('failure_stack'):
-                attention.append('      stack: ' + r['failure_stack'])
+            # Only tasks no automatic retry will run reach here (BLOCKED). One line each: the task, how many
+            # failures stopped it and the last cause; the old nodes, logs and stacks are in --classic
+            # (user 11-10: 'needs attention 은 노드가 날아갔는데도 왜 남아있는거냐. 현재 노드 정보나 뿌려').
+            cause = re.sub(r'\s+', ' ', str(r.get('failure_cause') or r.get('error') or 'no error recorded'))
+            m = re.search(r'(SIG[A-Z]+ \(exit -\d+\)).*?; crashed in ([^;]+)', cause)
+            if m:
+                cause = f"{m.group(1)} in {m.group(2)}"     # the crash place, not the rank/stage preamble
+            attention.append(f"  ✗ {label} {name}: stopped after {r.get('failure_lifetime_count') or r['attempt']} failures"
+                             f" · last: {cause[:110]}")
             continue
         elif r['status'] == 'interrupted':
             text = f"⏸ {label} {name} interrupted{when(r)}: reruns automatically on the next free node"
@@ -1452,6 +1450,19 @@ def node_table(bases, cohorts, now, this_host=None):
     rank = {'hung': 0, 'running': 1, 'busy': 2, 'starting': 3, 'idle': 4, 'gone': 5, 'finished': 6}
     return sorted(out, key=lambda r: (rank[r['state']], natural(r['host']), natural(r['pid'])))
 
+def code_version():
+    """The bundle folder name (rlvr-v8-h100-vX.Y.Z) or the git commit this status file runs from."""
+    root = Path(__file__).resolve().parents[1]
+    m = re.search(r'v\d+\.\d+\.\d+', root.name)
+    if m:
+        return m.group(0)
+    try:
+        return subprocess.run(['git', '-c', 'safe.directory=*', '-C', str(root), 'rev-parse', '--short', 'HEAD'],
+                              capture_output=True, text=True, timeout=5).stdout.strip() or 'unknown code'
+    except (OSError, subprocess.SubprocessError):
+        return 'unknown code'
+
+
 def render_clean(bases, now=None, gpus=None, host=None, cohorts=COHORTS, width=None, all_nodes=False):
     import shutil
     now = time.time() if now is None else now
@@ -1491,7 +1502,7 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
     for part in textwrap.wrap(LEGEND_TABLE, max(60, width - 2)):
         out.append(paint(part, 'dim'))
     stamp = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(now))
-    head = f"━━ V8 status · {stamp} "
+    head = f"━━ V8 status · {code_version()} · {stamp} "
     out.append(paint(head + '━' * max(3, min(width, 100) - len(head)), 'head'))
     out.append(paint('   ' + ', '.join(str(b) for b in bases), 'dim'))
 
@@ -1595,7 +1606,13 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
                     break
                 mark = line.strip()[:1]
                 style = 'bad' if mark == '✗' else 'warn' if mark in '?⏸!' else None
-                out.append(paint(clip(line, width), style))
+                import textwrap   # an item may take two lines so its crash place / cause is not cut off
+                parts = textwrap.wrap(line, max(60, width - 1), subsequent_indent='    ', break_on_hyphens=False,
+                                      drop_whitespace=True) or [line]
+                if len(parts) > 2:
+                    parts = parts[:2]; parts[1] = clip(parts[1] + ' …', width)
+                for part in parts:
+                    out.append(paint(('  ' + part) if part is parts[0] and line.startswith('  ') and not part.startswith('  ') else part, style))
             else:
                 import textwrap
                 m = re.match(r'(\w+:)\s+(.*)', line.lstrip())

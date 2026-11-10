@@ -595,9 +595,11 @@ def test_failure_next_step_follows_the_default_retry_rule(tmp_path):
     notes = failure_notes(base, "olmo_math", now)
     assert "retried automatically: attempt 2/3 starts in 40s" in notes["soon"]
     assert "retried automatically: attempt 3/3 is waiting for the next free node" in notes["ready"]
-    assert "BLOCKED: failure cap reached (3 recorded; limit 3); no more automatic retries; failed checkpoints/logs retained; repair required" in text
+    assert "BLOCKED: failure cap reached (3 recorded; limit 3); no more automatic retries; failed checkpoints/logs retained; repair required" in notes["spent"]
     bottom = text.split("━━ V8 status · ")[1]
-    assert " needs attention (1)" in bottom and "  ✗ OLMo MATH s7 SR25 FAILED" in bottom and " s5 SR25 FAILED" not in bottom
+    # one line per blocked task; no why/next/log blocks of old nodes (user 11-10 '현재 노드 정보나 뿌려')
+    assert " needs attention (1)" in bottom and "  ✗ OLMo MATH s7 SR25: stopped after 3 failures · last: exit 1 without an error message" in bottom
+    assert " s5 SR25" not in bottom.split(" needs attention")[1] and "      why:" not in bottom and "      log:" not in bottom
     assert " auto-retry, nothing to do: OLMo MATH 2 failed task(s)" in bottom
 
 
@@ -801,7 +803,12 @@ def test_native_crash_says_where_the_rank_crashed(tmp_path):
     write(q / "jobs" / "n.json", job)
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=120)
     bottom = text.split("V8 status · ")[1]
-    assert " needs attention (1)" in bottom and "BLOCKED: SIGSEGV (exit -11) on 2 different nodes (h-m, h-n)" in re.sub(r"\n {12}", " ", bottom)
+    assert " needs attention (1)" in bottom
+    joined = re.sub(r"\n {4}(?=\S)", " ", bottom)          # an item may wrap onto one indented line
+    line = next(x for x in joined.splitlines() if x.startswith("  ✗ OLMo MATH s6 eval"))
+    assert ": stopped after 2 failures · last: SIGSEGV (exit -11) in embedding (torch/nn/functional.py:2551) ← generate" in line, line
+    assert "BLOCKED: SIGSEGV (exit -11) on 2 different nodes (h-m, h-n)" in failure_notes(base, "olmo_math", now)["n"]
+    return
     why = next(line for line in bottom.splitlines() if line.startswith("      why:  "))
     assert why.startswith("      why:  rank 1 SIGSEGV (exit -11), native crash during answering; crashed in embedding"), why
     joined = re.sub(r"\n {12}", " ", bottom)
