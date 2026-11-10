@@ -10154,5 +10154,103 @@
         "text": "현재 attempt의 native 실패만 확인한다. 이전 오분류 중 exit75·이전 native·정형 오류·현재 실패 증거 없음이 확인된 건만 실패 한도에서 제외하고 원문 attempts/outcome/exit를 유지한 채 정정 근거를 추가한다.82검사 통과·1조건 건너뜀, 정지/진짜 오류 보존15검사 통과, 원래 계획·실행기의 합성CPU4조합 완주1검사 통과. OLMo 완료→Qwen MBPP 배정까지 CPU에서 확인했다. 원격H100 정상화나 실패 실험 건너뛰기 정책 변경은 주장하지 않는다."
       }
     ]
+  },
+  {
+    "id": "V8-158",
+    "title": "배정 직전 offer 와 작업 기록이 다르면 큐 전체를 실패로 기록해 모든 노드가 나감 (Inspected task definition changed before claim)",
+    "area": "V8 실행·재개·상태 감사",
+    "severity": "critical",
+    "first_reported": "2026-11-11",
+    "introduction_commit": "d347995f65c351c5b4f1d5ba8014c763d40e7e16",
+    "cause": "Codex 커밋 d347995(11-08) 의 claim_offered 는 다시 읽은 작업 기록이 검사 때 offer 와 다르면 ValueError('Inspected task definition changed before claim') 를 올렸고, 배정 루프는 이 예외를 pool.fail() 로 공유 큐 failure 에 기록했다. 그러면 모든 노드가 그 큐를 실패로 보고 BLOCKED·blocked_work 로 나갔다. Codex 커밋 53b78b5(11-11 00:06, v34)는 검사한 offer 와 그 control.lock 을 배정 때까지 루프를 넘겨 들고 있게 해 offer 가 낡을 틈을 늘렸고, train 단계에서 함께 offer 되는 ext·eval side 작업은 동시 배정 정책이 아닐 때 단계가 달라 같은 예외가 난다. 낡은 offer 는 다시 검사하면 되는 일이지 큐 실패가 아니다.",
+    "impact": "사용자 보고(11-11): 'v8 코드 지금 lock 걸려서 아무것도 시작못해', '모든 시작노드가 idle임', '노드 다 날아감', 'block_work current worker outcomes exit1 does not identify a new model crash', 'state BLOCED', 'inspected task definition changed before claim'. 클러스터의 모든 노드가 작업 없이 종료.",
+    "attribution": "Codex 의 d347995(예외)·53b78b5(offer 보유) 와 배정 루프의 pool.fail 처리. Claude 가 같은 날 27371f0 로 수정.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "원인 커밋 d347995 (Codex)",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/d347995f65c351c5b4f1d5ba8014c763d40e7e16"
+      },
+      {
+        "kind": "source",
+        "label": "offer 보유 커밋 53b78b5 (Codex)",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/53b78b5a55c7a5a594aa5f1519322f75fe8a851a"
+      },
+      {
+        "kind": "source",
+        "label": "수정 커밋 27371f0 (Claude)",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/27371f0de0ee328ca2509f4db8fb4e13cf2e46fd"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-11",
+        "actor": "사용자",
+        "type": "reported",
+        "status": "open",
+        "text": "사용자 보고(11-11): 'v8 코드 지금 lock 걸려서 아무것도 시작못해', '모든 시작노드가 idle임', '노드 다 날아감', 'block_work current worker outcomes exit1 does not identify a new model crash', 'state BLOCED', 'inspected task definition changed before claim'.",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-11",
+        "actor": "Claude",
+        "type": "source_fix_verified",
+        "status": "code_fixed",
+        "text": "27371f0: 다른 offer 항목은 건너뛰고 다음 검사로 넘김(큐 실패 없음). 이미 state.json 에 기록된 같은 failure 는 노드가 뜨거나 기다리는 중에 recover_budget_api_failure 가 failure_history 로 옮기고 actions 에 recover_stale_offer_claim_failure 로 남기고 이어서 돈다. 검사 시간 제한 300→1800초(V8_SCAN_TIMEOUT). fail-stop·log-state·순차 runner/cohort·handoff 시험 통과(순차 test_reopened_completed_cohort...[False] 1개는 수정 전 master 에서도 실패). v1.0.39 묶음 시작 확인. H100 실측 전.",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/27371f0de0ee328ca2509f4db8fb4e13cf2e46fd",
+        "evidence_kind": "code_test"
+      }
+    ]
+  },
+  {
+    "id": "V8-159",
+    "title": "노드 확인이 큐 control.lock 을 쥔 채 120초 제한으로 돌아 노드들이 줄 서다 시간 초과, 순차 모드에서 포기한 노드는 영원히 idle",
+    "area": "V8 실행·재개·상태 감사",
+    "severity": "high",
+    "first_reported": "2026-11-11",
+    "introduction_commit": "81695de0323e600f65c9fbb6a5f515981fe5e721",
+    "cause": "독립 시작(TaskScan verify)은 큐 control.lock 의 dup fd 를 쥔 채 runtime.verify_node()(동결 trainer·입력 해시)를 한다. 그래서 여러 노드가 동시에 시작하면 한 노드씩 줄 서서 확인한다(WAIT_QUEUE_LOCK). Codex 커밋 81695de(11-10 23:47)는 이 확인에 runtime.timeout(V8_RUNTIME_INIT_TIMEOUT, 기본 120초, 원래 런타임 기동용)을 제한으로 걸었고, 583fea8(23:57)은 작업 검사에 300초 제한을 걸었다. 넘으면 give_up 으로 그 cohort 를 포기하는데, ef9c95d(18:55, 사용자 지시 '일단 1개를 완전히 끝내고 다른거를 시작하게 해저')의 순차 모드에서는 다음 실험이 eligible 이 아니어서 그 노드는 종료도 재시도도 없이 idle 로 남는다. 작업 검사 시간 초과 때는 멈춘 검사 스레드가 control.lock dup fd 를 계속 쥐어 다른 노드도 막는다.",
+    "impact": "사용자 보고(11-11): 'v8 코드 지금 lock 걸려서 아무것도 시작못해', '모든 시작노드가 idle임', '노드 다 날아감', 'block_work current worker outcomes exit1 does not identify a new model crash', 'state BLOCED', 'inspected task definition changed before claim'. CPU 재현(6 노드 순차, 노드 확인 25초·제한 20초): 70초 동안 작업 0개, 6 노드 모두 시간 초과(3개 BLOCKED 종료, 3개 idle). 확인 8초일 때도 이론치 120개 중 16개.",
+    "attribution": "Codex 의 81695de·583fea8(제한)과 ef9c95d(순차 포기 후 대기). 검사 제한은 Claude 27371f0 에서 1800초로 늘림. 잠금 없는 노드 확인·포기 시 종료 수정은 준비됨(미배포).",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "노드 확인 제한 81695de (Codex)",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/81695de0323e600f65c9fbb6a5f515981fe5e721"
+      },
+      {
+        "kind": "source",
+        "label": "검사 제한 583fea8 (Codex)",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/583fea8fb4ad1c3ec25c059ce20eb169aaa0f1cd"
+      },
+      {
+        "kind": "source",
+        "label": "순차 배정 ef9c95d (Codex)",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/ef9c95db70bcf81c9c531ce8c8a7908fc9980c03"
+      },
+      {
+        "kind": "source",
+        "label": "검사 제한 완화 27371f0 (Claude)",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/27371f0de0ee328ca2509f4db8fb4e13cf2e46fd"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-11",
+        "actor": "사용자",
+        "type": "reported",
+        "status": "open",
+        "text": "사용자 보고(11-11): 'v8 코드 지금 lock 걸려서 아무것도 시작못해', '모든 시작노드가 idle임', '노드 다 날아감', 'block_work current worker outcomes exit1 does not identify a new model crash', 'state BLOCED', 'inspected task definition changed before claim'.",
+        "evidence_kind": "user_report"
+      },
+      {
+        "at": "2026-11-11",
+        "actor": "Claude",
+        "type": "reproduced",
+        "status": "open",
+        "text": "CPU worker loop 재현과 준비한 수정: 노드 확인을 잠금 없이 하고 initialize 때만 control.lock 을 잡음, 확인 제한 V8_NODE_VERIFY_TIMEOUT 기본 1800초, 검사 시간 초과·활성 실험 포기 시 idle 대신 종료(잠금 해제). 재현에서 확인 25초: 0→32개, 확인 8초: 16→64개. 기존 시험 3개(fail_stop 다른 cohort 대기, log_states 멈춘 확인, 순차 runner)가 새 동작과 달라 아직 올리지 않음.",
+        "evidence_kind": "code_test"
+      }
+    ]
   }
 ]

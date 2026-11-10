@@ -14552,6 +14552,76 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "3323e102e105c842487645fc9a80473c49bb7ff8",
+      "at": "2026-11-10T23:23:08+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Record stop-budget regression, original-runner order verification and reported losses",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/3323e102e105c842487645fc9a80473c49bb7ff8",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "7502bc683e1de4f5c9d4fbb0d366832cf76d2b70",
+      "at": "2026-11-10T23:35:08+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Stop waiting on corrupt JSON and remove repeated raw queue dumps",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/7502bc683e1de4f5c9d4fbb0d366832cf76d2b70",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "81695de0323e600f65c9fbb6a5f515981fe5e721",
+      "at": "2026-11-10T23:47:50+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Bound node verification and keep startup receipt writes off dispatch loop",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/81695de0323e600f65c9fbb6a5f515981fe5e721",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "583fea8fb4ad1c3ec25c059ce20eb169aaa0f1cd",
+      "at": "2026-11-10T23:57:45+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Bound stalled metadata inspections and explain queue lock waits",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/583fea8fb4ad1c3ec25c059ce20eb169aaa0f1cd",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "53b78b5a55c7a5a594aa5f1519322f75fe8a851a",
+      "at": "2026-11-11T00:06:55+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Retain inspected queue control through sequential task claim",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/53b78b5a55c7a5a594aa5f1519322f75fe8a851a",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "7b53f2eef5701780f29666ab5c9c11956931bfce",
+      "at": "2026-11-11T00:21:18+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Stop orphaned V8 CPU children that retain queue control locks",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/7b53f2eef5701780f29666ab5c9c11956931bfce",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "27371f0de0ee328ca2509f4db8fb4e13cf2e46fd",
+      "at": "2026-11-11T00:33:56+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8: a stale offer never fails the shared queue; recover the recorded stale-claim failure",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/27371f0de0ee328ca2509f4db8fb4e13cf2e46fd",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
     }
   ]
 }
