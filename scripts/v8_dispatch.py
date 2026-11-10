@@ -17,13 +17,21 @@ from v8_rpc import send,receive
 
 
 class RuntimeProxy:
-    def __init__(self,entry,plan,planfile,*,asynchronous=False):
+    def __init__(self,entry,plan,planfile,*,asynchronous=False,lazy=False):
         self.cohort=entry['cohort'];self.python=entry['python'];self.runner=Path(entry['runner'])
         self.root=Path(plan['root'])/self.cohort;self.error=None;self.process=None
         self.gpus=list(plan['gpus'])
         self.independent_startup=asynchronous;self.initialized=False;self.pending_barrier=None;self.on_ready=None
         self.stop_event=None;self.overrides=[];self.corrected_plans=()
+        self.policy_recorded=False;self.verification_stage='checking original node inputs'
+        self.startup_file=Path(planfile).with_name(Path(planfile).name+'.'+self.cohort+'.startup.json')
+        self.startup_stage='starting selected Python interpreter'
         self.binding=dict(schema=1,cohort=self.cohort,root=str(self.root))
+        self.planfile=Path(planfile);self.channel=None
+        if not lazy:self._start()
+
+    def _start(self):
+        if self.channel is not None or self.error:return
         self.channel,child=socket.socketpair()
         try:
             timeout=float(os.environ.get('V8_RUNTIME_INIT_TIMEOUT','120'));self.started=time.monotonic();self.timeout=timeout
@@ -31,9 +39,9 @@ class RuntimeProxy:
             self.channel.settimeout(timeout)
             print(f'[v8] {self.cohort}: opening original runtime with {self.python}; startup timeout={timeout:g}s',flush=True)
             self.process=subprocess.Popen([self.python,str(Path(__file__).with_name('v8_runtime_worker.py')),
-                str(child.fileno()),str(planfile),self.cohort],env=os.environ,pass_fds=(child.fileno(),),stdin=subprocess.DEVNULL)
+                str(child.fileno()),str(self.planfile),self.cohort],env=os.environ,pass_fds=(child.fileno(),),stdin=subprocess.DEVNULL)
             child.close()
-            if not asynchronous:self._initialize()
+            if not self.independent_startup:self._initialize()
         except Exception as exc:
             self.error=f'{type(exc).__name__}: {exc}'
             self.close(grace=.2)  # initialization has not launched any training task
@@ -51,14 +59,18 @@ class RuntimeProxy:
         self.primary_results_first=reply.get('primary_results_first',False)
         self.streaming_ready_tasks=reply.get('streaming_ready_tasks',False)
         self.overrides=list(reply.get('overrides',[]));self.corrected_plans=tuple(reply.get('corrected_plans',()))
-        if self.on_ready:self.on_ready(self)
 
     def startup_ready(self):
+        if self.channel is None:self._start()
         if self.error or self.initialized:return True
         try:
+            if self.startup_file.exists():
+                try:self.startup_stage=nodes.read(self.startup_file).get('stage',self.startup_stage)
+                except (OSError,ValueError,AttributeError):pass
             if select.select([self.channel],[],[],0)[0]:
                 self.channel.settimeout(min(1,self.timeout));self._initialize();return True
-            if time.monotonic()-self.started>=self.timeout:raise TimeoutError('runtime initialization timed out')
+            if time.monotonic()-self.started>=self.timeout:
+                raise TimeoutError(f'runtime initialization timed out after {self.timeout:g}s; stage={self.startup_stage}; python={self.python}; source={self.runner}')
             return False
         except Exception as exc:
             self.error=f'{type(exc).__name__}: {exc}';self.close(grace=.2);return True
@@ -93,7 +105,15 @@ class RuntimeProxy:
             raise ValueError(f'{self.cohort}: {reply.get("type")}: {reply.get("error")}')
         return reply.get('result')
 
-    def verify_node(self):return self.call('verify_node')
+    def verify_node(self):
+        # This is called by TaskScan under the cohort control lease, outside the
+        # dispatch loop. One publisher writes the shared policy receipt; joining
+        # workers reuse it instead of every actor fsyncing the same path at startup.
+        if not self.policy_recorded and self.on_ready:
+            self.verification_stage='saving shared dispatch policy receipt'
+            self.on_ready(self);self.policy_recorded=True
+        self.verification_stage='verifying frozen trainer and input hashes'
+        return self.call('verify_node')
     def fresh_admission(self,device_fds):return self.call('fresh_admission',fds=device_fds)
     def plan(self,phase):return self.call('plan',phase)
     def side_tasks(self):return self.call('side_tasks')
@@ -128,7 +148,7 @@ class RuntimeProxy:
         return self.call('execute',task,str(matrix),attempt,fds=(fd,*device_fds),stop=stop)
 
     def close(self,grace=2):
-        self.channel.close()
+        if self.channel is not None:self.channel.close()
         if self.process is not None:
             try:self.process.wait(timeout=grace)
             except subprocess.TimeoutExpired:
@@ -183,7 +203,7 @@ def main():
             if receipt.exists():
                 if nodes.read(receipt)!=record:raise ValueError('dispatch policy receipt changed')
             else:nodes.atomic(receipt,record)
-        actor=RuntimeProxy(entries[cohort],plan,runfile,asynchronous=True);actors.append(actor)
+        actor=RuntimeProxy(entries[cohort],plan,runfile,asynchronous=True,lazy=True);actors.append(actor)
         actor.primary_cohort_scope=tuple(dict.fromkeys([*entries,*plan['errors']]))
         actor.primary_unavailable_cohorts=tuple(plan['errors'])
         actor.on_ready=record_policy

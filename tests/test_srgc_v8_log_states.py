@@ -115,3 +115,20 @@ def test_diagnostic_write_failure_does_not_fail_training_or_reset_checkpoints(tm
     monkeypatch.setattr(nodes,'atomic',fail_diagnostics)
     assert nodes.worker_loop_many(pairs(tmp_path),'host.42',threading.Event(),poll=.001,
                                   cohort_order=nodes.DEFAULT_COHORTS)==0
+
+
+def test_wedged_verification_has_finite_exit_and_cannot_initialize_after_retirement(tmp_path):
+    pool=nodes.Pool(tmp_path/'olmo_math/.multi-node',dict(cohort='olmo_math'))
+    release=threading.Event()
+    class Runtime:
+        independent_startup=True;timeout=.05;pending_barrier=None
+        verification_stage='saving shared dispatch policy receipt'
+        def verify_node(self):release.wait(1)
+    runtime=Runtime();start=time.monotonic()
+    try:
+        assert nodes.worker_loop_many([(pool,runtime)],'node',threading.Event(),poll=.005,
+                                      cohort_order=('olmo_math',))==1
+        assert time.monotonic()-start<.5
+    finally:release.set()
+    time.sleep(.03)
+    assert not (pool.root/'binding.json').exists() and not (pool.root/'state.json').exists()

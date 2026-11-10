@@ -38,6 +38,46 @@ def test_large_messages_and_transferred_lease_stay_valid_after_sender_closes(tmp
         left.close();right.close()
 
 
+def test_policy_receipt_does_not_block_runtime_initialization_on_dispatch_thread(tmp_path,modules):
+    import time
+    dispatch,_=modules;script=tmp_path/'original.py'
+    script.write_text(FAKE.replace('__TAG__',repr('CPU init fixture')))
+    entry=dict(cohort='olmo_math',script=str(script),runner=str(tmp_path),python=sys.executable)
+    plan=dict(root=str(tmp_path/'runs'),gpus=['0','1','2','3'],entries=[entry],worker='fixture.1')
+    path=tmp_path/'plan.json';path.write_text(json.dumps(plan))
+    actor=dispatch.RuntimeProxy(entry,plan,path,asynchronous=True)
+    calls=[];release=threading.Event()
+    def policy(_):calls.append(True);release.wait(.5)
+    actor.on_ready=policy
+    try:
+        deadline=time.monotonic()+3
+        while not dispatch.select.select([actor.channel],[],[],0)[0] and time.monotonic()<deadline:time.sleep(.005)
+        began=time.monotonic();assert actor.startup_ready()
+        assert actor.initialized and not calls
+        assert time.monotonic()-began<.2
+        release.set();actor.verify_node();actor.verify_node()
+        assert calls==[True]
+    finally:release.set();actor.close()
+
+
+def test_unused_cohort_is_not_started_and_timeout_begins_only_when_selected(tmp_path,modules):
+    import time
+    dispatch,_=modules;script=tmp_path/'original.py'
+    script.write_text(FAKE.replace('__TAG__',repr('lazy CPU fixture')))
+    entry=dict(cohort='qwen_mbpp',script=str(script),runner=str(tmp_path),python=sys.executable)
+    plan=dict(root=str(tmp_path/'runs'),gpus=['0','1','2','3'],entries=[entry],worker='fixture.1')
+    path=tmp_path/'plan.json';path.write_text(json.dumps(plan))
+    actor=dispatch.RuntimeProxy(entry,plan,path,asynchronous=True,lazy=True)
+    try:
+        assert actor.process is None and actor.channel is None
+        start=time.monotonic();assert not actor.startup_ready()
+        assert actor.started>=start and actor.process is not None
+        deadline=time.monotonic()+3
+        while not actor.startup_ready() and time.monotonic()<deadline:time.sleep(.005)
+        assert actor.initialized and actor.error is None
+    finally:actor.close()
+
+
 FAKE=r'''
 import fcntl,hashlib,json,os,sys
 from pathlib import Path

@@ -196,7 +196,15 @@ def control_overrides(runtime,source):
 
 
 def main():
-    channel=socket.socket(fileno=int(sys.argv[1]));plan=json.loads(Path(sys.argv[2]).read_text())
+    channel=socket.socket(fileno=int(sys.argv[1]))
+    startup=Path(sys.argv[2]).with_name(Path(sys.argv[2]).name+'.'+sys.argv[3]+'.startup.json')
+    def stage(text):
+        temporary=startup.with_name(startup.name+'.'+str(os.getpid())+'.tmp')
+        try:
+            temporary.write_text(json.dumps(dict(stage=text,pid=os.getpid())));os.replace(temporary,startup)
+        except OSError:pass  # diagnostics never delay or change numerical work
+    stage('reading private launch plan')
+    plan=json.loads(Path(sys.argv[2]).read_text())
     cohort=sys.argv[3];entry=next(x for x in plan['entries'] if x['cohort']==cohort)
     stop=threading.Event()
     for sig in (signal.SIGINT,signal.SIGTERM):signal.signal(sig,lambda *_:stop.set())
@@ -204,8 +212,19 @@ def main():
     try:
         activate_trainer(os.environ)
         spec=importlib.util.spec_from_file_location('_original_v8_coordinator',entry['script'])
+        stage('importing original runtime: '+str(entry['script']))
         module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        if hasattr(module,'python_identity'):
+            original_identity=module.python_identity
+            def identity(*args,**kwargs):
+                stage('checking Python package versions: '+str(args[0]))
+                result=original_identity(*args,**kwargs)
+                stage('hashing original runtime and trainer files')
+                return result
+            module.python_identity=identity
+        stage('constructing original runtime: '+str(entry['script']))
         runtime=module.Runtime(entry['runner'],plan['root'],cohort,sys.executable,plan['gpus'])
+        stage('installing verified control adapter')
         overrides,corrected=control_overrides(runtime,Path(entry['script']).read_text())
         # Keep the original child/config/engine untouched. Add diagnostics through an
         # explicit control entry point whose hash is recorded with the dispatcher policy.
@@ -229,6 +248,7 @@ def main():
                           dict(worker=plan['worker'],pid=os.getpid(),at=module.time.time(),task=task,
                                dispatch_policy=plan.get('dispatch_policy'),controller_sha256=plan.get('controller_sha256')))
         runtime.heartbeat=heartbeat
+        stage('original runtime ready')
         send(channel,dict(ok=True,binding=runtime.binding,overrides=overrides,corrected_plans=corrected,
                           primary_results_first=getattr(runtime,'primary_results_first',False),
                           streaming_ready_tasks=getattr(runtime,'streaming_ready_tasks',False)))

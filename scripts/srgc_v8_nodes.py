@@ -31,7 +31,7 @@ import time
 import uuid
 
 SCHEMA = 1
-DISPATCH_POLICY = 'bounded-json-metadata-errors-v31'
+DISPATCH_POLICY = 'bounded-nonblocking-runtime-startup-v32'
 COHORT_ORDER = 'complete-one-cohort-before-next-v1'
 EVAL_NATIVE_RECOVERY = 'evaluation-sigsegv-recovery-v1'
 NODE_NATIVE_FAILURE_LIMIT = 2
@@ -1410,11 +1410,14 @@ class TaskScan:
     """One original actor's metadata scan, holding only its own cohort control lease."""
     def __init__(self,pool,runtime,worker,stop,fd,*,verify=False,retry=False):
         held=os.dup(fd);self.finished=threading.Event();self.result=None;self.error=None
+        self.cancelled=threading.Event()
         self.started=self.reported=time.monotonic();self.kind='node verification' if verify else 'task inspection'
         def scan():
             try:
                 if verify:
-                    runtime.verify_node();pool.initialize(retry=retry,worker=worker,recover=pool.controller_sha256)
+                    runtime.verify_node()
+                    if self.cancelled.is_set() or stop.is_set():raise NodeFailure('node verification cancelled before queue initialization')
+                    pool.initialize(retry=retry,worker=worker,recover=pool.controller_sha256)
                     self.result=('verified',None)
                 else:self.result=pool.tick(runtime,worker,stop,claim=False,offer=True)
             except BaseException as exc:
@@ -1522,10 +1525,12 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
         facts=dict(getattr(pool,'observation',{}));facts['order']=list(cohort_order)
         if not claim_ok:diagnostic.publish('WAIT_GPU',name,str(busy),**facts)
         elif i in scans:
-            diagnostic.publish('CHECKING',name,scans[i].kind+' pending; no GPU task assigned',**facts)
+            detail=getattr(runtime,'verification_stage',scans[i].kind) if scans[i].kind=='node verification' else scans[i].kind
+            diagnostic.publish('CHECKING',name,detail+'; no GPU task assigned',**facts)
         elif getattr(runtime,'pending_barrier',None) is not None:
             diagnostic.publish('CPU_STAGE',name,'CPU stage '+runtime.pending_barrier[0]+' pending',**facts)
-        elif i not in initialized:diagnostic.publish('STARTING',name,'runtime initialization or node verification pending',**facts)
+        elif i not in initialized:
+            diagnostic.publish('STARTING',name,getattr(runtime,'startup_stage','node verification pending'),**facts)
         elif i in offers:diagnostic.publish('WAIT_CLAIM',name,'ready offer found; waiting to acquire or revalidate its lease',**facts)
         elif facts.get('metadata_error'):
             diagnostic.publish('WAIT_METADATA',name,'append-only JSONL is being written; bounded metadata retry: '+facts['metadata_error'],**facts)
@@ -1649,6 +1654,11 @@ def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_ga
                 scan=scans[index]
                 if not scan.finished.is_set():
                     now=time.monotonic()
+                    if scan.kind=='node verification' and now-scan.started>=getattr(runtime,'timeout',120):
+                        scan.cancelled.set();del scans[index]
+                        detail=getattr(runtime,'verification_stage','checking node inputs')
+                        give_up(index,pool,'node verification',NodeFailure(f'verification timed out at {detail}; no GPU task claimed'))
+                        progressed=True;continue
                     if now-scan.reported>=30:
                         print(f'[{worker}] {cohort(pool)}: {scan.kind} pending {now-scan.started:.0f}s; '
                               'no cross-cohort dispatch lock held',flush=True);scan.reported=now
