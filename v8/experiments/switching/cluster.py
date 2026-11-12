@@ -238,6 +238,40 @@ def prefix_cost_from_receipts(root, seed):
         return None
 
 
+def cache_cost_from_receipts(root, seed, detail=None):
+    """Initial SR-cache generation GPU-seconds of the seed's input bundle (<bundle>.cache/cost-summary.json,
+    written by srgc_rebuttal.build_cache), the same inclusive invocation total cost_report uses.
+
+    None when the summary is missing or incomplete: unknown, never zero. `detail` (a dict) receives the
+    path, completeness and the known lower bound, so a missing value can be reported with its reason."""
+    detail = detail if detail is not None else {}
+    try:
+        bundle = Path(read_json(Path(root) / "locator.json")["seeds"][str(seed)]["input_bundle"])
+    except (OSError, ValueError, KeyError, TypeError):
+        detail.update(status="no input_bundle in locator.json")
+        return None
+    path = bundle.with_suffix(".cache") / "cost-summary.json"
+    detail.update(path=str(path))
+    if not path.is_file():
+        detail.update(status="no cost-summary.json (cache built without receipts)")
+        return None
+    try:
+        summary = read_json(path)
+        sessions = summary.get("invocations") or {}
+        known = sum(v for v in (sessions.get("known_gpu_seconds") or {}).values() if isinstance(v, (int, float)))
+        detail.update(known_lower_bound_gpu_seconds=known or None, complete=bool(summary.get("complete")),
+                      candidates=summary.get("candidate_count"), measured_prompts=summary.get("measured_prompts"))
+        total = sessions.get("total_gpu_seconds")
+        if summary.get("complete") and isinstance(total, (int, float)):
+            detail.update(status="complete")
+            return float(total)
+        detail.update(status="incomplete receipts")
+        return None
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
+        detail.update(status=f"unreadable: {type(exc).__name__}")
+        return None
+
+
 def cmd_profile(args):
     """Cost profile from EXISTING endpoint receipts of the original arms (no rewards read)."""
     root = v8_root(args) / args.cohort
@@ -269,8 +303,11 @@ def cmd_collect(args):
     evals = eval_index(root)
     rows = []
     for seed in cfg["seeds"]["training"]:
+        # cold-start = prefix + initial SR-cache generation + continuation (cyHH Q3); the cache cost was never
+        # passed here before, so every cache-using policy had cold_start_gpu_seconds=None.
         rows += SeedBank(root, cfg, args.cohort, seed, "rebuttal_bank", evals=evals,
-                         prefix_cost=prefix_cost_from_receipts(root, seed)).policy_rows(budget=budget)
+                         prefix_cost=prefix_cost_from_receipts(root, seed),
+                         cache_cost=cache_cost_from_receipts(root, seed)).policy_rows(budget=budget)
     write_csv(root / "analysis" / "policy_outcomes_bank.csv", rows)
     atomic_write_json(root / "analysis" / "policy_outcomes_bank.json", rows)
     for role in ("development", "test"):

@@ -148,13 +148,31 @@ def main():
                 text.append(f"  ... {len(lines) - 200} more in {dst / 'analysis' / 'diff.txt'}")
             (dst / "analysis" / "diff.txt").write_text("\n".join(lines) + "\n")
             for field, name in (("continuation_gpu_seconds", "continuation GPU hours (matched update)"),
-                                ("cold_start_gpu_seconds", "cold-start GPU hours")):
+                                ("cold_start_gpu_seconds", "cold-start GPU hours (prefix + SR cache + continuation)")):
                 h_new, h_old = gpu_hours_by_policy(new, field), gpu_hours_by_policy(old, field)
                 if h_new:
                     text.append(f"{name}, mean per seed, old -> new:")
                     for p in sorted(h_new, key=lambda p: h_new[p][0]):
                         o = h_old.get(p)
                         text.append(f"  {p:28s} {('%.3f' % o[0]) if o else '-':>9s} -> {h_new[p][0]:9.3f}  n={h_new[p][1]}")
+            # cold-start inputs per seed (cyHH Q3: cache construction must be included, never silently dropped)
+            text.append("cold-start inputs per seed (shared prefix + initial SR-cache generation):")
+            for seed in cfg["seeds"]["training"]:
+                detail = {}
+                pre = cluster.prefix_cost_from_receipts(dst, seed)
+                cache = cluster.cache_cost_from_receipts(dst, seed, detail)
+                lb = detail.get("known_lower_bound_gpu_seconds")
+                text.append(f"  s{seed}: prefix {('%.2fh' % (pre / 3600)) if pre is not None else 'unknown'}"
+                            f"   cache {('%.2fh' % (cache / 3600)) if cache is not None else 'unknown'}"
+                            + ("" if cache is not None else f" ({detail.get('status')}"
+                               + (f"; known so far >= {lb / 3600:.2f}h" if lb else "") + ")")
+                            + (f"  [{detail['path']}]" if cache is None and detail.get("path") else ""))
+            missing = {}
+            for r in new:
+                if r.get("cold_start_gpu_seconds") is None and r.get("cost_missing"):
+                    missing.setdefault(r["cost_missing"], set()).add(r["policy_id"])
+            for why, pols in sorted(missing.items()):
+                text.append(f"  cold-start unknown ({why}): {len(pols)} policies, e.g. {', '.join(sorted(pols)[:4])}")
             v8_summary.summarize("recount (current code)", dst / "analysis", text)
         except Exception as e:  # noqa: BLE001 - report and continue with the next cohort
             import traceback
