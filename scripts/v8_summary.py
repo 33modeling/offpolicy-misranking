@@ -95,6 +95,7 @@ def summarize(label, adir, out):
     if e3:
         out.append("E3 SR-Uniform same state: " + " ".join(f"s{r['seed']}(tau{r['tau_s']}):{f(r['delta_pp'], 1)}" for r in e3))
     rows_path = adir / "policy_outcomes_bank.json"
+    rows = []
     if rows_path.exists():
         rows = json.loads(rows_path.read_text())
         for key, name in (("reward_fraction", "matched update"), ("budget_reward_fraction", "frozen budget")):
@@ -112,6 +113,11 @@ def summarize(label, adir, out):
         g = pe.get("gpu_seconds")
         out.append(f"GPU hours: {f(g / 3600 if g else None, 1, False)} (complete={pe.get('complete')}, "
                    f"missing_events={pe.get('missing_events')}, killed_phases={pe.get('killed_phase_starts')})")
+    try:
+        import v8_explain_ko
+        v8_explain_ko.explain(a, rows, out)
+    except Exception as e:  # noqa: BLE001 - the numbers above stay valid without the reading
+        out.append(f"(해석 생성 실패: {type(e).__name__}: {e})")
 
 
 def main():

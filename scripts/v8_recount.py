@@ -94,6 +94,36 @@ def gpu_hours_by_policy(rows, field):
     return {p: (sum(v) / len(v), len(v)) for p, v in acc.items()}
 
 
+def cold_start_ko(cold, rows, missing):
+    """Korean reading of the cold-start inputs (reviewer Q3: the full cost includes the SR-cache build)."""
+    out = []
+    full = [s for s, pre, cache, _ in cold if pre is not None and cache is not None]
+    out.append("cold-start 비용(공유 prefix + 첫 SR 캐시 생성 + 이어 학습): "
+               + (f"시드 {len(cold)}개 중 {len(full)}개는 세 부분이 다 기록돼 있다." if full else
+                  f"시드 {len(cold)}개 모두 한 부분 이상 기록이 비어 있다."))
+    if full:
+        pre = sum(p for s, p, c, _ in cold if s in full) / len(full) / 3600
+        cache = sum(c for s, p, c, _ in cold if s in full) / len(full) / 3600
+        out.append(f"  다 기록된 시드 평균: prefix {pre:.2f}시간, SR 캐시 {cache:.2f}시간. "
+                   "SR 캐시는 SR을 쓰는 정책에만 더해진다.")
+    for s, pre, cache, d in cold:
+        gaps = []
+        if pre is None:
+            gaps.append("prefix 비용 기록 없음")
+        if cache is None:
+            lb = d.get("known_lower_bound_gpu_seconds")
+            gaps.append(f"SR 캐시 비용 미완성({d.get('status')}"
+                        + (f", 지금까지 확인된 것만 {lb / 3600:.2f}시간 이상" if lb else "") + ")")
+        if gaps:
+            out.append(f"  s{s}: " + ", ".join(gaps))
+    if missing:
+        n = len({p for ps in missing.values() for p in ps})
+        out.append(f"  cold-start 합계가 비어 있는 정책 {n}개. 리뷰 답변에는 빈 칸을 0으로 채우지 말고 하한으로 적는다.")
+    elif rows and full and len(full) == len(cold):
+        out.append("  모든 정책의 cold-start 합계가 계산됐다. 리뷰 Q3 답변에 그대로 쓸 수 있다.")
+    return out
+
+
 def main():
     work = os.environ.get("OM_WORK") or f"{os.environ.get('GROUP_VOLUME', '/group-volume')}/" \
                                          f"{os.environ.get('OM_USER', 'minsoo3.kim')}/offpolicy-misranking"
@@ -157,10 +187,12 @@ def main():
                         text.append(f"  {p:28s} {('%.3f' % o[0]) if o else '-':>9s} -> {h_new[p][0]:9.3f}  n={h_new[p][1]}")
             # cold-start inputs per seed (cyHH Q3: cache construction must be included, never silently dropped)
             text.append("cold-start inputs per seed (shared prefix + initial SR-cache generation):")
+            cold = []
             for seed in cfg["seeds"]["training"]:
                 detail = {}
                 pre = cluster.prefix_cost_from_receipts(dst, seed)
                 cache = cluster.cache_cost_from_receipts(dst, seed, detail)
+                cold.append((seed, pre, cache, detail))
                 lb = detail.get("known_lower_bound_gpu_seconds")
                 text.append(f"  s{seed}: prefix {('%.2fh' % (pre / 3600)) if pre is not None else 'unknown'}"
                             f"   cache {('%.2fh' % (cache / 3600)) if cache is not None else 'unknown'}"
@@ -174,6 +206,7 @@ def main():
             for why, pols in sorted(missing.items()):
                 text.append(f"  cold-start unknown ({why}): {len(pols)} policies, e.g. {', '.join(sorted(pols)[:4])}")
             v8_summary.summarize("recount (current code)", dst / "analysis", text)
+            text += cold_start_ko(cold, new, missing)
         except Exception as e:  # noqa: BLE001 - report and continue with the next cohort
             import traceback
             traceback.print_exc()
