@@ -888,3 +888,25 @@ def test_green_running_cells_add_up_to_the_run_count(tmp_path):
     assert green == status.clean_block(base, "olmo_mbpp", now, "viewer", 200)[4]["running"] == 3
     assert status.mark_style("✓") == "done" and status.mark_style("1/3") == "done" and status.mark_style("▶×2") == "run"
     assert status.mark_style("○") is None and status.STYLE["done"] != status.STYLE["run"]
+
+
+def test_narrow_screen_splits_columns_instead_of_hiding_right_hand_running_tasks(tmp_path, monkeypatch):
+    """A row wider than the phone screen was cut at the right edge, so running tasks in SR225..U vanished
+    from the grid while the run count below still counted them."""
+    now = time.time()
+    base, q, m = two_cohort_base(tmp_path, now)
+    cfg = {"seeds": {"training": [5, 6, 7, 8, 9]}, "bank": {"core_grid": [50, 100, 150, 200], "extended_grid": [25, 75, 125, 175, 225, 250]},
+           "training": {"matched_update_endpoint": 275, "prefix_updates": 25}}
+    monkeypatch.setattr(status, "runner_config", lambda cohort: cfg)
+    for i, (arm, wid) in enumerate((("bank_sr_t250", "h-a.1"), ("bank_sr_t025", "h-b.1"))):
+        write(q / "jobs" / f"j{i}.json", {"state": "running", "phase": "train", "task": {"kind": "train", "method_id": arm,
+              "training_seed": 5, "run_id": f"j{i}", "horizon": 275, "parent": {"completed_update": arm[-3:]}},
+              "attempts": [{"id": f"a{i}", "worker": wid, "started_at": now - 60}]})
+        worker_beat(q, wid, 2, "child:1", now)
+    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=80)
+    block = text.split("Qwen MBPP ·")[0]
+    assert all(len(line) <= 80 for line in block.splitlines()), max(block.splitlines(), key=len)
+    five = [line.split() for line in block.splitlines() if line.split()[:1] == ["5"]]
+    marks = sum(c.startswith("▶") for row in five for c in row)
+    assert marks == status.clean_block(base, "olmo_math", now, "viewer", 80)[4]["running"] == 2
+    assert "표에 안 나온 실행 중 작업" not in block

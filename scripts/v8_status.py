@@ -1135,14 +1135,34 @@ def clean_block(base, cohort, now, host, width):
             coloured.append(paint(cell, 'dim' if header else mark_style(cells[c])))
         return clip('  '.join(plain), width) if len('  '.join(plain)) > width else '  '.join(coloured)
     if seeds:
-        lines.append(row_text(' train', {c: c for c in cols}, header=True))
-        for seed in seeds:
-            lines.append(row_text(f'{seed!s:>6}', {c: table[(seed, c)] for c in cols}))
-        if show_later:
-            for name, part in ((' ext', ext_table), (' eval', eval_table)):
-                lines.append(row_text(f'{name:<6}', {c: c for c in cols}, header=True))
-                for seed in seeds:
-                    lines.append(row_text(f'{seed!s:>6}', {c: part[(seed, c)] for c in cols}))
+        # A row wider than the screen used to be cut off at the right edge, hiding the running tasks of the
+        # right-hand branches (user 11-13 '초록색 개수랑 아래 running 개수랑 안맞는다고'): split the columns instead.
+        chunks, chunk, used_w = [], [], 6
+        for c in cols:
+            if chunk and used_w + 2 + widths[c] > width:
+                chunks.append(chunk); chunk, used_w = [], 6
+            chunk.append(c); used_w += 2 + widths[c]
+        if chunk:
+            chunks.append(chunk)
+        all_cols = cols
+        for part_cols in chunks:
+            cols = part_cols
+            lines.append(row_text(' train', {c: c for c in cols}, header=True))
+            for seed in seeds:
+                lines.append(row_text(f'{seed!s:>6}', {c: table[(seed, c)] for c in cols}))
+            if show_later:
+                for name, part in ((' ext', ext_table), (' eval', eval_table)):
+                    lines.append(row_text(f'{name:<6}', {c: c for c in cols}, header=True))
+                    for seed in seeds:
+                        lines.append(row_text(f'{seed!s:>6}', {c: part[(seed, c)] for c in cols}))
+        cols = all_cols
+        # every running task must be one green ▶ (×k) in the grid; name any that is not, with its node
+        shown = {id(r) for key, items in list(cells.items()) + list(ext.items()) + list(ev.items())
+                 if key[0] in seeds and key[1] in cols for r in items}
+        hidden = [r for r in rows if r['status'] == 'running' and id(r) not in shown]
+        if hidden:
+            names = ', '.join(f"{task_name(r, runs)} ({r.get('host') or '?'})" for r in hidden[:6])
+            lines.append(paint(clip(f"   표에 안 나온 실행 중 작업 {len(hidden)}개: {names}", width), 'warn'))
         if use_plan:
             known = ' · '.join(f"s{k} @{v}" for k, v in sorted(u_tau.items()))
             if known:
