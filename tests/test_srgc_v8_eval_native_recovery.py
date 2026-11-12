@@ -9,6 +9,15 @@ import pytest
 from scripts import srgc_v8_nodes as nodes
 from test_srgc_v8_child_errors import child_runtime
 
+
+import pytest as _pytest
+
+
+@_pytest.fixture(autouse=True)
+def _cap_without_user_grant(monkeypatch):
+    """These tests pin the failure cap itself; the one-time user retry grant (11-13) has its own tests."""
+    monkeypatch.setenv('V8_USER_RETRY_GRANT', '0')
+
 if os.environ.get('V8_EVAL_RECOVERY_SOURCE'):
     spec=importlib.util.spec_from_file_location('old_eval_recovery',os.environ['V8_EVAL_RECOVERY_SOURCE'])
     nodes=importlib.util.module_from_spec(spec);spec.loader.exec_module(nodes)

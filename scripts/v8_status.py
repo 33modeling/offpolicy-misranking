@@ -824,15 +824,22 @@ def render_srgc(live, base, cohort, now, host):
 # One compact block per cohort: short column names, one symbol per cell, one line per running task
 # and per problem, one line for all nodes; the summary (counts, workers, this node) is at the bottom.
 
-LEGEND_TABLE = ("% = how far (a running task counts by its own progress), (done/planned tasks) · updates = updates the plan adds, "
-                "+ = more to plan · fail = real error · marked = failed, no training error · intr = interrupted, reruns · "
-                "stuck = marked running, no worker recorded · other = unknown state")
-LEGEND = ("✓ done  ▶120 running, at update 120 (eval ▶275 = evaluating update 275)  ○ ready  · waiting or not created yet  "
-          "none = no such task (On has no ext; no U if a seed never switched)  ✗ failed  ! no training error  ⏸ interrupted  ? running, no worker recorded")
+LEGEND_LINES = (   # user 11-13 'status 뭐가 뭔지 모르겠어', '하얀색은 뭐고', '초록색 개수랑 아래 running 개수랑 안맞는다고'
+    "위 칸 읽는 법: 줄=시드, 열=branch (On=On-policy, SR50=50 업데이트에서 SR로 전환, U=Uniform으로 전환)",
+    "  train=학습, ext=예산 연장 학습, eval=평가. eval 칸 하나에는 그 branch의 평가가 여러 개 들어 있음",
+    "  초록 ▶ = 지금 도는 작업 (초록만 실행 중). ▶120은 120 업데이트째, eval ▶275는 275 업데이트를 평가 중",
+    "       ▶×2 = 그 칸에서 2개가 동시에 도는 중. 초록 ▶ 개수(×k는 k개)를 다 더하면 아래 run 숫자와 같음",
+    "  파랑 ✓ = 그 칸 작업이 다 끝남. 파랑 2/3 = 3개 중 2개 끝남 (나머지는 대기·실패)",
+    "  흰색 ○ = 실행 대기. 빈 GPU 노드가 생기면 바로 시작함. 흐린 · = 앞 단계가 안 끝나 아직 만들 수 없음",
+    "  빨강 ✗ = 실패 (자동 재시도를 기다리거나 막힘, 이유는 아래 줄). 노랑 ! = 실패 기록이지만 학습 오류 아님",
+    "  노랑 ⏸ = 끊겨서 다시 돌릴 작업. 노랑 ? = 실행 중으로 적혔는데 맡은 노드가 없음. none = 그 칸엔 작업이 없음",
+    "아래 표: run 실행 중 · ready 대기 · fail 실패 · train/ext/eval 단계 진행률 (끝난 작업/계획된 작업)",
+    "  updates 끝난 업데이트/계획된 업데이트 (+는 다음 단계 계획이 나오면 늘어남) · stuck 노드 없이 실행 중으로 적힘",
+)
 COHORT_LABEL = {'olmo_math': 'OLMo MATH', 'qwen_mbpp': 'Qwen MBPP', 'olmo_mbpp': 'OLMo MBPP', 'qwen_math': 'Qwen MATH'}
 COHORT_SHORT = {}   # four experiments: 'OLMo'/'Qwen' alone would be ambiguous, so the node table shows the full name
 COLOR = False   # set by main() only when stdout is a terminal (never in logs, pipes or tests)
-STYLE = {'ok': '32', 'run': '1;32', 'bad': '1;31', 'warn': '33', 'dim': '2', 'head': '1', 'info': '36'}
+STYLE = {'done': '34', 'ok': '32', 'run': '1;32', 'bad': '1;31', 'warn': '33', 'dim': '2', 'head': '1', 'info': '36'}
 
 
 def paint(text, style):
@@ -843,8 +850,9 @@ def mark_style(mark):
     mark = mark.strip()
     if not mark or mark in ('-', 'none'):
         return 'dim'
-    return {'✓': 'ok', '✗': 'bad', '?': 'warn', '⏸': 'warn', '○': None, '·': 'dim'}.get(mark[0], 'run' if mark[0] == '▶' else
-           'bad' if '✗' in mark else 'warn' if ('?' in mark or '⏸' in mark) else 'run' if '▶' in mark else None)
+    return {'✓': 'done', '✗': 'bad', '?': 'warn', '⏸': 'warn', '!': 'warn', '○': None, '·': 'dim'}.get(mark[0], 'run' if mark[0] == '▶' else
+           'bad' if '✗' in mark else 'warn' if ('?' in mark or '⏸' in mark) else 'run' if '▶' in mark else
+           'done' if re.fullmatch(r'\d+/\d+', mark) else None)
 PHASE_LABEL = {'prepare': 'prepare', 'train': 'training', 'freeze': 'budget freeze', 'extension': 'budget extension',
                'primary_evaluation': 'matched-step evaluation', 'primary_finalize': 'matched-step analysis',
                'evaluation': 'budget evaluation', 'finalize': 'analysis', 'complete': 'complete'}
@@ -1052,7 +1060,7 @@ def clean_block(base, cohort, now, host, width):
                 u_tau[seed] = int(col[1:]); col = 'U'      # Uniform destination: one column, tau differs per seed
             if col not in train_cols:
                 train_cols.append(col)
-            cells[(seed, col)] = symbol(r)
+            cells.setdefault((seed, col), []).append(r)
     def col_key(c):
         kind = 0 if c == 'On' else 1 if c.startswith('SR') else 2 if c.startswith('U') else 3
         num = int(re.sub(r'\D', '', c) or 0)
@@ -1082,11 +1090,18 @@ def clean_block(base, cohort, now, host, width):
         running = [i for i in items if i['status'] == 'running']
         failed = any(i['status'] == 'failed' for i in items)
         if running:
-            if kind == 'eval':      # the evaluation running now, by its update ('▶275'), and how many are done
-                head = symbol(min(running, key=lambda i: exit_code(i.get('update')) or 0))
-            else:                   # combined progress of the branch's tasks (user: '0/2 가 진행률이냐 ?')
-                head = f"▶{round(100 * sum(task_fraction(i) for i in items) / len(items))}%"
-            return head + (f" {done}/{len(items)}" if kind == 'eval' and done else '') + ('✗' if failed else '')
+            # user 11-13 '초록색 개수랑 아래 running 개수랑 안맞는다고': a cell with k running tasks says ×k, so the
+            # running tasks drawn in green add up to the run count below
+            many = f"×{len(running)}" if len(running) > 1 else ''
+            if kind == 'eval' and not many:   # the one evaluation running now, by its update ('▶275')
+                head = symbol(running[0])
+            elif kind == 'eval':
+                head = '▶' + many
+            elif kind == 'ext':               # combined progress of the branch's tasks (user: '0/2 가 진행률이냐 ?')
+                head = f"▶{many}{' ' if many else ''}{round(100 * sum(task_fraction(i) for i in items) / len(items))}%"
+            else:
+                head = symbol(running[0]) if not many else '▶' + many
+            return head + (f" {done}/{len(items)}" if done else '') + ('✗' if failed else '')
         if failed:
             return f"{done}/{len(items)}✗"
         if done:
@@ -1104,7 +1119,7 @@ def clean_block(base, cohort, now, host, width):
     show_later = bool(ext or ev or use_plan)
     for seed in seeds:
         for c in cols:
-            table[(seed, c)] = cells.get((seed, c), missing['train'])
+            table[(seed, c)] = count_cell(cells[(seed, c)], 'train') if (seed, c) in cells else missing['train']
             ext_table[(seed, c)] = 'none' if c == 'On' else count_cell(ext.get((seed, c), []), 'ext')   # On is never extended
             eval_table[(seed, c)] = count_cell(ev.get((seed, c), []), 'eval')
     tables = [table] + ([ext_table, eval_table] if show_later else [])
@@ -1513,11 +1528,7 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
                 job = next((x for x in rows if x['status'] == 'running' and x.get('host') == host), None)
                 if job:
                     mine = f"▶ {task_name(job, run_branches(rows))} ({COHORT_SHORT.get(COHORT_LABEL.get(cohort, cohort), COHORT_LABEL.get(cohort, cohort))})"
-    import textwrap
-    for part in textwrap.wrap(LEGEND, max(60, width - 2), break_on_hyphens=False):
-        out.append(paint(part, 'dim'))
-    import textwrap
-    for part in textwrap.wrap(LEGEND_TABLE, max(60, width - 2)):
+    for part in LEGEND_LINES:
         out.append(paint(part, 'dim'))
     stamp = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(now))
     head = f"━━ V8 status · {code_version()} · {stamp} "

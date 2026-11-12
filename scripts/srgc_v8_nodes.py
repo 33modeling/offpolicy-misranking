@@ -34,6 +34,11 @@ SCHEMA = 1
 DISPATCH_POLICY = 'retain-ready-offer-control-until-sequential-claim-v34'
 COHORT_ORDER = 'complete-one-cohort-before-next-v1'
 EVAL_NATIVE_RECOVERY = 'evaluation-sigsegv-recovery-v1'
+# User 11-13 '자꾸 에러 난거 먼저 처리해서 다시 시작하게 해야지': every task that was BLOCKED (failure cap or native
+# crashes on two places) when this policy first met it gets ONE fresh failure budget, counted from its last
+# attempt. Never renewed by a restart/new node/hash; attempts, failures and checkpoints are kept; a native
+# crash place stays excluded for that task.
+USER_RETRY_GRANT = 'user-retry-blocked-v1-20261113'
 NODE_NATIVE_FAILURE_LIMIT = 2
 # Node verification hashes this node's frozen trainer and inputs; on a shared volume with many nodes starting
 # together it takes minutes. It runs without the queue control.lock and has its own limit (user 11-11:
@@ -205,6 +210,19 @@ def budget_attempts(job,attempts):
     return [a for a in attempts if a.get('id') not in ignored]
 
 
+def granted_view(job):
+    """The job as seen by its one user retry grant: only attempts after the grant, no older replay receipt."""
+    grant=job.get('user_retry_grant') if isinstance(job,dict) else None
+    if (not isinstance(grant,dict) or grant.get('policy')!=USER_RETRY_GRANT or not isinstance(job.get('task'),dict)
+            or grant.get('task_sha256')!=digest(semantic_task(job['task']))):return None
+    attempts=[a for a in job.get('attempts',[]) if isinstance(a,dict)]
+    ids=[a.get('id') for a in attempts]
+    if grant.get('after_attempt') not in ids:return None
+    view=dict(job,attempts=attempts[ids.index(grant['after_attempt'])+1:])
+    view.pop('evaluation_native_recovery',None);view.pop('user_retry_grant',None)
+    return view
+
+
 def retry_budget_failures(job):
     """Lifetime task faults, except the single user-requested native evaluation replay.
 
@@ -212,6 +230,8 @@ def retry_budget_failures(job):
     another failure budget. Genuine node loss/intentional stops are still refunded.
     Native crashes count once per host (v25): relaunches on one crashing node are one node fault.
     """
+    view=granted_view(job)
+    if view is not None:return retry_budget_failures(view)
     recovery=evaluation_recovery_attempts(job)
     if recovery is not None:return counted_failures(dict(attempts=budget_attempts(job,recovery)))
     attempts=budget_attempts(job,[a for a in job.get('attempts',[]) if isinstance(a,dict)])
@@ -278,6 +298,9 @@ def native_failure_blocks(job,place=None):
     """Where a native crash stops a task: on the GPU set (host, GPUs) where it already crashed natively
     (place given), and everywhere once it crashed TASK_NATIVE_HOST_LIMIT times on different places. Without
     `place` this is the queue-wide answer: False means another node may still resume it from its checkpoint."""
+    view=granted_view(job)
+    if view is not None:   # after the user grant: never back to a crash place; the cap counts new crashes only
+        return bool(place is not None and crashed_here(job,place)) or native_failure_blocks(view)
     fault=fatal_native_failure(job)
     if not fault:return False
     if place is not None and crashed_here(job,place):return True
@@ -696,6 +719,7 @@ class Pool:
         return (getattr(self,'host',None) or socket.gethostname(),tuple(str(g) for g in getattr(self,'gpus',()) or ()))
 
     def retry_limit_reached(self,job):
+        if granted_view(job) is not None:return retry_budget_failures(job)>=failure_limit(self.max_attempts)
         if evaluation_recovery_attempts(job) is not None:return retry_budget_failures(job)>=1
         return retry_budget_failures(job)>=failure_limit(self.max_attempts)
 
@@ -835,6 +859,7 @@ class Pool:
         if recover:
             self.recover_budget_api_failure(recover,worker)
             self.recover_failed(recover,worker)
+            self.grant_user_retry(worker)
         if self.automatic_retry:self.enable_automatic_retry(worker)
         state=read(state_path)
         if retry:
@@ -844,6 +869,41 @@ class Pool:
             if state['failure']:
                 state['failure_history'].append(state['failure']);state['failure']=None
             atomic(state_path,state)
+
+    def grant_user_retry(self,worker):
+        """USER_RETRY_GRANT: blocked tasks get one fresh failure budget, once per task, history kept."""
+        if os.environ.get('V8_USER_RETRY_GRANT','1')=='0':return []   # tests that pin the cap itself
+        state=self.queue_state();failure=state.get('failure')
+        if failure and not aggregate_task_failure(failure):return []   # input/setup/identity failures stay
+        granted=[]
+        for path in sorted(self.root.glob('jobs/*.json')):
+            job=read(path)
+            if job.get('state') not in ('failed','pending','interrupted') or not job.get('attempts'):continue
+            if isinstance(job.get('user_retry_grant'),dict) and job['user_retry_grant'].get('policy')==USER_RETRY_GRANT:continue
+            if not (native_failure_blocks(job) or self.retry_limit_reached(job)):continue
+            lease=Lock(self.root/'leases'/(path.stem+'.lock'))
+            if not lease.acquire():continue
+            try:
+                job=read(path)
+                if job.get('user_retry_grant') or not job.get('attempts'):continue
+                last=job['attempts'][-1]
+                job['user_retry_grant']=dict(policy=USER_RETRY_GRANT,after_attempt=last.get('id'),
+                    task_sha256=digest(semantic_task(job['task'])),failures_before=retry_budget_failures(job),
+                    crash_places=native_crash_hosts(job),worker=worker,at=time.time(),
+                    reason='user_requested_restart_of_blocked_tasks_20261113')
+                if last.get('id') is None:continue
+                job['state']='pending';atomic(path,job);granted.append(path.stem)
+            finally:lease.close()
+        if granted:
+            state=self.queue_state()
+            if state.get('failure') and aggregate_task_failure(state['failure']):
+                state.setdefault('failure_history',[]).append(state['failure']);state['failure']=None
+            state.setdefault('actions',[]).append(dict(action='user_retry_grant',policy=USER_RETRY_GRANT,
+                                                       tasks=granted,worker=worker,at=time.time()))
+            atomic(self.root/'state.json',state)
+            print(f'[v8] {self.binding.get("cohort")}: {len(granted)} blocked task(s) restart once more from their '
+                  'checkpoints (user retry grant; failures and logs kept; never on the node where they crashed)',flush=True)
+        return granted
 
     def recover_budget_api_failure(self,controller,worker):
         """Verified recovery: fix the known API regression, or allow independent work beside a blocked eval plan."""

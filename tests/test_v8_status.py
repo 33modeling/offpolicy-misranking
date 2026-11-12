@@ -857,3 +857,34 @@ def test_native_crash_stack_at_the_end_of_the_task_log_is_found(tmp_path):
                    '  File "/code/v8/experiments/switching/trainer.py", line 99 in rollout\n\nExtension modules: x\n')
     cause, _ = status.native_story([{"rank": None, "signal": 11, "error_file": str(log)}])
     assert "step (vllm/worker.py:12)" in cause and "no fault dump" not in cause, cause
+
+
+def test_green_running_cells_add_up_to_the_run_count(tmp_path):
+    """User 11-13 '초록색 개수랑 아래 running 개수랑 안맞는다고': two evaluations of one branch running at once
+    show as ▶×2; every running task is counted in exactly one green cell; done is not green."""
+    now = time.time()
+    base = tmp_path / "v8"
+    q = base / "olmo_mbpp" / ".multi-node"
+    write(q / "state.json", {"phase": "primary_evaluation", "failure": None})
+    snap = tmp_path / "snap.pt"
+    snap.write_text("x")
+    def ev(key, seed, update, state, worker=None):
+        attempts = [{"id": key + "a", "worker": worker, "started_at": now - 60}] if worker else []
+        write(q / "jobs" / f"{key}.json", {"state": state, "phase": "evaluation", "attempts": attempts,
+              "task": {"kind": "evaluate", "training_seed": seed, "completed_update": update, "snapshot_path": str(snap),
+                       "run_id": f"olmo_mbpp.rebuttal_bank.s{seed}.bank_sr_t050.abcdef0123"}})
+    for i, wid in enumerate(("n1.1", "n2.1", "n3.1")):
+        write(q / "workers" / (hashlib.sha256(json.dumps(wid).encode()).hexdigest() + ".json"), {"worker": wid, "at": now - 2})
+    ev("a1", 5, 25, "running", "n1.1"); ev("a2", 5, 50, "running", "n2.1"); ev("a3", 5, 75, "done")
+    ev("b1", 6, 25, "running", "n3.1"); ev("b2", 6, 50, "done")
+    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
+    grid = text.split("━━ V8 status · ")[0]
+    lines = grid.splitlines()
+    i = next(k for k, l in enumerate(lines) if l.startswith(" eval"))
+    rows = {l.split()[0]: l.split()[1:] for l in lines[i + 1:] if l.strip()[:1].isdigit()}
+    assert "▶×2" in rows["5"] and "1/3" in rows["5"], rows
+    assert "▶25" in rows["6"] and "1/2" in rows["6"], rows
+    green = sum(int(c[2:]) if c.startswith("▶×") else 1 for r in rows.values() for c in r if c.startswith("▶"))
+    assert green == status.clean_block(base, "olmo_mbpp", now, "viewer", 200)[4]["running"] == 3
+    assert status.mark_style("✓") == "done" and status.mark_style("1/3") == "done" and status.mark_style("▶×2") == "run"
+    assert status.mark_style("○") is None and status.STYLE["done"] != status.STYLE["run"]

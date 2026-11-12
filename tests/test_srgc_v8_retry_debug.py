@@ -6,6 +6,15 @@ import pytest
 from scripts import srgc_v8_nodes as nodes
 
 
+import pytest as _pytest
+
+
+@_pytest.fixture(autouse=True)
+def _cap_without_user_grant(monkeypatch):
+    """These tests pin the failure cap itself; the one-time user retry grant (11-13) has its own tests."""
+    monkeypatch.setenv('V8_USER_RETRY_GRANT', '0')
+
+
 def prepared(tmp_path):
     root=tmp_path/'olmo_math'
     runtime=object.__new__(nodes.Runtime);runtime.root=root
