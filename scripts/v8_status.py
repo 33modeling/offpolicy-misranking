@@ -300,6 +300,27 @@ def native_crash_frames(stack, n=3):
     return frames
 
 
+def fault_text(path, size=262144):
+    """The faulthandler dump in a rank dump file or, when no rank dump was found, in the task log. A crash
+    writes its stack at the END of the log, so the tail is read too (it was only the first 64 KB: user 11-13
+    'no fault dump was written for this rank ... 계속 쌓여'). Returns the text from the last
+    'Fatal Python error' on, else the head of the file."""
+    try:
+        with Path(path).open('rb') as handle:
+            head = handle.read(65536)
+            end = handle.seek(0, 2)
+            handle.seek(max(len(head), end - size))
+            tail = handle.read(size)
+    except OSError:
+        return None
+    for chunk in (tail, head):
+        text = chunk.decode(errors='replace')
+        at = text.rfind('Fatal Python error')
+        if at >= 0:
+            return text[at:]
+    return head.decode(errors='replace')
+
+
 def native_story(ranks):
     """(cause, dump path) for the first rank that died of a native signal, or (None, None)."""
     for f in ranks:
@@ -311,10 +332,7 @@ def native_story(ranks):
             continue
         stack, dump = f.get('native_python_stack'), f.get('native_fault_log') or f.get('error_file')
         if not stack and dump:
-            try:
-                stack = Path(dump).read_bytes()[:65536].decode(errors='replace')
-            except OSError:
-                stack = None
+            stack = fault_text(dump)
         progress = f.get('last_progress') if isinstance(f.get('last_progress'), dict) else {}
         stage = progress.get('stage')
         frames = native_crash_frames(stack)
@@ -1051,33 +1069,33 @@ def clean_block(base, cohort, now, host, width):
                'ext': 'none' if sealed['extension'] or not use_plan else '·',
                'eval': 'none' if sealed['evaluation'] or not use_plan else '·'}
     def count_cell(items, kind='ext'):
+        """One grid cell for a branch's ext/eval tasks. It must agree with the done/running/failed counts
+        below the grid (user 11-13: '위 표랑 아래 현황이랑 안맞아'): a running task shows even when another
+        task of the cell failed, and finished tasks show as done/total instead of disappearing behind ○/·."""
         if not items:
             return missing[kind]
         if len(items) == 1:
             return symbol(items[0])
-        if all(i['status'] == 'done' for i in items):
-            return '✓'
-        if any(i['status'] == 'failed' for i in items):
-            return '✗'
-        if kind == 'eval':      # a branch's evaluations: the one running now, by its update ('▶275')
-            running = [i for i in items if i['status'] == 'running']
-            if running:
-                return symbol(min(running, key=lambda i: exit_code(i.get('update')) or 0))
-            return '○' if any(i.get('ready') for i in items if i['status'] == 'pending') else '·'
-        frac = sum(task_fraction(i) for i in items) / len(items)
-        if frac > 0 or any(i['status'] == 'running' for i in items):
-            # combined progress of the branch's tasks (user: '0/2 가 진행률이냐 ?')
-            return ('▶' if any(i['status'] == 'running' for i in items) else '') + f"{round(100 * frac)}%"
-        if all(i['status'] == 'pending' or i.get('lost') for i in items):
-            return '○' if any(i.get('ready') or i.get('lost') for i in items) else '·'
         done = sum(i['status'] == 'done' for i in items)
-        run = sum(i['status'] == 'running' for i in items)
         if done == len(items):
             return '✓'
-        mark = ('✗' if any(i['status'] == 'failed' for i in items) else '▶' if run else
-                '?' if any(i['status'] in ('unconfirmed', 'stopped') and not i.get('lost') for i in items) else
+        running = [i for i in items if i['status'] == 'running']
+        failed = any(i['status'] == 'failed' for i in items)
+        if running:
+            if kind == 'eval':      # the evaluation running now, by its update ('▶275'), and how many are done
+                head = symbol(min(running, key=lambda i: exit_code(i.get('update')) or 0))
+            else:                   # combined progress of the branch's tasks (user: '0/2 가 진행률이냐 ?')
+                head = f"▶{round(100 * sum(task_fraction(i) for i in items) / len(items))}%"
+            return head + (f" {done}/{len(items)}" if kind == 'eval' and done else '') + ('✗' if failed else '')
+        if failed:
+            return f"{done}/{len(items)}✗"
+        if done:
+            return f"{done}/{len(items)}"
+        if all(i['status'] == 'pending' or i.get('lost') for i in items):
+            return '○' if any(i.get('ready') or i.get('lost') for i in items) else '·'
+        mark = ('?' if any(i['status'] in ('unconfirmed', 'stopped') and not i.get('lost') for i in items) else
                 '⏸' if any(i['status'] == 'interrupted' for i in items) else '')
-        return f"{done}/{len(items)}" + mark
+        return f"0/{len(items)}" + mark
     cols = list(train_cols)
     for c in sorted({c for _, c in ext} | {c for _, c in ev}, key=col_key):
         if c not in cols:

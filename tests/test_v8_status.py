@@ -820,3 +820,40 @@ def test_native_crash_says_where_the_rank_crashed(tmp_path):
         "Fatal Python error: Segmentation fault\n\nCurrent thread 0x1 (most recent call first):\n  <no Python frame>\n"}])[0]
     assert "no Python frame (inside a native library" in no_frame
     assert status.native_story([{"rank": 0, "message": "ValueError: x"}]) == (None, None)
+
+
+def test_eval_grid_cell_agrees_with_counts_below(tmp_path):
+    """User 11-13 '위 표랑 아래 현황이랑 안맞아': a branch has several evaluations; finished ones must show in its
+    grid cell (was ○ until every one finished), and a running one must not be hidden by a failed sibling (was ✗)."""
+    now = time.time()
+    base = tmp_path / "v8"
+    q = base / "olmo_mbpp" / ".multi-node"
+    write(q / "state.json", {"phase": "primary_evaluation", "failure": None})
+    snap = tmp_path / "snap.pt"
+    snap.write_text("x")
+    def ev(key, seed, update, state, attempts=()):
+        write(q / "jobs" / f"{key}.json", {"state": state, "phase": "evaluation", "attempts": list(attempts),
+              "task": {"kind": "evaluate", "training_seed": seed, "completed_update": update, "snapshot_path": str(snap),
+                       "run_id": f"olmo_mbpp.rebuttal_bank.s{seed}.bank_sr_t050.abcdef0123"}})
+    ev("a1", 5, 25, "done"); ev("a2", 5, 50, "done"); ev("a3", 5, 75, "pending")
+    ev("b1", 6, 25, "failed", [{"id": "f1", "exit_code": -11, "worker": "gone.1"}])
+    ev("b2", 6, 50, "running", [{"id": "r1", "worker": "node01.7", "started_at": now - 60}])
+    ev("b3", 6, 75, "done")
+    key = hashlib.sha256(json.dumps("node01.7").encode()).hexdigest()
+    write(q / "workers" / (key + ".json"), {"worker": "node01.7", "at": now - 2})
+    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
+    grid = text.split("━━ V8 status · ")[0]
+    rows = {line.split()[0]: line.split()[1:] for line in grid.splitlines()[grid.splitlines().index(next(
+        l for l in grid.splitlines() if l.startswith(' eval'))) + 1:] if line.strip()[:1].isdigit()}
+    assert "2/3" in rows["5"] and "○" not in rows["5"], rows
+    assert "▶50" in rows["6"] and rows["6"][rows["6"].index("▶50") + 1] == "1/3✗", rows
+
+
+def test_native_crash_stack_at_the_end_of_the_task_log_is_found(tmp_path):
+    """No rank dump file: the torchrun task log holds the faulthandler stack at its end, after >64 KB of output."""
+    log = tmp_path / "task.log"
+    log.write_text("x" * 200000 + "\nFatal Python error: Segmentation fault\n\nCurrent thread 0x1 (most recent call first):\n"
+                   '  File "/env/site-packages/vllm/worker.py", line 12 in step\n'
+                   '  File "/code/v8/experiments/switching/trainer.py", line 99 in rollout\n\nExtension modules: x\n')
+    cause, _ = status.native_story([{"rank": None, "signal": 11, "error_file": str(log)}])
+    assert "step (vllm/worker.py:12)" in cause and "no fault dump" not in cause, cause
