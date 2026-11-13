@@ -100,23 +100,34 @@ def test_readiness_says_whether_a_cohort_can_be_used_now():
 
 def test_report_lists_every_raw_row_with_an_explanation_under_it(tmp_path):
     import v8_report_ko
-    _write(tmp_path)
+    adir = tmp_path / "analysis"
+    adir.mkdir()
+    _write(adir)
+    run = tmp_path / "runs" / "r1"
+    run.mkdir(parents=True)
+    (run / "manifest.json").write_text(json.dumps({"run_id": "r1", "role": "rebuttal_bank", "method_id": "bank_sr_t050",
+                                                   "training_seed": 5, "status": "completed_horizon",
+                                                   "task": {"stage": "bank-branches", "horizon": 275}}))
+    (run / "snapshots.jsonl").write_text("".join(json.dumps({"completed_update": u}) + "\n" for u in (75, 275)))
+    (tmp_path / "evaluations").mkdir()
+    (tmp_path / "evaluations" / "e.json").write_text(json.dumps({"run_id": "r1", "completed_update": 75, "split": "final",
+                                                                 "reward_fraction": 0.3, "evaluated_at": "t"}))
     out = []
     cfg = {"model": {"repository": "m"}, "dataset": "math", "training": {"prefix_updates": 25}, "seeds": {"training": SEEDS}}
     dobs = {5: [(25, 0.01), (50, -0.02), (75, -0.01)], 6: None}
     cold = [(5, 3600.0, 7200.0, {}), (6, None, None, {"status": "incomplete receipts"})]
-    v8_report_ko.report("x", cfg, tmp_path, out, dobs=dobs, cold=cold, missing={}, diff=(2, 15))
+    v8_report_ko.report("x", cfg, adir, out, dobs=dobs, cold=cold, missing={}, diff=(2, 15))
     text = "\n".join(out)
-    for head in ("[이 cohort는 무슨 실험인가]", "[판정]", "[시드별 SR-GC 신호 D 원본]", "[정책별 원본 행: rebuttal_bank]",
-                 "[비교 원본과 결과]", "[비용 원본]", "[종합 해석]"):
+    for head in ("■ 한눈에 보기", "■ 실험 설정 원본 값", "■ SR-GC 신호 D 원본 값", "■ 정책별 원본 값: 학습 시드 bank",
+                 "■ 비교 원본 값과 결과", "■ 보상 곡선 원본 값", "■ 비용 원본 값", "■ 빠진 것 점검"):
         assert head in text
-    assert "s5: 25:+0.0100 50:-0.0200 75:-0.0100" in text and "처음 음수는 update 50" in text
-    assert text.count("== srgc_current : SR-GC(현재 규칙)") == 1
-    assert sum(line.startswith("  s") and "상태 triggered" in line for line in out) == 15
-    block = text.split("== fixed_sr_t050")[1].split("\n== ")[0]
-    assert "무슨 실험: update 50에서 cached SR" in block and "결과: 시드 5개 중 5개 사용 가능" in block
-    assert "보상@H275 39.60%" in block and "이어 학습 17.82h" in block
-    assert "원본: 평균 차이 +0.38점, 시드 5개, 승/무/패 1/4/0, 시드별 s5 +0.00" in text
-    assert "무슨 비교: 같은 업데이트(H=275)에서 SR-GC(현재 규칙)와 고정 시점 SR 전환" in text
-    assert "리뷰 결론 후보(P9): (c)" in text and "다른 행 2개 / 전체 15개" in text
-    assert "s6: prefix 모름, 첫 SR 캐시 모름(incomplete receipts)" in text
+    assert "25      +0.0100" in text and "s5: 검사 3회 중 음수 2회, 처음 음수 update 50." in text
+    assert text.count("● SR-GC(현재 규칙)  (srgc_current)") == 1
+    block = text.split("● 고정 시점 SR 전환 τ=50  (fixed_sr_t050)")[1].split("\n  ●")[0]
+    assert "update 50에서 전환." in block and "결과: 평균 보상 39.60%(시드 5개)" in block
+    assert "s5    전환함" in block and "39.60%" in block and "17.82h" in block
+    assert "시드별 차이: s5 +0.00, s6 +0.00, s7 +1.90" in text and "1승 4무 0패" in text
+    assert "리뷰 결론 후보(P9): (c)" in text and "다른 행 2개(전체 15개)" in text
+    assert "75      30.00" in text
+    assert "H=275 체크포인트가 있는데 H 평가가 없는 런 1개" in text and "bank_sr_t050 s5 (final)" in text
+    assert "s6      모름     모름  incomplete receipts" in text and "새 시드 검증(test)과 개발 시드(development) 런이 없다" in text
