@@ -19,6 +19,39 @@ NAMES = {
     "fixed_sr_tuned": "고정 시점 전환(조정값)",
 }
 GOOD = ("triggered", "not_triggered", "ran")
+STATUS_KO = {
+    "censored": "기준 On-policy 궤적의 체크 기록이 마지막 예정 체크 전에 끝남. 그 궤적 학습이 아직 진행 중이거나 끊김",
+    "unavailable": "그 전환 시점의 branch 학습이 아직 끝나지 않음",
+    "missing_trajectory": "기준 On-policy 궤적이 아직 없음",
+    "capped_at_horizon": "같은 예산의 끝점이 학습 끝(H) 뒤라서 예산 연장 학습이 더 필요함",
+    "none": "상태 기록 없음",
+}
+
+
+def readiness(a, rows):
+    """One line: can this cohort's result be used now, and if not, what is missing."""
+    pr = (a.get("primary_rebuttal") or {}).get("primary_contrast") or {}
+    pb = (a.get("primary_rebuttal_budget") or {}).get("primary_contrast") or {}
+    n1, n2 = pr.get("n_training_seeds") or 0, pb.get("n_training_seeds") or 0
+    usable = [r for r in rows if r.get("status") in GOOD]
+    unmeasured = [r for r in usable if r.get("reward_fraction") is None]
+    seeds = len({r.get("seed") for r in rows if r.get("seed") is not None}) or 5
+    if n1 >= 3 and n2 >= 3:
+        head = f"판정: 쓸 수 있음. 주 비교가 같은 업데이트 {n1}개 시드, 같은 예산 {n2}개 시드로 계산됐다."
+    elif n1 >= 3:
+        head = f"판정: 같은 업데이트 비교만 쓸 수 있음({n1}개 시드). 같은 예산 비교는 시드 {n2}개뿐이다."
+    elif rows and not usable:
+        head = "판정: 아직 못 씀. 학습이 덜 끝나 비교할 행이 없다."
+    elif unmeasured:
+        head = f"판정: 아직 못 씀. 평가가 진행 중이다(평가 안 된 행 {len(unmeasured)}개)."
+    else:
+        head = f"판정: 아직 못 씀. 주 비교에 쓸 시드가 {n1}개뿐이다(필요 {min(3, seeds)}개 이상)."
+    out = [head]
+    if unmeasured:
+        pols = sorted({r["policy_id"] for r in unmeasured})
+        out.append(f"평가 결과가 아직 없는 행 {len(unmeasured)}개(정책 {len(pols)}개, 예: {', '.join(name(p) for p in pols[:3])}). "
+                   "학습은 끝났고 평가 작업이 남은 것이다.")
+    return out
 
 
 def name(p):
@@ -76,6 +109,7 @@ def explain(a, rows, out):
     H = ep.get("matched_update")
     b = ep.get("budget") or {}
     out.append("-- 해석 (위 숫자에서 계산) --")
+    out.extend(readiness(a, rows))
     out.append("모든 차이는 SR-GC 쪽 보상에서 비교 대상 보상을 뺀 값이고 단위는 보상 퍼센트포인트(점)다.")
 
     pr, pb = a.get("primary_rebuttal") or {}, a.get("primary_rebuttal_budget") or {}
@@ -167,9 +201,13 @@ def explain(a, rows, out):
                    + ". 이 정책들의 같은 예산 비교는 시드 수가 적다.")
 
     sc = a.get("status_counts") or {}
-    bad = sum(n for d in sc.values() for s, n in d.items() if s not in GOOD)
-    if bad:
-        out.append(f"쓸 수 없는 런이 {bad}개 있다(censored·unavailable 등). 위 비교에서 그 시드는 빠졌다.")
+    by = {}
+    for d in sc.values():
+        for st, n in d.items():
+            if st not in GOOD:
+                by[st] = by.get(st, 0) + n
+    for st, n in sorted(by.items(), key=lambda kv: -kv[1]):
+        out.append(f"쓸 수 없는 행 {n}개: {st} = {STATUS_KO.get(st, '분류되지 않은 상태')}. 위 비교에서 그 시드는 빠졌다.")
     pe = a.get("physical_expenditure") or {}
     if pe and not pe.get("complete"):
         out.append(f"클러스터 전체 GPU 합계는 기록 {pe.get('missing_events')}개가 빠져 미완성이다. 합계 숫자는 인용하면 안 된다.")

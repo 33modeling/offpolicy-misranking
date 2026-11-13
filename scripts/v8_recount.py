@@ -146,11 +146,14 @@ def main():
     text = [f"# V8 recount with current code  host={socket.gethostname()}  at={time.strftime('%Y-%m-%d %H:%M %Z')}",
             f"# source root={v8} (read only)  output={out_base}",
             "# rows and costs recomputed from recorded runs/ledgers/evaluations; frozen budget reused as recorded"]
+    ko = [f"# V8 결과 해석  host={socket.gethostname()}  at={time.strftime('%Y-%m-%d %H:%M %Z')}",
+          "# 현재 코드로 다시 집계한 값에서 계산. 차이 = SR-GC 보상 - 비교 대상 보상, 단위 점(퍼센트포인트)", ""]
     for cohort in COHORTS:
         src = v8 / cohort
         text += ["", f"################ {cohort}"]
         if not (src / "locator.json").is_file() or not (src / "runs").is_dir():
             text.append("no recorded runs")
+            ko += [f"################ {cohort}", "판정: 아직 못 씀. 기록된 학습 런이 없다.", ""]
             continue
         dst = out_base / cohort
         try:
@@ -165,8 +168,10 @@ def main():
                             f"config: DIFFERS from the queue binding ({str(bound)[:12]} vs {now[:12]}); "
                             "rows use the current configs/*.json")
             before = relabeled["events"]
-            cluster.cmd_collect(args)
-            cluster.cmd_analyze(args)
+            import contextlib
+            with contextlib.redirect_stdout(sys.stderr):   # collect/analyze progress JSON stays off the result text
+                cluster.cmd_collect(args)
+                cluster.cmd_analyze(args)
             text.append(f"SR-cache refresh events relabeled (SCI-01): {relabeled['events'] - before}")
             new = read_json(dst / "analysis" / "policy_outcomes_bank.json")
             old_path = src / "analysis" / "policy_outcomes_bank.json"
@@ -205,18 +210,30 @@ def main():
                     missing.setdefault(r["cost_missing"], set()).add(r["policy_id"])
             for why, pols in sorted(missing.items()):
                 text.append(f"  cold-start unknown ({why}): {len(pols)} policies, e.g. {', '.join(sorted(pols)[:4])}")
+            start = len(text)
             v8_summary.summarize("recount (current code)", dst / "analysis", text)
             text += cold_start_ko(cold, new, missing)
+            block = text[start:]
+            at = next((i for i, line in enumerate(block) if line.startswith("-- 해석")), None)
+            ko += [f"################ {cohort}"] + (block[at + 1:] if at is not None else ["(해석 없음)"]) + [""]
         except Exception as e:  # noqa: BLE001 - report and continue with the next cohort
             import traceback
             traceback.print_exc()
             text.append(f"recount failed: {type(e).__name__}: {e}")
+            ko += [f"################ {cohort}", f"판정: 집계 실패({type(e).__name__}: {e}). 위 오류부터 봐야 한다.", ""]
     body = "\n".join(text) + "\n"
     dest = Path(os.environ.get("V8_RECOUNT_TEXT") or Path.home() / "v8-recount.txt")
     tmp = dest.with_name(dest.name + f".tmp.{os.getpid()}")
     tmp.write_text(body)
     os.replace(tmp, dest)
-    sys.stdout.write(body + f"\n[v8] saved: {dest}\n")
+    ko_dest = Path(os.environ.get("V8_EXPLAIN_TEXT") or Path.home() / "v8-explain.txt")
+    tmp = ko_dest.with_name(ko_dest.name + f".tmp.{os.getpid()}")
+    tmp.write_text("\n".join(ko) + "\n")
+    os.replace(tmp, ko_dest)
+    if os.environ.get("V8_EXPLAIN_ONLY"):
+        sys.stdout.write("\n".join(ko) + f"\n[v8] saved: {ko_dest} (all numbers: {dest})\n")
+    else:
+        sys.stdout.write(body + f"\n[v8] saved: {dest} and {ko_dest}\n")
 
 
 if __name__ == "__main__":

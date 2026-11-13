@@ -84,3 +84,15 @@ def test_cold_start_reading_never_fills_gaps_with_zero():
     assert "0으로 채우지 말고 하한" in text
     full = "\n".join(v8_recount.cold_start_ko([(5, 3600.0, 7200.0, {})], [{}], {}))
     assert "Q3 답변에 그대로 쓸 수 있다" in full
+
+
+def test_readiness_says_whether_a_cohort_can_be_used_now():
+    import v8_explain_ko as ko
+    a = {"primary_rebuttal": {"primary_contrast": {"n_training_seeds": 0}}, "primary_rebuttal_budget": {}}
+    rows = [{"policy_id": "srgc_current", "seed": s, "status": "triggered", "reward_fraction": None} for s in SEEDS]
+    text = "\n".join(ko.readiness(a, rows))
+    assert "판정: 아직 못 씀. 평가가 진행 중이다(평가 안 된 행 5개)" in text and "SR-GC(현재 규칙)" in text
+    assert ko.readiness(a, [{"policy_id": "x", "seed": 5, "status": "censored"}])[0].startswith("판정: 아직 못 씀. 학습이 덜 끝나")
+    out = []
+    ko.explain({"status_counts": {"p": {"censored": 3, "triggered": 2}}}, [], out)
+    assert any(line.startswith("쓸 수 없는 행 3개: censored = 기준 On-policy 궤적") for line in out)
