@@ -146,8 +146,9 @@ def main():
     text = [f"# V8 recount with current code  host={socket.gethostname()}  at={time.strftime('%Y-%m-%d %H:%M %Z')}",
             f"# source root={v8} (read only)  output={out_base}",
             "# rows and costs recomputed from recorded runs/ledgers/evaluations; frozen budget reused as recorded"]
-    ko = [f"# V8 결과 해석  host={socket.gethostname()}  at={time.strftime('%Y-%m-%d %H:%M %Z')}",
-          "# 현재 코드로 다시 집계한 값에서 계산. 차이 = SR-GC 보상 - 비교 대상 보상, 단위 점(퍼센트포인트)", ""]
+    ko = [f"# V8 결과 보고서  host={socket.gethostname()}  at={time.strftime('%Y-%m-%d %H:%M %Z')}",
+          "# cohort마다 원본 값을 전부 적고, 항목마다 아래에 무슨 실험인지와 결과를 단다.",
+          "# 값은 기록된 런·평가를 현재 코드로 다시 집계한 것이다. 학습·평가는 건드리지 않았다.", ""]
     for cohort in COHORTS:
         src = v8 / cohort
         text += ["", f"################ {cohort}"]
@@ -213,9 +214,26 @@ def main():
             start = len(text)
             v8_summary.summarize("recount (current code)", dst / "analysis", text)
             text += cold_start_ko(cold, new, missing)
-            block = text[start:]
-            at = next((i for i, line in enumerate(block) if line.startswith("-- 해석")), None)
-            ko += [f"################ {cohort}"] + (block[at + 1:] if at is not None else ["(해석 없음)"]) + [""]
+            dobs = {}
+            from switching.matrix import monitored_observations
+            for r in new:
+                if r.get("policy_id") == "on_continued" and r.get("run_id") and r.get("role") == "rebuttal_bank":
+                    try:
+                        dobs[r["seed"]] = monitored_observations(dst, r["run_id"])
+                    except (OSError, ValueError, KeyError, TypeError):
+                        dobs[r["seed"]] = None
+            ko.append(f"################ {cohort}")
+            try:
+                import v8_report_ko
+                v8_report_ko.report(cohort, cfg, dst / "analysis", ko, dobs=dobs, cold=cold, missing=missing,
+                                    diff=(changed, len(new)))
+            except Exception as e:  # noqa: BLE001 - fall back to the short reading
+                import traceback
+                traceback.print_exc()
+                block = text[start:]
+                at = next((i for i, line in enumerate(block) if line.startswith("-- 해석")), None)
+                ko += [f"(상세 보고서 생성 실패: {type(e).__name__}: {e})"] + (block[at + 1:] if at is not None else [])
+            ko.append("")
         except Exception as e:  # noqa: BLE001 - report and continue with the next cohort
             import traceback
             traceback.print_exc()

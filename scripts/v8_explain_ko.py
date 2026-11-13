@@ -63,6 +63,8 @@ def name(p):
         return f"고정 시점 Uniform 전환 τ={int(p[-3:])}"
     if p.startswith("plateau_sr_eps"):
         return f"학습 보상 정체 트리거 ε={int(p[-4:]) / 1000:g}"
+    if p.startswith("sr_early_refreshed_k") and p[-3:].isdigit():
+        return f"처음부터 SR, 캐시 {int(p[-3:])}마다 갱신"
     if p.endswith("_c50") and p[:-4] in NAMES:
         return NAMES[p[:-4]] + ", 검사 간격 50"
     return p
