@@ -1819,16 +1819,11 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
         progressed=False;dispatched=False;short_claim_wait=False
         active=None
         if cohort_order:
-            # Serialize lease probes: two metadata readers must not mistake each
-            # other's brief flock probe for an executing task. This also gates CPU
-            # preparation of the next cohort, not just its GPU claims.
-            gate=Lock(dispatch_lock)
-            try:
-                if not gate.acquire():
-                    diagnostic.publish('WAIT_DISPATCH_LOCK',None,'another worker holds the shared dispatch lock',order=list(cohort_order))
-                    stop.wait(min(poll,.05));continue
-                active=unfinished_cohort(pairs,cohort_order)
-            finally:gate.close()
+            # Which cohort comes first, from the shared state files only (user 11-16 'dispatch lock queue lock 걸려
+            # 있다고'). Taking the one cross-cohort dispatch lock here on every loop of every node, and probing every
+            # task lease of finished cohorts under it, made all nodes queue behind each other once a node served
+            # several cohorts. Lease probes and claims stay serialized under the dispatch lock in the claim step.
+            active=unfinished_cohort(pairs,cohort_order,check_leases=False)
         if cohort_order:
             for i,(pool,_) in enumerate(pairs):
                 if terminal.get(i)!='complete':continue
