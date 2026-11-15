@@ -101,7 +101,12 @@ def repair_mbpp_subprocess(verifier):
     if getattr(verifier,'__name__',None)!='code_reward' or not filename:return verifier,None
     if not Path(filename).is_file():return verifier,None
     digest=hashlib.sha256(Path(filename).read_bytes()).hexdigest()
-    if digest not in MBPP_VERIFIER_HASHES:return verifier,None
+    if digest not in MBPP_VERIFIER_HASHES:
+        # Not one of the audited verifiers: the launch keeps its original preexec_fn (Python run between fork and
+        # exec in a multi-threaded CUDA process). Say so once; scoring is never changed for an unknown source.
+        print(f'RUNTIME REPAIR SKIPPED mbpp_subprocess: verifier {filename} sha256 {digest} is not audited; '
+              'original preexec_fn launch retained',flush=True)
+        return verifier,None
     original=namespace['subprocess'];limits=namespace['_limits']
     memory=namespace['CODE_MEMORY_BYTES'];cpu=int(namespace['CODE_TIMEOUT_SECONDS'])+1
     fsize=namespace.get('CODE_RESULT_BYTES',1<<20)

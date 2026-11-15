@@ -1,5 +1,6 @@
 """A native crash names the rank's last stage from the real progress record (which has no pid)."""
 import importlib
+import importlib.util
 import json
 from pathlib import Path
 import time
@@ -53,3 +54,14 @@ def test_fault_handler_meta_and_probe_record_carry_identity(tmp_path,monkeypatch
     assert meta['started_at']>0 and meta['executable'] and 'host' in meta
     source=(ROOT/'scripts/v8_generation_probe.py').read_text()
     assert "details.setdefault('pid',os.getpid())" in source
+
+
+def test_unaudited_mbpp_verifier_says_its_preexec_launch_is_kept(tmp_path,monkeypatch,capsys):
+    monkeypatch.syspath_prepend(str(ROOT/'scripts'))
+    entry=importlib.import_module('v8_task_entry')
+    source=tmp_path/'verifiers.py';source.write_text('def code_reward(record,response):\n    return 0.0\n')
+    spec=importlib.util.spec_from_file_location('_unaudited_verifier',source)
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    fixed,receipt=entry.repair_mbpp_subprocess(module.code_reward)
+    assert fixed is module.code_reward and receipt is None
+    assert 'RUNTIME REPAIR SKIPPED mbpp_subprocess' in capsys.readouterr().out
