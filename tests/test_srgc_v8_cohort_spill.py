@@ -101,11 +101,11 @@ def test_named_cohort_first_then_other_cohorts_that_already_have_queues(tmp_path
     import v8_queue_runtime as q
     runner=_runner(tmp_path, ['olmo_math','qwen_mbpp','olmo_mbpp','qwen_math','llama_mbpp','gemma_math'])
     root=tmp_path/'v8';_queue(root,'olmo_math');_queue(root,'llama_mbpp');_queue(root,'qwen_mbpp')
-    # Default (no flag): the named MBPP cohort first, then the remaining cohorts.
-    assert q.cohort_list('qwen_mbpp', None, root, runner)==(['qwen_mbpp','olmo_math','olmo_mbpp','qwen_math','llama_mbpp'],
-                                                            {'olmo_math','olmo_mbpp','qwen_math','llama_mbpp'})
+    # Default (no flag): the named cohort first, then only cohorts that already have a queue, MBPP first.
+    # olmo_mbpp, qwen_math and gemma_math have no queue, so they are never added (no new queue is started).
+    assert q.cohort_list('qwen_mbpp', None, root, runner)==(['qwen_mbpp','llama_mbpp','olmo_math'],{'llama_mbpp','olmo_math'})
     order,auto=q.cohort_list('all', None, root, runner)
-    assert order==['olmo_math','qwen_mbpp','olmo_mbpp','qwen_math','llama_mbpp'] and auto=={'llama_mbpp'}
+    assert order==['qwen_mbpp','olmo_mbpp','olmo_math','qwen_math','llama_mbpp'] and auto=={'llama_mbpp'}
     # An exact list is used as given (no automatic additions).
     assert q.cohort_list('all', 'olmo_mbpp, qwen_mbpp', root, runner)==(['olmo_mbpp','qwen_mbpp'],set())
     assert q.cohort_list('qwen_math', 'olmo_mbpp,qwen_math', root, runner)==(['qwen_math','olmo_mbpp'],set())
@@ -136,6 +136,10 @@ def test_launcher_default_serves_the_remaining_cohorts_after_the_named_one(tmp_p
     env=dict(os.environ, V8_ROOT=str(tmp_path/'v8'), V8_RUNNER_ROOT=str(ROOT/'v8/experiments'), V8_PYTHON=sys.executable)
     env.pop('V8_COHORTS', None)
     plan=q.selections(ROOT, env, ['qwen_mbpp'], serve_remaining=True)
-    assert plan.order[:4]==['qwen_mbpp','olmo_math','olmo_mbpp','qwen_math'] and not plan.errors
+    assert plan.order==['qwen_mbpp'] and not plan.errors          # no other queue exists: nothing else is started
+    _queue(tmp_path/'v8','olmo_math');_queue(tmp_path/'v8','olmo_mbpp')
+    plan=q.selections(ROOT, env, ['qwen_mbpp'], serve_remaining=True)
+    # existing queues only (these fake ones cannot be opened, so they are skipped, not a launch error)
+    assert plan.order==['qwen_mbpp'] and list(plan.skipped)==['olmo_mbpp','olmo_math'] and not plan.errors
     assert q.selections(ROOT, env, ['qwen_mbpp','--cohorts','qwen_mbpp'], serve_remaining=True).order==['qwen_mbpp']
     assert q.selections(ROOT, env, ['qwen_mbpp']).order==['qwen_mbpp']   # direct callers keep one cohort

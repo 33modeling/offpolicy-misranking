@@ -36,11 +36,11 @@ def cohort_list(cohort,listed,root,runner):
     """Cohorts one node serves, in claim-priority order, and which were added automatically.
 
     listed (--cohorts / V8_COHORTS, comma separated) is used exactly, after the named cohort.
-    Otherwise (user 11-15 'mbpp 끝나면 나머지 돌게'): the named cohort first, then the remaining
-    default cohorts, then every other configured cohort that already has a queue under V8_ROOT,
-    so a node never idles beside ready work. 'all' is the same without a named cohort.
+    Otherwise (user 11-15 'mbpp 끝나면 나머지 돌게'): the named cohort first, then every other configured
+    cohort that already has a queue under V8_ROOT, MBPP cohorts first; a cohort without a queue is never
+    added (no new queue is started). 'all' keeps its explicit list.
     """
-    first=list(DEFAULT_ORDER) if cohort=='all' else [cohort]
+    first=sorted(DEFAULT_ORDER,key=lambda c:(not c.endswith('_mbpp'),DEFAULT_ORDER.index(c))) if cohort=='all' else [cohort]
     if listed:
         names=[c.strip() for c in listed.split(',') if c.strip()]
         if not names or any(not c.replace('_','').replace('-','').isalnum() for c in names):
@@ -48,8 +48,10 @@ def cohort_list(cohort,listed,root,runner):
         return list(dict.fromkeys([*([] if cohort=='all' else first),*names])),set()
     configured=sorted(p.stem for p in (Path(runner)/'configs/cohorts').glob('*.json'))
     known=[c for c in DEFAULT_ORDER if c in configured]+[c for c in configured if c not in DEFAULT_ORDER]
-    extra=[c for c in known if c not in first and (c in DEFAULT_ORDER or (Path(root)/c/'.multi-node/binding.json').is_file())]
-    extra+=[c for c in DEFAULT_ORDER if c not in first and c not in extra]
+    # Only cohorts whose queue already exists: a node never starts a new queue for an experiment nobody started
+    # (user 11-15: '언제 초기화하라고했냐'). MBPP cohorts come before the others (user 11-15: 'mbpp가 우선시 되어야').
+    ranked=sorted(known,key=lambda c:(not c.endswith('_mbpp'),known.index(c)))
+    extra=[c for c in ranked if c not in first and (Path(root)/c/'.multi-node/binding.json').is_file()]
     return first+extra,set(extra)
 
 
