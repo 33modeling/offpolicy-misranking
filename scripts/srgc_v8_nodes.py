@@ -349,32 +349,9 @@ def record_node_native_fault(pool,runtime,attempt):
         atomic(path,row)
 
 
-def node_native_faults_all_cohorts(pool,runtime):
-    """Native crashes of this GPU set (host + GPUs, same controller) recorded by every cohort under V8_ROOT.
-    A node serves several cohorts since 47217d5; the per-cohort count let a bad GPU set crash twice per cohort."""
-    mine=node_native_identity(pool,runtime);found=[]
-    root=pool.root.parent.parent if pool.root.name=='.multi-node' else pool.root.parent
-    for path in sorted(root.glob('*/.multi-node/node-native-faults/*.json')):
-        try:row=read(path)
-        except (OSError,ValueError):continue
-        identity=row.get('identity') or {}
-        if (identity.get('host'),list(identity.get('gpus') or []),identity.get('controller_sha256'))!=\
-           (mine['host'],list(mine['gpus']),mine['controller_sha256']):continue
-        cohort=path.parent.parent.parent.name
-        found+=[dict(f,cohort=cohort) for f in row.get('failures',[]) if isinstance(f,dict)]
-    return found
-
-
 def node_native_hold(pool,runtime):
     path=node_native_path(pool,runtime)
-    if not path.exists():
-        everywhere=node_native_faults_all_cohorts(pool,runtime)
-        if len(everywhere)>=NODE_NATIVE_FAILURE_LIMIT:
-            return (f'This GPU set ({socket.gethostname()} GPU {",".join(map(str,getattr(runtime,"gpus",())))}) recorded '
-                    f'{len(everywhere)} native crashes across cohorts '
-                    f'({", ".join(sorted({f["cohort"] for f in everywhere}))}); no further tasks on this GPU set. '
-                    'Underlying native cause remains unconfirmed; see node-native-faults/ of those cohorts')
-        return None
+    if not path.exists():return None
     row=read(path)
     if row.get('identity')!=node_native_identity(pool,runtime):raise NodeFailure('Node native-fault identity differs')
     if getattr(pool,'readmitted',False):
@@ -384,11 +361,6 @@ def node_native_hold(pool,runtime):
         return (f'This GPU set recorded {len(row["failures"])} native crashes for this cohort/controller; '
                 f'no further tasks on this GPU set. Other nodes/cohorts and saved checkpoints are retained. '
                 f'Original evidence: {path}; underlying native cause remains unconfirmed')
-    everywhere=node_native_faults_all_cohorts(pool,runtime)
-    if len(everywhere)>=NODE_NATIVE_FAILURE_LIMIT:
-        return (f'This GPU set recorded {len(everywhere)} native crashes across cohorts '
-                f'({", ".join(sorted({f["cohort"] for f in everywhere}))}); no further tasks on this GPU set. '
-                f'Original evidence: {path} and the other cohorts\' node-native-faults/; underlying native cause remains unconfirmed')
     return None
 
 
