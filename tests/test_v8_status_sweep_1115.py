@@ -74,3 +74,36 @@ def test_extension_that_spent_its_budget_before_the_cap_is_complete_work(tmp_pat
     run_at(base, rid, 330, "completed_budget")
     row = next(r for r in status.collect(base, "olmo_math", now)[1] if r["key"] == "x")
     assert row["failure_real"] is False and "the run is complete" in row["failure_cause"], row["failure_cause"]
+
+
+def test_running_task_always_says_how_far_it_is(tmp_path):
+    """'status 알수가 없어': a generation record without questions_total showed 'answering' with no total. An
+    evaluation takes N from the finished evaluation of the same spec (per GPU) and says roughly how long is
+    left (median of finished evaluations of that experiment x the part still to do); training shows its update."""
+    now = time.time()
+    base, q = base_with_queue(tmp_path, "primary_evaluation")
+    rid = "olmo_math.rebuttal_bank.s5.bank_sr_t025.aa11"
+    ev = {"kind": "evaluate", "training_seed": 5, "run_id": rid, "completed_update": 275, "split": "final",
+          "snapshot_sha256": "ab" * 32, "evaluation_spec_hash": "cd" * 32, "task_id": "eval.x"}
+    write(q / "jobs" / "e1.json", {"state": "running", "phase": "evaluation", "task": ev,
+                                   "attempts": [{"id": "ea", "worker": "h-ev.1", "started_at": now - 300}]})
+    for k, (start, end) in enumerate(((now - 9000, now - 7800), (now - 7000, now - 5800), (now - 5000, now - 4000))):
+        write(q / "jobs" / f"d{k}.json", {"state": "done", "phase": "evaluation", "task": dict(ev, task_id=f"eval.d{k}"),
+                                         "attempts": [{"id": f"da{k}", "started_at": start, "ended_at": end}]})
+    write(base / "olmo_math" / "evaluations" / f"{'ef' * 8}__{('cd' * 32)[:12]}.json", {"n_questions": 2000})
+    for rank in range(4):   # generation records of this attempt without questions_total
+        write(q / "progress" / "ea" / f"rank-{rank}.json", {"stage": "generation", "updated": now - 5,
+                                                             "question_index": 75, "response_tokens": 300})
+    beat(q, "h-ev.1", 2, now, "child:1")
+    train = {"kind": "train", "method_id": "bank_sr_t050", "training_seed": 6, "run_id": "t6", "horizon": 75,
+             "parent": {"completed_update": 50, "path": "/nowhere"}}
+    write(q / "jobs" / "t1.json", {"state": "running", "phase": "train", "task": train,
+                                   "attempts": [{"id": "ta", "worker": "h-tr.1", "started_at": now - 300}]})
+    run_at(base, "t6", 62)
+    write(q / "progress" / "ta" / "rank-0.json", {"stage": "generation", "updated": now - 3,
+                                                  "question_index": 3, "questions_total": 8})
+    beat(q, "h-tr.1", 2, now, "child:1")
+    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
+    nodes = {line.split()[1]: line for line in text.splitlines() if line.startswith(" ▶ h-")}
+    assert "answering 75/500" in nodes["h-ev"] and "~17 min left" in nodes["h-ev"], nodes["h-ev"]
+    assert "update 62/75" in nodes["h-tr"] and "answering 3/8" in nodes["h-tr"], nodes["h-tr"]

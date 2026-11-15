@@ -167,6 +167,8 @@ def _collect(base, cohort, now):
                        seed=task.get('training_seed', '-'), status=job.get('state', 'pending'),
                        total=task.get('horizon') or task.get('endpoint') or task.get('total_updates'),
                        attempt=len(attempts), started=attempt.get('started_at'), ended=attempt.get('ended_at'), update=task.get('completed_update'), run_id=task.get('run_id'), kind=task.get('kind'), phase=job.get('phase'), host=shown_worker.rsplit('.', 1)[0] if shown_worker else None, worker=shown_worker, done=None)
+            if task.get('kind') == 'evaluate':
+                row['eval_spec'] = task.get('evaluation_spec_hash')
             parent = task.get('parent') if isinstance(task.get('parent'), dict) else {}
             start = exit_code(parent.get('completed_update'))   # int parse; branches/extensions start here
             row['start'] = start if isinstance(start, int) and start >= 0 else 0
@@ -916,17 +918,54 @@ def symbol(row):
     return {'failed': '✗', 'interrupted': '⏸', 'unconfirmed': '?', 'stopped': '?'}.get(status, '?')
 
 
-def short_progress(row, now):
+def eval_context(directory, rows):
+    """Per experiment: median wall time of finished evaluations, and n_questions per evaluation spec
+    (from its finished evaluation records), so a running evaluation can say how far it is and how long is left."""
+    times = sorted(r['ended'] - r['started'] for r in rows if r.get('kind') == 'evaluate' and r['status'] == 'done'
+                   and all(isinstance(r.get(k), (int, float)) and not isinstance(r.get(k), bool) for k in ('started', 'ended'))
+                   and r['ended'] > r['started'])
+    median = (times[len(times) // 2] if len(times) % 2 else (times[len(times) // 2 - 1] + times[len(times) // 2]) / 2) if times else None
+    questions = {}
+    for r in rows:
+        spec = r.get('eval_spec')
+        if r['status'] != 'running' or not isinstance(spec, str) or spec in questions:
+            continue
+        questions[spec] = None
+        for path in sorted((Path(directory) / 'evaluations').glob(f'*__{spec[:12]}.json'))[:5]:
+            n = (read(path) or {}).get('n_questions')
+            if isinstance(n, int) and n > 0:
+                questions[spec] = n
+                break
+    return dict(median=median, questions=questions)
+
+
+def short_progress(row, now, context=None):
+    """'update 62/75 · answering 3/8, 812 tok (5s ago)' / 'answering 75/500, 300 tok (5s ago) · ~17 min left'.
+    The question total is the event's own, else another rank's, else (evaluation) the question count of a finished
+    evaluation with the same spec split over the ranks (user 11-15 '고쳐놔 status 알수가 없어')."""
     events = row.get('_events') or []
     if not events:
         return None
     rank, stage, details, age = min(events, key=lambda e: e[3])
     text = STAGE_SHORT.get(stage, stage.replace('_', ' '))
-    if details.get('question_index') and details.get('questions_total'):
-        text += f" {details['question_index']}/{details['questions_total']}"
+    index, total = details.get('question_index'), details.get('questions_total')
+    if not total:
+        total = next((e[2].get('questions_total') for e in events if e[2].get('questions_total')), None)
+    n = ((context or {}).get('questions') or {}).get(row.get('eval_spec')) if row.get('kind') == 'evaluate' else None
+    if not total and n:
+        total = -(-n // max(1, len(events)))      # questions per GPU process: ids[rank::world]
+    if index:
+        text += f" {index}/{total}" if total else f" {index}/?"
     if details.get('response_tokens') is not None:
         text += f", {details['response_tokens']} tok"
-    return f"{text} ({age_text(age)} ago)"
+    text = f"{text} ({age_text(age)} ago)"
+    if row.get('kind') == 'evaluate':
+        median = (context or {}).get('median')
+        if median and index and total:
+            text += f" · ~{age_text(median * max(0.0, 1 - min(1.0, index / total)))} left"
+    elif isinstance(row.get('done'), int) and row.get('total'):
+        text = f"update {row['done']}/{row['total']} · " + text
+    return text
 
 
 def clip(line, width):
@@ -1379,7 +1418,7 @@ def node_table(bases, cohorts, now, this_host=None):
     gone     no heartbeat >90 s and nothing it still holds (a task it ran with its lock free is resumed by
              the next free node, so it is shown as ready, not here)   finished  same after its queue completed"""
     this_host = this_host or socket.gethostname()
-    nodes, queues, info, runs_by_cohort = {}, [], {}, {}
+    nodes, queues, info, runs_by_cohort, eval_ctx = {}, [], {}, {}, {}
     def entry(worker, host):
         return nodes.setdefault(worker, dict(worker=worker, host=host, beats={}, jobs=[], complete=True))
     for base in bases:
@@ -1390,6 +1429,7 @@ def node_table(bases, cohorts, now, this_host=None):
             queues.append(queue)
             state, rows = collect(base, cohort, now)
             runs_by_cohort[cohort] = run_branches(rows)
+            eval_ctx[cohort] = eval_context(Path(base) / cohort, rows)
             phase = state.get('phase')
             info[cohort] = dict(phase=phase, open=phase != 'complete' and not state.get('failure'), queue=queue,
                                 ready=sum(1 for r in rows if (r['status'] == 'pending' and r.get('ready')) or r.get('lost')))
@@ -1437,11 +1477,11 @@ def node_table(bases, cohorts, now, this_host=None):
                                                         if local_alive else
                                                         f"no heartbeat {age_text(r['quiet'])}, lock still held (hung, or crashed node's lock not released): kill it there, rerun"))
                     elif r.get('quiet') is not None:
-                        row.update(state='running', doing=(short_progress(r, now) or
+                        row.update(state='running', doing=(short_progress(r, now, eval_ctx.get(cohort)) or
                                    f"no heartbeat {age_text(r['quiet'])}" +
                                    (", task lock held (admission / model load / checkpoint)" if r.get('lease') is True else '')))
                     else:
-                        row.update(state='running', doing=short_progress(r, now) or
+                        row.update(state='running', doing=short_progress(r, now, eval_ctx.get(cohort)) or
                                    (f"log written {age_text(r['activity_age'])} ago" if r.get('activity_age') is not None
                                     else 'started, no output yet'))
                 else:
