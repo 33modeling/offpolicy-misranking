@@ -52,6 +52,34 @@ def test_first_cohort_without_claimable_task_hands_the_node_to_the_next_cohort(t
     assert all(pool.queue_state()['phase']=='complete' for pool, _ in rows)
 
 
+def test_first_cohort_lock_held_by_other_nodes_does_not_keep_the_node_idle(tmp_path, monkeypatch):
+    """11-16 'mbpp는 꽉찼는데 그걸 기다리고 있음', '다른걸로 안넘어가고': other nodes keep the first cohort's
+    queue control lock busy almost all the time; this node must still serve the next cohort."""
+    import fcntl
+    monkeypatch.setattr(nodes, 'SPILL_STALL_SECONDS', .3)
+    gate=threading.Event();stop=threading.Event();done=threading.Event()
+    first=Gated(tmp_path, 'olmo_mbpp', gate);rows=pairs(tmp_path, cohorts=('olmo_math',))
+    rows.insert(0, (nodes.Pool(first.root/'.multi-node', first.binding), first))
+    lock_path=rows[0][0].root/'control.lock'
+    def other_nodes():   # hold the lock >99.5% of the time, like many nodes polling a full queue
+        while not done.is_set():
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(lock_path, 'a+') as fh:
+                fcntl.flock(fh, fcntl.LOCK_EX);time.sleep(.2);fcntl.flock(fh, fcntl.LOCK_UN)
+            time.sleep(.0005)
+    holder=threading.Thread(target=other_nodes, daemon=True);holder.start()
+    def watch():
+        deadline=time.monotonic()+60
+        while time.monotonic()<deadline and not stop.is_set():
+            if rows[1][0].root.joinpath('state.json').exists() and rows[1][0].queue_state()['phase']=='complete':
+                done.set();gate.set();return
+            time.sleep(.01)
+    threading.Thread(target=watch, daemon=True).start()
+    try:assert run(rows, stop, seconds=20)==0 and not stop.is_set()
+    finally:done.set();holder.join(5)
+    claims=[c for c, _ in ((row['cohort'], row['task']) for row in events(tmp_path) if row['stage']=='execute')]
+    assert claims[:4]==['olmo_math']*4 and claims.count('olmo_mbpp')==4
+
 def test_nothing_claimable_anywhere_waits_with_bounded_polls_and_does_not_exit(tmp_path):
     gate=threading.Event();stop=threading.Event()
     rows=[]

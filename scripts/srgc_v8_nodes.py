@@ -34,6 +34,10 @@ SCHEMA = 1
 DISPATCH_POLICY = 'retain-ready-offer-control-until-sequential-claim-v34'
 COHORT_ORDER = 'earlier-cohort-first-next-cohort-when-nothing-claimable-v2'
 SPILL_LOCK_GRACE = float(os.environ.get('V8_SPILL_LOCK_GRACE', '10'))  # seconds
+# An earlier cohort that gives this node no task for this long, for any reason (including other nodes
+# holding its queue lock all the time), no longer holds the node back (user 11-16: 'mbpp는 꽉찼는데 그걸
+# 기다리고 있음', '다른걸로 안넘어가고'). Earlier cohorts keep claim priority on every later loop.
+SPILL_STALL_SECONDS = float(os.environ.get('V8_SPILL_STALL_SECONDS', '30'))
 EVAL_NATIVE_RECOVERY = 'evaluation-sigsegv-recovery-v1'
 # User 11-13 '자꾸 에러 난거 먼저 처리해서 다시 시작하게 해야지': every task that was BLOCKED (failure cap or native
 # crashes on two places) when this policy first met it gets ONE fresh failure budget, counted from its last
@@ -1701,7 +1705,7 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
     # Spill (user 11-15): when every cohort up to `limit` has nothing this node can claim now,
     # the next cohort in cohort_order becomes eligible. Earlier cohorts keep claim priority; one
     # task at a time, so two cohorts never share this GPU group. Reset after each executed task.
-    spill_rank=-1;spill_report=None
+    spill_rank=-1;spill_report=None;stall_since=time.monotonic()
     def rank(pool):
         name=cohort(pool)
         return cohort_order.index(name) if name in cohort_order else len(cohort_order)
@@ -2263,10 +2267,17 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
               and not any(getattr(r,'pending_barrier',None) is not None for _,r in pairs))
         # A short queue-lock wait is another node's metadata write, not proof the cohort has no work.
         lock_wait=any(i in eligible and time.monotonic()-since<SPILL_LOCK_GRACE for i,since in control_waits.items())
-        if idle and cohort_order and claim_ok and not lock_wait:
+        if dispatched or offers:stall_since=time.monotonic()
+        stalled=cohort_order and not offers and time.monotonic()-stall_since>=SPILL_STALL_SECONDS
+        if cohort_order and claim_ok and ((idle and not lock_wait) or stalled):
             following=[rank(p) for i,(p,_) in enumerate(pairs) if i not in terminal and rank(p)>limit]
             if following:
                 report_wait(active,claim_ok,busy)  # why the earlier cohort has nothing for this node
+                if stalled and not idle:
+                    print(f'[{worker}] no task from {cohort_order[limit] if limit<len(cohort_order) else "earlier cohorts"} for '
+                          f'{time.monotonic()-stall_since:.0f}s (queue lock busy or nothing ready); also serving '
+                          f'{cohort_order[min(following)]}',flush=True)
+                stall_since=time.monotonic()
                 spill_rank=min(following);continue  # strictly increases: bounded, never a busy loop
         if idle:
             if cohort_order:
