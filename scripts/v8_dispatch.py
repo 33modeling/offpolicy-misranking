@@ -173,6 +173,7 @@ def main():
     entries={entry['cohort']:entry for entry in plan['entries']}
     requested=set(entries)|set(plan['errors'])
     cohort_order=tuple(c for c in nodes.DEFAULT_COHORTS if c in requested)+tuple(sorted(requested-set(nodes.DEFAULT_COHORTS)))
+    if plan.get('order') and set(plan['order'])==requested:cohort_order=tuple(plan['order'])  # claim priority
     controls={name:hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
               for name in ('v8_dispatch.py','v8_runtime_worker.py','v8_rpc.py','srgc_v8_nodes.py',
                            'v8_task_entry.py','v8_generation_probe.py','v8_progress_text.py','srgc_verifier_fallback.py')}
@@ -185,7 +186,7 @@ def main():
         def record_policy(actor):
             record=dict(schema=1,policy=nodes.DISPATCH_POLICY,controller_source=controls,
                         original_runtime_binding=actor.binding,numerical_source_changed=False,
-                        cohort_order=dict(policy=nodes.COHORT_ORDER,cohorts=list(cohort_order),spill_to_next=False),
+                        cohort_order=dict(policy=nodes.COHORT_ORDER,cohorts=list(cohort_order),spill_to_next=True),
                         execution_order=nodes.CONCURRENT_ORDER if actor.streaming_ready_tasks else
                                         nodes.PRIMARY_ORDER if actor.primary_results_first else 'original-runtime-order',
                         conditional_runtime_repairs=dict(strict_math_verifier='recorded-seed-fallback',
@@ -217,10 +218,10 @@ def main():
     args=[];i=0
     while i<len(plan['argv']):
         token=plan['argv'][i]
-        if token in ('--root','--runner-root','--python','--gpus','--poll-seconds','--max-attempts','--retry-delay'):
-            if token!='--runner-root':args.extend(plan['argv'][i:i+2])
+        if token in ('--root','--runner-root','--python','--gpus','--poll-seconds','--max-attempts','--retry-delay','--cohorts'):
+            if token not in ('--runner-root','--cohorts'):args.extend(plan['argv'][i:i+2])
             i+=2;continue
-        if token.startswith('-') and not token.startswith('--runner-root='):args.append(token)
+        if token.startswith('-') and not token.startswith(('--runner-root=','--cohorts=')):args.append(token)
         i+=1
     if len(entries)==1:args.insert(0,next(iter(entries)))
     for cohort,error in plan['errors'].items():print(f'V8 startup: {cohort} blocked: {error}',file=sys.stderr,flush=True)

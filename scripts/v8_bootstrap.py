@@ -88,7 +88,7 @@ def main(argv=None):
                              'run git pull in the existing offpolicy-misranking checkout.')
     if inspect:
         os.execvpe(env['V8_PYTHON'],[env['V8_PYTHON'],str(tools/'scripts/srgc_v8_nodes.py'),*argv],env)
-    groups=selections(tools,env,argv)
+    groups=selections(tools,env,argv,serve_remaining=True)
     # Scheduling is a separately versioned control extension. The actor loads the original
     # Runtime/Python, so an existing queue keeps its exact base binding and numerical source.
     entries=[]
@@ -101,7 +101,10 @@ def main(argv=None):
     if any(not (control/name).is_file() for name in required):
         raise ValueError('Shared dispatcher files are missing; run git pull in the complete existing checkout')
     plan=private_cache()/('dispatch-plan-'+uuid.uuid4().hex+'.json')
-    plan.write_text(json.dumps(dict(schema=1,root=str(groups.root),argv=argv,entries=entries,errors=groups.errors)))
+    for cohort,error in getattr(groups,'skipped',{}).items():
+        print(f'V8 startup: {cohort} not served by this node ({error})',file=sys.stderr,flush=True)
+    plan.write_text(json.dumps(dict(schema=1,root=str(groups.root),argv=argv,entries=entries,errors=groups.errors,
+                                    order=getattr(groups,'order',[]))))
     child_env=dict(env,V8_ROOT=str(groups.root),V8_RUNNER_ROOT=entries[0]['runner'])
     os.execvpe(env['V8_PYTHON'],[env['V8_PYTHON'],str(control/'v8_dispatch.py'),str(plan)],child_env)
     return 0

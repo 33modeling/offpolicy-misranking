@@ -24,8 +24,33 @@ def runner_identity(root):
 
 
 class SelectionPlan(list):
-    def __init__(self,groups,errors,root=None):
+    def __init__(self,groups,errors,root=None,order=None,skipped=None):
         super().__init__(groups);self.errors=errors;self.root=root
+        self.order=list(order or []);self.skipped=dict(skipped or {})
+
+
+DEFAULT_ORDER=('olmo_math','qwen_mbpp','olmo_mbpp','qwen_math')
+
+
+def cohort_list(cohort,listed,root,runner):
+    """Cohorts one node serves, in claim-priority order, and which were added automatically.
+
+    listed (--cohorts / V8_COHORTS, comma separated) is used exactly, after the named cohort.
+    Otherwise (user 11-15 'mbpp 끝나면 나머지 돌게'): the named cohort first, then the remaining
+    default cohorts, then every other configured cohort that already has a queue under V8_ROOT,
+    so a node never idles beside ready work. 'all' is the same without a named cohort.
+    """
+    first=list(DEFAULT_ORDER) if cohort=='all' else [cohort]
+    if listed:
+        names=[c.strip() for c in listed.split(',') if c.strip()]
+        if not names or any(not c.replace('_','').replace('-','').isalnum() for c in names):
+            raise ValueError(f'--cohorts/V8_COHORTS must be comma-separated cohort names, got {listed!r}')
+        return list(dict.fromkeys([*([] if cohort=='all' else first),*names])),set()
+    configured=sorted(p.stem for p in (Path(runner)/'configs/cohorts').glob('*.json'))
+    known=[c for c in DEFAULT_ORDER if c in configured]+[c for c in configured if c not in DEFAULT_ORDER]
+    extra=[c for c in known if c not in first and (c in DEFAULT_ORDER or (Path(root)/c/'.multi-node/binding.json').is_file())]
+    extra+=[c for c in DEFAULT_ORDER if c not in first and c not in extra]
+    return first+extra,set(extra)
 
 
 def private_cache():
@@ -180,7 +205,7 @@ def read_binding(root,cohort):
     return old
 
 
-def selections(tools,env,args):
+def selections(tools,env,args,*,serve_remaining=False):
     """Return original source groups; retain normal all-cohort dispatch when identities match."""
     tools=Path(tools)
     parser=argparse.ArgumentParser(add_help=False)
@@ -188,10 +213,15 @@ def selections(tools,env,args):
     for flag in ('root','runner-root','python','gpus','poll-seconds','max-attempts','retry-delay'):parser.add_argument('--'+flag)
     parser.add_argument('--retry-failed',action='store_true')
     parser.add_argument('--new-queue',action='store_true')
+    parser.add_argument('--cohorts')
     options,unknown=parser.parse_known_args(args)
     if unknown:raise ValueError('Unsupported V8 launch arguments: '+' '.join(unknown))
-    cohorts=['olmo_math','qwen_mbpp','olmo_mbpp','qwen_math'] if options.cohort=='all' else [options.cohort]
     root=Path(options.root or env['V8_ROOT']).resolve()
+    if serve_remaining or options.cohorts:
+        # Launcher (scripts/run_v8_nodes.sh): the named cohort first, then the remaining ones.
+        cohorts,automatic=cohort_list(options.cohort,options.cohorts or env.get('V8_COHORTS'),root,
+                                      Path(options.runner_root or env['V8_RUNNER_ROOT']))
+    else:cohorts,automatic=(list(DEFAULT_ORDER) if options.cohort=='all' else [options.cohort]),set()
     bindings={};errors={}
     for cohort in cohorts:
         try:bindings[cohort]=read_binding(root,cohort)
@@ -236,5 +266,7 @@ def selections(tools,env,args):
             group=groups.setdefault(key,dict(choice,cohorts=[],pythons={}))
             group['cohorts'].append(cohort);group['pythons'][cohort]=python
         except (OSError,ValueError,zipfile.BadZipFile) as exc:errors[cohort]=str(exc)
-    if not groups:raise ValueError('; '.join(f'{c}: {e}' for c,e in errors.items()))
-    return SelectionPlan(groups.values(),errors,root)
+    # An automatically added cohort this node cannot open is skipped, not a launch error.
+    skipped={c:errors.pop(c) for c in list(errors) if c in automatic}
+    if not groups:raise ValueError('; '.join(f'{c}: {e}' for c,e in {**errors,**skipped}.items()))
+    return SelectionPlan(groups.values(),errors,root,[c for c in cohorts if c not in skipped],skipped)

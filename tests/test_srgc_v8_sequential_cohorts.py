@@ -82,31 +82,26 @@ def test_all_four_finish_training_evaluation_and_finalize_in_declared_order(tmp_
     assert keep.read_bytes()==b'optimizer RNG reward checkpoint sentinel'
 
 
-def test_six_simultaneous_nodes_never_spill_to_next_cohort_when_two_jobs_are_full(tmp_path):
+def test_six_simultaneous_nodes_spill_to_next_cohort_when_two_jobs_are_full(tmp_path):
+    # User 11-15: 'mbpp 가 전부 할당 됬으면 다음으로 넘어가야될거 아니냐' - the four nodes that find
+    # olmo_math fully allocated take ready work from the next cohorts instead of idling.
     ctx=mp.get_context('fork');stop=ctx.Event();release=ctx.Event();children=[]
     try:
         for i in range(6):
             child=ctx.Process(target=worker,args=(tmp_path,f'node-{i}',stop,release));child.start();children.append(child)
-        deadline=time.monotonic()+30   # hang guard under machine load
+        deadline=time.monotonic()+60   # hang guard under machine load
         while time.monotonic()<deadline:
             claims=[row for row in events(tmp_path) if row['stage']=='execute']
-            if len(claims)>=2:break
+            if any(row['cohort']!='olmo_math' for row in claims):break
             time.sleep(.01)
-        assert len(claims)==2
-        time.sleep(.2)
-        assert {row['cohort'] for row in events(tmp_path)}=={'olmo_math'}
+        assert [row for row in claims if row['cohort']=='olmo_math']==[row for row in claims[:2]]
+        assert any(row['cohort']!='olmo_math' for row in claims),'idle nodes did not move to the next cohort'
         release.set()
         for child in children:
             child.join(60)
             assert not child.is_alive() and child.exitcode==0
         assert all(nodes.read(p)['code']==0 for p in (tmp_path/'exits').glob('*'))
         recorded=events(tmp_path)
-        for first,second in zip(nodes.DEFAULT_COHORTS,nodes.DEFAULT_COHORTS[1:]):
-            # A late joining node may verify an already complete queue; it must
-            # never execute another task or CPU stage after the next cohort starts.
-            end=max(i for i,row in enumerate(recorded) if row['cohort']==first and row['stage']!='verify')
-            start=min(i for i,row in enumerate(recorded) if row['cohort']==second)
-            assert end<start
         claims=[(row['cohort'],row['task']) for row in recorded if row['stage']=='execute']
         assert len(claims)==len(set(claims))==16
     finally:
@@ -131,21 +126,26 @@ def test_complete_label_with_live_lease_still_blocks_next_cohort(tmp_path):
     assert nodes.unfinished_cohort(rows,nodes.DEFAULT_COHORTS)=='qwen_mbpp'
 
 
-def test_missing_earlier_runtime_is_not_silently_skipped(tmp_path):
+def test_missing_earlier_runtime_does_not_idle_the_node_but_is_reported(tmp_path,capsys):
     rows=pairs(tmp_path,cohorts=('qwen_mbpp',))
     assert nodes.worker_loop_many(rows,'cpu-node',threading.Event(),poll=.001,
                                   cohort_order=nodes.DEFAULT_COHORTS)==1
-    assert not events(tmp_path)
+    assert rows[0][0].queue_state()['phase']=='complete'
+    assert 'BLOCKED: every cohort this node can serve is done, but olmo_math is unavailable' in capsys.readouterr().out
     assert not (tmp_path/'olmo_math').exists()
 
 
-def test_failed_active_cohort_exhausts_finite_budget_without_starting_next(tmp_path):
+def test_failed_cohorts_exhaust_finite_budget_and_the_node_exits(tmp_path):
     rows=pairs(tmp_path,fail=True)
-    assert nodes.worker_loop_many(rows,'cpu-node',threading.Event(),poll=.001,
-                                  cohort_order=nodes.DEFAULT_COHORTS)==1
-    assert {row['cohort'] for row in events(tmp_path)}=={'olmo_math'}
+    stop=threading.Event();timer=threading.Timer(60,stop.set);timer.start()   # hang guard
+    try:assert nodes.worker_loop_many(rows,'cpu-node',stop,poll=.001,cohort_order=nodes.DEFAULT_COHORTS)==1
+    finally:timer.cancel();timer.join()
+    assert not stop.is_set()
     for path in (rows[0][0].root/'jobs').glob('*.json'):
         assert len(nodes.read(path)['attempts'])==nodes.MAX_ATTEMPTS
+    for pool,_ in rows:
+        for path in (pool.root/'jobs').glob('*.json'):
+            assert len(nodes.read(path)['attempts'])<=nodes.MAX_ATTEMPTS
 
 
 def test_old_primary_order_scope_no_longer_waits_for_later_cohort(tmp_path):
@@ -174,7 +174,8 @@ def test_quiescent_failure_in_active_cohort_is_not_hidden_by_unstarted_future_co
     finally:timer.cancel();timer.join()
     assert not stop.is_set()
     assert path.read_bytes()==before
-    assert not events(tmp_path)
+    # The later cohorts are served meanwhile; the blocked cohort never executes anything.
+    assert not [row for row in events(tmp_path) if row['cohort']=='olmo_math']
 
 
 @pytest.mark.parametrize('reopened_failure',[False,True])
@@ -208,23 +209,30 @@ def test_reopened_completed_cohort_does_not_leave_worker_waiting_on_its_cached_c
     assert keep.read_bytes()==b'optimizer RNG reward checkpoint sentinel'
     claims=[(row['cohort'],row['task']) for row in events(tmp_path) if row['stage']=='execute']
     if reopened_failure:
+        # The reopened, now failed cohort keeps its failure; the node still serves the other cohorts.
         assert rows[0][0].queue_state()['failure']['detail']=='invalid frozen inputs after recheck'
-        assert len(claims)==len(set(claims))==4
-        assert {name for name,_ in claims}=={'olmo_math'}
+        assert len(claims)==len(set(claims))==16
+        assert all(pool.queue_state()['phase']=='complete' for pool,_ in rows[1:])
     else:
         assert all(pool.queue_state()['phase']=='complete' for pool,_ in rows)
         assert len(claims)==len(set(claims))==16,'adopt existing completed outputs instead of rerunning them'
 
 
-def test_live_lease_after_complete_keeps_next_cohort_waiting_and_accepts_stop(tmp_path):
+def test_live_lease_after_complete_does_not_idle_the_node_and_accepts_stop(tmp_path):
     rows=pairs(tmp_path);pool=rows[0][0];pool.initialize()
     state=pool.queue_state();state['phase']='complete';nodes.atomic(pool.root/'state.json',state)
-    stop=threading.Event();timer=threading.Timer(.15,stop.set)
+    stop=threading.Event();release=threading.Event()
+    later=rows[1][1];execute=later.execute
+    def first_task_then_stop(task,*args):
+        rc=execute(task,*args);stop.set();return rc
+    later.execute=first_task_then_stop
+    timer=threading.Timer(30,stop.set)   # hang guard
     with nodes.Lock(pool.root/'leases/still-running.lock'):
         timer.start()
         try:rc=nodes.worker_loop_many(rows,'cpu-node',stop,poll=.005,cohort_order=nodes.DEFAULT_COHORTS)
         finally:timer.cancel();timer.join()
     assert rc==75 and stop.is_set()
     recorded=events(tmp_path)
-    assert recorded and all(row['cohort']=='olmo_math' and row['stage']=='verify' for row in recorded)
-    assert not (rows[1][0].root/'state.json').exists()
+    assert all(row['stage']=='verify' for row in recorded if row['cohort']=='olmo_math')
+    assert [row['cohort'] for row in recorded if row['stage']=='execute']==['qwen_mbpp']
+    assert pool.queue_state()['phase']=='complete'

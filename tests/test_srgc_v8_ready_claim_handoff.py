@@ -38,7 +38,7 @@ def concurrent_worker(base,name,stop,release):
     nodes.atomic(Path(base)/'exits'/name,dict(code=code))
 
 
-def test_six_new_async_workers_fill_active_jobs_and_finish_all_four_in_order(tmp_path):
+def test_six_new_async_workers_fill_active_jobs_then_spill_and_finish_all_four(tmp_path):
     from test_srgc_v8_sequential_cohorts import events
     ctx=mp.get_context('fork');stop=ctx.Event();release=ctx.Event();children=[]
     try:
@@ -50,20 +50,18 @@ def test_six_new_async_workers_fill_active_jobs_and_finish_all_four_in_order(tmp
             claims=[row for row in events(tmp_path) if row['stage']=='execute']
             if len(claims)>=2:break
             time.sleep(.005)
-        assert len(claims)==2 and {row['cohort'] for row in claims}=={'olmo_math'}
+        assert len(claims)>=2 and {row['cohort'] for row in claims[:2]}=={'olmo_math'}
         release.set()
         for child in children:
-            child.join(8)
+            child.join(60)   # hang guard under machine load
             assert not child.is_alive() and child.exitcode==0
         assert len(list((tmp_path/'exits').glob('*')))==6
         assert all(nodes.read(path)['code']==0 for path in (tmp_path/'exits').glob('*'))
         recorded=events(tmp_path)
         actual=[(row['cohort'],row['task']) for row in recorded if row['stage']=='execute']
         assert len(actual)==len(set(actual))==16
-        for first,second in zip(nodes.DEFAULT_COHORTS,nodes.DEFAULT_COHORTS[1:]):
-            end=max(i for i,row in enumerate(recorded) if row['cohort']==first and row['stage']!='verify')
-            start=min(i for i,row in enumerate(recorded) if row['cohort']==second)
-            assert end<start
+        # User 11-15: workers with nothing claimable in olmo_math move on instead of idling.
+        assert all(pool.queue_state()['phase']=='complete' for pool,_ in asynchronous_pairs(tmp_path))
     finally:
         stop.set();release.set()
         for child in children:

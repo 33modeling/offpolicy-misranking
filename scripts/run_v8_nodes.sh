@@ -27,6 +27,8 @@ usage() {
     echo "  sh scripts/run_v8_nodes.sh status       status table like run_srgc.sh status (--watch to refresh)" >&2
     echo "  sh scripts/run_v8_nodes.sh stop         stop this node's V8 worker (checkpoints and queue kept)" >&2
     echo "  math = olmo_math, mbpp = qwen_mbpp" >&2
+    echo "  a named cohort goes first; when it has nothing to claim the node takes ready work from the remaining cohorts" >&2
+    echo "  (one task at a time). To restrict: --cohorts a,b,c (or V8_COHORTS=a,b,c) sets that list exactly." >&2
 }
 COHORT=; MODE=; WATCH=; VALUE_NEXT=; WATCH_NEXT=; VIEW=
 n=$#
@@ -39,7 +41,7 @@ for arg in "$@"; do
     fi
     case "$arg" in
         -h|--help) usage; exit 0 ;;
-        --gpus|--root|--python|--poll-seconds|--runner-root|--max-attempts|--retry-delay) VALUE_NEXT=1; set -- "$@" "$arg" ;;
+        --gpus|--root|--python|--poll-seconds|--runner-root|--max-attempts|--retry-delay|--cohorts) VALUE_NEXT=1; set -- "$@" "$arg" ;;
         --watch) WATCH=--watch; WATCH_NEXT=1 ;;
         --watch=*) WATCH="--watch ${arg#--watch=}" ;;
         --all-nodes|--simple|--classic) VIEW="$VIEW $arg" ;;

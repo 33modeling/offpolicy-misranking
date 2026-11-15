@@ -32,7 +32,8 @@ import uuid
 
 SCHEMA = 1
 DISPATCH_POLICY = 'retain-ready-offer-control-until-sequential-claim-v34'
-COHORT_ORDER = 'complete-one-cohort-before-next-v1'
+COHORT_ORDER = 'earlier-cohort-first-next-cohort-when-nothing-claimable-v2'
+SPILL_LOCK_GRACE = float(os.environ.get('V8_SPILL_LOCK_GRACE', '10'))  # seconds
 EVAL_NATIVE_RECOVERY = 'evaluation-sigsegv-recovery-v1'
 # User 11-13 '자꾸 에러 난거 먼저 처리해서 다시 시작하게 해야지': every task that was BLOCKED (failure cap or native
 # crashes on two places) when this policy first met it gets ONE fresh failure budget, counted from its last
@@ -1580,6 +1581,13 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
     diagnostic=WorkerStatus(dispatch_lock.parent,worker,controller_sha256)
     cohort_order=tuple(cohort_order)
     sequence_report=None
+    # Spill (user 11-15): when every cohort up to `limit` has nothing this node can claim now,
+    # the next cohort in cohort_order becomes eligible. Earlier cohorts keep claim priority; one
+    # task at a time, so two cohorts never share this GPU group. Reset after each executed task.
+    spill_rank=-1;spill_report=None
+    def rank(pool):
+        name=cohort(pool)
+        return cohort_order.index(name) if name in cohort_order else len(cohort_order)
     for pool,runtime in pairs:
         runtime.sequential_cohorts=cohort_order
         if cohort_order:runtime.primary_cohort_scope=(pool.binding['cohort'],)
@@ -1662,9 +1670,7 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
     def refresh_before_exit():
         """Recheck original readiness after the stale scan; never claim under this check."""
         refreshed=False
-        active=unfinished_cohort(pairs,cohort_order,check_leases=False) if cohort_order else None
         for i,(pool,runtime) in enumerate(pairs):
-            if cohort_order and cohort(pool)!=active:continue
             if (i not in initialized or (i in terminal and i not in shared_failures)
                     or getattr(runtime,'pending_barrier',None) is not None):continue
             try:
@@ -1704,7 +1710,7 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
             finally:gate.close()
         if cohort_order:
             for i,(pool,_) in enumerate(pairs):
-                if terminal.get(i)!='complete' or cohort(pool)!=active:continue
+                if terminal.get(i)!='complete':continue
                 try:state=read(pool.root/'state.json')
                 except FileNotFoundError:state={}
                 if state.get('phase')!='complete' or state.get('failure'):
@@ -1712,19 +1718,18 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                     # Local completion is only a cache: recheck identity/readiness
                     # normally, retaining finished outputs and failure budgets.
                     terminal.pop(i);discard_offer(i)
-                    print(f'[{worker}] {active}: shared queue is no longer complete; '
+                    print(f'[{worker}] {cohort(pool)}: shared queue is no longer complete; '
                           'rechecking it before later cohorts',flush=True)
-            # An offer can outlive its phase when another worker finishes the cohort.
-            # Drop it so discovery can observe 'complete', rather than waiting forever
-            # with a stale offer that the sequential claim gate will never admit.
-            for i in tuple(offers):
-                if cohort(pairs[i][0])!=active:discard_offer(i)
             if active!=sequence_report:
                 print(f'[{worker}] cohort order: {" -> ".join(cohort_order)}; '
-                      f'active={active or "all complete"}; next cohort waits for full completion',flush=True)
+                      f'active={active or "all complete"}; when nothing here is claimable now this node '
+                      'takes ready work from the next cohort in this order',flush=True)
                 sequence_report=active
             available={cohort(pool) for pool,_ in pairs}
-            if active is not None and active not in available:
+            active_rank=cohort_order.index(active) if active is not None else len(cohort_order)
+            # Later cohorts this node can still serve (the active one may be unavailable or given up here).
+            later=[i for i,(pool,_) in enumerate(pairs) if i not in terminal and rank(pool)>active_rank]
+            if active is not None and active not in available and not later:
                 diagnostic.publish('BLOCKED',active,'required earlier runtime is unavailable; later cohorts remain queued',order=list(cohort_order))
                 print(f'[{worker}] BLOCKED: {active} is unavailable on this node; '
                       'later cohorts are not started; queues/checkpoints retained',flush=True)
@@ -1732,7 +1737,7 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
             # Node-local give-ups only; a shared queue failure keeps waiting for recovery by another node.
             stuck=[i for i,(pool,_) in enumerate(pairs) if cohort(pool)==active and terminal.get(i)=='failed'
                    and i not in shared_failures]
-            if active is not None and stuck:
+            if active is not None and stuck and not later:
                 # Later cohorts are not eligible until the active one completes, so this node would only idle.
                 why=reasons.get(active,'see the messages above')
                 diagnostic.publish('BLOCKED',active,'this node cannot serve the active cohort: '+why,order=list(cohort_order))
@@ -1740,8 +1745,18 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                       'experiments wait for it, so this worker exits instead of idling. Fix the cause and start the '
                       'same command again; queues and checkpoints are kept.',flush=True)
                 return 1
-            active_rank=cohort_order.index(active) if active is not None else len(cohort_order)
-            eligible={i for i,(pool,_) in enumerate(pairs) if cohort_order.index(cohort(pool))<=active_rank}
+            limit=max(active_rank,spill_rank)
+            # A started scan or CPU stage keeps its cohort eligible until it is collected.
+            eligible={i for i,(pool,runtime) in enumerate(pairs) if rank(pool)<=limit or i in scans
+                      or getattr(runtime,'pending_barrier',None) is not None}
+            # An offer can outlive its phase when another worker finishes the cohort, and an
+            # ineligible offer would keep its retained control lock: drop both.
+            for i in tuple(offers):
+                if i not in eligible:discard_offer(i)
+            if limit!=spill_report and limit>active_rank and limit<len(cohort_order):
+                print(f'[{worker}] nothing claimable now in earlier cohorts; also serving {cohort_order[limit]} '
+                      '(earlier cohorts keep priority; one task at a time on this GPU group)',flush=True)
+                spill_report=limit
         else:eligible=set(range(len(pairs)))
         # A different verified worker may recover the shared queue while this
         # worker is waiting on the other cohort. Do not cache that old failure
@@ -1963,13 +1978,15 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                 if gate_held:
                     # Kernel-held task leases, not heartbeat age or stale running labels, are
                     # authoritative. Claim while this same shared lock remains held.
-                    current=unfinished_cohort(pairs,cohort_order) if cohort_order else None
                     live={i:len(pool.held_leases()) for i,(pool,_) in enumerate(pairs)
-                          if i in initialized and i not in terminal and i in offers
-                          and (not cohort_order or cohort(pool)==current)}
-                    order=sorted(live,key=lambda i:(live[i],(i-cursor)%len(pairs)))
+                          if i in initialized and i not in terminal and i in offers and i in eligible}
+                    # Sequential: the earliest cohort in the order first; archival: fewest live leases.
+                    order=sorted(live,key=lambda i:((rank(pairs[i][0]) if cohort_order else 0),live[i],(i-cursor)%len(pairs)))
                     for candidate in order:
                         pool,runtime=pairs[candidate]
+                        if cohort_order and any(scan.kind=='task inspection' and rank(pairs[j][0])<rank(pool)
+                                                and time.monotonic()-scan.started<SPILL_LOCK_GRACE for j,scan in scans.items()):
+                            short_claim_wait=True;break  # an earlier cohort is being inspected right now: it may offer work
                         try:
                             hold=node_native_hold(pool,runtime)
                             if hold:
@@ -2019,6 +2036,16 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
             finally:gate.close()
         # GPU execution, admission and CPU barriers NEVER hold the cross-cohort lock.
         if claimed is not None:
+            # Release every other retained offer (and its queue control lock) before a long task. A task
+            # inspection of another cohort still in flight must not keep that cohort's control.lock either.
+            for other in tuple(offers):discard_offer(other)
+            for other,scan in tuple(scans.items()):
+                if other==index or scan.kind!='task inspection':continue
+                scan.cancelled.set()  # its thread releases the lease instead of retaining it for a claim
+                if scan.finished.is_set():
+                    if scan.offer_control is not None:scan.offer_control.close()
+                    del scans[other]
+            spill_rank=-1
             pool,runtime=pairs[index]
             lease,key,task,attempt=claimed;cursor=(index+1)%len(pairs)
             log=pool.root/'logs'/(attempt['id']+'.log')
@@ -2061,7 +2088,7 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
         if cohort_order:
             current=unfinished_cohort(pairs,cohort_order,check_leases=False)
             failed=[i for i,(pool,_) in enumerate(pairs) if cohort(pool)==current and terminal.get(i)=='failed']
-            if failed:
+            if failed and not any(i not in terminal for i in range(len(pairs))):
                 if refresh_before_exit():continue
                 diagnostic.publish('BLOCKED',current,reasons.get(current,'active cohort cannot proceed'),order=list(cohort_order))
                 print(f'[{worker}] STOPPED: {current} is not complete; later cohorts remain queued; '
@@ -2085,6 +2112,12 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
         if len(terminal)==len(pairs):
             failed=[cohort(pairs[i][0]) for i,v in terminal.items() if v=='failed']
             if failed and refresh_before_exit():continue
+            unserved=(unfinished_cohort(pairs,cohort_order,check_leases=False) if cohort_order and not failed else None)
+            if unserved is not None and unserved not in {cohort(p) for p,_ in pairs}:
+                diagnostic.publish('BLOCKED',unserved,'required runtime is unavailable on this node',order=list(cohort_order))
+                print(f'[{worker}] BLOCKED: every cohort this node can serve is done, but {unserved} is unavailable '
+                      'on this node; queues/checkpoints retained',flush=True)
+                return 1
             for name in failed:print(f'[{worker}] {name}: FAILED: {reasons.get(name,"see its .multi-node/state.json")}',flush=True)
             done=[cohort(pairs[i][0]) for i,v in terminal.items() if v=='complete']
             if done:print(f'[{worker}] complete: {", ".join(done)}',flush=True)
@@ -2092,14 +2125,26 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                                                [dict(cohort=name,detail=reasons.get(name)) for name in failed])
             diagnostic.publish('BLOCKED' if failed else 'COMPLETE',None,'; '.join(failed) if failed else 'all selected cohorts finalized')
             return 1 if failed else 0
-        if (not dispatched and not progressed and not offers and not scans and not pending_setup
-                and all(i in initialized or i in terminal for i in eligible)
-                and not any(getattr(r,'pending_barrier',None) is not None for _,r in pairs)):
-            inspected=[pair for pair in pairs if not cohort_order or cohort(pair[0])==active]
-            blocked=quiescent_failure(inspected)
+        idle=(not dispatched and not progressed and not offers and not scans and not pending_setup
+              and all(i in initialized or i in terminal for i in eligible)
+              and not any(getattr(r,'pending_barrier',None) is not None for _,r in pairs))
+        # A short queue-lock wait is another node's metadata write, not proof the cohort has no work.
+        lock_wait=any(i in eligible and time.monotonic()-since<SPILL_LOCK_GRACE for i,since in control_waits.items())
+        if idle and cohort_order and claim_ok and not lock_wait:
+            following=[rank(p) for i,(p,_) in enumerate(pairs) if i not in terminal and rank(p)>limit]
+            if following:
+                report_wait(active,claim_ok,busy)  # why the earlier cohort has nothing for this node
+                spill_rank=min(following);continue  # strictly increases: bounded, never a busy loop
+        if idle:
+            if cohort_order:
+                # Exit only when every cohort this node still serves is blocked by its own failures.
+                inspected=[pair for i,pair in enumerate(pairs) if i not in terminal]
+                blocked=None if not inspected else quiescent_failure(inspected) if len(inspected)==1 else (
+                    None if any(quiescent_failure([pair]) is None for pair in inspected) else quiescent_failure(inspected))
+            else:blocked=quiescent_failure(pairs)
             if blocked:
                 if refresh_before_exit():continue
-                blocked=quiescent_failure(inspected)
+                blocked=quiescent_failure(inspected) if cohort_order else quiescent_failure(pairs)
                 if not blocked:continue
                 record_worker_retirement(pairs,worker,blocked['reason'],blocked['faults'])
                 diagnostic.publish('BLOCKED',active,blocked['reason'],faults=blocked['faults'])
@@ -2536,13 +2581,18 @@ def main(argv=None,*,selected_cohorts=None,cohort_order=None):
     parser.add_argument('--max-attempts',type=int,default=MAX_ATTEMPTS,help='lifetime task failure cap; default2 (one retry); legacy0 also means2')
     parser.add_argument('--retry-delay',type=float,default=RETRY_DELAY,help='seconds before restart; default0 (immediate)')
     parser.add_argument('--status',action='store_true')
+    parser.add_argument('--cohorts',default=os.environ.get('V8_COHORTS'),
+                        help='comma-separated cohorts this node serves, in claim-priority order (launcher default: '
+                             'the named cohort, then other cohorts with queues under V8_ROOT)')
     parser.add_argument('--new-queue',action='store_true',
                         help='after stopping the workers on ALL nodes: keep the existing queue as .multi-node.superseded-<time> '
                              'and start a fresh one (refused once any update has completed or a job lease is held)')
     args=parser.parse_args(argv)
     if args.root is None:parser.error('V8_ROOT or --root is required (shared by all nodes)')
     if not re.fullmatch(r'[A-Za-z0-9_-]+',args.cohort):parser.error('cohort must be a simple configured identifier')
-    cohorts=tuple(selected_cohorts) if selected_cohorts is not None else DEFAULT_COHORTS if args.cohort=='all' else (args.cohort,)
+    listed=tuple(dict.fromkeys(([] if args.cohort=='all' else [args.cohort])+[c.strip() for c in (args.cohorts or '').split(',') if c.strip()]))
+    cohorts=(tuple(selected_cohorts) if selected_cohorts is not None else listed if args.cohorts else
+             DEFAULT_COHORTS if args.cohort=='all' else (args.cohort,))
     if not cohorts or len(set(cohorts))!=len(cohorts) or any(not re.fullmatch(r'[A-Za-z0-9_-]+',c) for c in cohorts):
         parser.error('selected cohorts must be nonempty, distinct configured identifiers')
     if selected_cohorts is not None and args.cohort!='all' and cohorts!=(args.cohort,):

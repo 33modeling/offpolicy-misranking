@@ -59,7 +59,7 @@ def test_diagnostic_heartbeat_does_not_reset_same_state_or_invent_model_progress
 
 
 @pytest.mark.parametrize('mode,expected',[('parent','WAIT_CHECKPOINT'),('leased','WAIT_OTHER_WORKERS'),('gpu','WAIT_GPU')])
-def test_worker_logs_observed_wait_reason_without_starting_later_cohort(tmp_path,capsys,mode,expected):
+def test_worker_logs_observed_wait_reason_and_only_then_serves_later_cohort(tmp_path,capsys,mode,expected):
     from test_srgc_v8_sequential_cohorts import pairs,events
     rows=pairs(tmp_path);pool,runtime=rows[0];pool.initialize()
     state=pool.queue_state();state['phase']='train';nodes.atomic(pool.root/'state.json',state)
@@ -69,7 +69,11 @@ def test_worker_logs_observed_wait_reason_without_starting_later_cohort(tmp_path
         for task in runtime.plan('train')[0]:
             key=pool.register(task,'train');lease=nodes.Lock(pool.root/'leases'/(key+'.lock'))
             assert lease.acquire();leases.append(lease)
-    stop=threading.Event();timer=threading.Timer(.15,stop.set);timer.start()
+    stop=threading.Event();timer=threading.Timer(.15 if mode=='gpu' else 30,stop.set);timer.start()
+    later=rows[1][1];execute=later.execute
+    def first_task_then_stop(task,*args):
+        rc=execute(task,*args);stop.set();return rc
+    later.execute=first_task_then_stop
     try:
         assert nodes.worker_loop_many(rows,'host.42',stop,poll=.005,cohort_order=nodes.DEFAULT_COHORTS,
                                       gpu_gate=(lambda:(False,'another process occupies the GPU set')) if mode=='gpu' else None)==75
@@ -79,8 +83,14 @@ def test_worker_logs_observed_wait_reason_without_starting_later_cohort(tmp_path
     text=capsys.readouterr().out
     assert 'state='+expected in text
     assert 'state=STOPPED' in text
-    assert not any(row['stage']=='execute' for row in events(tmp_path))
-    assert not (rows[1][0].root/'state.json').exists()
+    claims=[row['cohort'] for row in events(tmp_path) if row['stage']=='execute']
+    if mode=='gpu':
+        # A busy GPU set is no reason to prepare other cohorts: nothing could run anyway.
+        assert not claims and not (rows[1][0].root/'state.json').exists()
+    else:
+        # User 11-15: olmo_math has nothing claimable, so the node takes the next cohort's ready work.
+        assert text.index('state='+expected)<text.index('also serving qwen_mbpp')
+        assert claims==['qwen_mbpp']
 
 
 def test_supervisor_uses_own_scheduler_reason_and_rejects_previous_launch(tmp_path,supervisor,monkeypatch):

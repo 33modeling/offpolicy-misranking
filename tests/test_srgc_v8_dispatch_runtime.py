@@ -160,13 +160,12 @@ def test_existing_cohort_bindings_and_checkpoints_survive_new_dispatcher(tmp_pat
     assert all(path.read_bytes()==data for path,data in checkpoints.items())
     for entry in entries:
         queue=root/entry['cohort']/'.multi-node'
-        # An unavailable earlier cohort now blocks later work, rather than
-        # silently borrowing these workers for the next model/data combination.
-        expected_phase=('train' if old_failed else 'prepare') if partial else 'complete'
-        assert dispatch.nodes.read(queue/'state.json')['phase']==expected_phase
-        assert len(list((root/entry['cohort']/'snapshots').glob('*.pt')))==(1 if partial else 3)
+        # User 11-15: an unavailable earlier cohort no longer idles the node; the
+        # available one runs to completion and the launch still reports the missing one.
+        assert dispatch.nodes.read(queue/'state.json')['phase']=='complete'
+        assert len(list((root/entry['cohort']/'snapshots').glob('*.pt')))==3
     receipts=list((root/'.v8-dispatch-policies').glob('*.json'))
-    assert len(receipts)==(0 if partial else len(entries))
+    assert len(receipts)==len(entries)
     assert all(json.loads(p.read_text())['numerical_source_changed'] is False for p in receipts)
     assert all(json.loads(p.read_text())['cohort_order']['cohorts']==['olmo_math','qwen_mbpp'] for p in receipts)
 
