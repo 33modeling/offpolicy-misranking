@@ -148,6 +148,11 @@ def run_srgc_child(runtime,command,log,fds,stop,*,extra=None,label=None,interval
     from srgc_rebuttal.progress import signature
     environment=dict(runtime.environment,CUDA_VISIBLE_DEVICES=','.join(runtime.gpus),**(extra or {}))
     environment['PYTHONFAULTHANDLER']='1'
+    if not environment.get('TRITON_CACHE_DIR'):
+        # Triton's default cache is under $HOME, which may be the shared volume: ranks of several nodes writing the
+        # same compiled kernels (Qwen fla-core) there can leave a truncated cubin that crashes the next loader.
+        # A node-local cache only costs one compile per node; kernels and numerics are unchanged.
+        environment['TRITON_CACHE_DIR']=os.path.join(environment.get('TMPDIR') or '/tmp',f'v8-triton-{os.getuid()}')
     if code:
         paths=[str(code),str(code/'src'),*environment.get('PYTHONPATH','').split(os.pathsep)]
         environment['PYTHONPATH']=os.pathsep.join(dict.fromkeys(path for path in paths if path))
