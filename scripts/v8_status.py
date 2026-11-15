@@ -841,6 +841,7 @@ LEGEND_LINES = (   # user 11-13 'status 뭐가 뭔지 모르겠어', '하얀색�
     "  노랑 ⏸ = 끊겨서 다시 돌릴 작업. 노랑 ? = 실행 중으로 적혔는데 맡은 노드가 없음. none = 그 칸엔 작업이 없음",
     "아래 표: run 실행 중 · ready 대기 · fail 실패 · train/ext/eval 단계 진행률 (끝난 작업/계획된 작업)",
     "  updates 끝난 업데이트/계획된 업데이트 (+는 다음 단계 계획이 나오면 늘어남) · stuck 노드 없이 실행 중으로 적힘",
+    "  left 남은 시간 어림 = 남은 업데이트 × 끝난 학습의 업데이트 1회 시간(중앙값) + 남은 평가 × 끝난 평가 1개 시간(중앙값), 지금 도는 작업 수로 나눔. ? = 아직 잰 시간이 없음",
 )
 COHORT_LABEL = {'olmo_math': 'OLMo MATH', 'qwen_mbpp': 'Qwen MBPP', 'olmo_mbpp': 'OLMo MBPP', 'qwen_math': 'Qwen MATH'}
 COHORT_SHORT = {}   # four experiments: 'OLMo'/'Qwen' alone would be ambiguous, so the node table shows the full name
@@ -1280,6 +1281,18 @@ def clean_block(base, cohort, now, host, width):
             planned += end - start
             reached = end if r['status'] == 'done' else (r['done'] if isinstance(r.get('done'), int) else start)
             done_updates += max(0, min(reached, end) - start)
+    # Time left (user 11-15: '남은 진행률이랑 시간을 알고 싶은거야'), from measured times only: seconds per training
+    # update = median over finished training tasks of wall time / updates it did; one evaluation = median wall time of
+    # finished evaluations. Remaining work / tasks running now. None when nothing is measured yet (shown as '?').
+    def took(r):
+        a, b = r.get('started'), r.get('ended')
+        return b - a if isinstance(a, (int, float)) and isinstance(b, (int, float)) and b > a else None
+    per_update = sorted(took(r) / (r['total'] - min(r.get('start') or 0, r['total'])) for r in rows
+                        if r.get('kind') == 'train' and r['status'] == 'done' and took(r) and isinstance(r.get('total'), int)
+                        and r['total'] > min(r.get('start') or 0, r['total']))
+    eval_took = sorted(t for t in (took(r) for r in evals if r['status'] == 'done') if t)
+    sec_update = per_update[len(per_update) // 2] if per_update else None
+    sec_eval = eval_took[len(eval_took) // 2] if eval_took else None
     phases_known = {k: v for k, v in planned_tasks.items() if not k.startswith('_')}
     have_n = {'train': len(trains), 'ext': len(exts), 'eval': len(evals)}
     # the same totals the train/ext/eval cells show, so the bar and the cells agree (user 11-15: '위 아래 일관성도 없고')
@@ -1306,6 +1319,7 @@ def clean_block(base, cohort, now, host, width):
                  ext=(sum(r['status'] == 'done' for r in exts), len(exts)),
                  eval=(sum(r['status'] == 'done' for r in evals), len(evals)),
                  planned=planned_tasks,
+                 sec_update=sec_update, sec_eval=sec_eval,
                  scheduler_phase=state.get('phase'),side_work=state.get('ready_side_work'),
                  base_planning_error=state.get('base_planning_error'),
                  parallel_work=isinstance(state.get('execution_order'),dict) and state['execution_order'].get('policy')=='ready-checkpoint-evaluation-extension-v1',
@@ -1336,6 +1350,22 @@ def lease_held(queue, key):
         return False
     finally:
         os.close(fd)
+
+
+def time_left(st, plan):
+    """'~6h20m' = remaining training updates x measured seconds per update + remaining evaluations x measured time of
+    one evaluation, divided by the tasks running now; '?' until both kinds of time are measured; 'done' at the end."""
+    done_u, planned_u = st.get('updates') or (0, 0)
+    left_u = max(0, planned_u - done_u)
+    ev_done, ev_have = st.get('eval') or (0, 0)
+    ev_plan = plan.get('eval') or (ev_have, ev_have, 'exact')
+    left_e = max(0, phase_total(ev_plan, ev_have) - ev_done)
+    if not left_u and not left_e:
+        return 'done' if st.get('total') else ''
+    if (left_u and not st.get('sec_update')) or (left_e and not st.get('sec_eval')):
+        return '?'
+    work = left_u * (st.get('sec_update') or 0) + left_e * (st.get('sec_eval') or 0)
+    return '~' + span(work / max(1, st.get('running') or 0))
 
 
 def span(seconds):
@@ -1586,7 +1616,7 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
 
     # 1. one aligned row per experiment
     cols = ('phase', 'progress', 'train', 'ext', 'eval', 'running', 'ready', 'waiting', 'failed', 'marked', 'interrupted',
-            'on dead node', 'other', 'updates')
+            'on dead node', 'other', 'updates', 'left')
     table = []
     for st in stats:
         if not st.get('total'):
@@ -1602,8 +1632,9 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
                           train=cells['train'], ext=cells['ext'], eval=cells['eval'],
                           other=st.get('other', 0), running=st['running'], ready=st['ready'], waiting=st['waiting'],
                           failed=st['failed'], marked=st.get('marked', 0), interrupted=st['interrupted'], **{'on dead node': st['dead']},
-                          updates=(f"{done_u:,}/{planned:,}" + ('+' if st.get('updates_more') else '')) if planned else ''))
-    used = [c for c in cols if c in ('phase', 'progress', 'train', 'ext', 'eval', 'running', 'updates')
+                          updates=(f"{done_u:,}/{planned:,}" + ('+' if st.get('updates_more') else '')) if planned else '',
+                          left=time_left(st, plan)))
+    used = [c for c in cols if c in ('phase', 'progress', 'train', 'ext', 'eval', 'running', 'updates', 'left')
             or any(isinstance(r.get(c), int) and r.get(c) for r in table)]
     def cell(r, c):
         v = r.get(c, '')

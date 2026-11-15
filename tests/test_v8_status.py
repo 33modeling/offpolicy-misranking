@@ -244,10 +244,10 @@ def test_clean_view_is_compact_with_summary_last(tmp_path):
     top, bottom = text.split("━━ V8 status · ")
     assert "needs attention" not in top
     summary = next(norm(line) for line in bottom.splitlines() if line.startswith(" OLMo MATH "))
-    assert summary.startswith("OLMo MATH training ░░░░░░░░░░░░ 1% 1/60 0/55 0/55 ") and summary.endswith("37/8,125+")
+    assert summary.startswith("OLMo MATH training ░░░░░░░░░░░░ 1% 1/60 0/55 0/55 ") and summary.endswith("37/8,125+ ?")   # nothing finished yet, so no measured time
     assert "cells to fill: OLMo MATH 170 (train 60 + ext 55 + eval 55)" in bottom
     header = next(norm(line) for line in bottom.splitlines() if norm(line).startswith("phase progress"))
-    assert header == "phase progress train ext eval run wait fail updates"
+    assert header == "phase progress train ext eval run wait fail updates left"
     assert norm(next(line for line in bottom.splitlines() if line.startswith(" Qwen MBPP"))) == "Qwen MBPP not started"
     # the OOM evaluation retries by itself: one auto-retry line, no needs attention (user 11-10)
     assert "needs attention" not in bottom and " auto-retry, nothing to do: OLMo MATH 1 failed task(s)" in bottom
@@ -910,3 +910,14 @@ def test_narrow_screen_splits_columns_instead_of_hiding_right_hand_running_tasks
     marks = sum(c.startswith("▶") for row in five for c in row)
     assert marks == status.clean_block(base, "olmo_math", now, "viewer", 80)[4]["running"] == 2
     assert "표에 안 나온 실행 중 작업" not in block
+
+
+def test_time_left_is_remaining_work_times_measured_times_over_running_tasks():
+    """'남은 진행률이랑 시간을 알고 싶은거야' (11-15): measured seconds only, '?' before anything is measured."""
+    st = {"total": 10, "updates": (100, 400), "eval": (2, 6), "running": 2, "sec_update": 60.0, "sec_eval": 1800.0}
+    plan = {"eval": (6, 6, "exact")}
+    # 300 updates x 60 s + 4 evaluations x 1800 s = 25,200 s over 2 running tasks = 12,600 s
+    assert status.time_left(st, plan) == "~3h30m"
+    assert status.time_left(dict(st, sec_eval=None), plan) == "?"
+    assert status.time_left(dict(st, updates=(400, 400), eval=(6, 6)), plan) == "done"
+    assert status.time_left(dict(st, running=0), plan) == "~7h00m"    # nothing running: one task at a time
