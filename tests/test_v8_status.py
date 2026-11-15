@@ -244,8 +244,8 @@ def test_clean_view_is_compact_with_summary_last(tmp_path):
     top, bottom = text.split("━━ V8 status · ")
     assert "needs attention" not in top
     summary = next(norm(line) for line in bottom.splitlines() if line.startswith(" OLMo MATH "))
-    assert summary.startswith("OLMo MATH training ░░░░░░░░░░░░ 1% 2% (1/55-60) 0% (0/50-55) 0% (0/≥55) ") and summary.endswith("37/8,125+")
-    assert "cells to fill: OLMo MATH ≥160 (train 55-60 + ext 50-55 + eval ≥55)" in bottom
+    assert summary.startswith("OLMo MATH training ░░░░░░░░░░░░ 1% 1/60 0/55 0/55 ") and summary.endswith("37/8,125+")
+    assert "cells to fill: OLMo MATH 170 (train 60 + ext 55 + eval 55)" in bottom
     header = next(norm(line) for line in bottom.splitlines() if norm(line).startswith("phase progress"))
     assert header == "phase progress train ext eval run wait fail updates"
     assert norm(next(line for line in bottom.splitlines() if line.startswith(" Qwen MBPP"))) == "Qwen MBPP not started"
@@ -650,10 +650,10 @@ def test_cells_to_fill_are_planned_totals_before_and_after_each_phase_is_sealed(
     stats = status.clean_block(base, "olmo_math", now, "viewer", 200)[4]
     plan = stats["planned"]
     assert plan["train"] == (6, 8, "range") and plan["ext"] == (4, 6, "range") and plan["eval"] == (6, None, "at least")
-    assert stats["pct"] == round(100 * 1 / 16)          # 1 done of at least 6 + 4 + 6 cells
+    assert stats["pct"] == round(100 * 1 / 20)          # 1 done of 8 + 6 + 6 cells (the most each phase can still have)
     assert stats["updates"] == (50, 2 * ((75 - 25) + (75 - 25) + (75 - 50)))
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
-    assert "cells to fill: OLMo MATH ≥16 (train 6-8 + ext 4-6 + eval ≥6)" in text
+    assert "cells to fill: OLMo MATH 20 (train 8 + ext 6 + eval 6)" in text
     assert "exact when each phase is planned" in text
     for queue in (q, m):
         for phase in ("train", "extension", "evaluation"):
@@ -762,11 +762,11 @@ def test_extension_and_evaluation_cells_follow_each_task_through_its_states(tmp_
     job("x25", "done", extension, "extension"); run(R + "bank_sr_t025.bb22", 400)
     job("e1", "done", e275, "evaluation"); job("e2", "running", e400, "evaluation", "h-ev.1")
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
-    assert cells(text, "ext")["SR25"] == "✓" and cells(text, "eval")["SR25"] == "▶400"   # 275 done, the one at update 400 running
+    assert cells(text, "ext")["SR25"] == "✓" and cells(text, "eval")["SR25"] == "1/2▶400"   # 275 done, the one at update 400 running
     assert any(" s5 eval SR25 ext@400 " in line for line in text.splitlines() if line.startswith(" ▶ h-ev"))
     job("e2", "done", e400, "evaluation")
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
-    assert cells(text, "eval")["SR25"] == "✓"
+    assert cells(text, "eval")["SR25"] == "2/2"   # several tasks: always finished/total
     stats = status.clean_block(base, "olmo_math", now, "viewer", 220)[4]
     assert stats["ext"] == (1, 1) and stats["eval"] == (2, 2) and stats["running"] == 0
 
@@ -846,7 +846,7 @@ def test_eval_grid_cell_agrees_with_counts_below(tmp_path):
     rows = {line.split()[0]: line.split()[1:] for line in grid.splitlines()[grid.splitlines().index(next(
         l for l in grid.splitlines() if l.startswith(' eval'))) + 1:] if line.strip()[:1].isdigit()}
     assert "2/3" in rows["5"] and "○" not in rows["5"], rows
-    assert "▶50" in rows["6"] and rows["6"][rows["6"].index("▶50") + 1] == "1/3✗", rows
+    assert "1/3▶50✗" in rows["6"], rows
 
 
 def test_native_crash_stack_at_the_end_of_the_task_log_is_found(tmp_path):
@@ -882,9 +882,9 @@ def test_green_running_cells_add_up_to_the_run_count(tmp_path):
     lines = grid.splitlines()
     i = next(k for k, l in enumerate(lines) if l.startswith(" eval"))
     rows = {l.split()[0]: l.split()[1:] for l in lines[i + 1:] if l.strip()[:1].isdigit()}
-    assert "▶×2" in rows["5"] and "1/3" in rows["5"], rows
-    assert "▶25" in rows["6"] and "1/2" in rows["6"], rows
-    green = sum(int(c[2:]) if c.startswith("▶×") else 1 for r in rows.values() for c in r if c.startswith("▶"))
+    assert "1/3▶×2" in rows["5"], rows
+    assert "1/2▶25" in rows["6"], rows
+    green = sum(int(c.split("▶×")[1]) if "▶×" in c else 1 for r in rows.values() for c in r if "▶" in c)
     assert green == status.clean_block(base, "olmo_mbpp", now, "viewer", 200)[4]["running"] == 3
     assert status.mark_style("✓") == "done" and status.mark_style("1/3") == "done" and status.mark_style("▶×2") == "run"
     assert status.mark_style("○") is None and status.STYLE["done"] != status.STYLE["run"]

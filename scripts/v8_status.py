@@ -829,7 +829,7 @@ LEGEND_LINES = (   # user 11-13 'status 뭐가 뭔지 모르겠어', '하얀색�
     "  train=학습, ext=예산 연장 학습, eval=평가. eval 칸 하나에는 그 branch의 평가가 여러 개 들어 있음",
     "  초록 ▶ = 지금 도는 작업 (초록만 실행 중). ▶120은 120 업데이트째, eval ▶275는 275 업데이트를 평가 중",
     "       ▶×2 = 그 칸에서 2개가 동시에 도는 중. 초록 ▶ 개수(×k는 k개)를 다 더하면 아래 run 숫자와 같음",
-    "  파랑 ✓ = 그 칸 작업이 다 끝남. 파랑 2/3 = 3개 중 2개 끝남 (나머지는 대기·실패)",
+    "  파랑 ✓ = 작업 1개짜리 칸이 끝남. 작업이 여러 개인 칸은 늘 끝난 수/전체 수 (2/3 = 3개 중 2개 끝남, 3/3 = 다 끝남)",
     "  흰색 ○ = 실행 대기. 빈 GPU 노드가 생기면 바로 시작함. 흐린 · = 앞 단계가 안 끝나 아직 만들 수 없음",
     "  빨강 ✗ = 실패 (자동 재시도를 기다리거나 막힘, 이유는 아래 줄). 노랑 ! = 실패 기록이지만 학습 오류 아님",
     "  노랑 ⏸ = 끊겨서 다시 돌릴 작업. 노랑 ? = 실행 중으로 적혔는데 맡은 노드가 없음. none = 그 칸엔 작업이 없음",
@@ -985,15 +985,17 @@ def planned_cells(queue, cohort, rows):
     return out
 
 
-def cells_text(done, plan):
+def phase_total(plan, have=0):
+    """One number for a phase's total tasks (user 11-15: '30/59 이런거만 말이 되는거지', no ≥ and no ranges):
+    the sealed count, otherwise the most the plan can still produce, and never fewer than the tasks that exist."""
     lo, hi, kind = plan
     if kind == 'exact':
-        return f"{done}/{lo}"
-    if kind == 'range':
-        return f"{done}/{lo}" if lo == hi else f"{done}/{lo}-{hi}"
-    if kind == 'at least':
-        return f"{done}/≥{lo}"
-    return f"{done}/?"
+        return lo
+    return max(have, hi if hi is not None else lo)
+
+
+def cells_text(done, plan, have=0):
+    return f"{done}/{phase_total(plan, have)}"
 
 
 def branch_column(arm):
@@ -1077,40 +1079,20 @@ def clean_block(base, cohort, now, host, width):
                'ext': 'none' if sealed['extension'] or not use_plan else '·',
                'eval': 'none' if sealed['evaluation'] or not use_plan else '·'}
     def count_cell(items, kind='ext'):
-        """One grid cell for a branch's ext/eval tasks. It must agree with the done/running/failed counts
-        below the grid (user 11-13: '위 표랑 아래 현황이랑 안맞아'): a running task shows even when another
-        task of the cell failed, and finished tasks show as done/total instead of disappearing behind ○/·."""
+        """One grid cell. One task: its state (✓ done, ▶37 running at update 37, ○ ready, · waiting, ✗ failed,
+        ! marked). Several tasks (a branch's evaluations, one per saved checkpoint): always finished/total first,
+        the same count as the experiment row above (user 11-15: '위 아래 일관성도 없고', '30/59 이런거만 말이 되는거지'),
+        then ▶ and the running one (▶×2 when two run, so green cells add up to the run count) and ✗ if one failed."""
         if not items:
             return missing[kind]
         if len(items) == 1:
             return symbol(items[0])
         done = sum(i['status'] == 'done' for i in items)
-        if done == len(items):
-            return '✓'
         running = [i for i in items if i['status'] == 'running']
-        failed = any(i['status'] == 'failed' for i in items)
-        if running:
-            # user 11-13 '초록색 개수랑 아래 running 개수랑 안맞는다고': a cell with k running tasks says ×k, so the
-            # running tasks drawn in green add up to the run count below
-            many = f"×{len(running)}" if len(running) > 1 else ''
-            if kind == 'eval' and not many:   # the one evaluation running now, by its update ('▶275')
-                head = symbol(running[0])
-            elif kind == 'eval':
-                head = '▶' + many
-            elif kind == 'ext':               # combined progress of the branch's tasks (user: '0/2 가 진행률이냐 ?')
-                head = f"▶{many}{' ' if many else ''}{round(100 * sum(task_fraction(i) for i in items) / len(items))}%"
-            else:
-                head = symbol(running[0]) if not many else '▶' + many
-            return head + (f" {done}/{len(items)}" if done else '') + ('✗' if failed else '')
-        if failed:
-            return f"{done}/{len(items)}✗"
-        if done:
-            return f"{done}/{len(items)}"
-        if all(i['status'] == 'pending' or i.get('lost') for i in items):
-            return '○' if any(i.get('ready') or i.get('lost') for i in items) else '·'
-        mark = ('?' if any(i['status'] in ('unconfirmed', 'stopped') and not i.get('lost') for i in items) else
-                '⏸' if any(i['status'] == 'interrupted' for i in items) else '')
-        return f"0/{len(items)}" + mark
+        failed = any(i['status'] == 'failed' and i.get('failure_real') is not False for i in items)
+        marked = any(i['status'] == 'failed' and i.get('failure_real') is False for i in items)
+        run = (symbol(running[0]) if len(running) == 1 else f"▶×{len(running)}") if running else ''
+        return f"{done}/{len(items)}" + run + ('✗' if failed else '') + ('!' if marked else '')   # no space: cells are columns
     cols = list(train_cols)
     for c in sorted({c for _, c in ext} | {c for _, c in ev}, key=col_key):
         if c not in cols:
@@ -1255,7 +1237,9 @@ def clean_block(base, cohort, now, host, width):
             reached = r['total'] if r['status'] == 'done' else (r['done'] if isinstance(r.get('done'), int) else start)
             done_updates += max(0, min(reached, r['total']) - start)
     phases_known = {k: v for k, v in planned_tasks.items() if not k.startswith('_')}
-    planned_total = max(total, sum(v[0] for v in phases_known.values())) if phases_known else total
+    have_n = {'train': len(trains), 'ext': len(exts), 'eval': len(evals)}
+    # the same totals the train/ext/eval cells show, so the bar and the cells agree (user 11-15: '위 아래 일관성도 없고')
+    planned_total = max(total, sum(phase_total(v, have_n.get(k, 0)) for k, v in phases_known.items())) if phases_known else total
     work_done = sum(task_fraction(r) for r in rows)        # partial progress of running tasks counts
     pct = min(100, round(100 * work_done / planned_total)) if planned_total else 0
     def stage_pct(items, key):
@@ -1566,7 +1550,8 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
         filled = min(12, round(12 * st['pct'] / 100))
         done_u, planned = st['updates']
         plan = {k: v for k, v in (st.get('planned') or {}).items() if not k.startswith('_')}
-        cells = {k: f"{(st.get('stage_pct') or {}).get(k, 0)}% ({cells_text(st.get(k, (0, 0))[0], plan.get(k, (st.get(k, (0, 0))[1], st.get(k, (0, 0))[1], 'exact')))})"
+        cells = {k: cells_text(st.get(k, (0, 0))[0], plan.get(k, (st.get(k, (0, 0))[1], st.get(k, (0, 0))[1], 'exact')),
+                               st.get(k, (0, 0))[1])
                  for k in ('train', 'ext', 'eval')}
         table.append(dict(name=st['label'], phase=st['phase'], progress=f"{'█' * filled}{'░' * (12 - filled)} {st['pct']:>3}%",
                           train=cells['train'], ext=cells['ext'], eval=cells['eval'],
@@ -1600,11 +1585,9 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
         if not plan:
             continue
         plan = {k: v for k, v in plan.items() if not k.startswith('_')}
-        lo = sum(v[0] for v in plan.values())
-        exact = all(v[2] == 'exact' for v in plan.values())
-        hi = None if any(v[1] is None for v in plan.values()) else sum(v[1] for v in plan.values())
-        total = f"{lo}" if exact else f"{lo}-{hi}" if hi is not None and hi != lo else f"≥{lo}" if hi is None else f"{lo}"
-        parts = ' + '.join(f"{k} {cells_text(0, v).split('/', 1)[1]}" for k, v in plan.items())
+        each = {k: phase_total(v, (st.get(k) or (0, 0))[1]) for k, v in plan.items()}
+        total = f"{sum(each.values())}"
+        parts = ' + '.join(f"{k} {n}" for k, n in each.items())
         fill.append(f"{st['label']} {total} ({parts})")
     auto = [st for st in stats if st.get('auto_failed')]
     if auto:
