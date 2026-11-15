@@ -442,6 +442,115 @@ def forced_termination(attempt,rc,log):
     return dict(signals=signals,cause='forced_signal_cause_unconfirmed',evidence='process exit or signal-only rank report')
 
 
+CRASH_RECORD='crash-fields-v1'
+_FRAME=re.compile(r'^\s+File "(?P<file>[^"]+)", line (?P<line>\d+) in (?P<func>.+?)\s*$')
+_C_FRAME=re.compile(r'^\s+(?:Binary file "(?P<binary>[^"]+)"|(?P<cfile>\S+\.so[.\d]*))(?:, at (?P<at>.+?))?\s*$')
+CRASH_CLASSES=(  # (class, signals or None for any, log text); first match wins
+    ('nccl_watchdog_abort',(6,),('Watchdog caught collective operation timeout','ProcessGroupNCCL\'s watchdog',
+                                  'NCCL watchdog','Some NCCL operations have failed or timed out')),
+    ('cuda_error',None,('CUDA error:','cudaErrorIllegalAddress','an illegal memory access','CUBLAS_STATUS_','CUDNN_STATUS_')),
+    ('gpu_out_of_memory',None,('CUDA out of memory','OutOfMemoryError')),
+    ('nccl_error',None,('NCCL error','ncclUnhandledCudaError','ncclSystemError','ncclInternalError')),
+    ('shared_memory_bus_error',(7,),('/dev/shm','shm_open','Bus error')),
+    ('cpp_exception_abort',(6,),('terminate called after throwing','std::bad_alloc','c10::Error')),
+    ('host_killed',(9,),('',)),
+)
+
+
+def crash_frames(text,limit=12):
+    """Top frames of the crashing thread from a faulthandler dump: 'func (file:line)' (Python) and
+    'binary at symbol' (C stack, Python 3.14+), most recent call first."""
+    lines=str(text or '').splitlines()
+    start=next((i for i,l in enumerate(lines) if l.startswith('Current thread')),None)
+    if start is None:start=next((i for i,l in enumerate(lines) if l.startswith('Thread ')),None)
+    if start is None:start=next((i for i,l in enumerate(lines) if 'Fatal Python error' in l),0)
+    frames=[]
+    for line in lines[start+1:]:
+        if frames and (line.startswith('Thread ') or line.startswith('Current thread') or line.startswith('Extension modules')):break
+        match=_FRAME.match(line)
+        if match:frames.append(f"{match['func']} ({match['file']}:{match['line']})")
+        elif 'C stack' in line or 'Binary file' in line:
+            c=_C_FRAME.match(line)
+            if c and (c['binary'] or c['cfile']):frames.append(f"[C] {Path(c['binary'] or c['cfile']).name}"+(f" at {c['at']}" if c['at'] else ''))
+        if len(frames)>=limit:break
+    return frames
+
+
+def _tail(path,size=131072):
+    try:
+        with Path(path).open('rb') as handle:
+            handle.seek(max(0,Path(path).stat().st_size-size))
+            return handle.read().decode(errors='replace')
+    except OSError:return ''
+
+
+def crash_fields(root,attempt,rc,task=None):
+    """exit code/signal, stage, top native frames and a cause class for one failed attempt.
+    Reads only this attempt's files: child-failure summary, rank progress, fault dumps, log tail, stacks."""
+    root=Path(root);aid=attempt.get('id') or '';progress=root/'progress'/aid
+    failures=[f for f in (attempt.get('child_failure') or {}).get('failures',[]) if isinstance(f,dict)]
+    fault=fatal_native_failure(dict(attempts=[attempt]))
+    signal_number=fault['signal'] if fault else (-rc if type(rc) is int and rc<0 else rc-128 if type(rc) is int and 128<rc<160 else None)
+    if signal_number is None:signal_number=next((f['signal'] for f in failures if f.get('signal')),None)
+    crashed=next((f for f in failures if f.get('signal')==signal_number and f.get('rank') is not None),None) or \
+            next((f for f in failures if f.get('rank') is not None),None)
+    stage=dict(stage=None,rank=None,source=None)
+    if crashed and isinstance(crashed.get('last_progress'),dict):
+        stage=dict(stage=crashed['last_progress'].get('stage'),rank=crashed.get('rank'),source='crashed rank')
+    else:
+        newest=None
+        for path in sorted(progress.glob('rank-*.json')) if progress.is_dir() else ():
+            if not re.fullmatch(r'rank-\d+\.json',path.name):continue
+            try:event=read(path)
+            except (OSError,ValueError):continue
+            if isinstance(event,dict) and (newest is None or (event.get('updated') or 0)>(newest[1].get('updated') or 0)):
+                newest=(path,event)
+        if newest:stage=dict(stage=newest[1].get('stage'),rank=int(newest[0].stem.split('-')[1]),source='latest rank record')
+    stacks=[];sources=[]
+    if crashed and crashed.get('native_python_stack'):
+        stacks.append(crashed['native_python_stack']);sources.append(crashed.get('native_fault_log'))
+    for path in sorted(progress.glob('native-fault-rank-*.log')) if progress.is_dir() else ():
+        if str(path) not in sources:
+            text=_tail(path,65536)
+            if 'Fatal Python error' in text:stacks.append(text);sources.append(str(path))
+    log=root/'logs'/(aid+'.log');log_text=_tail(log)
+    if 'Fatal Python error' in log_text:
+        stacks.append(log_text[log_text.rfind('Fatal Python error'):]);sources.append(str(log))
+    label=(task or {}).get('task_id') or (task or {}).get('run_id')
+    started=attempt.get('started_at') or 0
+    for path in sorted((root/'stacks').glob(f'{label}-rank*.txt')) if label and (root/'stacks').is_dir() else ():
+        try:
+            if path.stat().st_mtime<started:continue
+        except OSError:continue
+        text=_tail(path,65536)
+        if 'Fatal Python error' in text:
+            stacks.append(text[text.rfind('Fatal Python error'):]);sources.append(str(path))
+    frames=next((f for f in (crash_frames(t) for t in stacks) if f),[])
+    crash_class=None
+    for name,signals,needles in CRASH_CLASSES:
+        if signals is not None and signal_number not in signals:continue
+        if any(n and n in log_text for n in needles) or (signals and needles==('',)):crash_class=name;break
+    if crash_class is None and signal_number:crash_class='native_crash_unclassified'
+    notable=[l.strip()[:300] for l in log_text.splitlines()
+             if re.search(r'Fatal Python error|Segmentation fault|Aborted|terminate called|CUDA error|NCCL (?:WARN|error)|Xid|'
+                          r'watchdog|illegal memory|out of memory|exitcode\s*:\s*-\d+|ChildFailedError|Bus error',l,re.I)][-12:]
+    try:signal_name=signal.Signals(signal_number).name if signal_number else None
+    except ValueError:signal_name=f'signal {signal_number}'
+    return dict(record=CRASH_RECORD,signal=signal_number,signal_name=signal_name,stage=stage['stage'],stage_rank=stage['rank'],
+                stage_source=stage['source'],crashed_rank=crashed.get('rank') if crashed else None,
+                crash_frames=frames,crash_class=crash_class,crash_log_lines=notable,
+                crash_evidence=[s for s in dict.fromkeys(sources) if s])
+
+
+def crash_line(attempt):
+    env=attempt.get('env') or {};torch=(env.get('torch') or {})
+    return (f"CRASH exit={attempt.get('exit_code')} {attempt.get('signal_name') or ''} host={attempt.get('host')} "
+            f"gpus={','.join(attempt.get('gpus') or [])} stage={attempt.get('stage') or 'unrecorded'} "
+            f"class={attempt.get('crash_class')} python={env.get('executable') or '?'} torch={torch.get('version') or '?'}"
+            f"/cuda{torch.get('cuda') or '?'} transformers={(env.get('packages') or {}).get('transformers') or '?'} "
+            f"frames: {' <- '.join((attempt.get('crash_frames') or [])[:4]) or 'none recorded'}")
+
+
 def primary_results_ready(cohort_root):
     """Small immutable receipts only; never scan model/checkpoint bodies in the claim gate."""
     root=Path(cohort_root);queue=root/'.multi-node'
@@ -1306,10 +1415,13 @@ class Pool:
             return 'claimed',(lease,path.stem,job['task'],attempt)
         return 'waiting',None
 
-    def finish(self,key,rc,runtime,stop,node_error=None):
+    def finish(self,key,rc,runtime,stop,node_error=None,preflight=None):
         """Keep original rank faults; refund node-local faults and intentional interruptions."""
         path=self.root/'jobs'/(key+'.json');job=read(path);attempt=job['attempts'][-1]
         attempt.update(exit_code=rc,ended_at=time.time());done=False
+        if preflight is not None:
+            attempt['preflight']=preflight
+            if preflight.get('env'):attempt['env']=preflight['env']
         failure_path=self.root/'progress'/job['attempts'][-1]['id']/'child-failure.json'
         if failure_path.is_file():
             try:
@@ -1341,6 +1453,10 @@ class Pool:
                                                            task=key,attempt=job['attempts'][-1]['id'],at=time.time()))
             atomic(self.root/'state.json',state)
         if job['state'] in ('failed','interrupted'):self.arm_evaluation_recovery(job,attempt.get('worker'))
+        if rc not in (0,75,None) or fatal_native_failure(dict(attempts=[attempt])):
+            try:attempt.update(crash_fields(self.root,attempt,rc,job.get('task')))
+            except Exception as exc:attempt['crash_record_error']=f'{type(exc).__name__}: {exc}'
+            print('[v8] '+crash_line(attempt),flush=True)
         atomic(path,job)
         record_node_native_fault(self,runtime,attempt)
         return job['state']
@@ -1555,17 +1671,17 @@ def unfinished_cohort(pairs,order,*,check_leases=True):
 
 
 def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_gate=None,
-                     max_attempts=MAX_ATTEMPTS,retry_delay=RETRY_DELAY,automatic_retry=True,cohort_order=()):
+                     max_attempts=MAX_ATTEMPTS,retry_delay=RETRY_DELAY,automatic_retry=True,cohort_order=(),preflight=False):
     # Only finished inspection leases enter this stack. A still-running scan
     # keeps its own lease until its thread exits, even during worker retirement.
     with ExitStack() as offer_cleanup:
         return _worker_loop_many(pairs,worker,stop,poll=poll,device_fds=device_fds,retry=retry,gpu_gate=gpu_gate,
             max_attempts=max_attempts,retry_delay=retry_delay,automatic_retry=automatic_retry,
-            cohort_order=cohort_order,offer_cleanup=offer_cleanup)
+            cohort_order=cohort_order,offer_cleanup=offer_cleanup,preflight=preflight)
 
 
 def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
-                     max_attempts,retry_delay,automatic_retry,cohort_order,offer_cleanup):
+                     max_attempts,retry_delay,automatic_retry,cohort_order,offer_cleanup,preflight=False):
     """Schedule within cohort_order; an empty order retains archival fair dispatch."""
     if not pairs:raise ValueError('At least one cohort is required')
     if stop.is_set():return 75
@@ -2055,9 +2171,18 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                                method=task.get('method_id'),log=str(log),order=list(cohort_order))
             print(f'[{worker}] {time.strftime("%Y-%m-%d %H:%M:%S")} {cohort(pool)} {task["kind"]} '
                   f'{task.get("method_id",task.get("task_id"))} seed={task.get("training_seed")} log={log}',flush=True)
-            node_error=None
+            node_error=None;checked=None
             try:
                 try:
+                    if preflight and not stop.is_set() and isinstance(getattr(runtime,'python',None),str):
+                        # Before every launch (user 11-16 '환경 문제인지 torch 버전 문제인지'): the cohort's own Python,
+                        # its versions against this queue and the model family, CUDA on these GPUs, free GPUs, /dev/shm.
+                        diagnostic.publish('PREFLIGHT',cohort(pool),'checking Python/torch/CUDA/GPUs/shm before start',task=key)
+                        checked=PREFLIGHT_CHECK(cohort(pool),runtime.python,list(getattr(runtime,'gpus',()) or ()),pool.binding)
+                        print(f'[{worker}] '+preflight_line(checked),flush=True)
+                        if not checked.get('ok'):
+                            raise PreflightFailed('preflight failed; task not started on this node, another node takes it: '+
+                                                  '; '.join(checked.get('failures',[])))
                     rc=75 if stop.is_set() else runtime.execute(task,pool.root/'tasks'/(key+'.json'),lease.fd,stop,device_fds,attempt)
                 except Exception as exc:
                     # Launch-side faults (admission, node verification, dead actor, missing interpreter) happen on
@@ -2069,7 +2194,7 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                 while recorded is None:
                     try:
                         with pool.control() as control:
-                            if control is not None:recorded=pool.finish(key,rc,runtime,stop,node_error=node_error)
+                            if control is not None:recorded=pool.finish(key,rc,runtime,stop,node_error=node_error,preflight=checked)
                     except NODE_LOCAL as exc:
                         node_error=node_error or f'{type(exc).__name__}: {exc}';recorded='unrecorded'
                         print(f'[{worker}] could not record the attempt ({exc}); the released lease lets another '
@@ -2260,6 +2385,284 @@ def gpu_lease_names(gpus,inventory,host=None):
     if inventory:return [(row['uuid'],hashlib.sha256(row['uuid'].encode()).hexdigest()+'.lock') for row in inventory]
     host=host or socket.gethostname()
     return [(f'{host}:{gpu}',digest([host,gpu])+'.lock') for gpu in gpus]
+
+
+PREFLIGHT_POLICY='node-preflight-before-each-task-v1'
+# Recorded (not part of the queue binding): native libraries whose ABI must match torch on this node.
+PREFLIGHT_PACKAGES=('torch','transformers','peft','numpy','math-verify','fla-core','flash-linear-attention','triton',
+                    'flash-attn','accelerate','tokenizers','safetensors','sympy','vllm','causal-conv1d',
+                    'nvidia-nccl-cu12','nvidia-cudnn-cu12','nvidia-cublas-cu12','nvidia-cuda-runtime-cu12')
+PREFLIGHT_ENV=('CUDA_VISIBLE_DEVICES','LD_LIBRARY_PATH','LD_PRELOAD','PYTHONPATH','PYTHONHOME','CUDA_HOME','CUDA_PATH',
+               'PYTORCH_CUDA_ALLOC_CONF','TORCH_NCCL_ASYNC_ERROR_HANDLING','TORCH_NCCL_BLOCKING_WAIT','TRITON_CACHE_DIR',
+               'HF_HOME','TRANSFORMERS_CACHE','OMP_NUM_THREADS','TOKENIZERS_PARALLELISM','VIRTUAL_ENV','CONDA_PREFIX')
+_PREFLIGHT_SMOKE=r"""
+import faulthandler,json,os,sys,time
+faulthandler.enable(all_threads=True)
+import importlib.metadata as md
+out=dict(executable=sys.executable,python_version=sys.version,prefix=sys.prefix,packages={},imports={})
+for name in json.loads(sys.argv[1]):
+    try:out['packages'][name]=md.version(name)
+    except Exception:out['packages'][name]=None
+def libraries():
+    found=set()
+    try:
+        for line in open('/proc/self/maps'):
+            path=line.split()[-1] if line.strip() else ''
+            if any(k in path for k in ('libnccl','libcudnn','libcublas','libcudart','libcuda.so','libnvrtc','libc10_cuda')):found.add(path)
+    except OSError:pass
+    return sorted(found)
+try:
+    import torch
+    t=dict(version=torch.__version__,cuda=torch.version.cuda,cxx11_abi=bool(getattr(torch._C,'_GLIBCXX_USE_CXX11_ABI',False)),
+           file=torch.__file__)
+    try:t['cudnn']=torch.backends.cudnn.version()
+    except Exception as exc:t['cudnn']='error: '+str(exc)
+    try:
+        v=torch.cuda.nccl.version();t['nccl']='.'.join(map(str,v)) if isinstance(v,tuple) else str(v)
+    except Exception as exc:t['nccl']='error: '+str(exc)
+    out['torch']=t
+    if sys.argv[2]=='1':
+        devices=[]
+        out['cuda']=dict(available=torch.cuda.is_available(),device_count=torch.cuda.device_count(),devices=devices)
+        for i in range(torch.cuda.device_count()):
+            free,total=torch.cuda.mem_get_info(i)
+            a=torch.ones((512,512),device=f'cuda:{i}',dtype=torch.float32)
+            value=float((a@a).sum().item());torch.cuda.synchronize(i)
+            devices.append(dict(index=i,name=torch.cuda.get_device_name(i),capability=list(torch.cuda.get_device_capability(i)),
+                                free_mib=free>>20,total_mib=total>>20,matmul_ok=value==512.0**3))
+            del a
+        out['libraries']=libraries()
+except BaseException as exc:out['error']=f'{type(exc).__name__}: {exc}'
+for name in json.loads(sys.argv[3]):
+    try:__import__(name);out['imports'][name]='ok'
+    except BaseException as exc:out['imports'][name]=f'{type(exc).__name__}: {exc}'
+print('V8PREFLIGHT '+json.dumps(out),flush=True)
+"""
+
+
+def _version_tuple(text):
+    parts=[]
+    for piece in re.split(r'[.+-]',str(text or '')):
+        if not piece.isdigit():break
+        parts.append(int(piece))
+    return tuple(parts)
+
+
+def cohort_requirements(cohort):
+    """model_matrix.py's loader minimums per model family: (package, minimum or None for 'installed', why)."""
+    name=str(cohort or '').lower();rows=[('torch','2.3','requirements.txt torch>=2.3')]
+    if name.startswith('olmo'):rows.append(('transformers','4.57.0','OLMo-3 needs transformers>=4.57'))
+    if name.startswith('qwen'):
+        rows+=[('transformers','5','Qwen3.5 needs transformers>=5 (qwen3_5 classes)'),
+               ('fla-core',None,'Qwen3.5 DeltaNet kernels need fla-core (seed runs pinned 0.5.2)')]
+    if name.startswith('gemma'):rows.append(('torch','2.5','Gemma needs torch>=2.5'))
+    return rows
+
+
+def cohort_imports(cohort):
+    name=str(cohort or '').lower()
+    return ['transformers','fla'] if name.startswith('qwen') else ['transformers']
+
+
+def driver_info(run=subprocess.run):
+    """(driver version, max CUDA version) from nvidia-smi, or (None, None)."""
+    try:
+        result=run(['nvidia-smi'],capture_output=True,text=True,timeout=30)
+    except (OSError,subprocess.SubprocessError):return None,None
+    text=result.stdout or ''
+    driver=re.search(r'Driver Version:\s*([\d.]+)',text);cuda=re.search(r'CUDA Version:\s*([\d.]+)',text)
+    return (driver.group(1) if driver else None),(cuda.group(1) if cuda else None)
+
+
+def gpu_health(gpus,run=subprocess.run):
+    """Uncorrected volatile ECC errors and pending row remaps per allocated GPU (missing fields: None)."""
+    rows={}
+    for field in ('ecc.errors.uncorrected.volatile.total','remapped_rows.pending'):
+        try:
+            result=run(['nvidia-smi','--id='+','.join(gpus),'--query-gpu=index,'+field,'--format=csv,noheader,nounits'],
+                       capture_output=True,text=True,timeout=30)
+        except (OSError,subprocess.SubprocessError):continue
+        if result.returncode:continue
+        for line in result.stdout.strip().splitlines():
+            parts=[x.strip() for x in line.split(',')]
+            if len(parts)==2:rows.setdefault(parts[0],{})[field]=parts[1]
+    return rows
+
+
+def process_owner(pid):
+    info=dict(pid=pid)
+    try:info['cmdline']=Path(f'/proc/{pid}/cmdline').read_bytes().replace(b'\0',b' ').decode(errors='replace').strip()[:300]
+    except OSError:info['cmdline']=None
+    try:
+        for line in Path(f'/proc/{pid}/status').read_text().splitlines():
+            if line.startswith('Uid:'):
+                import pwd
+                uid=int(line.split()[1])
+                try:info['user']=pwd.getpwuid(uid).pw_name
+                except KeyError:info['user']=str(uid)
+            elif line.startswith('State:'):info['state']=line.split(':',1)[1].strip()
+    except OSError:pass
+    return info
+
+
+def host_resources():
+    import resource
+    out={}
+    try:
+        st=os.statvfs('/dev/shm');out['shm_free_mib']=st.f_bavail*st.f_frsize>>20;out['shm_total_mib']=st.f_blocks*st.f_frsize>>20
+    except OSError as exc:out['shm_error']=str(exc)
+    try:
+        info={l.split(':')[0]:int(l.split()[1]) for l in Path('/proc/meminfo').read_text().splitlines() if l.split()[1:2] and l.split()[1].isdigit()}
+        out['mem_available_mib']=info.get('MemAvailable',0)>>10;out['mem_total_mib']=info.get('MemTotal',0)>>10
+    except (OSError,ValueError,IndexError) as exc:out['meminfo_error']=str(exc)
+    limits={}
+    for name in ('NOFILE','MEMLOCK','STACK','NPROC','CORE','AS'):
+        key=getattr(resource,'RLIMIT_'+name,None)
+        if key is None:continue
+        soft,hard=resource.getrlimit(key)
+        limits[name.lower()]=['unlimited' if v==resource.RLIM_INFINITY else v for v in (soft,hard)]
+    out['ulimit']=limits
+    try:out['load_average']=list(os.getloadavg())
+    except OSError:pass
+    return out
+
+
+def child_like_environment(gpus):
+    """The environment a task child gets for imports: this node's, the trainer roots first on PYTHONPATH."""
+    env=dict(os.environ,CUDA_VISIBLE_DEVICES=','.join(gpus),PYTHONDONTWRITEBYTECODE='1')
+    code=os.environ.get('V8_CODE_ROOT')
+    if code:
+        code=str(Path(code).resolve())
+        env['PYTHONPATH']=os.pathsep.join(dict.fromkeys(filter(None,(code,code+'/src',*env.get('PYTHONPATH','').split(os.pathsep)))))
+    return env
+
+
+def node_preflight(cohort,python,gpus,expected=None,*,run=subprocess.run,inventory=gpu_inventory,processes=gpu_processes,
+                   resources=host_resources,driver=driver_info,health=gpu_health,sleep=time.sleep,clock=time.monotonic):
+    """Checks before one task launch on this node; never changes the queue. Returns the record that goes into the
+    attempt ('preflight', with 'env'). ok=False means: do not start the task here (another node takes it)."""
+    started=clock();failures=[];warnings=[];gpus=[str(g) for g in gpus]
+    limit=float(os.environ.get('V8_PREFLIGHT_SMOKE_SECONDS','300'))
+    env=dict(host=socket.gethostname(),gpus=gpus,cohort=cohort,executable=python,
+             variables={k:os.environ.get(k) for k in PREFLIGHT_ENV if os.environ.get(k) is not None})
+    # 1. GPUs: present, free (a leftover/foreign process waits up to V8_PREFLIGHT_GPU_WAIT seconds), healthy.
+    wait=float(os.environ.get('V8_PREFLIGHT_GPU_WAIT','60'));rows=inventory(gpus);waited=0
+    while rows and any(r['used_mib']>BUSY_MIB for r in rows) and waited<wait:
+        sleep(5);waited+=5;rows=inventory(gpus)  # a just-finished task's memory is often released within seconds
+    if rows is None:warnings.append('nvidia-smi did not report the allocated GPUs; GPU checks skipped')
+    else:
+        env['gpu_inventory']=rows
+        uuids={r['uuid'] for r in rows};apps=[]
+        for line in processes():
+            parts=[x.strip() for x in line.split(',')]
+            if len(parts)>=3 and parts[1] in uuids and parts[0].isdigit():
+                apps.append(dict(process_owner(int(parts[0])),gpu_uuid=parts[1],used_mib=parts[2]))
+        env['gpu_processes']=apps
+        busy=[r for r in rows if r['used_mib']>BUSY_MIB]
+        if busy:
+            failures.append('GPUs still occupied before start: '+', '.join(f"GPU {r['index']} {r['used_mib']} MiB" for r in busy)+
+                            '; processes: '+('; '.join(f"pid {a['pid']} {a.get('user','?')} {a['used_mib']} MiB {a.get('cmdline') or ''}"[:200] for a in apps)
+                                             or 'none listed (another container or a dying process)'))
+        elif apps:warnings.append(f'{len(apps)} process(es) hold small memory on these GPUs: '+
+                                  ', '.join(f"pid {a['pid']} {a.get('user','?')}" for a in apps))
+        for index,values in health(gpus).items():
+            env.setdefault('gpu_health',{})[index]=values
+            for field,value in values.items():
+                if value.isdigit() and int(value)>0:
+                    failures.append(f'GPU {index} reports {field}={value} (hardware memory errors; use another node)')
+    d,cuda=driver();env.update(driver_version=d,driver_cuda=cuda)
+    # 2. Host: /dev/shm (NCCL shared-memory transport), memory, limits.
+    host=resources();env['host_resources']=host
+    min_shm=float(os.environ.get('V8_PREFLIGHT_MIN_SHM_MIB','1024'))
+    if 'shm_free_mib' in host and host['shm_free_mib']<min_shm:
+        failures.append(f"/dev/shm has {host['shm_free_mib']} MiB free (< {min_shm:g}); NCCL shared-memory transport "
+                        'can crash (SIGBUS/SIGSEGV). Free /dev/shm or start the container with a larger --shm-size')
+    elif 'shm_free_mib' in host and host['shm_free_mib']<8192:warnings.append(f"/dev/shm only {host['shm_free_mib']} MiB free")
+    min_mem=float(os.environ.get('V8_PREFLIGHT_MIN_MEM_MIB','8192'))
+    if 'mem_available_mib' in host and host['mem_available_mib']<min_mem:
+        failures.append(f"host MemAvailable {host['mem_available_mib']} MiB (< {min_mem:g}); model loading would be killed or crash")
+    nofile=(host.get('ulimit') or {}).get('nofile')
+    if nofile and nofile[0]!='unlimited' and nofile[0]<4096:warnings.append(f'ulimit -n soft limit {nofile[0]} (< 4096)')
+    for name in ('LD_PRELOAD','LD_LIBRARY_PATH'):
+        if os.environ.get(name):warnings.append(f'{name} is set ({os.environ[name][:200]}); it overrides the venv CUDA/NCCL libraries')
+    # 3. The cohort's own Python: versions, CUDA init and one matmul on every allocated GPU (subprocess).
+    smoke=dict(rc=None)
+    try:
+        result=run([python,'-c',_PREFLIGHT_SMOKE,json.dumps(PREFLIGHT_PACKAGES),'1' if rows else '0',
+                    json.dumps(cohort_imports(cohort))],capture_output=True,text=True,timeout=limit,env=child_like_environment(gpus))
+        smoke['rc']=result.returncode
+        line=next((l for l in reversed(result.stdout.splitlines()) if l.startswith('V8PREFLIGHT ')),None)
+        report=json.loads(line[len('V8PREFLIGHT '):]) if line else {}
+        if result.returncode or not line:smoke['stderr_tail']=(result.stderr or '')[-4000:]
+    except subprocess.TimeoutExpired as exc:
+        report={};smoke.update(rc='timeout',stderr_tail=str(exc.stderr or '')[-4000:] if exc.stderr else '')
+    except OSError as exc:report={};smoke.update(rc='not-started',error=str(exc))
+    env.update({k:report[k] for k in ('python_version','prefix','packages','torch','cuda','libraries','imports') if k in report})
+    env['smoke']=smoke
+    if smoke['rc']=='timeout':failures.append(f'cohort Python {python} did not finish import torch/CUDA init within {limit:g}s')
+    elif smoke['rc']=='not-started':failures.append(f'cohort Python {python} cannot be started: {smoke.get("error")}')
+    elif smoke['rc']:
+        rc=smoke['rc']
+        try:what=signal.Signals(-rc).name if rc<0 else f'exit {rc}'
+        except ValueError:what=f'exit {rc}'
+        frames=crash_frames(smoke.get('stderr_tail'))
+        failures.append(f'cohort Python {python} crashed ({what}) in import torch / CUDA init / one matmul before any task code'+
+                        (': '+' <- '.join(frames[:4]) if frames else ''))
+    if report.get('error'):failures.append(f"cohort Python {python}: {report['error']}")
+    for name,state in (report.get('imports') or {}).items():
+        if state!='ok':failures.append(f'cohort Python {python}: import {name} failed: {state}')
+    cuda_report=report.get('cuda')
+    if rows and cuda_report is not None:
+        if not cuda_report.get('available') or cuda_report.get('device_count')!=len(gpus):
+            failures.append(f"CUDA sees {cuda_report.get('device_count')} device(s) (available={cuda_report.get('available')}) "
+                            f'for CUDA_VISIBLE_DEVICES={",".join(gpus)}')
+        bad=[str(dv['index']) for dv in cuda_report.get('devices',[]) if not dv.get('matmul_ok')]
+        if bad:failures.append('wrong matmul result on CUDA device(s) '+','.join(bad))
+    torch_cuda=_version_tuple((report.get('torch') or {}).get('cuda'));driver_cuda=_version_tuple(cuda)
+    if torch_cuda and driver_cuda:
+        if torch_cuda[:1]>driver_cuda[:1]:
+            failures.append(f'torch is built for CUDA {report["torch"]["cuda"]} but the driver {d} supports CUDA {cuda} only')
+        elif torch_cuda[:2]>driver_cuda[:2]:
+            warnings.append(f'torch CUDA {report["torch"]["cuda"]} is newer than the driver CUDA {cuda} (minor-version '
+                            'compatibility; JIT/PTX kernels such as Triton may fail)')
+    prefix=report.get('prefix') or ''
+    foreign=[l for l in report.get('libraries') or [] if 'libcuda.so' not in l and prefix and not l.startswith(prefix)
+             and '/site-packages/' not in l]
+    if foreign:warnings.append('CUDA/NCCL libraries loaded from outside the venv: '+', '.join(foreign[:6]))
+    # 4. Versions: what this queue was started with and what the model family needs.
+    packages=report.get('packages') or {}
+    if expected and report:
+        if expected.get('python_version') and report.get('python_version')!=expected['python_version']:
+            failures.append(f"Python {str(report.get('python_version')).split()[0]} differs from the queue's "
+                            f"{str(expected['python_version']).split()[0]}")
+        for name,version in (expected.get('packages') or {}).items():
+            if name in packages and packages.get(name)!=version:
+                failures.append(f'{name} {packages.get(name)} differs from the queue runtime {version}')
+    if report:
+        for name,minimum,why in cohort_requirements(cohort):
+            have=packages.get(name)
+            if have is None and name=='fla-core':have=packages.get('flash-linear-attention')
+            if have is None:failures.append(f'{name} is not installed in {python} ({why})')
+            elif minimum and _version_tuple(have)<_version_tuple(minimum):failures.append(f'{name} {have} < {minimum} ({why})')
+    return dict(policy=PREFLIGHT_POLICY,ok=not failures,failures=failures,warnings=warnings,
+                checked_at=time.time(),seconds=round(clock()-started,1),env=env)
+
+
+def preflight_line(result):
+    env=result.get('env') or {};torch=env.get('torch') or {}
+    head=(f"PREFLIGHT {'ok' if result.get('ok') else 'FAILED'} host={env.get('host')} gpus={','.join(env.get('gpus') or [])} "
+          f"python={env.get('executable')} ({str(env.get('python_version') or '?').split()[0]}) torch={torch.get('version')} "
+          f"cuda={torch.get('cuda')} nccl={torch.get('nccl')} driver={env.get('driver_version')}/{env.get('driver_cuda')} "
+          f"transformers={(env.get('packages') or {}).get('transformers')} shm_free={(env.get('host_resources') or {}).get('shm_free_mib')}MiB "
+          f"({result.get('seconds')}s)")
+    return '\n'.join([head,*('  FAIL: '+f for f in result.get('failures',[])),*('  warn: '+w for w in result.get('warnings',[]))])
+
+
+class PreflightFailed(NodeFailure):
+    """This node cannot start the task safely; the attempt is refunded and another node takes it."""
+
+
+PREFLIGHT_CHECK=node_preflight  # module attribute so CPU tests can substitute the node
 
 
 class GpuGate:
@@ -2659,6 +3062,7 @@ def main(argv=None,*,selected_cohorts=None,cohort_order=None):
         return worker_loop_many(pairs,worker,stop,poll=args.poll_seconds,device_fds=tuple(lock.fd for lock in locks),
                                 retry=args.retry_failed,gpu_gate=GpuGate(gpus) if inventory is not None else None,
                                 max_attempts=args.max_attempts,retry_delay=args.retry_delay,
+                                preflight=inventory is not None and os.environ.get('V8_PREFLIGHT','1')!='0',
                                 cohort_order=cohorts if cohort_order is None else cohort_order)
     finally:
         for signum,handler in previous.items():signal.signal(signum,handler)

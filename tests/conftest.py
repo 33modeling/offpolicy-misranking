@@ -20,3 +20,10 @@ def released_pair_trainers(request, monkeypatch):
         monkeypatch.setattr(base, "digest", lambda path:
                             "c3032239f9b9e55f3f2f1c80481b0b1bcac33ece41931e35d1800b662ccbeac9"
                             if path.resolve() == launcher else digest(path))
+
+
+@pytest.fixture(autouse=True)
+def no_v8_node_preflight(monkeypatch):
+    # V8 CPU fixtures fake nvidia-smi; the per-task node preflight would run the real torch/CUDA smoke
+    # in this test Python. Preflight tests call it directly or pass preflight=True.
+    monkeypatch.setenv("V8_PREFLIGHT", "0")
