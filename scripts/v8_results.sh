@@ -3,6 +3,7 @@
 # worker가 collect·analyze를 이미 돌려 둔 analysis/report.md 를 코호트별로 모아 ~/v8-results.txt 에 쓴다.
 # 계산은 하지 않는다(읽기 전용). 결과가 아직 없는 코호트는 그렇다고 적는다.
 set -eu
+export PYTHONDONTWRITEBYTECODE=1
 WORK=${OM_WORK:-${GROUP_VOLUME:-/group-volume}/${OM_USER:-minsoo3.kim}/offpolicy-misranking}
 V8_ROOT=${V8_ROOT:-$WORK/v8}
 OUT=${V8_RESULTS_OUT:-$HOME/v8-results.txt}
