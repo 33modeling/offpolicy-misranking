@@ -602,3 +602,28 @@ sh scripts/run_v8_nodes.sh
   다른 일이 없고 아무것도 돌지 않으면 기존처럼 그 worker 만 끝난다(`blocked_work`).
 - 노드별 격리(같은 GPU 묶음에서 native 충돌 2번이면 그 cohort 일을 받지 않음), 실패 상한(작업당 2), 평가 재생 예산
   기록은 그대로다. 이 규칙은 SIGSEGV 원인 수정이 아니다. 원인은 다음 충돌의 status why 줄(충돌 함수·파일·줄)로 찾는다.
+
+### 작업 시작 전 노드 점검과 충돌 기록 (2026-11-16)
+
+사용자 지시(11-16): "왜 자꾸 fail 이 나는거야 도대체 원인 찾아", "환경 문제인지 torch 버전 문제인지", "exit -11 말이야".
+
+- 작업마다 torchrun 직전에 `node-preflight-before-each-task-v1` 점검을 한다(실제 GPU 노드만, `V8_PREFLIGHT=0` 이면 끔).
+  그 cohort 의 Python 으로 torch·transformers·peft·fla-core·triton·flash-attn·nvidia-nccl 등의 버전, torch CUDA·NCCL·cuDNN,
+  import transformers(Qwen 은 fla 도), 배정 GPU 마다 CUDA 초기화와 행렬곱 1회, 실제로 읽힌 CUDA/NCCL 라이브러리 경로를 본다.
+  큐 binding 의 Python·패키지 버전, 모델 최소 버전(OLMo-3 transformers>=4.57, Qwen3.5 transformers>=5 와 fla-core,
+  Gemma torch>=2.5), GPU 점유(최대 60초 기다린 뒤 점유 프로세스 이름), ECC 오류, 드라이버 CUDA, `/dev/shm` 여유(1 GiB 이상),
+  MemAvailable(8 GiB 이상), ulimit, LD_LIBRARY_PATH/LD_PRELOAD 도 본다.
+- 점검이 실패하면 작업을 시작하지 않는다. 그 시도는 `node_failure`(실패 횟수에 안 셈)로 남고, 이 노드는 그 cohort 를 받지 않으며
+  다른 노드가 이어 받는다. 결과는 터미널에 `PREFLIGHT ok|FAILED ...` 로 찍히고 attempt 의 `preflight`·`env` 에 저장된다.
+- 실패한 attempt 마다 `exit_code`·`signal`·`signal_name`·`host`·`gpus`·`stage`·`stage_rank`·`crashed_rank`·`crash_frames`
+  (충돌 스레드 상위 프레임)·`crash_class`(nccl_watchdog_abort, cuda_error, gpu_out_of_memory, nccl_error, cpp_exception_abort,
+  shared_memory_bus_error, host_killed, native_crash_unclassified)·`crash_log_lines`·`crash_evidence`·`env` 를 남기고
+  `CRASH ...` 한 줄을 찍는다.
+- 이전의 "last stage=unrecorded" 는 기록 결함이었다. 진행 기록(`srgc_rebuttal.progress.record`)에 pid 가 없어 pid 비교가 늘 실패했다.
+  이제 충돌 rank 의 실제 마지막 단계가 나온다.
+- 한 GPU 묶음이 여러 cohort 에서 합쳐 native 충돌 2번이면 모든 cohort 에서 그 GPU 묶음은 일을 받지 않는다(11-15 부터 노드가 여러
+  cohort 를 받기 때문).
+- Triton 커널 캐시는 따로 지정이 없으면 노드 로컬(`$TMPDIR` 또는 `/tmp` 의 `v8-triton-<uid>`)을 쓴다.
+- SIGABRT(-6) 가 `crash_class=nccl_watchdog_abort` 이면 대개 다른 rank 의 먼저 난 충돌·멈춤 때문에 NCCL watchdog 이 프로세스를
+  끝낸 것이다(`TORCH_NCCL_ASYNC_ERROR_HANDLING=1`). 같은 작업의 다른 rank 의 SIGSEGV 가 원인 쪽이다.
+- 이 점검과 기록은 SIGSEGV 원인 수정이 아니다. 원인은 다음 충돌의 `crash_frames`·`env`·`preflight` 로 확인한다.
