@@ -41,6 +41,24 @@ def activate_trainer(environment):
     return code
 
 
+def progress_event(directory,meta):
+    """The crashed rank's last progress record of this invocation.
+
+    srgc_rebuttal.progress.record writes {stage, updated, ...} without a pid, so the former pid-only match
+    reported 'last stage=unrecorded' for every real crash. The progress folder belongs to one attempt; a
+    record is this invocation's when its pid matches, or (no pid) when it is not older than the fault
+    handler of this invocation."""
+    path=Path(directory)/f'rank-{meta["rank"]}.json'
+    try:event=json.loads(path.read_text())
+    except (OSError,ValueError):return None
+    if not isinstance(event,dict):return None
+    if 'pid' in event:return event if event.get('pid')==meta.get('pid') else None
+    started=meta.get('started_at')
+    updated=event.get('updated')
+    if isinstance(started,(int,float)) and isinstance(updated,(int,float)) and updated<started-1:return None
+    return event
+
+
 def child_result(rc,directory,environment,log,label,*,log_offset=0):
     """A real rank fault wins over an interruption marker; never turn errors into success."""
     if not rc:return rc
@@ -79,10 +97,7 @@ def child_result(rc,directory,environment,log,label,*,log_offset=0):
             fatal={'Segmentation fault':11,'Aborted':6,'Bus error':7,'Illegal instruction':4,'Floating point exception':8}
             found=next((n for text,n in fatal.items() if 'Fatal Python error: '+text in stack and n in numbers),None)
             if found is None:continue
-            stage=None;progress=directory/f'rank-{meta["rank"]}.json'
-            if progress.exists():
-                event=json.loads(progress.read_text())
-                if isinstance(event,dict) and event.get('pid')==meta['pid']:stage=event
+            stage=progress_event(directory,meta)
             name=signal.Signals(found).name
             failures.append(dict(rank=meta['rank'],pid=meta['pid'],signal=found,
                 message=f'{name} (exit -{found}): native crash; last stage={stage.get("stage") if stage else "unrecorded"}; '

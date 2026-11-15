@@ -115,6 +115,7 @@ def install(rank):
             return method
         def record(stage,**details):
             if cohort:details.setdefault('cohort',cohort)
+            details.setdefault('pid',os.getpid())  # lets a native crash name this rank's last stage
             scope=state['scope']
             if stage=='policy_update':state['optimizer_steps']+=1
             details.setdefault('optimizer_steps_this_process',state['optimizer_steps'])

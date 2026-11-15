@@ -63,7 +63,9 @@ def install_native_fault_handler():
         key=hashlib.sha256(token.encode()).hexdigest()[:24]
         path=root/f'native-fault-rank-{rank}-{key}.log'
         fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_APPEND|os.O_CLOEXEC,0o660)
-        meta=dict(schema=1,rank=rank,pid=os.getpid(),invocation=token,log=path.name,python=sys.version)
+        meta=dict(schema=1,rank=rank,pid=os.getpid(),invocation=token,log=path.name,python=sys.version,
+                  executable=sys.executable,started_at=time.time(),host=os.uname().nodename,
+                  cuda_visible_devices=os.environ.get('CUDA_VISIBLE_DEVICES'),local_rank=os.environ.get('LOCAL_RANK'))
         os.write(fd,('V8 native fault context '+json.dumps(meta)+'\n').encode())
         target=root/f'native-fault-rank-{rank}.json';temporary=target.with_suffix('.tmp')
         temporary.write_text(json.dumps(meta)+'\n');os.replace(temporary,target)
