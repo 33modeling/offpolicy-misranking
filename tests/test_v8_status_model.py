@@ -297,3 +297,63 @@ def test_every_view_prints_the_same_numbers(tmp_path, monkeypatch):
     monkeypatch.setenv("V8_ROOT", str(base)); monkeypatch.setenv("V8_EVAL_TIME_OUT", str(out))
     v8_eval_time.main()
     assert f"evaluations {row['eval']} done " in out.read_text()
+
+
+def test_old_attempt_without_exit_code_says_what_its_own_files_show(tmp_path):
+    """User 11-16: 'no exit code or error was recorded for this attempt (older record); see its log' told nothing.
+    An attempt written by older code has no exit_code/error; its log, rank progress records, native fault dump and
+    runtime repair receipt still say how it ended, where, and in which stage."""
+    base = tmp_path / "v8"
+    qu = Queue(base)
+    t = qu.train_task(5, "bank_sr_t050", 50)
+    old = {"id": "old1", "worker": "h-old.77", "started_at": NOW - 900, "ended_at": NOW - 600, "gpus": [0, 1, 2, 3]}
+    qu.job(t, "train", "failed", [old])
+    (qu.q / "logs").mkdir(exist_ok=True)
+    (qu.q / "logs" / "old1.log").write_text("step 120\n  exitcode  : -6 (pid: 4242)\n")
+    write(qu.q / "progress" / "old1" / "rank-1.json", {"stage": "policy_update", "updated": NOW - 610})
+    write(qu.q / "progress" / "old1" / "runtime-repair-rank-1.json", {"repairs": {"memory": "x"}})
+    (qu.q / "progress" / "old1" / "native-fault-rank-1-abc.log").write_text(
+        "Fatal Python error: Aborted\n\nCurrent thread 0x1 (most recent call first):\n"
+        '  File "/env/site-packages/torch/optim/adamw.py", line 77 in step\n\n')
+    row = next(r for r in status.collect(base, "olmo_math", NOW)[1] if r["key"] == task_key(t))
+    cause = row["failure_cause"]
+    assert "SIGABRT (exit -6) in its log" in cause and "last stage rank 1 optimizer step" in cause, cause
+    assert "rank 1 Aborted in step (torch/optim/adamw.py:77)" in cause and "runtime repairs memory" in cause, cause
+    assert "node h-old GPU 0-3" in cause and "see its log" not in cause, cause
+    t2 = qu.train_task(6, "bank_sr_t050", 50)
+    qu.job(t2, "train", "failed", [dict(old, id="old2")])
+    row = next(r for r in status.collect(base, "olmo_math", NOW)[1] if r["key"] == task_key(t2))
+    assert row["failure_cause"].startswith("unknown: the job record has no exit code or error, and none of these exist: ")
+    assert ".multi-node/logs/old2.log" in row["failure_cause"] and "native-fault-rank-*.log" in row["failure_cause"]
+
+
+GOLDEN = Path(__file__).with_name("v8_status_golden")
+
+
+def golden_screen(tmp_path, stage):
+    """A realistic queue at one stage, rendered at a phone-friendly width with run-specific text masked."""
+    rnd = random.Random({"early": 11, "extension": 4, "evaluation": 27}[stage])
+    while True:   # the same seeded draw always lands on the same queue
+        base = tmp_path / stage / "v8"
+        if base.exists():
+            import shutil
+            shutil.rmtree(base.parent)
+        qu, _ = random_queue(base, rnd)
+        phase = json.loads((qu.q / "state.json").read_text())["phase"]
+        if (stage, phase) in (("early", "train"), ("extension", "extension"), ("evaluation", "evaluation")) and \
+                (stage != "early" or not (qu.q / "plans" / "train.json").exists()):
+            break
+    text = status.render_clean([base], now=NOW, gpus=[("0", 97, 61000)], host="viewer", width=120)
+    text = re.sub(r"━━ V8 status · \S+ · ", "━━ V8 status · CODE · ", text).replace(str(base), "<root>")
+    return text
+
+
+def test_golden_screens(tmp_path):
+    for stage in ("early", "extension", "evaluation"):
+        text = golden_screen(tmp_path, stage)
+        path = GOLDEN / f"{stage}.txt"
+        if not path.exists():
+            path.parent.mkdir(exist_ok=True)
+            path.write_text(text)
+        assert text == path.read_text(), stage
+        assert "screen counts disagree" not in text

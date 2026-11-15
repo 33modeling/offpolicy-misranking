@@ -355,6 +355,66 @@ def native_story(ranks):
     return None, None
 
 
+def attempt_evidence(directory, attempt, lines):
+    """What an attempt's own files say when its job record has no exit code or error (attempts written by older
+    code): the exit code / signal torchrun logged, each rank's last recorded stage, the crashing frame of a native
+    fault dump, runtime repairs, and where it ran. Returns (text or None, files checked)."""
+    aid = str(attempt.get('id') or '')
+    progress = Path(directory) / '.multi-node' / 'progress' / aid
+    checked = [f".multi-node/logs/{aid}.log", f".multi-node/progress/{aid}/rank-*.json",
+               f".multi-node/progress/{aid}/native-fault-rank-*.log", f".multi-node/progress/{aid}/runtime-repair-rank-*.json"]
+    parts = []
+    text = '\n'.join(lines or [])
+    codes = [int(n) for n in re.findall(r'exitcode\s*:\s*(-?\d+)', text)]
+    signals = [int(n) for n in re.findall(r'Signal (\d+) \(SIG', text)]
+    code = next((c for c in reversed(codes) if c not in (0, -2, -15)), None)
+    number = -code if code is not None and code < 0 else next((n for n in reversed(signals) if n not in (2, 15)), None)
+    if number:
+        try:
+            name = signal.Signals(number).name
+        except ValueError:
+            name = f'signal {number}'
+        parts.append(f"{name} (exit -{number}) in its log")
+    elif code is not None:
+        parts.append(f"exit {code} in its log")
+    stages = []
+    try:
+        files = sorted(progress.glob('rank-*.json'))
+    except OSError:
+        files = []
+    for path in files:
+        event = read(path)
+        if isinstance(event, dict) and event.get('stage') and re.fullmatch(r'rank-\d+\.json', path.name):
+            stages.append(f"rank {path.stem.split('-')[1]} {STAGE_SHORT.get(event['stage'], event['stage'])}")
+    if stages:
+        parts.append('last stage ' + ', '.join(stages[:4]))
+    try:
+        dumps = sorted(progress.glob('native-fault-rank-*.log'))
+    except OSError:
+        dumps = []
+    for path in dumps:
+        dump = fault_text(path)
+        if dump and 'Fatal Python error' in dump:
+            frames = native_crash_frames(dump)
+            kind = re.search(r'Fatal Python error: ([A-Za-z ]+)', dump)
+            parts.append(f"rank {path.name.split('-')[3]} {kind.group(1).strip() if kind else 'native fault'} in " +
+                         (' ← '.join(frames) if frames else 'a thread with no Python frame'))
+            break
+    try:
+        repairs = sorted(progress.glob('runtime-repair-rank-*.json'))
+    except OSError:
+        repairs = []
+    names = sorted({k for path in repairs for k in ((read(path) or {}).get('repairs') or {})})
+    if names:
+        parts.append('runtime repairs ' + ', '.join(names))
+    if not parts:
+        return None, checked
+    host = attempt.get('host') or (str(attempt.get('worker')).rsplit('.', 1)[0] if attempt.get('worker') else None)
+    gpus = attempt.get('gpus')
+    where = (f"node {host}" if host else '') + (f" GPU {gpu_text(','.join(str(g) for g in gpus))}" if gpus else '')
+    return '; '.join(parts) + (f"; {where}" if where else ''), checked
+
+
 def failure_story(row, attempt, job, task, directory, state, live_policies, now):
     """Why a task is recorded as failed, whether that is a real training error, and what happens next.
 
@@ -419,9 +479,16 @@ def failure_story(row, attempt, job, task, directory, state, live_policies, now)
     elif attempt.get('error') and not re.fullmatch(r'task exit=-?\d+; output verified=\w+', str(attempt['error'])):
         cause = str(attempt['error'])
     elif rc is None:
-        cause = 'no exit code or error was recorded for this attempt (older record); see its log'
+        found, checked = attempt_evidence(directory, attempt, lines)
+        cause = (f"no exit code in the job record (older record); from its files: {found}" if found else
+                 'unknown: the job record has no exit code or error, and none of these exist: ' + ', '.join(checked))
     else:
-        cause = f"exit {rc} without an error message in its log or rank error files"
+        found, _ = attempt_evidence(directory, attempt, lines)
+        try:
+            name = f" ({signal.Signals(-rc).name})" if rc < 0 else f" ({signal.Signals(rc - 128).name})" if 128 < rc < 160 else ''
+        except ValueError:
+            name = ''
+        cause = f"exit {rc}{name} without an error message in its log or rank error files" + (f"; {found}" if found else '')
     lifetime = counted_failures(job)
     used = retry_budget_failures(job)
     auto = state.get('automatic_retry_policy') if isinstance(state.get('automatic_retry_policy'), dict) else {}
@@ -1007,7 +1074,7 @@ def task_state(row, state):
             used = row.get('attempt')
         hosts = native_crash_hosts(job) if native_failure_blocks(job) else []
         where = f" on {len(hosts)} nodes ({', '.join(hosts)})" if hosts else ''
-        return 'person', f"stopped after {used} failures{where}, no more automatic retries · last: {re.sub(r' without an error message.*', '', cause)[:90]}"
+        return 'person', f"stopped after {used} failures{where}, no more automatic retries · last: {cause.replace(' without an error message in its log or rank error files', '')[:90]}"
     if status == 'pending':
         return ('ready' if row.get('ready') else 'waiting'), None
     if status == 'unconfirmed' and not row.get('lost'):
@@ -1020,7 +1087,7 @@ def task_state(row, state):
         cause = re.sub(r'\s+', ' ', str(row.get('failure_cause') or row.get('error') or 'no error recorded'))
         m = re.search(r'(SIG[A-Z]+ \(exit -\d+\)).*?; crashed in ([^;]+)', cause)
         short = (f"{m.group(1)} in " + ' ← '.join(m.group(2).split(' ← ')[:2]) if m else
-                 re.sub(r' without an error message.*', '', cause))
+                 cause.replace(' without an error message in its log or rank error files', ''))
         return 'retrying', f"failure {used}/{retry_limit(state)}, {short[:110]}"
     if row.get('lost'):
         return 'retrying', "its node stopped sending heartbeats"

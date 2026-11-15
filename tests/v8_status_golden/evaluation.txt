@@ -1,0 +1,70 @@
+OLMo MATH · budget evaluation ──────────────────────────────────────────────────────────────────────
+ train  On    SR25  SR50  SR75  SR100  SR125  SR150  SR175  SR200   SR225  SR250  U
+     5  ✓     ○     ✓     ✓     ✓      ↻      ✓      ✓      ▶242    ▶271   ○      ✓
+     6  ✓     ▶261  ✗     ✓     ▶243   ○      ✓      ↻      ↻       ▶226   ↻      ○
+     7  ✓     ▶157  ✓     ↻     ✓      ▶174   ✓      ↻      ✓       ✗      ↻      -
+     8  ✓     ✓     ○     ✓     ↻      ✗      ✗      ○      ✓       ✓      ○      ✓
+     9  ✓     ↻     ▶216  ✓     ✓      ✓      ✓      ↻      ✓       ▶240   ▶269   -
+ ext    On    SR25  SR50  SR75  SR100  SR125  SR150  SR175  SR200   SR225  SR250  U
+     5  -     -     -     ↻     ✓      -      ▶292   ▶312   -       -      -      ✓
+     6  -     -     -     ✓     -      -      ○      -      -       -      -      -
+     7  -     -     ✓     -     ✓      -      ↻      -      -       -      -      -
+     8  -     ↻     -     ✓     -      -      -      -      ✓       ✓      -      -
+     9  -     -     -     ○     ○      ✓      ✗      -      ✓       -      -      -
+ eval   On    SR25  SR50  SR75  SR100  SR125  SR150  SR175  SR200   SR225  SR250  U
+     5  0/1✗  -     -     1/1   1/1    -      0/1▶   1/1    -       -      -      -
+     6  -     -     -     1/1   -      -      1/2▶   -      -       -      -      -
+     7  0/1▶  -     -     -     1/2✗   -      1/2↻   -      -       -      -      -
+     8  0/1▶  1/2✗  -     1/2▶  -      -      -      -      0/1○    -      -      -
+     9  1/1   -     -     1/2   -      1/1    -      -      0/2↻×2  -      -      -
+   U = Uniform at the seed's switch point: s5 @225 · s6 @100 · s8 @125
+
+읽는 법: 줄=시드, 열=branch (On=On-policy 궤적, SR50=50 업데이트에서 SR로 전환, U=그 시드의 전환점에서 Uniform으로 전환)
+  train=학습, ext=예산 연장 학습, eval=평가. train·ext 칸은 작업 1개, eval 칸은 끝난 수/전체 수 (275 평가 + 예산 끝점 평가)
+  ✓ 끝남  ▶ 실행 중 (▶120 = 120 업데이트째)  ○ 바로 시작 가능  ↻ 실패·중단, 다음 빈 노드가 체크포인트부터 자동 재시작
+  · 앞 단계가 끝나야 시작  ✗ 자동 재시도 끝, 사람이 봐야 함  - 작업 없음.  eval 칸 1/3▶↻ = 3개 중 1개 끝, 1개 실행, 1개 재시작 대기
+아래 표: train/ext/eval = 끝난 작업/전체 작업 (전체 = 만든 작업 + 계획상 꼭 만들어질 작업). run ready retry wait ✗ = 위 칸 기호 수
+  done = 끝난 일의 비율 (업데이트·평가를 잰 시간으로 환산)  left = 남은 일 ÷ 지금 도는 작업 수.  ? = 잰 시간이 아직 없거나 도는 작업이 없음
+━━ V8 status · CODE · 2027-01-15 17:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   <root>
+             phase              train    ext   eval  run  ready  retry  wait  ✗  done  left  
+ OLMo MATH   budget evaluation  27/58  10/19  12/25   17     11     16     1  8   62%  ~3h36m
+ OLMo MBPP   not started
+ Qwen MATH   not started
+ Qwen MBPP   not started
+ ↻ OLMo MATH restarts by itself on the next free node: s8 SR25 ext (failure 2/4, exit 1); s9 eval SR200@275 (failure
+   1/4, exit 1); s7 SR250 (failure 1/4, exit 1); s7 eval SR150@275 (failure 3/4, exit 1); … 12 more
+
+ needs a person (8)
+  ✗ OLMo MATH s8 SR150: stopped after 5 failures, no more automatic retries · last: exit 1
+  ✗ OLMo MATH s8 eval SR25@275: stopped after 5 failures, no more automatic retries · last: exit 1
+  ✗ OLMo MATH s7 SR225: stopped after 4 failures, no more automatic retries · last: exit 1
+  ✗ OLMo MATH s6 SR50: stopped after 5 failures, no more automatic retries · last: exit 1
+  ✗ OLMo MATH s9 SR150 ext: stopped after 5 failures, no more automatic retries · last: exit 1
+  ✗ OLMo MATH s8 SR125: stopped after 5 failures, no more automatic retries · last: exit 1
+  ✗ OLMo MATH s5 eval On@275: stopped after 4 failures, no more automatic retries · last: exit 1
+  ✗ OLMo MATH s7 eval SR100@275: stopped after 4 failures, no more automatic retries · last: exit 1
+
+ nodes (19 hosts)  17 running · 2 idle
+   tasks that can run now 44 (run + ready + retry) · alive workers 19  → 25 more 4-GPU nodes would help   (2 gone not shown; --all-nodes)
+   host    gpus  state    exp        task                  done/total  left    time   beat  now
+ ▶ h08     ?     running  OLMo MATH  s5 SR200              242/275     ~24m    1h24m  41s   started, no output yet
+ ▶ h09     ?     running  OLMo MATH  s5 SR225              271/275     ~3m     19m    47s   started, no output yet
+ ▶ h12     ?     running  OLMo MATH  s6 SR25               261/275     ~10m    56m    46s   started, no output yet
+ ▶ h15     ?     running  OLMo MATH  s6 SR100              243/275     ~24m    1h27m  37s   started, no output yet
+ ▶ h20     ?     running  OLMo MATH  s6 SR225              226/275     ~37m    25m    8s    started, no output yet
+ ▶ h23     ?     running  OLMo MATH  s7 SR25               157/275     ~1h29m  10m    5s    started, no output yet
+ ▶ h27     ?     running  OLMo MATH  s7 SR125              174/275     ~1h16m  1h23m  31s   started, no output yet
+ ▶ h45     ?     running  OLMo MATH  s9 SR50               216/275     ~44m    1h56m  14s   started, no output yet
+ ▶ h52     ?     running  OLMo MATH  s9 SR225              240/275     ~26m    1h42m  50s   started, no output yet
+ ▶ h53     ?     running  OLMo MATH  s9 SR250              269/275     ~4m     1h37m  3s    started, no output yet
+ ▶ h56     ?     running  OLMo MATH  s5 SR150 ext          292/337     ~34m    39m    35s   started, no output yet
+ ▶ h57     ?     running  OLMo MATH  s5 SR175 ext          312/337     ~18m    1h30m  21s   started, no output yet
+ ▶ h76     ?     running  OLMo MATH  s5 eval SR150@275     q 233/500   ~52m    47m    5s    answering 85/125 (3s ago)
+ ▶ h78     ?     running  OLMo MATH  s6 eval SR150@275     q 245/500   ~50m    1h55m  50s   answering 116/125 (3s ago)
+ ▶ h79     ?     running  OLMo MATH  s7 eval On@275        q 285/500   ~42m    1h17m  44s   answering 48/125 (3s ago)
+ ▶ h82     ?     running  OLMo MATH  s8 eval On@275        q 218/500   ~55m    1h51m  18s   answering 119/125 (3s ago)
+ ▶ h94     ?     running  OLMo MATH  s8 eval SR75 ext@300  q 254/500   ~48m    1h08m  60s   answering 27/125 (3s ago)
+   idle00  ?     idle                                                                 37s   idle while 27 tasks are rea…
+   idle01  ?     idle                                                                 67s   idle while 27 tasks are rea…
+ this node  viewer · GPU 97% · no V8 task here
