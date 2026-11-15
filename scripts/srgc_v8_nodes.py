@@ -1765,6 +1765,13 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
             diagnostic.publish('CHECKING',name,detail+'; no GPU task assigned',**facts)
         elif getattr(runtime,'pending_barrier',None) is not None:
             diagnostic.publish('CPU_STAGE',name,'CPU stage '+runtime.pending_barrier[0]+' pending',**facts)
+        elif i in control_waits and not facts.get('ready') and facts.get('leased'):
+            # The last inspection saw no ready task and every task held by other nodes: that is why this node has
+            # nothing here, not the queue lock other nodes take while polling the full queue (user 11-16: 'qwen mbpp에는
+            # 모든 노드가 할당되었다고 그래서 더 이상 못하는데 왜 여기 걸려 있는거냐').
+            later=[cohort(p) for p,_ in pairs if cohort_order and cohort(p)!=name and rank(p)>rank(pool)]
+            diagnostic.publish('WAIT_OTHER_WORKERS',name,f"all {facts.get('leased')} running task(s) of {name} are held by other nodes; "
+                               +(f"this node also serves {', '.join(later)}" if later else 'no later cohort on this node'),**facts)
         elif i in control_waits:
             diagnostic.publish('WAIT_QUEUE_LOCK',name,'another worker holds queue control lock: '+str(pool.root/'control.lock'),
                                lock_wait_seconds=round(time.monotonic()-control_waits[i],1),**facts)
