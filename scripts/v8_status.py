@@ -170,6 +170,9 @@ def _collect(base, cohort, now):
             parent = task.get('parent') if isinstance(task.get('parent'), dict) else {}
             start = exit_code(parent.get('completed_update'))   # int parse; branches/extensions start here
             row['start'] = start if isinstance(start, int) and start >= 0 else 0
+            if job.get('phase') == 'extension' and isinstance(task.get('hard_cap'), int) and task['hard_cap'] > row['start']:
+                # a budget extension has horizon=H and starts at H; it runs on until its budget is spent, at most hard_cap
+                row['total'], row['updates_end'] = task['hard_cap'], task.get('horizon')
             if row['status'] == 'running' and not shown_worker:
                 row['status'] = 'unconfirmed'
                 row['error'] = 'marked running but no worker is recorded for it'
@@ -376,9 +379,10 @@ def failure_story(row, attempt, job, task, directory, state, live_policies, now)
                         and not re.search(r'Signal \d+ \(SIGKILL\)', log_error))
     manifest = row.get('_manifest') or {}
     total = row.get('total')
+    horizon = task.get('horizon') if isinstance(task.get('horizon'), int) else total   # a budget extension may stop before its cap
     finished = (task.get('kind') == 'train' and manifest.get('status') in TERMINAL_RUN
-                and isinstance(manifest.get('completed_updates'), int) and isinstance(total, int)
-                and manifest['completed_updates'] >= total)
+                and isinstance(manifest.get('completed_updates'), int) and isinstance(horizon, int)
+                and manifest['completed_updates'] >= horizon)
     snap, spec = task.get('snapshot_sha256'), task.get('evaluation_spec_hash')
     if task.get('kind') == 'evaluate' and isinstance(snap, str) and isinstance(spec, str):
         finished = (directory / 'evaluations' / f"{snap[:16]}__{spec[:12]}.json").is_file()
@@ -1231,11 +1235,12 @@ def clean_block(base, cohort, now, host, width):
     # parent's saved update (task.parent.completed_update), so counting from 0 would count that part again.
     planned = done_updates = 0
     for r in rows:
-        if r.get('kind') == 'train' and isinstance(r.get('total'), int):
-            start = min(r.get('start') or 0, r['total'])
-            planned += r['total'] - start
-            reached = r['total'] if r['status'] == 'done' else (r['done'] if isinstance(r.get('done'), int) else start)
-            done_updates += max(0, min(reached, r['total']) - start)
+        end = r['updates_end'] if isinstance(r.get('updates_end'), int) else r.get('total')   # unchanged by an extension's cap
+        if r.get('kind') == 'train' and isinstance(end, int):
+            start = min(r.get('start') or 0, end)
+            planned += end - start
+            reached = end if r['status'] == 'done' else (r['done'] if isinstance(r.get('done'), int) else start)
+            done_updates += max(0, min(reached, end) - start)
     phases_known = {k: v for k, v in planned_tasks.items() if not k.startswith('_')}
     have_n = {'train': len(trains), 'ext': len(exts), 'eval': len(evals)}
     # the same totals the train/ext/eval cells show, so the bar and the cells agree (user 11-15: '위 아래 일관성도 없고')
