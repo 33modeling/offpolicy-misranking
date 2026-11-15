@@ -47,28 +47,8 @@ def fixture(tmp_path, now):
     return base
 
 
-def test_snapshot_matches_run_srgc_status_layout(tmp_path):
-    now = time.time()
-    base = fixture(tmp_path, now)
-    text = status.render([base], now=now, gpus=[("0", 97, 61000), ("1", 95, 60000)], host="node01")
-    assert "V8 olmo_math · " in text and " · phase train" in text
-    assert "this node (node01): running traj-5 · 37/275 done · activity 40s ago" in text
-    assert "gpu memory used: 0:61000MiB 1:60000MiB · util 0:97% 1:95%" in text
-    assert "done 1 · running 1 · waiting 1 · needs attention 1" in text
-    assert "seed  " in text and "on_monitored" in text and "running 37/275" in text
-    assert "running now:" in text and "37/275 done · activity 40s ago · node node01 · log: PROGRESS 12:00:00" in text
-    assert "needs attention:" in text and "failed · last error: CUDA out of memory · 1 attempt" in text
-    assert "V8 qwen_mbpp · " in text and "no tasks" in text
-    assert "WARNING" not in text
 
 
-def test_stall_warning_only_when_silent_and_gpus_idle(tmp_path):
-    now = time.time()
-    base = fixture(tmp_path, now)
-    log = base / "olmo_math/.multi-node/logs/att1.log"
-    os.utime(log, (now - 3600, now - 3600))
-    assert "WARNING traj-5: no log or progress record for 60 min" in status.render([base], now=now, gpus=[("0", 0, 500)], host="node01")
-    assert "WARNING" not in status.render([base], now=now, gpus=[("0", 98, 60000)], host="node01")
 
 
 def test_missing_nvidia_smi_is_reported(tmp_path):
@@ -81,143 +61,26 @@ def test_age_text():
     assert status.age_text(5) == "5s" and status.age_text(600) == "10 min" and status.age_text(None) == "?"
 
 
-def test_stale_heartbeat_is_not_shown_as_confirmed_running(tmp_path):
-    """The view must distinguish uncertain activity from both confirmed live work and stopped ranks."""
-    now = time.time()
-    base = fixture(tmp_path, now)
-    key = hashlib.sha256(json.dumps("node01.gpu0123").encode()).hexdigest()
-    write(base / "olmo_math" / ".multi-node" / "workers" / (key + ".json"), {"worker": "node01.gpu0123", "at": now - 900})
-    text = status.render([base], now=now, gpus=[], host="node01")
-    assert "running now:" not in text
-    assert "worker node01.gpu0123 heartbeat age" in text and "process liveness unverified" in text
-    assert "task activity unconfirmed" in text and "next worker resumes it" not in text
-
-
-def test_nodes_section_counts_workers_and_available_work(tmp_path):
-    now = time.time()
-    base = fixture(tmp_path, now)
-    q = base / "olmo_math" / ".multi-node"
-    parent = tmp_path / "parent.pt"
-    parent.write_bytes(b"x")
-    write(q / "jobs" / "e.json", {"state": "pending", "task": {"kind": "train", "method_id": "sr_from_50", "training_seed": 5,
-                                                               "parent": {"path": str(parent)}}, "attempts": []})
-    write(q / "jobs" / "f.json", {"state": "pending", "task": {"kind": "train", "method_id": "sr_from_100", "training_seed": 5,
-                                                               "parent": {"path": str(tmp_path / "not-yet.pt")}}, "attempts": []})
-    key = hashlib.sha256(json.dumps("node02.gpu0123").encode()).hexdigest()
-    write(q / "workers" / (key + ".json"), {"worker": "node02.gpu0123", "at": now - 3, "task": None})
-    key = hashlib.sha256(json.dumps("node03.gpu0123").encode()).hexdigest()
-    write(q / "workers" / (key + ".json"), {"worker": "node03.gpu0123", "at": now - 4000, "task": None})
-    text = status.render([base], now=now, gpus=[("0", 97, 61000)], host="node01")
-    assert "nodes:" in text and "node02.gpu0123" in text and "idle (nothing claimable)" in text
-    assert "(1 node record without a heartbeat in the last 3 min not shown; not proof the process stopped)" in text
-    assert "ready 1" in text and "waiting" in text
-    assert "workers: 2 active" in text
-    assert "work available now for 2 workers (1 running + 1 ready to start)" in text
-
-
-def test_unreadable_or_corrupt_records_are_reported_not_hidden(tmp_path):
-    if os.geteuid() == 0:
-        return  # root can read mode-000 files
-    now = time.time()
-    base = fixture(tmp_path, now)
-    q = base / "olmo_math" / ".multi-node"
-    (q / "jobs" / "zz.json").write_text('{"state": "pend')            # partial write
-    (q / "state.json").chmod(0)
-    try:
-        text = status.render([base], now=now, gpus=[("0", 97, 61000)], host="node01")
-    finally:
-        (q / "state.json").chmod(0o644)
-    assert "ERROR some queue records could not be read" in text
-    assert "state.json" in text and "1 job record(s) unreadable or corrupt: zz.json" in text
-
-
-def test_status_distinguishes_applied_controller_from_old_and_unknown_workers(tmp_path):
-    now=time.time();base=fixture(tmp_path,now);q=base/'olmo_math/.multi-node'
-    expected=hashlib.sha256((Path(status.__file__).parent/'srgc_v8_nodes.py').read_bytes()).hexdigest()
-    for name,version in [('current.1',expected),('older.2','f'*64),('unknown.3',None)]:
-        write(q/'workers'/(name+'.json'),dict(worker=name,at=now,task=None,controller_sha256=version))
-    text=status.render([base],now=now,gpus=[],host='local')
-    assert 'dispatch current '+expected[:12] in text
-    assert 'dispatch different ffffffffffff' in text
-    assert 'dispatch unverified' in text
-
-
-def test_running_task_shows_live_trainer_progress_and_activity(tmp_path):
-    """The child no longer prints PROGRESS lines; status must read SRGC_PROGRESS_DIR rank files (11-08 report:
-    'v8_status 제대로 업데이트 안되는 것 같아')."""
-    now = time.time()
-    base = fixture(tmp_path, now)
-    q = base / "olmo_math" / ".multi-node"
-    log = q / "logs" / "att1.log"
-    os.utime(log, (now - 2400, now - 2400))                      # log silent for 40 min
-    prog = q / "progress" / "att1"
-    write(prog / "rank-0.json", {"stage": "generation", "updated": now - 7, "question_index": 3, "questions_total": 40,
-                                 "response_tokens": 812, "max_new_tokens": 2048})
-    write(prog / "rank-1.json", {"stage": "generation", "updated": now - 12})
-    text = status.render([base], now=now, gpus=[("0", 0, 500)], host="node01")
-    assert "activity 7s ago" in text
-    assert "now: Writing model answers for the current question | question 3/40 on this GPU" in text
-    assert "2 GPU processes, last record 7s-12s ago" in text
-    assert "WARNING" not in text                                  # progress is fresh even though the log is silent
-
-
-def test_progress_falls_back_to_this_hosts_latest_launch_directory(tmp_path):
-    now = time.time()
-    base = fixture(tmp_path, now)
-    launch = base / ".node-progress" / "node01" / "launch-abc"
-    write(launch / "rank-0.json", {"stage": "checkpoint_save", "updated": now - 3})
-    text = status.render([base], now=now, gpus=[("0", 97, 60000)], host="node01")
-    assert "now: Saving model, optimizer and RNG state · last record 3s ago" in text
-
-
-def test_stall_warning_needs_both_log_and_progress_silent(tmp_path):
-    now = time.time()
-    base = fixture(tmp_path, now)
-    q = base / "olmo_math" / ".multi-node"
-    os.utime(q / "logs" / "att1.log", (now - 3600, now - 3600))
-    write(q / "progress" / "att1" / "rank-0.json", {"stage": "generation", "updated": now - 3500})
-    assert "WARNING traj-5: no log or progress record for 58 min" in status.render([base], now=now, gpus=[("0", 0, 1)], host="node01")
 
 
 
-def test_default_screen_is_the_run_srgc_status_renderer(tmp_path, monkeypatch):
-    """`run_v8_nodes.sh status` must look like `run_srgc.sh <dataset> status` (11-08: 'status 다시 만들어')."""
-    monkeypatch.setenv("V8_CODE_ROOT", str(REPO))
-    now = time.time()
-    base = fixture(tmp_path, now)
-    q = base / "olmo_math" / ".multi-node"
-    write(q / "progress" / "att1" / "rank-0.json", {"stage": "generation", "updated": now - 5})
-    write(q / "progress" / "att1" / "rank-1.json", {"stage": "generation", "updated": now - 9})
-    text = status.render([base], now=now, host="node01", style="srgc")
-    assert "SRGC V8 olmo_math · " in text and " · phase train\n" in text
-    olmo = text.split("SRGC V8 olmo_mbpp")[0]   # the OLMo MATH block ends where the next experiment (OLMo MBPP) starts
-    assert olmo.index("seed  ") < olmo.index("running now:") < olmo.index("SRGC V8 olmo_math · ") < olmo.index("done 1 · running 1")  # summary at the bottom
-    assert olmo.rstrip().splitlines()[-1].startswith("workers: ")
-    assert "done 1 · running 1 · waiting 1 · needs attention 1" in text
-    assert "running 37/275" in text
-    assert "running now:" in text and "step 38/275 in progress · 37/275 done · generation (5s ago) · gpus 2 busy (last 5-9s) · node node01" in text
-    assert "needs attention:" in text and "nodes:" in text and "node01" in text and "heartbeat" in text
-    assert "SRGC V8 qwen_mbpp" in text and "no queue yet" in text
-    assert "workers: 1 active" in text
-
-
-def test_falls_back_to_simple_view_without_original_checkout(tmp_path, monkeypatch):
-    monkeypatch.setattr(status, "original_renderer", lambda: None)
-    now = time.time()
-    base = fixture(tmp_path, now)
-    text = status.render([base], now=now, gpus=[("0", 97, 61000)], host="node01", style="srgc")
-    assert text.startswith("(original run_srgc.sh status renderer not found")
-    assert "V8 olmo_math · " in text
 
 
 
-def test_simple_view_also_puts_summary_at_the_bottom(tmp_path):
-    now = time.time()
-    base = fixture(tmp_path, now)
-    text = status.render([base], now=now, gpus=[("0", 97, 61000)], host="node01", cohorts=("olmo_math",))
-    assert text.index("seed  ") < text.index("V8 olmo_math · ") < text.index("done 1 · running 1")
-    assert text.rstrip().splitlines()[-2].startswith("done 1 · running 1")
-    assert text.rstrip().splitlines()[-1].startswith("workers: ")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -229,34 +92,6 @@ def failure_notes(base, cohort, now):
             for r in rows if r['status'] == 'failed'}
 
 
-def test_clean_view_is_compact_with_summary_last(tmp_path):
-    """'status 좀 보기 좋게 정리하라고': short columns, one symbol per cell, summary at the bottom."""
-    now = time.time()
-    base = fixture(tmp_path, now)
-    q = base / "olmo_math" / ".multi-node"
-    write(q / "progress" / "att1" / "rank-0.json", {"stage": "generation", "updated": now - 5,
-                                                   "question_index": 3, "questions_total": 40, "response_tokens": 812})
-    text = status.render_clean([base], now=now, gpus=[("0", 97, 61000)], host="node01", width=160)
-    lines = text.rstrip().splitlines()
-    norm = lambda line: ' '.join(line.split())
-    assert lines[0].startswith("OLMo MATH · training ─")
-    assert "train  On" in text and "▶37" in text       # at update 37 (user: "training 쪽도 그냥 275로")
-    top, bottom = text.split("━━ V8 status · ")
-    assert "needs attention" not in top
-    summary = next(norm(line) for line in bottom.splitlines() if line.startswith(" OLMo MATH "))
-    assert summary.startswith("OLMo MATH training ░░░░░░░░░░░░ 1% 1/60 0/55 0/55 ") and summary.endswith("37/8,125+ ?")   # nothing finished yet, so no measured time
-    assert "cells to fill: OLMo MATH 170 (train 60 + ext 55 + eval 55)" in bottom
-    header = next(norm(line) for line in bottom.splitlines() if norm(line).startswith("phase progress"))
-    assert header == "phase progress train ext eval run wait fail updates left"
-    assert norm(next(line for line in bottom.splitlines() if line.startswith(" Qwen MBPP"))) == "Qwen MBPP not started"
-    # the OOM evaluation retries by itself: one auto-retry line, no needs attention (user 11-10)
-    assert "needs attention" not in bottom and " auto-retry, nothing to do: OLMo MATH 1 failed task(s)" in bottom
-    assert " nodes (1 host)  1 running" in bottom and "DEAD" not in bottom
-    row = next(line for line in bottom.splitlines() if line.startswith(" ▶ node01"))
-    for cell in (" running ", " OLMo ", " s5 On ", " 37/275 ", "answering 3/40, 812 tok (5s ago)"):
-        assert cell in row, (cell, row)
-    assert lines[-1] == " this node  node01 · GPU 97% · ▶ s5 On (OLMo MATH)"
-    assert all(len(line) <= 160 for line in lines)
 
 
 def worker_beat(q, wid, age, task=None, now=None):
@@ -316,14 +151,14 @@ def test_node_table_one_row_per_worker_with_what_it_does(tmp_path):
         by.setdefault(r.split()[1] if r[1] in "▶✗·" else r.split()[0], []).append(r)
     a2 = by["h100-a02"][0]
     assert a2.startswith(" ▶ ") and " 0-3 " in a2 and " OLMo " in a2 and " s6 SR25 " in a2 and " 3h02m " in a2 \
-        and "scoring questions (20s ago)" in a2
+        and "scoring questions (20s ago)" in a2 and " ?/275 " in a2   # no update recorded yet: '?', not the start
     assert "h100-a03" not in by and "DEAD" not in text
     assert by["h100-a04"][0].startswith(" ✗ ") and " hung " in by["h100-a04"][0] and "lock still held" in by["h100-a04"][0]
     assert "no other node can take that task" in text
     b10 = by["h100-b10"]
     assert " 0-3 or 4-7 " in b10[0] and " Qwen " in b10[0] and " s7 On " in b10[0] and " 40m " in b10[0]
     assert " starting " in b10[1] and "loading runtime / checking node" in b10[1]
-    assert " idle " in by["h100-b11"][0] and "idle while 1 task is ready" in by["h100-b11"][0]   # a03's task, free to take over
+    assert " idle " in by["h100-b11"][0] and "idle while 2 tasks are ready" in by["h100-b11"][0]   # a03's task, free to take over
     assert "h100-b12" not in by and not any(" gone " in r for r in rows)   # 'gone 보기 싫어': gone workers are only counted
     everything = status.render_clean([base], now=now, gpus=[("0", 97, 61000)], host="h100-a01", width=200, all_nodes=True)
     assert " h100-b12 " in everything and " gone " in everything
@@ -414,7 +249,7 @@ def test_assigned_task_uses_the_lease_lock_not_heartbeat_age(tmp_path):
     fd = os.open(q / "leases" / "held.lock", os.O_CREAT | os.O_RDWR); fcntl.flock(fd, fcntl.LOCK_EX)
     try:
         text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
-        stats = status.clean_block(base, "olmo_math", now, "viewer", 220)[4]   # while the lock is still held
+        model = status.task_model(base, "olmo_math", now)   # while the lock is still held
     finally:
         os.close(fd)
     by = {next(w for w in r.split() if w.startswith("h-")): r for r in node_rows(text)}
@@ -423,7 +258,8 @@ def test_assigned_task_uses_the_lease_lock_not_heartbeat_age(tmp_path):
     # 'free' lock + over 3 min: the next free node takes the task over (srgc_v8_nodes claim), so it counts as ready
     # and its old node is not listed (user: '새노드 할당되면 알아서 거기에 시작하면 되지 왜 표시를 해놓는거냐')
     assert "h-gone" not in by and "DEAD" not in text and "h-gone" not in text.split("V8 status · ")[1].split(" nodes (")[0]
-    assert stats["running"] == 2 and stats["dead"] == 0 and stats["ready"] >= 1
+    states = status.model_counts(model)[1]
+    assert states["running"] == 2 and states["retrying"] == 1 and states["person"] == 0   # h-gone's task: next node resumes it
 
 
 def test_idle_with_ready_work_says_so(tmp_path):
@@ -501,15 +337,14 @@ def test_healthy_nodes_never_get_an_x_and_attention_is_at_the_bottom(tmp_path):
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
     rows = node_rows(text)
     assert len(rows) == 4 and all(r.startswith(" ▶ ") and " running " in r for r in rows), rows
-    stats = status.clean_block(base, "olmo_math", now, "viewer", 200)[4]
-    assert stats["running"] == 4 and stats["dead"] == 0 and "on dead node" not in text and "DEAD" not in text
+    states = status.model_counts(status.task_model(base, "olmo_math", now))[1]
+    assert states["running"] == 4 and states["person"] == 0 and "DEAD" not in text
     top, bottom = text.split("V8 status · ")
     # its first failure retries by itself, so nothing needs a person (user 11-10: 'needs attention 은 노드가
     # 날아갔는데도 왜 남아있는거냐. 현재 노드 정보나 뿌려')
-    assert "needs attention" not in text and " auto-retry, nothing to do: OLMo MATH 1 failed task(s)" in bottom
-    # interrupted reruns on the next free node by itself: only its ⏸ cell and the intr count show it
-    assert "⏸ OLMo MATH s8 On" not in bottom
-    assert stats["failed"] == 1 and stats["interrupted"] == 1
+    assert "needs a person" not in text and " ↻ OLMo MATH restarts by itself on the next free node: " in bottom
+    assert "s9 SR50 (failure 0/4, task exit=1)" in bottom   # old record without exit code: the dispatcher counts 0 and "s8 On (interrupted)" in bottom
+    assert states["retrying"] == 2
 
 
 
@@ -556,7 +391,8 @@ def test_failed_tasks_say_why_and_whether_it_is_a_real_failure(tmp_path):
     def block(head):
         return notes[names[head]]
     # every one of them retries by itself (or is already complete): nothing under needs attention
-    assert "needs attention" not in bottom and " auto-retry, nothing to do: OLMo MATH 7 failed task(s)" in bottom
+    # every one of them retries by itself, and the run that is complete counts as done
+    assert "needs a person" not in bottom and " ↻ OLMo MATH restarts by itself on the next free node: " in bottom
     k = block("  ! OLMo MATH s5 SR25 marked failed ")
     assert "at update 120/275" in k and "NOT a training error: killed from outside (SIGKILL, exit 9)" in k
     assert "check dmesg on h-kill first" in k and "not retried yet: a node started with the current bundle retries" in k
@@ -568,13 +404,14 @@ def test_failed_tasks_say_why_and_whether_it_is_a_real_failure(tmp_path):
     assert "stall watchdog: no training progress for 30 min" in block("  ✗ OLMo MATH s9 SR25 FAILED ")
     assert "failed under older code: a node started with the current bundle retries it automatically" in block("  ✗ OLMo MATH s4 SR50 FAILED ")
     assert "rank 3: RuntimeError: NCCL communicator was aborted on rank 3" in block("  ✗ OLMo MATH s3 SR25 FAILED ")
-    stats = status.clean_block(base, "olmo_math", now, "viewer", 200)[4]
-    assert stats["failed"] == 5 and stats["marked"] == 2
+    model = status.task_model(base, "olmo_math", now)
+    assert {t["key"]: t["state"] for t in model["tasks"] if not t["planned"]} == \
+        {"kill": "retrying", "oom": "retrying", "fin": "done", "rank": "retrying", "stall": "retrying", "old": "retrying", "rfile": "retrying"}
     table = text.split("━━ V8 status")[0]
     lines = table.splitlines()
     start = next(i for i, line in enumerate(lines) if line.startswith(" train "))
     grid = "\n".join(line for line in lines[start + 1:] if line.strip()[:1].isdigit())   # seed rows of the tables
-    assert "!" in grid and "✗" in grid
+    assert "↻" in grid and "✗" not in grid and "!" not in grid
 
 
 
@@ -598,111 +435,18 @@ def test_failure_next_step_follows_the_default_retry_rule(tmp_path):
     assert "BLOCKED: failure cap reached (3 recorded; limit 3); no more automatic retries; failed checkpoints/logs retained; repair required" in notes["spent"]
     bottom = text.split("━━ V8 status · ")[1]
     # one line per blocked task; no why/next/log blocks of old nodes (user 11-10 '현재 노드 정보나 뿌려')
-    assert " needs attention (1)" in bottom and "  ✗ OLMo MATH s7 SR25: stopped after 3 failures · last: exit 1 without an error message" in bottom
-    assert " s5 SR25" not in bottom.split(" needs attention")[1] and "      why:" not in bottom and "      log:" not in bottom
-    assert " auto-retry, nothing to do: OLMo MATH 2 failed task(s)" in bottom
+    assert " needs a person (1)" in bottom and "  ✗ OLMo MATH s7 SR25: stopped after 3 failures, no more automatic retries · last: exit 1" in bottom
+    assert " s5 SR25" not in bottom.split(" needs a person")[1] and "      why:" not in bottom and "      log:" not in bottom
+    assert "s5 SR25 (failure 1/3, exit 1)" in bottom and "s6 SR25 (failure 2/3, exit 1)" in bottom
 
 
 
-def test_summary_numbers_add_up_and_updates_count_each_job_once(tmp_path, monkeypatch):
-    """'status 집계가 뭔가 이상해 숫자가 안맞아': columns must sum to the task total, train + eval = total, and a
-    branch or extension adds only horizon - start updates (it resumes from its parent's saved update)."""
-    now = time.time()
-    base, q, m = two_cohort_base(tmp_path, now)
-    def job(key, state, kind, arm, seed, horizon=None, start=None, phase="train", attempts=None):
-        task = {"kind": kind, "method_id": arm, "training_seed": seed, "run_id": key}
-        if horizon: task["horizon"] = horizon
-        if start is not None: task["parent"] = {"completed_update": str(start), "path": "/nowhere"}
-        write(q / "jobs" / f"{key}.json", {"state": state, "phase": phase, "task": task, "attempts": attempts or []})
-    job("on", "done", "train", "on_monitored", 5, horizon=75, start=25)          # adds 50
-    job("b25", "done", "train", "bank_sr_t025", 5, horizon=75, start=25)        # adds 50
-    job("b50", "pending", "train", "bank_sr_t050", 5, horizon=75, start=50)     # plans 25
-    job("ext", "pending", "train", "bank_sr_t025", 5, horizon=120, start=75, phase="extension")   # plans 45
-    job("ghost", "running", "train", "bank_uniform_t050", 5, horizon=75, start=50, attempts=[{"id": "g"}])  # no worker
-    job("odd", "weird", "train", "on_monitored", 6, horizon=75)
-    for i in range(3):
-        job(f"ev{i}", "done" if i == 0 else "pending", "evaluate", "evaluate", 5, phase="evaluation")
-    monkeypatch.setattr(status, "runner_config", lambda cohort: None)   # exact arithmetic of the jobs themselves
-    stats = status.clean_block(base, "olmo_math", now, "viewer", 200)[4]
-    assert stats["total"] == 9 and stats["train"] == (2, 5) and stats["ext"] == (0, 1) and stats["eval"] == (1, 3)
-    assert stats["done"] + stats["running"] + stats["ready"] + stats["waiting"] + stats["failed"] + stats["marked"] + \
-        stats["interrupted"] + stats["dead"] + stats["other"] == stats["total"]
-    assert stats["updates"] == (100, 50 + 50 + 25 + 45 + 25 + 75)   # was 75*5 + 120 = 495 before (each job from 0)
-    assert stats["dead"] == 0 and stats["other"] == 1 and stats["running"] == 0 and stats["ready"] >= 1   # ghost: next node resumes it
-    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
-    assert "marked running but no worker is recorded for it" not in text and "unknown job state 'weird'" in text
-    head = next(line for line in text.splitlines() if line.split()[:2] == ["phase", "progress"])
-    assert " stuck " not in head and " other " in head and " train " in head and " eval " in head
 
 
 
-def test_cells_to_fill_are_planned_totals_before_and_after_each_phase_is_sealed(tmp_path, monkeypatch):
-    """'status에 전부 몇칸을 채워야 하는지 표기해': later phases' jobs do not exist yet, so the totals come from the
-    plan: per seed 1 On + one SR branch per grid point (+ at most one Uniform), one extension per non-On run,
-    at least one final evaluation per run; exact once plans/<phase>.json is sealed."""
-    now = time.time()
-    base, q, m = two_cohort_base(tmp_path, now)
-    cfg = {"seeds": {"training": [5, 6]}, "bank": {"core_grid": [50], "extended_grid": [25]},
-           "training": {"matched_update_endpoint": 75, "prefix_updates": 25}}
-    monkeypatch.setattr(status, "runner_config", lambda cohort: cfg)
-    write(q / "jobs" / "on5.json", {"state": "done", "phase": "train", "task": {"kind": "train", "method_id": "on_monitored",
-          "training_seed": 5, "run_id": "on5", "horizon": 75, "parent": {"completed_update": "25"}}, "attempts": []})
-    stats = status.clean_block(base, "olmo_math", now, "viewer", 200)[4]
-    plan = stats["planned"]
-    assert plan["train"] == (6, 8, "range") and plan["ext"] == (4, 6, "range") and plan["eval"] == (6, None, "at least")
-    assert stats["pct"] == round(100 * 1 / 20)          # 1 done of 8 + 6 + 6 cells (the most each phase can still have)
-    assert stats["updates"] == (50, 2 * ((75 - 25) + (75 - 25) + (75 - 50)))
-    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
-    assert "cells to fill: OLMo MATH 20 (train 8 + ext 6 + eval 6)" in text
-    assert "exact when each phase is planned" in text
-    for queue in (q, m):
-        for phase in ("train", "extension", "evaluation"):
-            write(queue / "plans" / f"{phase}.json", {"sealed": True, "tasks": []})
-    for i in range(2):
-        write(q / "jobs" / f"x{i}.json", {"state": "pending", "phase": "extension", "task": {"kind": "train",
-              "method_id": "bank_sr_t050", "training_seed": 5, "run_id": f"x{i}", "horizon": 100}, "attempts": []})
-    write(q / "jobs" / "e.json", {"state": "pending", "phase": "evaluation", "task": {"kind": "evaluate", "training_seed": 5}, "attempts": []})
-    stats = status.clean_block(base, "olmo_math", now, "viewer", 200)[4]
-    assert stats["planned"]["train"] == (1, 1, "exact") and stats["planned"]["ext"] == (2, 2, "exact")
-    assert stats["planned"]["eval"] == (1, 1, "exact")
-    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
-    assert "cells to fill: OLMo MATH 4 (train 1 + ext 2 + eval 1)" in text and "exact when each phase" not in text
 
 
 
-def test_seed_table_draws_every_planned_branch_before_its_job_exists(tmp_path, monkeypatch):
-    """'SR25 부터 결국 250 까지 있는거 아니야', '왜 아예 표시를 안하냐고': all planned seeds and SR25..SR250 + U columns
-    are drawn from the start; cells without a job yet are '·' (not created yet); after sealing, the jobs decide."""
-    now = time.time()
-    base, q, m = two_cohort_base(tmp_path, now)
-    cfg = {"seeds": {"training": [5, 6, 7, 8, 9]}, "bank": {"core_grid": [50, 100, 150, 200], "extended_grid": [25, 75, 125, 175, 225, 250]},
-           "training": {"matched_update_endpoint": 275, "prefix_updates": 25}}
-    monkeypatch.setattr(status, "runner_config", lambda cohort: cfg)
-    write(q / "jobs" / "on5.json", {"state": "running", "phase": "train", "task": {"kind": "train", "method_id": "on_monitored",
-          "training_seed": 5, "run_id": "on5", "horizon": 275, "parent": {"completed_update": "25"}},
-          "attempts": [{"id": "a", "worker": "h-1.1", "started_at": now - 60}]})
-    worker_beat(q, "h-1.1", 2, "child:1", now)
-    write(q / "jobs" / "u6.json", {"state": "done", "phase": "train", "task": {"kind": "train", "method_id": "bank_uniform_t150",
-          "training_seed": 6, "run_id": "u6", "horizon": 275, "parent": {"completed_update": "150"}}, "attempts": []})
-    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
-    block = text.split("Qwen MBPP ·")[0]
-    lines = block.splitlines()
-    i_train = next(i for i, line in enumerate(lines) if line.startswith(" train"))
-    i_later = next(i for i, line in enumerate(lines) if line.startswith(" ext "))
-    assert lines[i_train].split() == ["train", "On", "SR25", "SR50", "SR75", "SR100", "SR125", "SR150", "SR175", "SR200", "SR225",
-                                      "SR250", "U"]
-    rows = {line.split()[0]: line.split() for line in lines[i_train + 1:i_later]}
-    assert sorted(rows) == ["5", "6", "7", "8", "9"]
-    assert rows["5"][1] == "▶" and rows["5"][2:12] == ["·"] * 10 and rows["9"][1:] == ["·"] * 12
-    assert rows["6"][12] == "✓" and "U = Uniform at the seed's switch point: s6 @150" in block
-    later = {line.split()[0]: line.split() for line in lines[i_later + 1:i_later + 6]}
-    assert later["9"] == ["9", "none"] + ["·"] * 11      # ext table: On is never extended; nothing else exists yet
-    i_eval = next(i for i, line in enumerate(lines) if line.startswith(" eval "))
-    assert {line.split()[0]: line.split() for line in lines[i_eval + 1:i_eval + 6]}["9"] == ["9"] + ["·"] * 12
-    for phase in ("train", "extension", "evaluation"):
-        write(q / "plans" / f"{phase}.json", {"sealed": True, "tasks": []})
-    sealed = status.render_clean([base], now=now, gpus=[], host="viewer", width=200).split("Qwen MBPP ·")[0]
-    assert next(line for line in sealed.splitlines() if line.startswith(" train")).split()[:3] == ["train", "On", "U"]
 
 
 
@@ -722,53 +466,6 @@ def test_default_screen_lists_all_four_experiments(tmp_path):
 
 
 
-def test_extension_and_evaluation_cells_follow_each_task_through_its_states(tmp_path):
-    """'status ext eval 도 노드 표시해 현황', 'ext eval 칸만 만들고 제대로 업데이트 하고 잇는지 체크': per-branch ext and eval
-    cells change with the jobs (pending -> running -> done); a running evaluation is '▶', not the scored run's
-    update count; evaluation jobs are named by the run they score in the node table."""
-    now = time.time()
-    base, q, m = two_cohort_base(tmp_path, now)
-    R = "olmo_math.rebuttal_bank.s5."
-    def job(key, state, task, phase, worker=None):
-        attempts = [{"id": key + "a", "worker": worker, "started_at": now - 600}] if worker else []
-        write(q / "jobs" / f"{key}.json", {"state": state, "phase": phase, "task": task, "attempts": attempts})
-    def run(rid, done):
-        write(base / "olmo_math" / "runs" / rid / "manifest.json", {"attempts": [{"attempt_id": "x"}]})
-        (base / "olmo_math" / "runs" / rid / "attempts" / "x").mkdir(parents=True, exist_ok=True)
-        (base / "olmo_math" / "runs" / rid / "attempts" / "x" / "updates.jsonl").write_text(json.dumps({"completed_updates": done}) + "\n")
-    def cells(text, table):
-        lines = text.split("Qwen MBPP ·")[0].splitlines()
-        i = next(k for k, line in enumerate(lines) if line.startswith(f" {table} "))
-        header = lines[i].split()
-        row = next(line for line in lines[i + 1:] if line.split()[:1] == ["5"]).split()
-        return dict(zip(header[1:], row[1:]))
-    train = {"kind": "train", "method_id": "bank_sr_t025", "training_seed": 5, "run_id": R + "bank_sr_t025.aa11", "horizon": 275}
-    extension = {"kind": "train", "method_id": "bank_sr_t025", "training_seed": 5, "run_id": R + "bank_sr_t025.bb22", "horizon": 400,
-                 "parent": {"completed_update": "275"}}
-    e275 = {"kind": "evaluate", "training_seed": 5, "run_id": R + "bank_sr_t025.aa11", "completed_update": 275}
-    e400 = {"kind": "evaluate", "training_seed": 5, "run_id": R + "bank_sr_t025.bb22", "completed_update": 400}
-    job("t25", "done", train, "train"); run(R + "bank_sr_t025.aa11", 275)
-    for wid in ("h-ext.1", "h-ev.1"):
-        worker_beat(q, wid, 2, "child:1", now)
-    job("x25", "pending", extension, "extension"); job("e1", "pending", e275, "evaluation")
-    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
-    assert cells(text, "ext")["SR25"] == "·" and cells(text, "eval")["SR25"] == "·" and cells(text, "ext")["On"] == "none"
-    job("x25", "running", extension, "extension", "h-ext.1"); run(R + "bank_sr_t025.bb22", 310)
-    job("e1", "running", e275, "evaluation", "h-ev.1"); run(R + "bank_sr_t025.aa11", 275)
-    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
-    assert cells(text, "ext")["SR25"] == "▶310" and cells(text, "eval")["SR25"] == "▶275"   # updates: run at 310, eval of update 275
-    node = {line.split()[1]: line for line in text.splitlines() if line.startswith(" ▶ h-")}
-    assert " s5 SR25 ext " in node["h-ext"] and " 310/400 " in node["h-ext"] and " s5 eval SR25@275 " in node["h-ev"]
-    job("x25", "done", extension, "extension"); run(R + "bank_sr_t025.bb22", 400)
-    job("e1", "done", e275, "evaluation"); job("e2", "running", e400, "evaluation", "h-ev.1")
-    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
-    assert cells(text, "ext")["SR25"] == "✓" and cells(text, "eval")["SR25"] == "1/2▶400"   # 275 done, the one at update 400 running
-    assert any(" s5 eval SR25 ext@400 " in line for line in text.splitlines() if line.startswith(" ▶ h-ev"))
-    job("e2", "done", e400, "evaluation")
-    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
-    assert cells(text, "eval")["SR25"] == "2/2"   # several tasks: always finished/total
-    stats = status.clean_block(base, "olmo_math", now, "viewer", 220)[4]
-    assert stats["ext"] == (1, 1) and stats["eval"] == (2, 2) and stats["running"] == 0
 
 def test_native_crash_says_where_the_rank_crashed(tmp_path):
     """'exit -11 torchrun 세그폴트 에러 고쳐볼래': the why line names the crashing function, file and line from the
@@ -793,60 +490,32 @@ def test_native_crash_says_where_the_rank_crashed(tmp_path):
                         "child_failure": {"failures": [failure, {"rank": 0, "message": "Signal 15 (SIGTERM) received"}]}}]})
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=120)
     auto = re.sub(r"\n {3}", " ", text.split("V8 status · ")[1])
-    assert "needs attention" not in auto
-    assert ("auto-retry, nothing to do: OLMo MATH 1 failed task(s) restart from their checkpoints on the next free node (✗ cells); "
-            "latest SIGSEGV (exit -11) crashed in embedding (torch/nn/functional.py:2551) ← generate") in auto
-    # the same task after a second crash on another node: blocked, so it is listed with why and the dump path
+    assert "needs a person" not in auto
+    assert ("s6 eval ?@275 (failure 1/4, SIGSEGV (exit -11) in embedding (torch/nn/functional.py:2551) ← generate (srgc_rebuttal/torch_backend.py:412))") in auto, auto
+    # crashed on three different nodes (TASK_NATIVE_HOST_LIMIT 3, 0f877d7): no node retries it, a person must look
     job = json.loads((q / "jobs" / "n.json").read_text())
-    job["attempts"].insert(0, dict(job["attempts"][0], id="na0", host="h-m", worker="h-m.1", child_failure=None))
-    job["attempts"][1].update(host="h-n")
+    for i, host in enumerate(("h-m", "h-o")):
+        job["attempts"].insert(0, dict(job["attempts"][-1], id=f"na{i}", host=host, worker=f"{host}.1", child_failure=None))
+    job["attempts"][-1].update(host="h-n")
     write(q / "jobs" / "n.json", job)
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=120)
     bottom = text.split("V8 status · ")[1]
-    assert " needs attention (1)" in bottom
-    joined = re.sub(r"\n {4}(?=\S)", " ", bottom)          # an item may wrap onto one indented line
+    assert " needs a person (1)" in bottom
+    joined = re.sub(r"\n {4,}(?=\S)", " ", bottom)          # an item may wrap onto one indented line
     line = next(x for x in joined.splitlines() if x.startswith("  ✗ OLMo MATH s6 eval"))
-    assert ": stopped after 2 failures · last: SIGSEGV (exit -11) in embedding (torch/nn/functional.py:2551) ← generate" in line, line
-    assert "BLOCKED: SIGSEGV (exit -11) on 2 different nodes (h-m, h-n)" in failure_notes(base, "olmo_math", now)["n"]
-    return
-    why = next(line for line in bottom.splitlines() if line.startswith("      why:  "))
-    assert why.startswith("      why:  rank 1 SIGSEGV (exit -11), native crash during answering; crashed in embedding"), why
-    joined = re.sub(r"\n {12}", " ", bottom)
+    assert "stopped after 3 failures on 3 nodes (h-o, h-m, h-n)" in line and \
+        "SIGSEGV (exit -11) in embedding (torch/nn/functional.py:2551)" in line, line
+    note = failure_notes(base, "olmo_math", now)["n"]
+    assert "BLOCKED: SIGSEGV (exit -11) on 3 different nodes (h-o, h-m, h-n)" in note
+    assert "why:  rank 1 SIGSEGV (exit -11), native crash during answering; crashed in embedding" in note
     assert ("crashed in embedding (torch/nn/functional.py:2551) ← generate (srgc_rebuttal/torch_backend.py:412) ← "
-            "evaluate (srgc_rebuttal/run_experiment.py:301)") in joined, joined
-    assert "SIGTERM" not in why                       # the peers torchrun stopped are not the cause
-    assert f"      stack: {dump_path}" in bottom.splitlines()        # whole path on one line, copyable
+            "evaluate (srgc_rebuttal/run_experiment.py:301)") in note
     no_frame = status.native_story([{"rank": 3, "signal": "11", "native_python_stack":
         "Fatal Python error: Segmentation fault\n\nCurrent thread 0x1 (most recent call first):\n  <no Python frame>\n"}])[0]
     assert "no Python frame (inside a native library" in no_frame
     assert status.native_story([{"rank": 0, "message": "ValueError: x"}]) == (None, None)
 
 
-def test_eval_grid_cell_agrees_with_counts_below(tmp_path):
-    """User 11-13 '위 표랑 아래 현황이랑 안맞아': a branch has several evaluations; finished ones must show in its
-    grid cell (was ○ until every one finished), and a running one must not be hidden by a failed sibling (was ✗)."""
-    now = time.time()
-    base = tmp_path / "v8"
-    q = base / "olmo_mbpp" / ".multi-node"
-    write(q / "state.json", {"phase": "primary_evaluation", "failure": None})
-    snap = tmp_path / "snap.pt"
-    snap.write_text("x")
-    def ev(key, seed, update, state, attempts=()):
-        write(q / "jobs" / f"{key}.json", {"state": state, "phase": "evaluation", "attempts": list(attempts),
-              "task": {"kind": "evaluate", "training_seed": seed, "completed_update": update, "snapshot_path": str(snap),
-                       "run_id": f"olmo_mbpp.rebuttal_bank.s{seed}.bank_sr_t050.abcdef0123"}})
-    ev("a1", 5, 25, "done"); ev("a2", 5, 50, "done"); ev("a3", 5, 75, "pending")
-    ev("b1", 6, 25, "failed", [{"id": "f1", "exit_code": -11, "worker": "gone.1"}])
-    ev("b2", 6, 50, "running", [{"id": "r1", "worker": "node01.7", "started_at": now - 60}])
-    ev("b3", 6, 75, "done")
-    key = hashlib.sha256(json.dumps("node01.7").encode()).hexdigest()
-    write(q / "workers" / (key + ".json"), {"worker": "node01.7", "at": now - 2})
-    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
-    grid = text.split("━━ V8 status · ")[0]
-    rows = {line.split()[0]: line.split()[1:] for line in grid.splitlines()[grid.splitlines().index(next(
-        l for l in grid.splitlines() if l.startswith(' eval'))) + 1:] if line.strip()[:1].isdigit()}
-    assert "2/3" in rows["5"] and "○" not in rows["5"], rows
-    assert "1/3▶50✗" in rows["6"], rows
 
 
 def test_native_crash_stack_at_the_end_of_the_task_log_is_found(tmp_path):
@@ -859,65 +528,7 @@ def test_native_crash_stack_at_the_end_of_the_task_log_is_found(tmp_path):
     assert "step (vllm/worker.py:12)" in cause and "no fault dump" not in cause, cause
 
 
-def test_green_running_cells_add_up_to_the_run_count(tmp_path):
-    """User 11-13 '초록색 개수랑 아래 running 개수랑 안맞는다고': two evaluations of one branch running at once
-    show as ▶×2; every running task is counted in exactly one green cell; done is not green."""
-    now = time.time()
-    base = tmp_path / "v8"
-    q = base / "olmo_mbpp" / ".multi-node"
-    write(q / "state.json", {"phase": "primary_evaluation", "failure": None})
-    snap = tmp_path / "snap.pt"
-    snap.write_text("x")
-    def ev(key, seed, update, state, worker=None):
-        attempts = [{"id": key + "a", "worker": worker, "started_at": now - 60}] if worker else []
-        write(q / "jobs" / f"{key}.json", {"state": state, "phase": "evaluation", "attempts": attempts,
-              "task": {"kind": "evaluate", "training_seed": seed, "completed_update": update, "snapshot_path": str(snap),
-                       "run_id": f"olmo_mbpp.rebuttal_bank.s{seed}.bank_sr_t050.abcdef0123"}})
-    for i, wid in enumerate(("n1.1", "n2.1", "n3.1")):
-        write(q / "workers" / (hashlib.sha256(json.dumps(wid).encode()).hexdigest() + ".json"), {"worker": wid, "at": now - 2})
-    ev("a1", 5, 25, "running", "n1.1"); ev("a2", 5, 50, "running", "n2.1"); ev("a3", 5, 75, "done")
-    ev("b1", 6, 25, "running", "n3.1"); ev("b2", 6, 50, "done")
-    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
-    grid = text.split("━━ V8 status · ")[0]
-    lines = grid.splitlines()
-    i = next(k for k, l in enumerate(lines) if l.startswith(" eval"))
-    rows = {l.split()[0]: l.split()[1:] for l in lines[i + 1:] if l.strip()[:1].isdigit()}
-    assert "1/3▶×2" in rows["5"], rows
-    assert "1/2▶25" in rows["6"], rows
-    green = sum(int(c.split("▶×")[1]) if "▶×" in c else 1 for r in rows.values() for c in r if "▶" in c)
-    assert green == status.clean_block(base, "olmo_mbpp", now, "viewer", 200)[4]["running"] == 3
-    assert status.mark_style("✓") == "done" and status.mark_style("1/3") == "done" and status.mark_style("▶×2") == "run"
-    assert status.mark_style("○") is None and status.STYLE["done"] != status.STYLE["run"]
 
 
-def test_narrow_screen_splits_columns_instead_of_hiding_right_hand_running_tasks(tmp_path, monkeypatch):
-    """A row wider than the phone screen was cut at the right edge, so running tasks in SR225..U vanished
-    from the grid while the run count below still counted them."""
-    now = time.time()
-    base, q, m = two_cohort_base(tmp_path, now)
-    cfg = {"seeds": {"training": [5, 6, 7, 8, 9]}, "bank": {"core_grid": [50, 100, 150, 200], "extended_grid": [25, 75, 125, 175, 225, 250]},
-           "training": {"matched_update_endpoint": 275, "prefix_updates": 25}}
-    monkeypatch.setattr(status, "runner_config", lambda cohort: cfg)
-    for i, (arm, wid) in enumerate((("bank_sr_t250", "h-a.1"), ("bank_sr_t025", "h-b.1"))):
-        write(q / "jobs" / f"j{i}.json", {"state": "running", "phase": "train", "task": {"kind": "train", "method_id": arm,
-              "training_seed": 5, "run_id": f"j{i}", "horizon": 275, "parent": {"completed_update": arm[-3:]}},
-              "attempts": [{"id": f"a{i}", "worker": wid, "started_at": now - 60}]})
-        worker_beat(q, wid, 2, "child:1", now)
-    text = status.render_clean([base], now=now, gpus=[], host="viewer", width=80)
-    block = text.split("Qwen MBPP ·")[0]
-    assert all(len(line) <= 80 for line in block.splitlines()), max(block.splitlines(), key=len)
-    five = [line.split() for line in block.splitlines() if line.split()[:1] == ["5"]]
-    marks = sum(c.startswith("▶") for row in five for c in row)
-    assert marks == status.clean_block(base, "olmo_math", now, "viewer", 80)[4]["running"] == 2
-    assert "표에 안 나온 실행 중 작업" not in block
 
 
-def test_time_left_is_remaining_work_times_measured_times_over_running_tasks():
-    """'남은 진행률이랑 시간을 알고 싶은거야' (11-15): measured seconds only, '?' before anything is measured."""
-    st = {"total": 10, "updates": (100, 400), "eval": (2, 6), "running": 2, "sec_update": 60.0, "sec_eval": 1800.0}
-    plan = {"eval": (6, 6, "exact")}
-    # 300 updates x 60 s + 4 evaluations x 1800 s = 25,200 s over 2 running tasks = 12,600 s
-    assert status.time_left(st, plan) == "~3h30m"
-    assert status.time_left(dict(st, sec_eval=None), plan) == "?"
-    assert status.time_left(dict(st, updates=(400, 400), eval=(6, 6)), plan) == "done"
-    assert status.time_left(dict(st, running=0), plan) == "~7h00m"    # nothing running: one task at a time

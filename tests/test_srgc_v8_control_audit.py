@@ -220,6 +220,9 @@ def test_local_idle_gpu_is_not_evidence_that_a_remote_worker_stalled(tmp_path,mo
     (queue/'jobs/a.json').write_text(json.dumps(dict(state='running',task=dict(kind='train',run_id='r',horizon=275),
         attempts=[dict(id='a',worker='remote.cluster.example.123',started_at=now-4000)])))
     (queue/'logs').mkdir();log=queue/'logs/a.log';log.write_text('work started\n');os.utime(log,(now-4000,now-4000))
+    import hashlib   # its worker is alive (heartbeat 5 s ago), so the node list names it
+    (queue/'workers').mkdir();(queue/'workers'/(hashlib.sha256(json.dumps('remote.cluster.example.123').encode()).hexdigest()+'.json')).write_text(
+        json.dumps(dict(worker='remote.cluster.example.123',at=now-5,task='child:1')))
     monkeypatch.setattr(socket,'gethostname',lambda:'local.cluster.example')
     output=v8_status.render([tmp_path],now=now,gpus=[('0',0,0)])
     assert 'WARNING' not in output,'local GPU state was incorrectly attributed to a remote worker'

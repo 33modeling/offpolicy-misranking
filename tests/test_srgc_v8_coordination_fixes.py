@@ -263,11 +263,13 @@ def test_status_grid_never_hides_extension_or_evaluation_states(tmp_path):
         job(dict(kind='evaluate',run_id=f's5.r{i}',training_seed=5,task_id=f'eval.{i}',snapshot_path='/absent',
                  snapshot_sha256=nodes.digest(['s',i]),evaluation_spec_hash=nodes.digest('e')),'evaluation',state)
     out=v8_status.render([tmp_path/'v8'],now=time.time(),gpus=[],host='h',cohorts=('olmo_math',))
-    header=next(line for line in out.splitlines() if line.startswith('seed'))
-    row=next(line for line in out.splitlines() if line.strip().startswith('5 '))
-    assert 'bank_sr_t050 ext' in header and header.rstrip().endswith('eval'),out
-    # the branch stays done, its extension shows failed, and the three evaluations are all counted
-    assert row.split()[1:4]==['done','done','failed'] and row.rstrip().endswith('1 failed,1 done,1 waiting'),out
+    grid=out.split('━━')[0].splitlines()
+    def cells(phase):
+        i=next(k for k,line in enumerate(grid) if line.startswith(' '+phase))
+        return dict(zip(grid[i].split()[1:],next(l for l in grid[i+1:] if l.split()[:1]==['5']).split()[1:]))
+    # the branch stays done, its extension restarts by itself, and the three evaluations are all counted
+    assert cells('train')['On']=='✓' and cells('train')['SR50']=='✓' and cells('ext')['SR50']=='↻',out
+    assert cells('eval')['?']=='1/3↻',out
 
 
 def test_queue_written_by_another_account_stops_this_node_without_traceback(tmp_path,capsys):
