@@ -106,5 +106,5 @@ def test_running_task_always_says_how_far_it_is(tmp_path):
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
     nodes = {line.split()[1]: line for line in text.splitlines() if line.startswith(" ▶ h-")}
     # 4 GPU processes at question 75 of their 500 = 300/2000 questions; 1,200 s median x 85% left = ~17 min
-    assert " q 300/2000 " in nodes["h-ev"] and " ~17m " in nodes["h-ev"] and "answering 75/500" in nodes["h-ev"], nodes["h-ev"]
+    assert "   300/2000 " in nodes["h-ev"] and " ~17m " in nodes["h-ev"] and "answering 75/500" in nodes["h-ev"], nodes["h-ev"]
     assert " 62/75 " in nodes["h-tr"] and "answering 3/8" in nodes["h-tr"], nodes["h-tr"]

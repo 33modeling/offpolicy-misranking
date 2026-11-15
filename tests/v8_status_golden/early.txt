@@ -44,5 +44,5 @@ OLMo MATH · training ───────────────────�
    host  gpus  state    exp        task            done/total  left  time   beat  now
  ▶ h06   ?     running  OLMo MATH  s6 SR50         233/275     ~13m  1h40m  38s   started, no output yet
  ▶ h08   ?     running  OLMo MATH  s6 SR100        140/275     ~42m  54m    32s   started, no output yet
- ▶ h22   ?     running  OLMo MATH  s8 eval On@275  q 171/500   ~34m  1h03m  41s   answering 25/125 (3s ago)
+ ▶ h22   ?     running  OLMo MATH  s8 eval On@275  171/500     ~34m  1h03m  41s   answering 25/125 (3s ago)
  this node  viewer · GPU 97% · no V8 task here

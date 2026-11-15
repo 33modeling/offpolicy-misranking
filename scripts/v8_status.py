@@ -1306,7 +1306,7 @@ def task_model(base, cohort, now):
             t['left_s'] = left_units * spe if spe else None
             if t['state'] in ('running', 'person') and t['row'] is not None and t['row']['status'] == 'running':
                 i, n = t.get('questions') or (0, None)
-                t['progress'] = f"q {i}/{n if n else '?'}"
+                t["progress"] = f"{i}/{n if n else '?'}"   # questions answered (user 11-16: "q 는 왜 붙여 놨냐")
         else:
             left_units = 0 if t['state'] == 'done' else max(0, t['end'] - t['done_u'])
             t['left_s'] = left_units * spu if spu else None

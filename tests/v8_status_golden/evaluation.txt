@@ -60,11 +60,11 @@ OLMo MATH · budget evaluation ────────────────�
  ▶ h53     ?     running  OLMo MATH  s9 SR250              269/275     ~4m     1h37m  3s    started, no output yet
  ▶ h56     ?     running  OLMo MATH  s5 SR150 ext          292/337     ~34m    39m    35s   started, no output yet
  ▶ h57     ?     running  OLMo MATH  s5 SR175 ext          312/337     ~18m    1h30m  21s   started, no output yet
- ▶ h76     ?     running  OLMo MATH  s5 eval SR150@275     q 233/500   ~52m    47m    5s    answering 85/125 (3s ago)
- ▶ h78     ?     running  OLMo MATH  s6 eval SR150@275     q 245/500   ~50m    1h55m  50s   answering 116/125 (3s ago)
- ▶ h79     ?     running  OLMo MATH  s7 eval On@275        q 285/500   ~42m    1h17m  44s   answering 48/125 (3s ago)
- ▶ h82     ?     running  OLMo MATH  s8 eval On@275        q 218/500   ~55m    1h51m  18s   answering 119/125 (3s ago)
- ▶ h94     ?     running  OLMo MATH  s8 eval SR75 ext@300  q 254/500   ~48m    1h08m  60s   answering 27/125 (3s ago)
+ ▶ h76     ?     running  OLMo MATH  s5 eval SR150@275     233/500     ~52m    47m    5s    answering 85/125 (3s ago)
+ ▶ h78     ?     running  OLMo MATH  s6 eval SR150@275     245/500     ~50m    1h55m  50s   answering 116/125 (3s ago)
+ ▶ h79     ?     running  OLMo MATH  s7 eval On@275        285/500     ~42m    1h17m  44s   answering 48/125 (3s ago)
+ ▶ h82     ?     running  OLMo MATH  s8 eval On@275        218/500     ~55m    1h51m  18s   answering 119/125 (3s ago)
+ ▶ h94     ?     running  OLMo MATH  s8 eval SR75 ext@300  254/500     ~48m    1h08m  60s   answering 27/125 (3s ago)
    idle00  ?     idle                                                                 37s   idle while 27 tasks are rea…
    idle01  ?     idle                                                                 67s   idle while 27 tasks are rea…
  this node  viewer · GPU 97% · no V8 task here

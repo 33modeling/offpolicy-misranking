@@ -59,11 +59,11 @@ OLMo MATH · budget extension ────────────────�
  ▶ h61     ?     running  OLMo MATH  s7 SR50 ext            355/400     ~38m    28m    3s    started, no output yet
  ▶ h67     ?     running  OLMo MATH  s8 SR175 ext           299/337     ~32m    1h19m  37s   started, no output yet
  ▶ h72     ?     running  OLMo MATH  s9 SR125 ext           378/400     ~18m    20m    22s   started, no output yet
- ▶ h78     ?     running  OLMo MATH  s5 eval SR75@275       q 182/500   ~45m    48m    59s   answering 89/125 (3s ago)
- ▶ h82     ?     running  OLMo MATH  s6 eval On@275         q 267/500   ~33m    1h00m  41s   answering 39/125 (3s ago)
- ▶ h85     ?     running  OLMo MATH  s7 eval SR50@275       q 100/500   ~56m    52m    48s   answering 32/125 (3s ago)
- ▶ h87     ?     running  OLMo MATH  s8 eval SR50@275       q 211/500   ~41m    1h34m  12s   answering 39/125 (3s ago)
- ▶ h98     ?     running  OLMo MATH  s7 eval SR200 ext@350  q 279/500   ~31m    37m    29s   answering 68/125 (3s ago)
+ ▶ h78     ?     running  OLMo MATH  s5 eval SR75@275       182/500     ~45m    48m    59s   answering 89/125 (3s ago)
+ ▶ h82     ?     running  OLMo MATH  s6 eval On@275         267/500     ~33m    1h00m  41s   answering 39/125 (3s ago)
+ ▶ h85     ?     running  OLMo MATH  s7 eval SR50@275       100/500     ~56m    52m    48s   answering 32/125 (3s ago)
+ ▶ h87     ?     running  OLMo MATH  s8 eval SR50@275       211/500     ~41m    1h34m  12s   answering 39/125 (3s ago)
+ ▶ h98     ?     running  OLMo MATH  s7 eval SR200 ext@350  279/500     ~31m    37m    29s   answering 68/125 (3s ago)
    idle00  ?     idle                                                                  11s   idle while 36 tasks are re…
    idle01  ?     idle                                                                  3s    idle while 36 tasks are re…
    idle02  ?     idle                                                                  14s   idle while 36 tasks are re…
