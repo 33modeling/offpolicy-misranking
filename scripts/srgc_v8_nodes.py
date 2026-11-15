@@ -48,7 +48,7 @@ NODE_VERIFY_TIMEOUT = float(os.environ.get('V8_NODE_VERIFY_TIMEOUT', '1800'))
 # A task that died of a native signal (SIGSEGV etc.) is retried from its last checkpoint on a host where it has
 # not crashed (user 11-10: 'failed로 된거 복구 되는거지? ... 디버깅 계속 해보고 수정해'). Repeated crashes on one
 # GPU node (V8-144) say nothing about the task; crashes on this many different hosts point at the task itself.
-TASK_NATIVE_HOST_LIMIT = 2
+TASK_NATIVE_HOST_LIMIT = 3   # 11-16: one more host before a native crash is blamed on the task
 TERMINAL = {'completed_horizon', 'completed_budget'}
 PHASES = ('train', 'primary_evaluation', 'extension', 'evaluation')
 CPU_PHASES = ('prepare', 'freeze', 'primary_finalize', 'finalize')
@@ -173,7 +173,8 @@ def access_message(path,exc):
             'Run the worker as the account that created this queue; nothing was changed.')
 
 
-MAX_ATTEMPTS=2     # initial task fault plus one immediate retry, across all workers
+MAX_ATTEMPTS=4     # initial task fault plus three immediate retries, across all workers (user 11-16:
+                   # '빨리 실패한거에 노드 다시 붙여야지'); still bounded, so a broken task cannot relaunch forever
 RETRY_DELAY=0.0    # restart from the saved checkpoint without a cooldown
 
 
