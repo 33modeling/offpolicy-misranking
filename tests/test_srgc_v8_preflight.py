@@ -101,37 +101,41 @@ def test_real_smoke_script_runs_in_this_python():
     except ImportError:assert any('No module named' in f for f in result['failures'])
 
 
-def test_preflight_failure_moves_the_task_to_another_node_without_counting_a_failure(tmp_path,monkeypatch):
-    """CPU fake queue: node-a fails preflight, the task is not started there and is not a task failure;
-    node-b passes preflight and runs it to done. Both preflight records stay in the attempts."""
-    pool,runtime,task,key,saved=prepared(tmp_path);calls=[];finished=[]
-    runtime.python='/venv/bin/python';runtime.gpus=GPUS
-    runtime.done=lambda _:bool(finished)
-    def execute(task,matrix,fd,stop,device_fds,attempt):
-        calls.append(pool.host);finished.append(True);stop.set();return 0
-    runtime.execute=execute
-    def fake(host_ok):
+def test_preflight_never_takes_a_node_out_of_service(tmp_path,monkeypatch):
+    """User 11-16 'idle이 너무 잡히는데', '실패하면 다시 시도안하고 그냥 idle 되는거 같음'.
+    Default (record): a failed check is written into the attempt and the task still runs on this node.
+    V8_PREFLIGHT=block: the launch is refused without counting a task failure, the node pauses and claims
+    again itself (it is never given up for the cohort), and runs the task once the check passes."""
+    def setup(sub):
+        (tmp_path/sub).mkdir();pool,runtime,task,key,saved=prepared(tmp_path/sub);calls=[];finished=[]
+        runtime.python='/venv/bin/python';runtime.gpus=GPUS
+        runtime.done=lambda _:bool(finished)
+        def execute(task,matrix,fd,stop,device_fds,attempt):
+            calls.append(pool.host);finished.append(True);stop.set();return 0
+        runtime.execute=execute
+        return pool,runtime,key,calls
+    def fake(results):
         def preflight(cohort,python,gpus,expected):
-            ok=host_ok[pool.host]
+            ok=results.pop(0) if results else True
             return dict(policy=nodes.PREFLIGHT_POLICY,ok=ok,failures=[] if ok else ['/dev/shm has 64 MiB free (< 1024)'],
-                        warnings=[],seconds=0.1,env=dict(host=pool.host,gpus=gpus,executable=python,
+                        warnings=[],seconds=0.1,env=dict(host='node-a',gpus=gpus,executable=python,
                         torch=dict(version='2.7.1+cu126'),packages=dict(GOOD_PACKAGES)))
         return preflight
-    monkeypatch.setattr(nodes,'PREFLIGHT_CHECK',fake({'node-a':False,'node-b':True}))
-    pool.host='node-a'
+    # record (default): runs anyway, the failed check is kept in the attempt
+    monkeypatch.setattr(nodes,'PREFLIGHT_MODE','record');monkeypatch.setattr(nodes,'PREFLIGHT_CHECK',fake([False]))
+    pool,runtime,key,calls=setup('record');pool.host='node-a'
     nodes.worker_loop(pool,runtime,'node-a.1',threading.Event(),poll=.001,retry_delay=0,preflight=True)
     job=nodes.read(pool.root/'jobs'/(key+'.json'))
-    assert calls==[] and job['state']=='interrupted' and nodes.counted_failures(job)==0
-    first=job['attempts'][0]
-    assert first['outcome']=='node_failure' and 'PreflightFailed' in first['error'] and '/dev/shm' in first['error']
-    assert first['preflight']['ok'] is False and first['env']['host']=='node-a' and first['host']=='node-a'
-    pool.host='node-b'
-    nodes.worker_loop(pool,runtime,'node-b.2',threading.Event(),poll=.001,retry_delay=0,preflight=True)
+    assert calls==['node-a'] and job['state']=='done' and job['attempts'][0]['preflight']['ok'] is False
+    # block: refused once, the same node retries after the pause and finishes the task
+    monkeypatch.setattr(nodes,'PREFLIGHT_MODE','block');monkeypatch.setattr(nodes,'PREFLIGHT_RETRY_SECONDS',0)
+    monkeypatch.setattr(nodes,'PREFLIGHT_CHECK',fake([False]))
+    pool,runtime,key,calls=setup('block');pool.host='node-a'
+    nodes.worker_loop(pool,runtime,'node-a.2',threading.Event(),poll=.001,retry_delay=0,preflight=True)
     job=nodes.read(pool.root/'jobs'/(key+'.json'))
-    assert calls==['node-b'] and job['state']=='done' and [a['host'] for a in job['attempts']]==['node-a','node-b']
-    assert job['attempts'][1]['preflight']['ok'] and job['attempts'][1]['env']['packages']['transformers']=='4.57.1'
-    assert saved.read_bytes()==b'original step25 optimizer RNG rewards'
-
+    first=job['attempts'][0]
+    assert first['outcome']=='node_failure' and 'PreflightFailed' in first['error'] and nodes.counted_failures(job)==0
+    assert calls==['node-a'] and job['state']=='done' and job['attempts'][-1]['preflight']['ok']
 
 def test_crash_records_signal_stage_frames_env_host_gpus(tmp_path,monkeypatch,capsys):
     pool,runtime,task,key,saved=prepared(tmp_path)

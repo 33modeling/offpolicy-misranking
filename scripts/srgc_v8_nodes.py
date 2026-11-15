@@ -2180,7 +2180,9 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                         diagnostic.publish('PREFLIGHT',cohort(pool),'checking Python/torch/CUDA/GPUs/shm before start',task=key)
                         checked=PREFLIGHT_CHECK(cohort(pool),runtime.python,list(getattr(runtime,'gpus',()) or ()),pool.binding)
                         print(f'[{worker}] '+preflight_line(checked),flush=True)
-                        if not checked.get('ok'):
+                        # Default: record only (user 11-16 'idle이 너무 잡히는데'). V8_PREFLIGHT=block refuses the launch,
+                        # and even then the node only pauses (V8_PREFLIGHT_RETRY_SECONDS) and keeps serving.
+                        if not checked.get('ok') and PREFLIGHT_MODE=='block':
                             raise PreflightFailed('preflight failed; task not started on this node, another node takes it: '+
                                                   '; '.join(checked.get('failures',[])))
                     rc=75 if stop.is_set() else runtime.execute(task,pool.root/'tasks'/(key+'.json'),lease.fd,stop,device_fds,attempt)
@@ -2205,7 +2207,12 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
             finally:lease.close()
             print(f'[{worker}] {time.strftime("%Y-%m-%d %H:%M:%S")} {cohort(pool)} task finished rc={rc} '
                   f'state={recorded} log={log}',flush=True)
-            if node_error is not None:give_up(index,pool,'node launch',NodeFailure(node_error))
+            if node_error is not None and node_error.startswith('PreflightFailed'):
+                # Not a reason to stop serving this cohort: the task is back in the queue for any node, this node
+                # waits a little (the GPU may still be releasing memory) and claims again.
+                print(f'[{worker}] preflight refused this launch; retrying in {PREFLIGHT_RETRY_SECONDS:g}s',flush=True)
+                stop.wait(PREFLIGHT_RETRY_SECONDS)
+            elif node_error is not None:give_up(index,pool,'node launch',NodeFailure(node_error))
             else:
                 hold=node_native_hold(pool,runtime)
                 if hold:give_up(index,pool,'native crash quarantine',NodeFailure(hold))
@@ -2662,6 +2669,8 @@ class PreflightFailed(NodeFailure):
     """This node cannot start the task safely; the attempt is refunded and another node takes it."""
 
 
+PREFLIGHT_MODE=os.environ.get('V8_PREFLIGHT','record').strip().lower()   # record (default) | block | 0 (off)
+PREFLIGHT_RETRY_SECONDS=float(os.environ.get('V8_PREFLIGHT_RETRY_SECONDS','120'))
 PREFLIGHT_CHECK=node_preflight  # module attribute so CPU tests can substitute the node
 
 
