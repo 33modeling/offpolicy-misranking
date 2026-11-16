@@ -2,6 +2,7 @@
 import hashlib
 from pathlib import Path
 import threading
+import time
 from types import SimpleNamespace
 
 from scripts import srgc_v8_nodes as nodes
@@ -91,7 +92,18 @@ def test_primary_report_survives_an_unavailable_cohort_without_hanging_worker(tm
     publish(left.root.parent,left.binding)
     def unavailable():raise nodes.NodeFailure('CPU fixture cannot open cohort b')
     rr.verify_node=unavailable
-    assert nodes.worker_loop_many([(left,lr),(right,rr)],'node',threading.Event(),poll=.001)==1
+    # 11-16: an unavailable runtime (NodeFailure) is a node-local fault retried after a backoff (600 s by
+    # default), so the worker waits for that retry instead of exiting; it neither spins nor starts extension.
+    stop=threading.Event();result={}
+    worker=threading.Thread(target=lambda:result.setdefault('code',nodes.worker_loop_many(
+        [(left,lr),(right,rr)],'node',stop,poll=.001)),daemon=True)
+    worker.start()
+    deadline=time.monotonic()+30
+    while time.monotonic()<deadline and not nodes.primary_results_ready(left.root.parent):time.sleep(.02)
+    time.sleep(.3)
+    assert worker.is_alive() and 'code' not in result
+    stop.set();worker.join(10)
+    assert result.get('code')==75
     assert nodes.primary_results_ready(left.root.parent)
     assert left.queue_state()['phase']=='extension' and left.queue_state()['failure'] is None
     assert not (lr.path/'start-extension').exists()

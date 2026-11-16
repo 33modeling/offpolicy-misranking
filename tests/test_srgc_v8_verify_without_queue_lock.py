@@ -59,11 +59,19 @@ def test_queue_lock_is_free_while_a_node_verifies(tmp_path):
     assert seen == [True], 'another node could not take control.lock while this node was verifying'
 
 
-def test_node_that_cannot_serve_the_active_cohort_exits_instead_of_idling(tmp_path, capsys):
-    rows = slow_pairs(tmp_path, 1.0, .1)       # verification longer than its limit: this node gives up olmo_math
-    start = time.monotonic()
-    code = nodes.worker_loop_many(rows, 'slow-node', threading.Event(), poll=.005, cohort_order=nodes.DEFAULT_COHORTS)
-    assert code == 1 and time.monotonic() - start < 3
+def test_node_whose_verifications_time_out_waits_for_the_retry_instead_of_exiting(tmp_path, capsys):
+    # 11-16 'idle 고쳐': a verification timeout is a node-local fault; the node gives that cohort up at once,
+    # names when it retries (V8_GIVEUP_RETRY_SECONDS, 600 s by default) and waits for it instead of exiting.
+    rows = slow_pairs(tmp_path, 1.0, .1)       # verification longer than its limit
+    stop = threading.Event(); result = {}
+    thread = threading.Thread(target=lambda: result.setdefault('code', nodes.worker_loop_many(
+        rows, 'slow-node', stop, poll=.005, cohort_order=nodes.DEFAULT_COHORTS)), daemon=True)
+    thread.start(); time.sleep(1.5)
+    try:
+        assert thread.is_alive() and 'code' not in result
+    finally:
+        stop.set(); thread.join(10)
+    assert result.get('code') == 75
     out = capsys.readouterr().out
-    assert 'timed out' in out and ('EXIT: this node cannot serve the active experiment olmo_math' in out
-                                    or 'STOPPED: olmo_math is not complete' in out)   # exits either way, never idles
+    assert 'timed out' in out and 'NOT SERVING olmo_math until ' in out and '(retry 1): node verification failed' in out
+    assert 'EXIT: this node cannot serve' not in out

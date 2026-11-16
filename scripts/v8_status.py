@@ -941,8 +941,10 @@ def node_table(bases, cohorts, now, this_host=None, models=None):
             code=diagnosis['state']
             state=('gone' if code in ('BLOCKED','STOPPED') else 'finished' if code=='COMPLETE' else
                    'starting' if code=='STARTING' else 'busy' if code in ('CHECKING','CPU_STAGE','RECORDING_RESULT') else 'idle')
+            # An idle node says in plain words why, per cohort it serves (user 11-16 '주석이라도 잘 나오게').
+            idle_reason=diagnosis.get('idle_reason') if state=='idle' and isinstance(diagnosis.get('idle_reason'),str) else None
             out.append(dict(base,state=state,experiment=COHORT_LABEL.get(diagnosis.get('cohort'),''),
-                            doing=scheduler_text(diagnosis,now)))
+                            doing=idle_reason or scheduler_text(diagnosis,now)))
             continue
         if any(task == 'runtime_initialization' for _, task in live.values()):
             out.append(dict(base, state='starting', doing='loading runtime / checking node'))

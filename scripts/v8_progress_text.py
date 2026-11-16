@@ -29,8 +29,13 @@ def scheduler_text(record,now):
     if record.get('checked_at') is not None:parts.append(f'task inspection {max(0,now-record["checked_at"]):.0f}s ago')
     if record.get('nothing_claimable_in'):parts.append('nothing claimable in '+COHORTS.get(record['nothing_claimable_in'],record['nothing_claimable_in']))
     if isinstance(record.get('serves'),list):parts.append('serves '+' -> '.join(map(str,record['serves'])))
-    if isinstance(record.get('not_serving'),dict) and record['not_serving']:
-        parts.append('NOT serving '+'; '.join(f'{c}: {str(r)[:120]}' for c,r in record['not_serving'].items()))
+    retrying=record.get('retrying') if isinstance(record.get('retrying'),dict) else {}
+    for c,row in retrying.items():
+        try:parts.append(f"NOT SERVING {c} until {time.strftime('%H:%M',time.localtime(row['until']))} (retry {row['retry']}): {str(row.get('reason',''))[:120]}")
+        except (KeyError,TypeError,ValueError,OverflowError):pass
+    others={c:r for c,r in (record.get('not_serving') or {}).items() if c not in retrying} if isinstance(record.get('not_serving'),dict) else {}
+    if others:
+        parts.append('NOT serving '+'; '.join(f'{c}: {str(r)[:120]}' for c,r in others.items()))
     parts.append(f'same state {max(0,now-record.get("since",record["at"])):.0f}s')
     parts.append('scheduler checked '+time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime(record['at']))+f' ({age:.0f}s ago)')
     return ' | '.join(parts)

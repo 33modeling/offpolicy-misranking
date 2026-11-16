@@ -79,6 +79,14 @@ class RuntimeProxy:
         finally:
             if self.channel.fileno()!=-1:self.channel.settimeout(None)
 
+    def restart(self):
+        """After a node-local give-up: stop this actor (dead, failed or stuck) and start it again through the
+        same lazy path as at startup (startup_ready -> _start); the node then verifies it again."""
+        self.close(grace=.2)
+        self.channel=None;self.process=None;self.error=None;self.initialized=False
+        self.startup_stage='starting selected Python interpreter';self.verification_stage='checking original node inputs'
+        self.inspection_stage='checking original task metadata'
+
     def call(self,method,*args,fds=(),stop=None):
         if self.error:raise nodes.NodeFailure(f'{self.cohort}: runtime actor unavailable on this node: {self.error}')
         if method in ('plan','side_tasks','ready','native_busy','done'):

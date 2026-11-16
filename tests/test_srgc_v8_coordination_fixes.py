@@ -139,7 +139,9 @@ def test_node_local_fault_never_fails_the_shared_queue(tmp_path,fault):
     good=start_node(tmp_path,plan,root,'good',FAKE_FAULT_NODE='bad',FAKE_FAULT=fault,FAKE_SLEEP='0.3')
     bad_rc,bad_out=finish(bad);good_rc,good_out=finish(good)
     assert good_rc==0,good_out[-3000:]
-    assert bad_rc==1 and 'this node stops serving' in bad_out and 'NOT marked failed' in bad_out,bad_out[-3000:]
+    # 11-16: the bad node waits for its node-local retry (600 s) instead of giving up for good, and exits 0
+    # as soon as it sees that the good node completed every cohort it serves.
+    assert bad_rc==0 and 'NOT SERVING' in bad_out and '(retry 1)' in bad_out and 'NOT marked failed' in bad_out,bad_out[-3000:]
     assert 'Traceback' not in bad_out+good_out
     for cohort in ('olmo_math','qwen_mbpp'):
         state=json.loads((root/cohort/'.multi-node/state.json').read_text())
@@ -278,10 +280,15 @@ def test_queue_written_by_another_account_stops_this_node_without_traceback(tmp_
     from test_srgc_v8_nodes import FakeRuntime
     runtime=FakeRuntime(tmp_path/'runtime');pool=nodes.Pool(tmp_path/'queue',runtime.binding);pool.initialize()
     (pool.root/'control.lock').touch();os.chmod(pool.root/'control.lock',0o444)
-    assert nodes.worker_loop(pool,runtime,'n',threading.Event(),poll=.002)==1
+    # 11-16: a queue access fault is node-local: retried after the backoff (600 s), the worker waits for it.
+    stop=threading.Event();result={}
+    worker=threading.Thread(target=lambda:result.setdefault('code',nodes.worker_loop(pool,runtime,'n',stop,poll=.002)),daemon=True)
+    worker.start();time.sleep(.5)
+    assert worker.is_alive() and 'code' not in result
+    stop.set();worker.join(10);assert result.get('code')==75
     out=capsys.readouterr().out
     assert 'control.lock' in out and 'Run the worker as the account that created this queue' in out
-    assert 'this node stops serving' in out
+    assert 'NOT SERVING fixture until ' in out and '(retry 1): queue access failed' in out and 'Traceback' not in out
     assert nodes.read(pool.root/'state.json')['failure'] is None
 
 

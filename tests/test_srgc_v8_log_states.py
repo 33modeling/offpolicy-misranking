@@ -134,12 +134,20 @@ def test_wedged_verification_has_finite_exit_and_cannot_initialize_after_retirem
         independent_startup=True;timeout=.05;verify_timeout=.05;pending_barrier=None   # V8-159: own verification limit
         verification_stage='saving shared dispatch policy receipt'
         def verify_node(self):release.wait(1)
-    runtime=Runtime();start=time.monotonic()
+    runtime=Runtime();stop=threading.Event();result={}
+    # 11-16: a verification timeout is a node-local fault retried after a backoff (V8_GIVEUP_RETRY_SECONDS,
+    # 600 s by default): the worker gives the wedged verification up at once and waits for that retry
+    # instead of exiting; it stops promptly on request.
+    worker=threading.Thread(target=lambda:result.setdefault('code',nodes.worker_loop_many(
+        [(pool,runtime)],'node',stop,poll=.005,cohort_order=('olmo_math',))),daemon=True)
     try:
-        assert nodes.worker_loop_many([(pool,runtime)],'node',threading.Event(),poll=.005,
-                                      cohort_order=('olmo_math',))==1
-        assert time.monotonic()-start<.5
-    finally:release.set()
+        worker.start();time.sleep(.5)
+        assert worker.is_alive() and 'code' not in result
+        status=nodes.read(tmp_path/'.v8-worker-status'/(nodes.digest('node')+'.json'))
+        assert status['retrying']['olmo_math']['kind']=='node verification'
+        start=time.monotonic();stop.set();worker.join(5)
+        assert result.get('code')==75 and time.monotonic()-start<.5
+    finally:release.set();stop.set()
     time.sleep(.03)
     assert not (pool.root/'binding.json').exists() and not (pool.root/'state.json').exists()
 

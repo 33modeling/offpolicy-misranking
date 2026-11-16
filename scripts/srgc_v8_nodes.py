@@ -1529,6 +1529,63 @@ def worker_loop(pool,runtime,worker,stop,*,poll=3,device_fds=(),retry=False,**po
 
 
 NODE_LOCAL=(NodeFailure,PermissionError)  # local access faults; other OSErrors stay queue-visible
+# User 11-16 'idle 고쳐': a node-local give-up (runtime/actor start, node verification, launch, queue access) is
+# retried on this node after a bounded backoff instead of for the rest of the process. Never retried: this GPU
+# set's native-crash quarantine and re-admission limits, a changed queue identity, queue-level failures.
+GIVEUP_NEVER_RETRY=frozenset({'native crash quarantine','GPU re-admission','queue identity','extension deferred'})
+GIVEUP_RETRY_CAP=3600.0
+
+
+def giveup_retryable(kind,exc):
+    # Only node-local faults (NodeFailure: dead/unstarted actor, timeouts, launch; PermissionError: local access).
+    # A verification that answers 'these frozen inputs differ' (ValueError) is deterministic: it keeps exiting.
+    if isinstance(exc,BindingMismatch) or kind in GIVEUP_NEVER_RETRY:return False
+    return isinstance(exc,NODE_LOCAL)
+
+
+IDLE_REPORT_SECONDS=float(os.environ.get('V8_IDLE_REPORT_SECONDS','30'))
+
+
+def span_text(seconds):
+    seconds=max(0,int(seconds))
+    if seconds<60:return f'{seconds}s'
+    if seconds<3600:return f'{seconds//60}m'
+    return f'{seconds//3600}h {seconds%3600//60}m'
+
+
+def observation_text(obs):
+    """Plain words for why a cohort's last task inspection gave this node nothing (user 11-16 '주석이라도 잘 나오게')."""
+    obs=dict(obs or {})
+    if not obs:return 'tasks not inspected yet'
+    if obs.get('metadata_error'):return 'a task record is being written by another node; reading it again shortly'
+    if obs.get('extension_waiting_for'):
+        return 'extension waits for the matched-step results of '+', '.join(map(str,obs['extension_waiting_for']))
+    if obs.get('planning_error') or obs.get('planning_errors'):
+        return 'planner reports an input problem: '+canonical(obs.get('planning_error') or obs['planning_errors'])[:120]
+    def count(key):
+        try:return int(obs.get(key) or 0)
+        except (TypeError,ValueError):return 0
+    ready,leased,native,deps,failed=(count(k) for k in ('ready','leased','native_busy','dependencies','failed'))
+    bits=[f'{ready} ready' if ready else 'none ready']
+    if leased:bits.append(f'{leased} running on other nodes')
+    if native:bits.append(f'{native} wait for a process still using the same run folder')
+    if deps:bits.append(f'{deps} waiting for parent checkpoints')
+    if obs.get('deferred_budget'):bits.append('waiting for the frozen evaluation budget')
+    if obs.get('recovery_wait'):bits.append('failed tasks wait for their retry time or another GPU host')
+    if failed:bits.append(f'{failed} failed for good')
+    if obs.get('unsealed_plan'):bits.append('all listed tasks are done; the planner has not added the next phase yet')
+    if len(bits)==1 and not ready:bits.append('nothing else to do in this phase now')
+    phase=obs.get('phase')
+    return (f'{phase}: ' if phase else '')+', '.join(bits)
+
+
+def giveup_retry_delay(n):
+    """Seconds before retry n (1, 2, ...): V8_GIVEUP_RETRY_SECONDS (600), doubling, at most 3600."""
+    try:base=float(os.environ.get('V8_GIVEUP_RETRY_SECONDS','600'))
+    except ValueError:base=600.0
+    if not math.isfinite(base) or base<=0:base=600.0
+    base=max(base,.05);cap=max(base,GIVEUP_RETRY_CAP)
+    return min(cap,base*2**min(max(int(n),1)-1,32))
 
 
 def quiescent_failure(pairs):
@@ -1705,6 +1762,8 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
     if stop.is_set():return 75
     initialized=set();terminal={};offers={};scans={};last_report=0;reasons={};busy_report=0;setup_report=0
     shared_failures=set();recovery_checked={};claim_contention_since={};exit_recheck_started={};node_rechecks=set();control_waits={};offer_controls={}
+    idle_state={'since':None,'reported':-float('inf')}  # this node has no task since (monotonic)
+    retry_at={};giveups={};retry_checked=[0.0]  # index -> pending node-local retry; index -> give-ups since last served task
     def discard_offer(i):
         offers.pop(i,None)
         owned=offer_controls.pop(i,None)
@@ -1721,8 +1780,41 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
     # lease counts (one flock probe per task lease, under the one cross-cohort dispatch lock) are never used.
     distinct_ranks=bool(cohort_order) and len({cohort_order.index(p.binding.get('cohort')) if p.binding.get('cohort') in cohort_order
                                                 else -1-i for i,(p,_) in enumerate(pairs)})==len(pairs)
+    def retry_text(i):
+        row=retry_at[i]
+        return f"until {time.strftime('%H:%M',time.localtime(row['until']))} (retry {row['retry']}): {row['reason']}"
+    def idle_cohort_text(i):
+        pool,runtime=pairs[i];now=time.monotonic()
+        if terminal.get(i)=='complete':return 'complete'
+        if i in retry_at and terminal.get(i)=='failed':return 'NOT SERVING '+retry_text(i)[:200]
+        if terminal.get(i)=='failed':
+            why=str(reasons.get(cohort(pool),'gave up on this node'))[:200]
+            return ('the queue has a recorded failure: ' if i in shared_failures else 'NOT SERVING: ')+why
+        if i in scans:
+            scan=scans[i];age=span_text(now-scan.started)
+            if scan.kind=='node verification':return f'starting (node verification {age})'
+            if scan.kind=='queue initialization':return f'starting (queue initialization {age})'
+            return f'inspecting its tasks ({age})'
+        if getattr(runtime,'pending_barrier',None) is not None:return 'CPU stage '+str(runtime.pending_barrier[0])+' running'
+        if i not in initialized:
+            if getattr(runtime,'channel',True) is None:return 'runtime not started yet (starts when earlier cohorts have nothing)'
+            return 'starting ('+str(getattr(runtime,'startup_stage','runtime start'))+')'
+        if i in offers:return 'ready task found, claiming it'
+        text=observation_text(getattr(pool,'observation',None))
+        if i in control_waits and not (getattr(pool,'observation',None) or {}).get('leased'):
+            text=f'waiting {span_text(now-control_waits[i])} for its queue lock (another node is reading or writing it); last seen '+text
+        if cohort_order and i not in eligible:text='earlier cohorts first; '+text
+        return text
+    def idle_reason():
+        if idle_state['since'] is None:return None
+        parts=[f'{cohort(pairs[i][0])} — {idle_cohort_text(i)}' for i in sorted(range(len(pairs)),key=lambda i:rank(pairs[i][0]))]
+        parts+=[f'{name} — NOT SERVING: {str(why)[:120]}' for name,why in dict(not_served or {}).items()
+                if name not in {cohort(p) for p,_ in pairs}]
+        if idle_state.get('gpu_busy'):parts.insert(0,'GPUs busy before new work: '+str(idle_state['gpu_busy'])[:120])
+        return f"IDLE {span_text(time.monotonic()-idle_state['since'])}: "+' · '.join(parts)
     def activity(i):
         pool,runtime=pairs[i]
+        if i in retry_at and terminal.get(i)=='failed':return 'NOT SERVING '+retry_text(i)[:300]
         if terminal.get(i)=='failed':return 'not serving: '+str(reasons.get(cohort(pool),'gave up on this node'))[:300]
         if terminal.get(i)=='complete':return 'complete'
         if i in scans:return 'node verification' if scans[i].kind=='node verification' else 'task inspection'
@@ -1734,9 +1826,13 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
     def context():
         return dict(serves=[cohort(p) for i,(p,_) in sorted(enumerate(pairs),key=lambda x:rank(x[1][0]))
                             if terminal.get(i)!='failed'],
-                    not_serving={**dict(not_served or {}),**{cohort(pairs[i][0]):str(reasons.get(cohort(pairs[i][0]),'gave up'))[:300]
+                    not_serving={**dict(not_served or {}),**{cohort(pairs[i][0]):(retry_text(i) if i in retry_at else
+                                                              str(reasons.get(cohort(pairs[i][0]),'gave up')))[:300]
                                                               for i,v in terminal.items() if v=='failed'}},
-                    cohorts={cohort(p):activity(i) for i,(p,_) in enumerate(pairs)})
+                    cohorts={cohort(p):activity(i) for i,(p,_) in enumerate(pairs)},
+                    retrying={cohort(pairs[i][0]):dict(until=row['until'],retry=row['retry'],kind=row['kind'],reason=row['reason'][:300])
+                              for i,row in retry_at.items() if terminal.get(i)=='failed'},
+                    **({'idle_reason':idle_reason()} if idle_state['since'] is not None else {}))
     diagnostic.context=context
     share_root=dispatch_lock.parent/'.v8-scan-share';used_shares={}
     def queue_marks(pool):
@@ -1792,6 +1888,16 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
         shared_failures.discard(index)  # node/source faults need fresh admission, not automatic rejoining
         terminal[index]='failed';reasons[cohort(pool)]=f'{type(exc).__name__}: {exc}'
         print(f'[{worker}] {cohort(pool)}: {kind} failed: {type(exc).__name__}: {exc}',flush=True)
+        if giveup_retryable(kind,exc):
+            giveups[index]=giveups.get(index,0)+1;delay=giveup_retry_delay(giveups[index])
+            retry_at[index]=dict(due=time.monotonic()+delay,until=time.time()+delay,retry=giveups[index],kind=kind,
+                                 reason=f'{kind} failed: {type(exc).__name__}: {exc}')
+            print(f'[v8] NODE {worker} NOT SERVING {cohort(pool)} {retry_text(index)}',flush=True)
+            print(f'[{worker}] {cohort(pool)}: node-local fault; the shared queue was NOT marked failed and the other '
+                  f'nodes continue. This node keeps serving its other cohorts and retries {cohort(pool)} in {delay:g}s '
+                  '(restarting its runtime and verifying this node again).',flush=True)
+            return
+        retry_at.pop(index,None)
         print(f'[v8] NODE {worker} NOT SERVING {cohort(pool)} from now: {kind} failed: {type(exc).__name__}: {exc}',flush=True)
         if isinstance(exc,BindingMismatch):
             print(f'[{worker}] {cohort(pool)}: no work is taken for this cohort on this node; nothing was changed.',flush=True)
@@ -1896,9 +2002,38 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                         refreshed=True
             except Exception as exc:give_up(i,pool,'final readiness check',exc)
         return refreshed
+    def retry_due():
+        """Return given-up cohorts whose backoff has passed to service: recreate the runtime, verify again."""
+        moved=False;now=time.monotonic()
+        for i in tuple(retry_at):
+            if terminal.get(i)!='failed':retry_at.pop(i);continue  # served again through another path
+            pool,runtime=pairs[i]
+            if now-retry_checked[0]>=max(.1,min(poll,5)):
+                # Finished on other nodes meanwhile: never wait out the backoff for a complete cohort.
+                try:done=read(pool.root/'state.json')
+                except (OSError,ValueError):done={}
+                if isinstance(done,dict) and done.get('phase')=='complete' and not done.get('failure'):
+                    retry_at.pop(i);terminal[i]='complete';reasons.pop(cohort(pool),None);moved=True;continue
+            if now<retry_at[i]['due']:continue
+            row=retry_at.pop(i);terminal.pop(i,None);initialized.discard(i);discard_offer(i)
+            reasons.pop(cohort(pool),None);control_waits.pop(i,None);claim_contention_since.pop(i,None)
+            scan=scans.pop(i,None)
+            if scan is not None:
+                scan.cancelled.set()
+                if scan.finished.is_set() and scan.offer_control is not None:scan.offer_control.close()
+            print(f'[v8] NODE {worker} SERVING {cohort(pool)} again (retry {row["retry"]}): restarting its runtime '
+                  f'after {row["reason"]}',flush=True)
+            restart=getattr(runtime,'restart',None)
+            if callable(restart):
+                try:restart()
+                except Exception as exc:give_up(i,pool,'runtime restart',NodeFailure(f'{type(exc).__name__}: {exc}'))
+            moved=True
+        if now-retry_checked[0]>=max(.1,min(poll,5)):retry_checked[0]=now
+        return moved
     while not stop.is_set():
         progressed=False;dispatched=False;short_claim_wait=False;gate_busy=False
         active=None
+        if retry_at and retry_due():progressed=True
         if cohort_order:
             # Which cohort comes first, from the shared state files only (user 11-16 'dispatch lock queue lock 걸려
             # 있다고'). Taking the one cross-cohort dispatch lock here on every loop of every node, and probing every
@@ -1925,7 +2060,7 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
             available={cohort(pool) for pool,_ in pairs}
             active_rank=cohort_order.index(active) if active is not None else len(cohort_order)
             # Later cohorts this node can still serve (the active one may be unavailable or given up here).
-            later=[i for i,(pool,_) in enumerate(pairs) if i not in terminal and rank(pool)>active_rank]
+            later=[i for i,(pool,_) in enumerate(pairs) if (i not in terminal or i in retry_at) and rank(pool)>active_rank]
             if active is not None and active not in available and not later:
                 diagnostic.publish('BLOCKED',active,'required earlier runtime is unavailable; later cohorts remain queued',order=list(cohort_order))
                 print(f'[{worker}] BLOCKED: {active} is unavailable on this node; '
@@ -1933,7 +2068,7 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                 return 1
             # Node-local give-ups only; a shared queue failure keeps waiting for recovery by another node.
             stuck=[i for i,(pool,_) in enumerate(pairs) if cohort(pool)==active and terminal.get(i)=='failed'
-                   and i not in shared_failures]
+                   and i not in shared_failures and i not in retry_at]  # a pending retry waits instead
             if active is not None and stuck and not later:
                 # Later cohorts are not eligible until the active one completes, so this node would only idle.
                 why=reasons.get(active,'see the messages above')
@@ -2248,6 +2383,7 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
             finally:gate.close()
         # GPU execution, admission and CPU barriers NEVER hold the cross-cohort lock.
         if claimed is not None:
+            idle_state['since']=None;idle_state['reported']=-float('inf')
             # Release every other retained offer (and its queue control lock) before a long task. A task
             # inspection of another cohort still in flight must not keep that cohort's control.lock either.
             for other in tuple(offers):discard_offer(other)
@@ -2309,6 +2445,7 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                 stop.wait(PREFLIGHT_RETRY_SECONDS)
             elif node_error is not None:give_up(index,pool,'node launch',NodeFailure(node_error))
             else:
+                giveups.pop(index,None)  # served normally again: the next node-local give-up starts the backoff anew
                 hold=node_native_hold(pool,runtime)
                 if hold:give_up(index,pool,'native crash quarantine',NodeFailure(hold))
                 elif fatal_native_failure(read(pool.root/'jobs'/(key+'.json'))):node_rechecks.discard(index)
@@ -2316,7 +2453,7 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
         if cohort_order:
             current=unfinished_cohort(pairs,cohort_order,check_leases=False)
             failed=[i for i,(pool,_) in enumerate(pairs) if cohort(pool)==current and terminal.get(i)=='failed']
-            if failed and not any(i not in terminal for i in range(len(pairs))):
+            if failed and not any(i not in terminal or i in retry_at for i in range(len(pairs))):
                 if refresh_before_exit():continue
                 diagnostic.publish('BLOCKED',current,reasons.get(current,'active cohort cannot proceed'),order=list(cohort_order))
                 print(f'[{worker}] STOPPED: {current} is not complete; later cohorts remain queued; '
@@ -2324,7 +2461,7 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                 record_worker_retirement(pairs,worker,'active sequential cohort unavailable on this node',
                                          [dict(cohort=current,detail=reasons.get(current))])
                 return 1
-        if any(v=='failed' for v in terminal.values()) or any(getattr(r,'primary_unavailable_cohorts',()) for _,r in pairs):
+        if not retry_at and (any(v=='failed' for v in terminal.values()) or any(getattr(r,'primary_unavailable_cohorts',()) for _,r in pairs)):
             deferred=[]
             for i,(pool,runtime) in enumerate(pairs):
                 if i in terminal:continue
@@ -2337,7 +2474,7 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                     pool=pairs[i][0]
                     give_up(i,pool,'extension deferred',NodeFailure('matched-step results are saved; '
                         'extension still waits for unavailable cohorts: '+', '.join(pool.extension_blockers())))
-        if len(terminal)==len(pairs):
+        if len(terminal)==len(pairs) and not retry_at:
             failed=[cohort(pairs[i][0]) for i,v in terminal.items() if v=='failed']
             if failed and refresh_before_exit():continue
             unserved=(unfinished_cohort(pairs,cohort_order,check_leases=False) if cohort_order and not failed else None)
@@ -2370,7 +2507,7 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                           f'{cohort_order[min(following)]}',flush=True)
                 stall_since=time.monotonic()
                 spill_rank=min(following);continue  # strictly increases: bounded, never a busy loop
-        if idle:
+        if idle and not retry_at:  # a pending node-local retry is waited for, never a reason to exit
             if cohort_order:
                 # Exit only when every cohort this node still serves is blocked by its own failures.
                 inspected=[pair for i,pair in enumerate(pairs) if i not in terminal]
@@ -2386,9 +2523,21 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                 print(f'[{worker}] STOPPED: {blocked["reason"]}; '+canonical(blocked['faults'])+
                       '; failed checkpoints/logs retained; no torchrun relaunch',flush=True)
                 return 1
+        if not dispatched:
+            now=time.monotonic()
+            if idle_state['since'] is None:idle_state['since']=now
+            idle_state['gpu_busy']=None if claim_ok else busy
+            if now-idle_state['since']>=IDLE_REPORT_SECONDS and now-idle_state['reported']>=IDLE_REPORT_SECONDS:
+                idle_state['reported']=now
+                try:print(f'[v8] NODE {worker} '+idle_reason(),flush=True)
+                except Exception as exc:print(f'[v8] NODE {worker} IDLE (reason unavailable: {type(exc).__name__}: {exc})',flush=True)
         if not dispatched and not progressed:
-            report_wait(active,claim_ok,busy)
+            if retry_at and len(terminal)==len(pairs):
+                first=min(retry_at,key=lambda i:retry_at[i]['due'])
+                diagnostic.publish('WAIT_RETRY',cohort(pairs[first][0]),'NOT SERVING '+cohort(pairs[first][0])+' '+retry_text(first))
+            else:report_wait(active,claim_ok,busy)
             wait=min(poll,.05) if short_claim_wait else min(poll,.5) if gate_busy else poll
+            if retry_at:wait=max(.01,min(wait,min(row['due'] for row in retry_at.values())-time.monotonic()))
             # A pending verification/inspection is collected as soon as it finishes, not one whole poll later
             # (each of startup -> verification -> inspection -> claim cost up to a poll on an idle node).
             pending=[scan for i,scan in scans.items() if i not in terminal]
