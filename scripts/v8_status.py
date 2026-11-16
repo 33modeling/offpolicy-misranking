@@ -1456,6 +1456,10 @@ def task_model(base, cohort, now):
                     t['progress'] = f"update {shown} · budget " + (f"{int(100 * t['budget'])}%" if t.get('budget') is not None else '?')
                     if type(cap) is int and type(t.get('shown_u')) is int and t['end'] >= cap and cap - t['shown_u'] <= 25:
                         t['progress'] += f" · cap {cap}"
+                    if t.get('budget') is None:
+                        # without the spent budget the stop point is unknown, so is the time left: the planner's shared
+                        # estimate showed '<1m left' on runs that went on for hours (user 11-16 '예상 시간 잘못')
+                        t['left_s'] = None
                 else:
                     t['progress'] = f"update {shown} of {t['end']}"
         t['left_units'] = left_units
