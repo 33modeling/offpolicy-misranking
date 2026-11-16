@@ -151,7 +151,7 @@ def test_node_table_one_row_per_worker_with_what_it_does(tmp_path):
         by.setdefault(r.split()[1] if r[1] in "▶✗·" else r.split()[0], []).append(r)
     a2 = by["h100-a02"][0]
     assert a2.startswith(" ▶ ") and " 0-3 " in a2 and " OLMo " in a2 and " s6 SR25 " in a2 and " 3h02m " in a2 \
-        and "scoring questions (20s ago)" in a2 and " ?/275 " in a2   # no update recorded yet: '?', not the start
+        and "scoring questions (20s ago)" in a2 and " update ? of 275 " in a2   # no update recorded yet: '?', not the start
     assert "h100-a03" not in by and "DEAD" not in text
     assert by["h100-a04"][0].startswith(" ✗ ") and " hung " in by["h100-a04"][0] and "lock still held" in by["h100-a04"][0]
     assert "no other node can take that task" in text

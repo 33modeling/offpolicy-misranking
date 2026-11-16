@@ -18,21 +18,25 @@ OLMo MATH · budget extension ────────────────�
      8  0/1   0/1     0/2▶○  0/1   0/1    0/1↻   0/1    1/2    0/1    0/1    1/2↻   0/2
      9  0/1   0/1     0/1↻   0/2↻  0/1    0/1    0/2○↻  0/1    1/2↻   1/2    0/1    -  
    U = Uniform at the seed's switch point: s5 @225 · s6 @225 · s8 @150
-   + 예산 끝점 평가가 더 생길 수 있음: 연장 학습이 끝나 예산 평가 계획이 서면 수가 정해짐
+   + 예산 끝점 평가가 더 생길 수 있음: 연장 학습이 끝나 예산 평가 계획이 서면 수가 정해짐 (left 에는 미리 넣어 셈)
 
 읽는 법: 줄=시드, 열=branch (On=On-policy 궤적, SR50=50 업데이트에서 SR로 전환, U=그 시드의 전환점에서 Uniform으로 전환)
   train=학습, ext=예산 연장 학습, eval=평가. train·ext 칸은 작업 1개, eval 칸은 끝난 수/전체 수 (275 평가 + 예산 끝점 평가)
-  ✓ 끝남  ▶ 실행 중 (▶120 = 120 업데이트째)  ○ 바로 시작 가능  ↻ 실패·중단, 다음 빈 노드가 체크포인트부터 자동 재시작
+  ✓ 끝남  ▶ 실행 중 (▶120 = 120 업데이트째, ext 의 ▶81% = 예산 81% 씀)  ○ 바로 시작 가능  ↻ 실패·중단, 다음 빈 노드가 체크포인트부터 자동 재시작
   · 앞 단계가 끝나야 시작  ✗ 자동 재시도 끝, 사람이 봐야 함  - 작업 없음.  eval 칸 1/3▶↻ = 3개 중 1개 끝, 1개 실행, 1개 재시작 대기
 아래 표: train/ext/eval = 끝난 작업/전체 작업 (전체 = 만든 작업 + 계획상 꼭 만들어질 작업). run ready retry wait ✗ = 위 칸 기호 수
-  done = 끝난 일의 비율 (업데이트·평가를 잰 시간으로 환산)  left = 남은 일 ÷ 지금 도는 작업 수.  ? = 잰 시간이 아직 없거나 도는 작업이 없음
+  done = 끝난 일의 비율 (업데이트·평가를 잰 시간으로 환산).  ? = 잰 시간이 아직 없거나 이 실험을 돌리는 GPU 묶음이 없음
+  left = 아직 안 만든 연장·예산 끝점 평가·U까지 남은 모든 일을 잰 시간으로 환산해, 이 실험을 돌리는 GPU 묶음 수와 앞뒤 순서로 나눈 범위 (짧은 쪽 = 예상, 긴 쪽 = 작업이 잰 속도로 돌면 늘지 않는 상한)
+노드 줄: progress = 학습은 update 87 of 275, 연장은 update 287 · budget 81% (예산이 다 차면 멈춤), 평가는 question 87 of 300 · left = 그 작업이 끝날 때까지 남은 시간 · ran for = 그 작업이 돈 시간
 ━━ V8 status · CODE · 2027-01-15 17:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    <root>
-             phase             train   ext  eval  run  ready  retry  wait   ✗  done  left   
- OLMo MATH   budget extension  31/58  9/53  7/70   13      9     27    75  10   37%  ~11h55m
+             phase             train   ext  eval  run  ready  retry  wait   ✗  done  left          
+ OLMo MATH   budget extension  31/58  9/53  7/70   13      9     27    75  10   35%  ~13h04m–44h21m
  OLMo MBPP   not started
  Qwen MATH   not started
  Qwen MBPP   not started
+   OLMo MATH finish 01-16 06:04–01-17 13:21 KST · work left 200h25m–516h05m GPU-group time (train 3250 · ext 2509–4462
+     updates · 109–154 evals) on 16 GPU groups · longest chain 5h10m
  ↻ OLMo MATH restarts by itself on the next free node: s9 eval SR200 ext@350 (its node stopped sending heartbeats); s6
    SR150 (failure 3/4, exit 1); s9 SR100 (failure 2/4, exit 1); s7 SR250 (interrupted); … 23 more
 
@@ -50,21 +54,21 @@ OLMo MATH · budget extension ────────────────�
 
  nodes (16 hosts)  13 running · 3 idle
    tasks that can run now 49 (run + ready + retry) · alive workers 16  → 33 more 4-GPU nodes would help   (10 gone not shown; --all-nodes)
-   host    gpus  state    exp        task                   done/total  left    time   beat  now
- ▶ h04     ?     running  OLMo MATH  s5 SR100               187/275     ~1h14m  1h09m  59s   started, no output yet
- ▶ h20     ?     running  OLMo MATH  s6 SR225               264/275     ~9m     1h43m  35s   started, no output yet
- ▶ h26     ?     running  OLMo MATH  s7 SR100               210/275     ~55m    1h02m  57s   started, no output yet
- ▶ h35     ?     running  OLMo MATH  s8 SR75                83/275      ~2h43m  1h16m  49s   started, no output yet
- ▶ h53     ?     running  OLMo MATH  s9 SR250               272/275     ~2m     1h11m  35s   started, no output yet
- ▶ h61     ?     running  OLMo MATH  s7 SR50 ext            355/400     ~38m    28m    3s    started, no output yet
- ▶ h67     ?     running  OLMo MATH  s8 SR175 ext           299/337     ~32m    1h19m  37s   started, no output yet
- ▶ h72     ?     running  OLMo MATH  s9 SR125 ext           378/400     ~18m    20m    22s   started, no output yet
- ▶ h78     ?     running  OLMo MATH  s5 eval SR75@275       182/500     ~45m    48m    59s   answering 89/125 (3s ago)
- ▶ h82     ?     running  OLMo MATH  s6 eval On@275         267/500     ~33m    1h00m  41s   answering 39/125 (3s ago)
- ▶ h85     ?     running  OLMo MATH  s7 eval SR50@275       100/500     ~56m    52m    48s   answering 32/125 (3s ago)
- ▶ h87     ?     running  OLMo MATH  s8 eval SR50@275       211/500     ~41m    1h34m  12s   answering 39/125 (3s ago)
- ▶ h98     ?     running  OLMo MATH  s7 eval SR200 ext@350  279/500     ~31m    37m    29s   answering 68/125 (3s ago)
-   idle00  ?     idle                                                                  11s   idle while 36 tasks are re…
-   idle01  ?     idle                                                                  3s    idle while 36 tasks are re…
-   idle02  ?     idle                                                                  14s   idle while 36 tasks are re…
+   host    gpus  state    exp        task                   progress                         left         ran for  beat  now
+ ▶ h04     ?     running  OLMo MATH  s5 SR100               update 187 of 275                ~1h07m left  1h09m    59s …
+ ▶ h20     ?     running  OLMo MATH  s6 SR225               update 264 of 275                ~8m left     1h43m    35s …
+ ▶ h26     ?     running  OLMo MATH  s7 SR100               update 210 of 275                ~49m left    1h02m    57s …
+ ▶ h35     ?     running  OLMo MATH  s8 SR75                update 83 of 275                 ~2h27m left  1h16m    49s …
+ ▶ h53     ?     running  OLMo MATH  s9 SR250               update 272 of 275                ~2m left     1h11m    35s …
+ ▶ h61     ?     running  OLMo MATH  s7 SR50 ext            update 355 · budget ?            <1m left     28m      3s  …
+ ▶ h67     ?     running  OLMo MATH  s8 SR175 ext           update 299 · budget ?            <1m left     1h19m    37s …
+ ▶ h72     ?     running  OLMo MATH  s9 SR125 ext           update 378 · budget ? · cap 400  ~16m left    20m      22s …
+ ▶ h78     ?     running  OLMo MATH  s5 eval SR75@275       question 182 of 500              ~45m left    48m      59s …
+ ▶ h82     ?     running  OLMo MATH  s6 eval On@275         question 267 of 500              ~33m left    1h00m    41s …
+ ▶ h85     ?     running  OLMo MATH  s7 eval SR50@275       question 100 of 500              ~56m left    52m      48s …
+ ▶ h87     ?     running  OLMo MATH  s8 eval SR50@275       question 211 of 500              ~41m left    1h34m    12s …
+ ▶ h98     ?     running  OLMo MATH  s7 eval SR200 ext@350  question 279 of 500              ~31m left    37m      29s …
+   idle00  ?     idle                                                                                              11s …
+   idle01  ?     idle                                                                                              3s  …
+   idle02  ?     idle                                                                                              14s …
  this node  viewer · GPU 97% · no V8 task here

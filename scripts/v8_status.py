@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -656,7 +657,8 @@ def eval_context(directory, rows):
 
 
 def short_progress(row, now, context=None, bare=False):
-    """'update 62/75 · answering 3/8, 812 tok (5s ago)' / 'answering 75/500, 300 tok (5s ago) · ~17 min left'.
+    """'update 62 of 75 · answering question 3 of 8, 812 tok (5s ago)' / 'answering question 75 of 500, 300 tok (5s ago)
+    · ~17 min left'.
     The question total is the event's own, else another rank's, else (evaluation) the question count of a finished
     evaluation with the same spec split over the ranks (user 11-15 '고쳐놔 status 알수가 없어')."""
     events = row.get('_events') or []
@@ -671,7 +673,7 @@ def short_progress(row, now, context=None, bare=False):
     if not total and n:
         total = -(-n // max(1, len(events)))      # questions per GPU process: ids[rank::world]
     if index:
-        text += f" {index}/{total}" if total else f" {index}/?"
+        text += f" question {index} of {total}" if total else f" question {index} of ?"
     if details.get('response_tokens') is not None:
         text += f", {details['response_tokens']} tok"
     text = f"{text} ({age_text(age)} ago)"
@@ -682,7 +684,7 @@ def short_progress(row, now, context=None, bare=False):
         if median and index and total:
             text += f" · ~{age_text(median * max(0.0, 1 - min(1.0, index / total)))} left"
     elif isinstance(row.get('done'), int) and row.get('total'):
-        text = f"update {row['done']}/{row['total']} · " + text
+        text = f"update {row['done']} of {row['total']} · " + text
     return text
 
 
@@ -900,8 +902,8 @@ def node_table(bases, cohorts, now, this_host=None, models=None):
             for jbase, cohort, r in e['jobs']:
                 task = task_name(r, runs_by_cohort.get(cohort, {}))
                 record = ((models or {}).get((str(jbase), cohort)) or {}).get('by_key', {}).get(r['key']) or {}
-                updates = f"{r['done']}/{r['total']}" if r['done'] is not None and r['total'] else \
-                          ('?/' + str(r['total']) if r['total'] and r.get('kind') != 'evaluate' else '')
+                updates = f"update {r['done']} of {r['total']}" if r['done'] is not None and r['total'] else \
+                          (f"update ? of {r['total']}" if r['total'] and r.get('kind') != 'evaluate' else '')
                 took = span(now - r['started']) if isinstance(r.get('started'), (int, float)) else ''
                 row = dict(base, experiment=COHORT_LABEL.get(cohort, cohort), task=task, updates=updates, took=took,
                            key=r['key'], cohort=cohort, base=str(jbase), progress=record.get('progress') or updates,
@@ -1011,10 +1013,12 @@ PLAN_PHASE = {'train': 'train', 'extension': 'ext', 'primary_evaluation': 'eval'
 LEGEND_LINES = (
     "읽는 법: 줄=시드, 열=branch (On=On-policy 궤적, SR50=50 업데이트에서 SR로 전환, U=그 시드의 전환점에서 Uniform으로 전환)",
     "  train=학습, ext=예산 연장 학습, eval=평가. train·ext 칸은 작업 1개, eval 칸은 끝난 수/전체 수 (275 평가 + 예산 끝점 평가)",
-    "  ✓ 끝남  ▶ 실행 중 (▶120 = 120 업데이트째)  ○ 바로 시작 가능  ↻ 실패·중단, 다음 빈 노드가 체크포인트부터 자동 재시작",
+    "  ✓ 끝남  ▶ 실행 중 (▶120 = 120 업데이트째, ext 의 ▶81% = 예산 81% 씀)  ○ 바로 시작 가능  ↻ 실패·중단, 다음 빈 노드가 체크포인트부터 자동 재시작",
     "  · 앞 단계가 끝나야 시작  ✗ 자동 재시도 끝, 사람이 봐야 함  - 작업 없음.  eval 칸 1/3▶↻ = 3개 중 1개 끝, 1개 실행, 1개 재시작 대기",
     "아래 표: train/ext/eval = 끝난 작업/전체 작업 (전체 = 만든 작업 + 계획상 꼭 만들어질 작업). run ready retry wait ✗ = 위 칸 기호 수",
-    "  done = 끝난 일의 비율 (업데이트·평가를 잰 시간으로 환산)  left = 남은 일 ÷ 지금 도는 작업 수.  ? = 잰 시간이 아직 없거나 도는 작업이 없음",
+    "  done = 끝난 일의 비율 (업데이트·평가를 잰 시간으로 환산).  ? = 잰 시간이 아직 없거나 이 실험을 돌리는 GPU 묶음이 없음",
+    "  left = 아직 안 만든 연장·예산 끝점 평가·U까지 남은 모든 일을 잰 시간으로 환산해, 이 실험을 돌리는 GPU 묶음 수와 앞뒤 순서로 나눈 범위 (짧은 쪽 = 예상, 긴 쪽 = 작업이 잰 속도로 돌면 늘지 않는 상한)",
+    "노드 줄: progress = 학습은 update 87 of 275, 연장은 update 287 · budget 81% (예산이 다 차면 멈춤), 평가는 question 87 of 300 · left = 그 작업이 끝날 때까지 남은 시간 · ran for = 그 작업이 돈 시간",
 )
 
 
@@ -1028,6 +1032,74 @@ def median(values):
         return None
     n = len(values)
     return values[n // 2] if n % 2 else (values[n // 2 - 1] + values[n // 2]) / 2
+
+
+def extension_spent(directory, run_id, family):
+    """GPU-seconds a budget extension has spent so far by the runner's own rule (runner._phase_cost: the ledger
+    events of its surviving attempt lineage, components the policy family pays for), and the updates they cover.
+    None when the ledger is missing, unreadable or has an unmeasured required event."""
+    rdir = Path(directory) / 'runs' / str(run_id)
+    try:
+        here = Path(__file__).resolve().parent
+        roots = ([os.environ['V8_RUNNER_ROOT']] if os.environ.get('V8_RUNNER_ROOT') else []) + [str(here.parent / 'v8' / 'experiments')]
+        for r in roots:
+            if r not in sys.path:
+                sys.path.append(r)
+        from switching.ledger import REQUIRED as FAMILY_COST, component_totals, lineage_events
+        manifest = read(rdir / 'manifest.json') or {}
+        attempts = [(a['attempt_id'], a['start_update']) for a in manifest.get('attempts') or []
+                    if isinstance(a, dict) and a.get('start_update') is not None and a.get('attempt_id')]
+        events = []
+        for path in sorted((rdir / 'attempts').glob('*/events.jsonl')):
+            for line in path.read_text().splitlines():
+                if line.strip():
+                    events.append(json.loads(line))
+        if not events or family not in FAMILY_COST:
+            return None
+        totals, missing = component_totals(lineage_events(events, attempts))
+        required = FAMILY_COST[family] - {'prefix', 'cache_build'}
+        if any(m.get('component') in required for m in missing):
+            return None
+        return sum(v for k, v in totals.items() if k in required)
+    except Exception:  # noqa: BLE001 - no readable ledger: the screen says 'budget ?'
+        return None
+
+
+def quantile(values, q):
+    """Nearest-rank quantile of the positive numbers (q=0.75: the slower quarter starts here)."""
+    values = sorted(v for v in values if number(v) and v > 0)
+    return values[max(0, math.ceil(q * len(values)) - 1)] if values else None
+
+
+def serving_groups(base, cohort, now, rows):
+    """GPU groups (one worker process = one group) serving this experiment, from heartbeats: a worker heartbeats
+    every open experiment it serves, so its share here is 1/(experiments it serves). While it runs a task only that
+    experiment's file moves; the others it heartbeat within the last day still count as served. A running task whose
+    worker is silent but holds its lock still occupies a group."""
+    beats, open_ = {}, {}
+    for queue in sorted(Path(base).glob('*/.multi-node')):
+        c = queue.parent.name
+        st = read(queue / 'state.json') or {}
+        open_[c] = st.get('phase') != 'complete' and not st.get('failure')
+        try:
+            for w in worker_records(queue, now):
+                beats.setdefault(w['worker'], {})[c] = (w['age'], w['task'])
+        except Exception:  # noqa: BLE001 - an odd heartbeat never crashes the screen
+            continue
+    running_here = {r.get('worker') for r in rows if r['status'] == 'running' and r.get('worker')}
+    share = 0.0
+    for worker, by in beats.items():
+        fresh = {c for c, (age, _) in by.items() if age <= ALIVE_SECONDS}
+        busy = any(task for c, (age, task) in by.items() if c in fresh) or worker in running_here
+        if not fresh and worker not in running_here:
+            continue
+        limit = 86400 if busy else GAVE_UP_SECONDS
+        served = {c for c, (age, _) in by.items() if open_.get(c) and age <= limit} | \
+                 ({cohort} if worker in running_here else set())
+        if cohort in served:
+            share += 1 / len(served)
+    running = sum(1 for r in rows if r['status'] == 'running')
+    return max(running, int(share + 0.5), 1 if share > 0 else 0)
 
 
 def retry_limit(state):
@@ -1192,11 +1264,9 @@ def task_model(base, cohort, now):
                 end = done_u = max(start, manifest['completed_updates'])
         else:
             done_u = min(max(r['done'], start), max(end, r['done'])) if type(r.get('done')) is int else start
-            if done_u > end:   # past the planner's budget estimate: the cap is the end
-                cap = task.get('hard_cap') if type(task.get('hard_cap')) is int else CAP
-                end = max(done_u, cap if type(cap) is int else done_u)
+            end = max(end, done_u)   # an extension past the planner's estimate is re-predicted from its measured speed below
         rec = add(key=r['key'], phase=phase, seed=r['seed'], col=col, state=st, why=why, row=r, start=start, end=end,
-                  done_u=done_u, shown_u=r['done'] if type(r.get('done')) is int else None)
+                  done_u=done_u, shown_u=r['done'] if type(r.get('done')) is int else None, task=task)
         if phase == 'train' and col == 'U':
             model['u_tau'][r['seed']] = start
 
@@ -1227,7 +1297,7 @@ def task_model(base, cohort, now):
                 col = branch_column(task.get('method_id') or '-')
                 start, end = train_span(task, phase, col, H, P, CAP)
                 add(key=key, phase=phase, seed=task.get('training_seed', '-'), col=col, planned=True,
-                    state='ready' if ready else 'waiting', start=start, end=end, done_u=start)
+                    state='ready' if ready else 'waiting', start=start, end=end, done_u=start, task=task)
 
     # Tasks the planner is certain to create (matrix.build_stage): per seed the On trajectory and one SR branch per
     # grid point (core + extended); one budget extension per finished SR/U branch; one evaluation at the matched
@@ -1268,13 +1338,14 @@ def task_model(base, cohort, now):
             model['more'].append(f"U(Uniform) {later} 최대 {len(open_u)}개씩 더: "
                                  f"{', '.join(f's{s}' for s in open_u)}의 On이 끝나면 전환 여부로 정해짐")
         if 'eval' not in sealed:
-            model['more'].append("예산 끝점 평가가 더 생길 수 있음: 연장 학습이 끝나 예산 평가 계획이 서면 수가 정해짐")
+            model['more'].append("예산 끝점 평가가 더 생길 수 있음: 연장 학습이 끝나 예산 평가 계획이 서면 수가 정해짐 (left 에는 미리 넣어 셈)")
     elif sealed != {'train', 'ext', 'eval'}:
         why = ('설정 파일을 못 읽어' if not cfg else '이 큐의 시드가 설정과 달라')
         model['more'].append(f"{why} 아직 안 만든 작업을 셀 수 없음: 전체 수는 지금까지 만든 작업 수")
 
-    # Measured time of one training update and of one evaluation: medians over finished tasks (wall time of the
-    # last attempt / updates that attempt trained), else over running tasks with enough progress.
+    # Measured wall time of one update (On trajectory and SR/U branches separately: the On run also refreshes and
+    # checks) and of one evaluation: medians over finished tasks (wall time of the last attempt / updates that
+    # attempt trained), else over running tasks with enough progress. The 75th percentile feeds the upper end.
     def attempt_start(t):
         attempts = (t['row'].get('_manifest') or {}).get('attempts')
         first = attempts[-1].get('start_update') if isinstance(attempts, list) and attempts and isinstance(attempts[-1], dict) else None
@@ -1282,23 +1353,83 @@ def task_model(base, cohort, now):
     def took(t, end=None):
         a, b = t['row'].get('started'), now if end is None else t['row'].get('ended')
         return b - a if number(a) and number(b) and b > a else None
-    per_update, per_eval, run_update, run_eval = [], [], [], []
+    measured = {'on': ([], []), 'branch': ([], []), 'eval': ([], [])}
     for t in tasks:
         if t['row'] is None:
             continue
         if t['phase'] == 'eval':
             if t['state'] == 'done' and took(t, 'end'):
-                per_eval.append(took(t, 'end'))
+                measured['eval'][0].append(took(t, 'end'))
             elif t['state'] == 'running' and t['frac'] >= 0.2 and took(t):
-                run_eval.append(took(t) / t['frac'])
+                measured['eval'][1].append(took(t) / t['frac'])
             continue
         n = (t['done_u'] or 0) - attempt_start(t)
+        kind = 'on' if t['col'] == 'On' else 'branch'
         if t['state'] == 'done' and n > 0 and took(t, 'end'):
-            per_update.append(took(t, 'end') / n)
+            t['rate'] = took(t, 'end') / n
+            measured[kind][0].append(t['rate'])
         elif t['state'] == 'running' and n >= 3 and took(t):
-            run_update.append(took(t) / n)
-    spu, spe = median(per_update) or median(run_update), median(per_eval) or median(run_eval)
-    model.update(spu=spu, spe=spe)
+            t['rate'] = took(t) / n
+            measured[kind][1].append(t['rate'])
+    speed, notes = {}, []
+    for kind, (done_v, run_v) in measured.items():
+        values = done_v or run_v
+        speed[kind] = (median(values), quantile(values, 0.75)) if values else None
+    if speed['on'] is None and speed['branch'] is not None:
+        speed['on'] = speed['branch']
+        notes.append('On update time not measured yet: SR update time used')
+    elif speed['branch'] is None and speed['on'] is not None:
+        speed['branch'] = speed['on']
+        notes.append('SR update time not measured yet: On update time used')
+    elif speed['on'] is None:
+        est = [t['task']['est_update_gpu_seconds'] / world for t in tasks
+               if isinstance(t.get('task'), dict) and number(t['task'].get('est_update_gpu_seconds'))
+               and type(world) is int and world > 0]
+        if est:
+            speed['on'] = speed['branch'] = (median(est), quantile(est, 0.75))
+            notes.append('update time not measured yet: planner estimate (GPU-seconds per update / GPUs)')
+    spu = median(measured['branch'][0] + measured['on'][0]) or median(measured['branch'][1] + measured['on'][1]) \
+        if speed['branch'] else None
+    spe = speed['eval'][0] if speed['eval'] else None
+    model.update(spu=spu, spe=spe, speed=speed, notes=notes)
+
+    # A budget extension stops when its next update no longer fits the budget (budget.should_continue). The planner
+    # sized one update by its parent branch's own cost; this extension's measured wall time per update against its
+    # parent's scales that cost, so a run cheaper than planned is predicted past the planned endpoint (never the
+    # hard cap just because it passed the estimate).
+    by_run = {t['row'].get('run_id'): t for t in tasks if t['row'] is not None and t['phase'] == 'train'}
+    for t in tasks:
+        if t['phase'] != 'ext' or t['state'] == 'done' or not isinstance(t.get('task'), dict):
+            continue
+        task = t['task']
+        cap = task.get('hard_cap') if type(task.get('hard_cap')) is int else CAP
+        horizon = task.get('horizon') if type(task.get('horizon')) is int else H
+        e = task.get('est_update_gpu_seconds')
+        b, o = task.get('budget_cap_gpu_seconds'), task.get('cost_offset_gpu_seconds')
+        spent = extension_spent(Path(base) / cohort, task.get('run_id'), (task.get('method') or {}).get('family')) \
+            if t['row'] is not None else None
+        t['budget'] = (o + spent) / b if spent is not None and number(b) and b > 0 and number(o) else None
+        parent = (task.get('parent') or {}).get('run_id') or (task.get('method') or {}).get('extension_of')
+        ref = (by_run.get(parent) or {}).get('rate') or (speed['branch'] or (None,))[0]
+        if t['budget'] is not None and type(horizon) is int and type(cap) is int:
+            # budget.should_continue: the next update must still fit; its cost is this run's own so far
+            n = t['done_u'] - horizon
+            per = spent / n if n >= 1 and spent > 0 else e
+            end = min(cap, t['done_u'] + int(max(0.0, b - o - spent) // per)) if number(per) and per > 0 else cap
+        else:
+            if number(e) and t.get('rate') and ref:
+                task = dict(task, est_update_gpu_seconds=e * t['rate'] / ref)
+            end = extension_end(task, horizon if type(horizon) is int else t['start'], cap)
+        if type(end) is int and t['done_u'] >= end and type(cap) is int:
+            end = min(cap, t['done_u'] + 1)   # still running past it: at least one more update
+        if type(end) is int:
+            t['end'] = max(t['start'], t['done_u'], end)
+    spans = [t['end'] - t['start'] for t in tasks if t['phase'] == 'ext' and not str(t['key']).startswith('planned.')
+             and t['end'] > t['start']]
+    model['ext_span'] = int(round(median(spans))) if spans else ((CAP - H) if type(CAP) is int and type(H) is int else 0)
+    for t in tasks:
+        if str(t['key']).startswith('planned.ext.') and type(H) is int:
+            t['end'] = H + int(round(model['ext_span']))
 
     for t in tasks:
         if t['phase'] == 'eval':
@@ -1306,15 +1437,30 @@ def task_model(base, cohort, now):
             t['left_s'] = left_units * spe if spe else None
             if t['state'] in ('running', 'person') and t['row'] is not None and t['row']['status'] == 'running':
                 i, n = t.get('questions') or (0, None)
-                t["progress"] = f"{i}/{n if n else '?'}"   # questions answered (user 11-16: "q 는 왜 붙여 놨냐")
+                t["progress"] = f"question {i} of {n if n else '?'}"   # user 11-16 '87/300 몇 시간': units in words
         else:
             left_units = 0 if t['state'] == 'done' else max(0, t['end'] - t['done_u'])
-            t['left_s'] = left_units * spu if spu else None
+            sp = speed['on' if t['col'] == 'On' else 'branch']
+            t['left_s'] = left_units * sp[0] if sp else None
+            if t['state'] == 'running' and sp and took(t) and t['done_u'] < t['end']:
+                # the part of the current update already run (never more than one update ahead of the record)
+                guess = attempt_start(t) + took(t) / sp[0]
+                if guess > t['done_u']:
+                    t['done_est'] = min(t['done_u'] + 1, guess, t['end'])
             if t['row'] is not None and t['row']['status'] == 'running':
-                t['progress'] = f"{t['shown_u'] if t.get('shown_u') is not None else '?'}/{t['end']}"
+                shown = t['shown_u'] if t.get('shown_u') is not None else '?'
+                if t['phase'] == 'ext':
+                    # the planner's stop update is an estimate shared by most branches (user 11-16 '300 이거 의미가
+                    # 없잖아'); the run stops when its budget is spent, so show how much of it is spent
+                    cap = (t.get('task') or {}).get('hard_cap') if type((t.get('task') or {}).get('hard_cap')) is int else CAP
+                    t['progress'] = f"update {shown} · budget " + (f"{int(100 * t['budget'])}%" if t.get('budget') is not None else '?')
+                    if type(cap) is int and type(t.get('shown_u')) is int and t['end'] >= cap and cap - t['shown_u'] <= 25:
+                        t['progress'] += f" · cap {cap}"
+                else:
+                    t['progress'] = f"update {shown} of {t['end']}"
         t['left_units'] = left_units
         if t['row'] is not None and t['row']['status'] == 'running':
-            t['left'] = ('~' + span(t['left_s'])) if t['left_s'] is not None else '?'
+            t['left'] = ('?' if t['left_s'] is None else '<1m left' if t['left_s'] < 60 else f"~{span(t['left_s'])} left")
 
     cols = []
     for t in tasks:
@@ -1325,10 +1471,18 @@ def task_model(base, cohort, now):
         return (kind, int(re.sub(r'\D', '', c) or 0), c)
     model['cols'] = sorted(cols, key=col_key)
     model['seeds'] = sorted({t['seed'] for t in tasks}, key=lambda x: (not isinstance(x, int), x if isinstance(x, int) else str(x)))
+    model.update(H=H, P=P, CAP=CAP, sealed=sealed, open_u=open_u, use_plan=use_plan,
+                 frozen=(Path(base) / cohort / 'frozen' / 'budget.json').exists() or
+                 bool((state.get('ready_side_work') or {}).get('budget_ready')),
+                 groups=serving_groups(base, cohort, now, rows))
     model['state'] = state
     model['phase'] = PHASE_LABEL.get(state.get('phase'), state.get('phase', 'not started'))
     model['runs'] = runs
     model['by_key'] = {t['key']: t for t in tasks}
+    try:
+        model['eta'] = model_eta(model)
+    except Exception as exc:  # noqa: BLE001 - the time estimate never takes the screen down
+        model['eta'], model['eta_error'] = None, f'{type(exc).__name__}: {exc}'
     return model
 
 
@@ -1343,24 +1497,271 @@ def model_counts(model):
     return out, states
 
 
+def eta_items(model, scenario):
+    """Every piece of work still to come in one experiment, as {id: (GPU-group seconds, dependencies, running)},
+    by the planner's rules (matrix.build_stage, ready_side_tasks, Runtime.plan('evaluation')):
+      train  each training run's remaining updates (On trajectory, one SR branch per grid point, U once known);
+             a branch starts when the On trajectory reaches its switch point, U when the On run is complete
+      ext    one budget extension per SR/U branch, after that branch and the budget freeze (all reference endpoints)
+      eval   the matched-update evaluation of every training run, then budget-endpoint evaluations: the On
+             trajectory's once the budget is frozen, each branch's after its extension
+    scenario 'low' = median times and the expected work; 'high' = 75th-percentile times, every possible U branch
+    (at the longest switch point), an extension not created yet runs to its hard cap, and as many budget endpoints
+    per branch as any finished branch needed (at least 2). Returns None when a needed time is unmeasured."""
+    H, P, CAP, sp = model.get('H'), model.get('P'), model.get('CAP'), model.get('speed') or {}
+    k = 0 if scenario == 'low' else 1
+    tasks = model['tasks']
+    if not any(t['state'] != 'done' for t in tasks):
+        return {}
+    def su(col):
+        v = sp.get('on' if col == 'On' else 'branch')
+        return v[k] if v else None
+    se = sp['eval'][k] if sp.get('eval') else None
+    items = {}
+    def item(iid, units, per, deps=(), running=False):
+        if per is None:
+            raise LookupError(iid)
+        items[iid] = dict(dur=max(0.0, units * per), deps=[d for d in deps if d[0] in items or d[0] in pending], running=running)
+    train = {(t['seed'], t['col']): t for t in tasks if t['phase'] == 'train'}
+    ext = {(t['seed'], t['col']): t for t in tasks if t['phase'] == 'ext'}
+    ids = lambda ph, s, c: (ph, s, c)
+    pending = {ids(t['phase'], t['seed'], t['col']) for t in tasks if t['phase'] != 'eval' and t['state'] != 'done'}
+    possible_u = [s for s in model.get('open_u') or []] if scenario == 'high' else []
+    pending |= {ids(ph, s, 'U?') for s in possible_u for ph in ('train', 'ext')}
+    try:
+        for (s, c), t in train.items():
+            if t['state'] == 'done':
+                continue
+            on, deps = train.get((s, 'On')), []
+            if c != 'On' and t['state'] == 'waiting' and on is not None and on['state'] != 'done':
+                if c == 'U':
+                    deps.append((ids('train', s, 'On'), None))
+                elif su('On') is not None:
+                    deps.append((ids('train', s, 'On'), max(0, t['start'] - on['done_u']) * su('On')))
+            item(ids('train', s, c), t['end'] - t.get('done_est', t['done_u']), su(c), deps, t['state'] == 'running')
+        for s in possible_u:
+            if type(H) is int and type(P) is int:
+                pending.add(ids('train', s, 'U?'))
+                item(ids('train', s, 'U?'), H - P, su('U'), [(ids('train', s, 'On'), None)])
+        gate = []
+        if not model.get('frozen') and not any(t['phase'] == 'ext' and not t['planned'] for t in tasks):
+            u_tau = model.get('u_tau') or {}
+            for (s, c), t in train.items():
+                ref = c == 'On' or (s in u_tau and c == f'SR{u_tau[s]}') or \
+                      (scenario == 'high' and train.get((s, 'On'), {}).get('state') != 'done' and c != 'U')
+                if ref and t['state'] != 'done':
+                    gate.append((ids('train', s, c), None))
+            items[('gate',)] = dict(dur=0.0, deps=gate, running=False)
+            gate = [(('gate',), None)]
+        branches = [(s, c) for (s, c) in train if c != 'On'] + [(s, 'U?') for s in possible_u]
+        for s, c in branches:
+            e = ext.get((s, c))
+            if e is not None and e['state'] == 'done':
+                continue
+            before = [(ids('train', s, c), None)] + gate
+            if e is None and 'ext' in model.get('sealed', ()):
+                continue   # the sealed extension plan has none for this branch
+            if e is None or (scenario == 'high' and str(e['key']).startswith('planned.ext.')):
+                if type(CAP) is int and type(H) is int:
+                    pending.add(ids('ext', s, c))
+                    item(ids('ext', s, c), CAP - H if scenario == 'high' else model.get('ext_span') or CAP - H, su(c), before)
+                continue
+            item(ids('ext', s, c), e['end'] - e.get('done_est', e['done_u']), su(c), before, e['state'] == 'running')
+        budget_evals, ext_done = {}, {key for key, e in ext.items() if e['state'] == 'done'}
+        for t in (t for t in tasks if t['phase'] == 'eval'):
+            budget = t['of_ext'] or (t['update'] is not None and t['update'] != H)
+            if budget:
+                budget_evals[(t['seed'], t['col'])] = budget_evals.get((t['seed'], t['col']), 0) + 1
+            if t['state'] == 'done':
+                continue
+            dep = (ids('ext', t['seed'], t['col']) if t['col'] != 'On' else ('gate',)) if budget else ids('train', t['seed'], t['col'])
+            item(('eval', t['key']), 1.0 - t['frac'], se, [(dep, None)], t['state'] == 'running')
+        for s in possible_u:
+            item(('eval', 'U?', s), 1, se, [(ids('train', s, 'U?'), None)])
+        if 'eval' not in model.get('sealed', ()) and model.get('use_plan', True):
+            most = max([v for key, v in budget_evals.items() if key in ext_done] + [2 if scenario == 'high' else 1])
+            for s, c in [(s, 'On') for (s, c) in train if c == 'On'] + branches:
+                need = (1 if c == 'On' else most) - budget_evals.get((s, c), 0)
+                if c != 'On' and (s, c) in ext_done and budget_evals.get((s, c)):
+                    need = 0
+                for i in range(max(0, need)):
+                    item(('budget-eval', s, c, i), 1, se, [(('gate',) if c == 'On' else ids('ext', s, c), None)])
+    except LookupError:
+        return None
+    return items
+
+
+def eta_paths(items):
+    """(earliest start, finish) of every item with unlimited GPU groups: a dependency (id, None) waits for that
+    item to finish, (id, lag) for lag seconds after it started (a branch whose switch point the On run reaches)."""
+    start, finish = {}, {}
+    def visit(i):
+        if i in finish:
+            return finish[i]
+        finish[i] = 0.0   # cycle guard (the planner's graph has none)
+        it = items[i]
+        t0 = 0.0
+        for d, lag in it['deps']:
+            if d in items:
+                visit(d)
+                t0 = max(t0, finish[d] if lag is None else start[d] + lag)
+        start[i], finish[i] = t0, t0 + it['dur']
+        return finish[i]
+    for i in items:
+        visit(i)
+    return start, finish
+
+
+def eta_schedule(items, groups):
+    """Makespan when `groups` GPU groups always take the waiting item on the longest remaining chain first
+    (running items keep their group)."""
+    succ = {i: [] for i in items}
+    for i, it in items.items():
+        for d, lag in it['deps']:
+            if d in items:
+                succ[d].append((i, lag))
+    level = {}
+    def bottom(i):
+        if i not in level:
+            level[i] = max([items[i]['dur'] + bottom(j) for j, lag in succ[i] if lag is None] +
+                           [lag + bottom(j) for j, lag in succ[i] if lag is not None] + [items[i]['dur']])
+        return level[i]
+    for i in items:
+        bottom(i)
+    t, started, done, busy = 0.0, {}, set(), []
+    for i, it in items.items():
+        if it['running']:
+            started[i] = 0.0
+            busy.append((it['dur'], i))
+    groups = max(groups, len(busy))
+    waiting = sorted((i for i in items if i not in started), key=lambda i: (-level[i], str(i)))
+    def ready_at(i):
+        at = 0.0
+        for d, lag in items[i]['deps']:
+            if d not in items:
+                continue
+            if lag is None:
+                if d not in done:
+                    return None
+                at = max(at, started[d] + items[d]['dur'])
+            elif d not in started:
+                return None
+            else:
+                at = max(at, started[d] + lag)
+        return at
+    while waiting or busy:
+        free = groups - len(busy)
+        for i in [i for i in waiting if (lambda r: r is not None and r <= t + 1e-9)(ready_at(i))][:max(0, free)]:
+            started[i] = t
+            busy.append((t + items[i]['dur'], i))
+            waiting.remove(i)
+        later = [r for r in map(ready_at, waiting) if r is not None and r > t + 1e-9]
+        if not busy and not later:
+            break   # nothing can ever start (a dependency outside the plan)
+        t = min([e for e, _ in busy] + later)
+        for e, i in list(busy):
+            if e <= t + 1e-9:
+                busy.remove((e, i))
+                done.add(i)
+    return t
+
+
+def model_eta(model):
+    """Time left of one experiment as a range, from all work still to come (eta_items) and the GPU groups serving
+    it: low = the longest-chain-first schedule of the expected work at median times (never below total work /
+    groups nor the longest chain); high = total work / groups + longest chain of the 'high' work, which bounds any
+    dispatcher that never leaves a group idle while a task can start, so it cannot grow while tasks run as measured.
+    None when a needed time is unmeasured; 'groups' 0 when no live worker serves it."""
+    out = {}
+    for scenario in ('low', 'high'):
+        items = eta_items(model, scenario)
+        if items is None:
+            return None
+        w = sum(it['dur'] for it in items.values())
+        _, finish = eta_paths(items)
+        chain = max(finish.values(), default=0.0)
+        out[scenario] = dict(items=items, work=w, chain=chain)
+    g = model.get('groups') or 0
+    out['groups'] = g
+    if not g:
+        return out
+    low = out['low']
+    low['left'] = max(eta_schedule(low['items'], g), low['work'] / g, low['chain'])
+    out['high']['left'] = max(low['left'], out['high']['work'] / g + out['high']['chain'])
+    return out
+
+
+def eta_work_text(model, eta):
+    """'train 812 · ext 1240–1600 updates · eval 96–130' of the work still to come."""
+    def count(scenario):
+        items = eta[scenario]['items']
+        sp = model['speed']
+        tr = sum(it['dur'] / sp['on' if i[2] == 'On' else 'branch'][0 if scenario == 'low' else 1]
+                 for i, it in items.items() if i[0] == 'train')
+        ex = sum(it['dur'] / sp['branch'][0 if scenario == 'low' else 1] for i, it in items.items() if i[0] == 'ext')
+        ev = sum(1 for i in items if i[0] in ('eval', 'budget-eval'))
+        return int(round(tr)), int(round(ex)), ev
+    lo, hi = count('low'), count('high')
+    r = lambda a, b: f"{a}" if a == b else f"{a}–{b}"
+    return f"train {r(lo[0], hi[0])} · ext {r(lo[1], hi[1])} updates · {r(lo[2], hi[2])} evals"
+
+
+def eta_lines(models, now, width):
+    """One line per open experiment: finish clock (KST) and the work still to come that the time left is made of."""
+    import textwrap
+    out = []
+    for model in models:
+        if not model['started'] or not any(t['state'] != 'done' for t in model['tasks']):
+            continue
+        eta = model.get('eta')
+        if eta is None:
+            missing = [name for k, name in (('branch', 'training update'), ('eval', 'evaluation'))
+                       if not (model.get('speed') or {}).get(k)]
+            why = model.get('eta_error') or f"no {' or '.join(missing) or 'task'} has been timed yet"
+            out.append(paint(clip(f"   {model['label']} time left ?: {why}", width), 'dim'))
+            continue
+        work = f"{span(eta['low']['work'])}" + ('' if span(eta['low']['work']) == span(eta['high']['work'])
+                                                 else f"–{span(eta['high']['work'])}")
+        g = eta['groups']
+        if 'left' in eta['low']:
+            lo, hi = now + eta['low']['left'], now + eta['high']['left']
+            when = f"finish {kst(lo)}" + ('' if kst(lo) == kst(hi) else f"–{kst(hi)[6:] if kst(hi)[:5] == kst(lo)[:5] else kst(hi)}") + " KST"
+        else:
+            when = "finish ?: no live GPU group serves it"
+        text = (f"{model['label']} {when} · work left {work} GPU-group time ({eta_work_text(model, eta)}) on "
+                f"{g} GPU group{'s' if g != 1 else ''} · longest chain {span(eta['low']['chain'])}")
+        if model.get('notes'):
+            text += ' · ' + '; '.join(model['notes'])
+        for part in textwrap.wrap(text, max(60, width - 2), break_on_hyphens=False, initial_indent='   ',
+                                  subsequent_indent='     ')[:3]:
+            out.append(paint(part, 'dim'))
+    return out
+
+
+def kst(t):
+    return time.strftime('%m-%d %H:%M', time.gmtime(t + 9 * 3600))
+
+
 def model_progress(model):
     """(percent of the work done in measured time, time left text): None/'?' when a needed time is unmeasured."""
-    tasks, spu, spe = model['tasks'], model['spu'], model['spe']
-    total_u = sum(t['end'] - t['start'] for t in tasks if t['phase'] != 'eval')
-    left_u = sum(t['left_units'] for t in tasks if t['phase'] != 'eval')
-    total_e = sum(1 for t in tasks if t['phase'] == 'eval')
-    left_e = sum(t['left_units'] for t in tasks if t['phase'] == 'eval')
+    tasks = model['tasks']
     if not tasks:
         return None, ''
-    if not left_u and not left_e:
+    if not any(t['state'] != 'done' for t in tasks):
         return 100, 'done'
-    if (total_u and not spu) or (total_e and not spe):
+    eta = model.get('eta')
+    if eta is None:
         return None, '?'
-    work = total_u * (spu or 0) + total_e * (spe or 0)
-    left = left_u * (spu or 0) + left_e * (spe or 0)
-    pct = min(99, int(100 * (1 - left / work))) if work else 0
-    running = sum(t['state'] == 'running' for t in tasks)
-    return pct, ('~' + span(left / running)) if running else '?'
+    sp = {k: (v or (0.0, 0.0))[0] for k, v in model['speed'].items()}
+    done = sum((t['done_u'] - t['start']) * sp['on' if t['col'] == 'On' else 'branch']
+               for t in tasks if t['phase'] != 'eval' and t['end'] > t['start'])
+    done += sum(t['frac'] for t in tasks if t['phase'] == 'eval') * sp['eval']
+    work = done + eta['low']['work']
+    pct = min(99, int(100 * done / work)) if work else 0
+    if 'left' not in eta['low']:
+        return pct, '?'
+    lo, hi = eta['low']['left'], eta['high']['left']
+    return pct, '~' + span(lo) + ('' if span(lo) == span(hi) else '–' + span(hi))
 
 
 def cell_text(items, phase):
@@ -1370,6 +1771,8 @@ def cell_text(items, phase):
         return '-'
     if phase != 'eval' and len(items) == 1:
         t = items[0]
+        if t['state'] == 'running' and phase == 'ext' and t.get('budget') is not None:
+            return f"▶{int(100 * t['budget'])}%"   # budget spent: the update count says nothing about the stop
         return f"▶{t['shown_u']}" if t['state'] == 'running' and type(t.get('shown_u')) is int else MARK[t['state']]
     text = f"{sum(t['state'] == 'done' for t in items)}/{len(items)}"
     for st in ('running', 'ready', 'retrying', 'person'):
@@ -1538,6 +1941,8 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
             parts.append(paint(v, 'bad' if c == '✗' and busy else 'warn' if c == 'retry' and busy else
                                'run' if c == 'run' and busy else 'dim' if not busy else None))
         out.append('  '.join(parts).rstrip())
+    for line in eta_lines(models, now, width):
+        out.append(line)
 
     # 2. what will restart by itself, what needs a person, planner notes
     import textwrap
@@ -1610,7 +2015,7 @@ def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
                    (paint(f"   ({', '.join(hidden)} not shown; --all-nodes)", 'dim') if hidden and not all_nodes else ''))
         if shown:
             ncols = (('host', 'host'), ('gpus', 'gpus'), ('state', 'state'), ('experiment', 'exp'), ('task', 'task'),
-                     ('progress', 'done/total'), ('left', 'left'), ('took', 'time'), ('beat', 'beat'))
+                     ('progress', 'progress'), ('left', 'left'), ('took', 'ran for'), ('beat', 'beat'))
             listed = [dict(r, beat=r['beat'].replace(' ago', ''), progress=r.get('progress') or '', left=r.get('left') or '')
                       for r in shown]
             nw = {k: max(len(t), *(len(str(r[k])) for r in listed)) for k, t in ncols}

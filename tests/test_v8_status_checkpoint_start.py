@@ -17,7 +17,7 @@ def test_loaded_start_is_visible_before_the_first_new_update(tmp_path,start):
     row=next(r for r in rows if r['run_id']=='traj-5')
     assert row['done']==start
     text=status.render_clean([base],now=now,gpus=[],host='node01',width=180)
-    assert f' {start}/275 ' in text
+    assert f' update {start} of 275 ' in text
 
 
 def test_parent_description_alone_does_not_prove_checkpoint_was_loaded(tmp_path):
@@ -29,7 +29,7 @@ def test_parent_description_alone_does_not_prove_checkpoint_was_loaded(tmp_path)
     assert next(r for r in rows if r['run_id']=='traj-5')['done'] is None
     text=status.render_clean([base],now=now,gpus=[],host='node01',width=180)
     node_row=next(line for line in text.splitlines() if line.startswith(' ▶ node01'))
-    assert '0/275' not in node_row and '?/275' in node_row
+    assert 'update 0 of 275' not in node_row and 'update ? of 275' in node_row
 
 
 def test_completed_new_update_takes_precedence_over_the_loaded_start(tmp_path):

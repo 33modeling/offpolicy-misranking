@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import re
 from pathlib import Path
 import sys
 import time
@@ -58,7 +59,8 @@ def test_running_budget_extension_is_not_shown_past_its_total(tmp_path):
     run_at(base, rid, 310)
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
     node = next(line for line in text.splitlines() if line.startswith(" ▶ h-ext"))
-    assert " 310/400 " in node and "310/275" not in node, node
+    # no recorded cost: the budget share is unknown and said so, never a planned stop as denominator (user 11-16)
+    assert " update 310 · budget ? " in node and "310/" not in node, node
     ext = next(t for t in status.task_model(base, "olmo_math", now)["tasks"] if t["key"] == "x")
     assert ext["start"] == 275 and ext["done_u"] == 310 and ext["end"] == 400
 
@@ -106,5 +108,9 @@ def test_running_task_always_says_how_far_it_is(tmp_path):
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=220)
     nodes = {line.split()[1]: line for line in text.splitlines() if line.startswith(" ▶ h-")}
     # 4 GPU processes at question 75 of their 500 = 300/2000 questions; 1,200 s median x 85% left = ~17 min
-    assert "300/2000 " in nodes["h-ev"] and " ~17m " in nodes["h-ev"] and "answering 75/500" in nodes["h-ev"], nodes["h-ev"]
-    assert " 62/75 " in nodes["h-tr"] and "answering 3/8" in nodes["h-tr"], nodes["h-tr"]
+    # every number says what it counts (user 11-16 '87/300 몇 시간'): no bare a/b on a node line
+    assert "question 300 of 2000 " in nodes["h-ev"] and " ~17m left " in nodes["h-ev"], nodes["h-ev"]
+    assert "answering question 75 of 500" in nodes["h-ev"], nodes["h-ev"]
+    assert "update 62 of 75 " in nodes["h-tr"] and "answering question 3 of 8" in nodes["h-tr"], nodes["h-tr"]
+    for line in nodes.values():
+        assert not re.search(r"\b\d+/\d+\b", line), line
