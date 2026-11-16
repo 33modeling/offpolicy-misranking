@@ -118,6 +118,33 @@ def attempt_block(base, attempt, full):
     return out
 
 
+def stack_block(queue, task, key):
+    """cluster_child.install_diagnostics points faulthandler (fatal signals, SIGUSR1, periodic) at
+    .multi-node/stacks/<task id>-rank<N>.txt, appending one '== <time> pid=...' block per process."""
+    out = []
+    labels = [x for x in dict.fromkeys((task.get('task_id'), task.get('run_id'), key)) if x]
+    files = []
+    for label in labels:
+        try:
+            files += sorted((queue / 'stacks').glob(f'{label}-rank*.txt'))
+        except OSError:
+            pass
+    out.append(f"stack dump files: {len(files)}" + ('' if (queue / 'stacks').is_dir() else ' (no stacks directory)'))
+    for path in dict.fromkeys(files):
+        size, text = lines_of(path, tail=400)
+        text = text if isinstance(text, list) else [text]
+        starts = [i for i, x in enumerate(text) if x.startswith('== ')]
+        block = text[starts[-3]:] if len(starts) >= 3 else text
+        fatal = sum('Fatal Python error' in x for x in text)
+        try:
+            mtime = when(path.stat().st_mtime)
+        except OSError:
+            mtime = '?'
+        out.append(f"  {path.name} ({size} bytes, modified {mtime}, 'Fatal Python error' in tail: {fatal}); last 3 process blocks:")
+        out += ['    ' + x[:300] for x in block[-150:]]
+    return out
+
+
 def kernel_lines():
     for command in (['dmesg', '-T'], ['journalctl', '-k', '--no-pager', '-n', '4000']):
         try:
@@ -177,6 +204,7 @@ def main():
                     report.append(f"run manifest attempts: {short(manifest.get('attempts'), 1500)}")
             for index, attempt in enumerate(attempts):
                 report += attempt_block(queue, attempt, full=index >= len(attempts) - FULL_ATTEMPTS)
+            report += stack_block(queue, task, path.stem)
     note, hits = kernel_lines()
     report += ['', '=' * 100, f"this node ({socket.gethostname()}) kernel: {note}"] + hits
     text = '\n'.join(report) + '\n'
