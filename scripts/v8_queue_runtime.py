@@ -26,7 +26,7 @@ def runner_identity(root):
 class SelectionPlan(list):
     def __init__(self,groups,errors,root=None,order=None,skipped=None):
         super().__init__(groups);self.errors=errors;self.root=root
-        self.order=list(order or []);self.skipped=dict(skipped or {})
+        self.order=list(order or []);self.skipped=dict(skipped or {});self.unqueued={}
 
 
 DEFAULT_ORDER=('olmo_math','qwen_mbpp','olmo_mbpp','qwen_math')
@@ -271,4 +271,11 @@ def selections(tools,env,args,*,serve_remaining=False):
     # An automatically added cohort this node cannot open is skipped, not a launch error.
     skipped={c:errors.pop(c) for c in list(errors) if c in automatic}
     if not groups:raise ValueError('; '.join(f'{c}: {e}' for c,e in {**errors,**skipped}.items()))
-    return SelectionPlan(groups.values(),errors,root,[c for c in cohorts if c not in skipped],skipped)
+    plan=SelectionPlan(groups.values(),errors,root,[c for c in cohorts if c not in skipped],skipped)
+    if serve_remaining and not (options.cohorts or env.get('V8_COHORTS')):
+        # Configured cohorts that cohort_list did not add: reported at startup, never started here.
+        try:configured=sorted(p.stem for p in (Path(options.runner_root or env['V8_RUNNER_ROOT'])/'configs/cohorts').glob('*.json'))
+        except OSError:configured=[]
+        plan.unqueued={c:f'no queue under {root/c/".multi-node"} (experiment not started; a node never starts a new queue)'
+                       for c in configured if c not in cohorts}
+    return plan

@@ -38,6 +38,14 @@ SPILL_LOCK_GRACE = float(os.environ.get('V8_SPILL_LOCK_GRACE', '10'))  # seconds
 # holding its queue lock all the time), no longer holds the node back (user 11-16: 'mbpp는 꽉찼는데 그걸
 # 기다리고 있음', '다른걸로 안넘어가고'). Earlier cohorts keep claim priority on every later loop.
 SPILL_STALL_SECONDS = float(os.environ.get('V8_SPILL_STALL_SECONDS', '30'))
+# Shared inspection result (scheduling cache under V8_ROOT/.v8-scan-share, never a queue file). Every idle node
+# re-inspected every cohort's whole task DAG under that cohort's control.lock, so with many nodes the lock was
+# always held by an inspection that found nothing new and a spare node waited on it (WAIT_QUEUE_LOCK) for
+# minutes before it could inspect, initialize or claim a later cohort. A node now reuses another node's
+# inspection when it is younger than this: a ready offer is claimed through the same claim_offered()
+# revalidation under the control lock (no claim rule changes), and 'nothing ready' with unchanged
+# jobs/ and state.json is not inspected again until it expires.
+SCAN_SHARE_SECONDS = float(os.environ.get('V8_SCAN_SHARE_SECONDS', '60'))
 EVAL_NATIVE_RECOVERY = 'evaluation-sigsegv-recovery-v1'
 # User 11-13 '자꾸 에러 난거 먼저 처리해서 다시 시작하게 해야지': every task that was BLOCKED (failure cap or native
 # crashes on two places) when this policy first met it gets ONE fresh failure budget, counted from its last
@@ -105,15 +113,20 @@ class WorkerStatus:
     def __init__(self,base,worker,controller):
         self.path=Path(base)/'.v8-worker-status'/(digest(worker)+'.json')
         self.worker=worker;self.controller=controller;self.last=None;self.written=-float('inf');self.since=time.time()
+        self.context=None  # callable -> extra fields on every record (cohorts served / not served on this node)
 
     def publish(self,state,cohort,reason,**details):
         now=time.time();signature=(state,cohort,reason)
         if signature!=self.last:self.since=now
         elif time.monotonic()-self.written<15:return
         self.last=signature;self.written=time.monotonic()
+        extra={}
+        if self.context is not None:
+            try:extra=self.context()
+            except Exception:extra={}  # diagnostics never stop the scheduler
         record=dict(schema=1,worker=self.worker,pid=os.getpid(),launch_id=os.environ.get('V8_LAUNCH_ID'),
                     controller_sha256=self.controller,at=now,since=self.since,state=state,cohort=cohort,
-                    reason=reason,**details)
+                    reason=reason,**{**extra,**details})
         try:atomic(self.path,record)
         except OSError as exc:print(f'[V8 STATUS ERROR] cannot save worker diagnosis: {exc}',flush=True)
         counts=' '.join(f'{k}={details[k]}' for k in ('phase','kind','method','seed','ready','leased','native_busy','dependencies','failed') if k in details)
@@ -1675,17 +1688,18 @@ def unfinished_cohort(pairs,order,*,check_leases=True):
 
 
 def worker_loop_many(pairs,worker,stop,*,poll=3,device_fds=(),retry=False,gpu_gate=None,
-                     max_attempts=MAX_ATTEMPTS,retry_delay=RETRY_DELAY,automatic_retry=True,cohort_order=(),preflight=False):
+                     max_attempts=MAX_ATTEMPTS,retry_delay=RETRY_DELAY,automatic_retry=True,cohort_order=(),preflight=False,
+                     not_served=None):
     # Only finished inspection leases enter this stack. A still-running scan
     # keeps its own lease until its thread exits, even during worker retirement.
     with ExitStack() as offer_cleanup:
         return _worker_loop_many(pairs,worker,stop,poll=poll,device_fds=device_fds,retry=retry,gpu_gate=gpu_gate,
             max_attempts=max_attempts,retry_delay=retry_delay,automatic_retry=automatic_retry,
-            cohort_order=cohort_order,offer_cleanup=offer_cleanup,preflight=preflight)
+            cohort_order=cohort_order,offer_cleanup=offer_cleanup,preflight=preflight,not_served=not_served)
 
 
 def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
-                     max_attempts,retry_delay,automatic_retry,cohort_order,offer_cleanup,preflight=False):
+                     max_attempts,retry_delay,automatic_retry,cohort_order,offer_cleanup,preflight=False,not_served=None):
     """Schedule within cohort_order; an empty order retains archival fair dispatch."""
     if not pairs:raise ValueError('At least one cohort is required')
     if stop.is_set():return 75
@@ -1702,6 +1716,54 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
     diagnostic=WorkerStatus(dispatch_lock.parent,worker,controller_sha256)
     cohort_order=tuple(cohort_order)
     sequence_report=None
+    eligible=set()
+    # Sequential order with one distinct rank per cohort: the claim order is the rank alone, so the per-claim
+    # lease counts (one flock probe per task lease, under the one cross-cohort dispatch lock) are never used.
+    distinct_ranks=bool(cohort_order) and len({cohort_order.index(p.binding.get('cohort')) if p.binding.get('cohort') in cohort_order
+                                                else -1-i for i,(p,_) in enumerate(pairs)})==len(pairs)
+    def activity(i):
+        pool,runtime=pairs[i]
+        if terminal.get(i)=='failed':return 'not serving: '+str(reasons.get(cohort(pool),'gave up on this node'))[:300]
+        if terminal.get(i)=='complete':return 'complete'
+        if i in scans:return 'node verification' if scans[i].kind=='node verification' else 'task inspection'
+        if getattr(runtime,'pending_barrier',None) is not None:return 'CPU stage'
+        if i not in initialized:return 'starting runtime' if getattr(runtime,'channel',True) is not None else 'not started (later cohort)'
+        if i in offers:return 'ready offer, claiming'
+        if i in control_waits:return f'queue lock busy {time.monotonic()-control_waits[i]:.0f}s'
+        return 'eligible, nothing ready' if i in eligible else 'waiting for its turn (earlier cohorts first)'
+    def context():
+        return dict(serves=[cohort(p) for i,(p,_) in sorted(enumerate(pairs),key=lambda x:rank(x[1][0]))
+                            if terminal.get(i)!='failed'],
+                    not_serving={**dict(not_served or {}),**{cohort(pairs[i][0]):str(reasons.get(cohort(pairs[i][0]),'gave up'))[:300]
+                                                              for i,v in terminal.items() if v=='failed'}},
+                    cohorts={cohort(p):activity(i) for i,(p,_) in enumerate(pairs)})
+    diagnostic.context=context
+    share_root=dispatch_lock.parent/'.v8-scan-share';used_shares={}
+    def queue_marks(pool):
+        try:return [(pool.root/'jobs').stat().st_mtime_ns,(pool.root/'state.json').stat().st_mtime_ns]
+        except OSError:return None
+    def share_scan(index,pool,scan,action,offer):
+        if not cohort_order or SCAN_SHARE_SECONDS<=0 or action not in ('ready','waiting') or getattr(scan,'marks',None) is None:return
+        observation=dict(getattr(pool,'observation',{}) or {})
+        if action=='waiting' and (observation.get('ready') or observation.get('metadata_error')):return
+        at=time.time()
+        try:atomic(share_root/(cohort(pool)+'.json'),dict(schema=1,cohort=cohort(pool),binding_sha256=digest(pool.binding),
+                   at=at,worker=worker,action=action,offer=offer if action=='ready' else None,
+                   observation=observation,marks=scan.marks))
+        except (OSError,ValueError,TypeError):return  # a missing cache only means a full inspection
+        if action=='ready':used_shares[index]=at  # this node already holds that offer
+    def shared_scan(index,pool):
+        """('ready', offer) / ('waiting', None) from another recent inspection, else None (inspect normally)."""
+        if not cohort_order or SCAN_SHARE_SECONDS<=0:return None
+        try:row=read(share_root/(cohort(pool)+'.json'))
+        except (OSError,ValueError):return None
+        if (not isinstance(row,dict) or row.get('binding_sha256')!=digest(pool.binding)
+                or not isinstance(row.get('at'),(int,float)) or not 0<=time.time()-row['at']<SCAN_SHARE_SECONDS):return None
+        if row.get('action')=='ready' and isinstance(row.get('offer'),dict) and used_shares.get(index)!=row['at']:
+            used_shares[index]=row['at'];return 'ready',row['offer'],row
+        if row.get('action')=='waiting' and row.get('marks') is not None and row['marks']==queue_marks(pool):
+            return 'waiting',None,row
+        return None
     # Spill (user 11-15): when every cohort up to `limit` has nothing this node can claim now,
     # the next cohort in cohort_order becomes eligible. Earlier cohorts keep claim priority; one
     # task at a time, so two cohorts never share this GPU group. Reset after each executed task.
@@ -1730,6 +1792,7 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
         shared_failures.discard(index)  # node/source faults need fresh admission, not automatic rejoining
         terminal[index]='failed';reasons[cohort(pool)]=f'{type(exc).__name__}: {exc}'
         print(f'[{worker}] {cohort(pool)}: {kind} failed: {type(exc).__name__}: {exc}',flush=True)
+        print(f'[v8] NODE {worker} NOT SERVING {cohort(pool)} from now: {kind} failed: {type(exc).__name__}: {exc}',flush=True)
         if isinstance(exc,BindingMismatch):
             print(f'[{worker}] {cohort(pool)}: no work is taken for this cohort on this node; nothing was changed.',flush=True)
         elif isinstance(exc,NODE_LOCAL):
@@ -1757,8 +1820,19 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
     def report_wait(active,claim_ok,busy):
         candidates=[i for i,(p,_) in enumerate(pairs) if cohort(p)==active] if cohort_order else [i for i in range(len(pairs)) if i not in terminal]
         if not candidates:return
-        i=candidates[0];pool,runtime=pairs[i];name=cohort(pool)
+        i=candidates[0]
+        held_elsewhere=None
+        if cohort_order and i not in scans and i not in offers and getattr(pairs[i][1],'pending_barrier',None) is None:
+            # The node spilled to a later cohort and is starting, verifying, inspecting or claiming there: say so,
+            # instead of the earlier full cohort's queue-lock wait (user 11-16 '전부 wait_queue_lock 에 걸려 있어').
+            busy_later=[j for j in sorted(eligible,key=lambda j:rank(pairs[j][0]))
+                        if j!=i and j not in terminal and rank(pairs[j][0])>rank(pairs[i][0])
+                        and (j in scans or j in offers or j not in initialized
+                             or getattr(pairs[j][1],'pending_barrier',None) is not None)]
+            if busy_later:held_elsewhere=cohort(pairs[i][0]);i=busy_later[0]
+        pool,runtime=pairs[i];name=cohort(pool)
         facts=dict(getattr(pool,'observation',{}));facts['order']=list(cohort_order)
+        if held_elsewhere:facts['nothing_claimable_in']=held_elsewhere
         if not claim_ok:diagnostic.publish('WAIT_GPU',name,str(busy),**facts)
         elif i in scans:
             detail=getattr(runtime,'verification_stage',scans[i].kind) if scans[i].kind=='node verification' else getattr(runtime,'inspection_stage',scans[i].kind)
@@ -1823,7 +1897,7 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
             except Exception as exc:give_up(i,pool,'final readiness check',exc)
         return refreshed
     while not stop.is_set():
-        progressed=False;dispatched=False;short_claim_wait=False
+        progressed=False;dispatched=False;short_claim_wait=False;gate_busy=False
         active=None
         if cohort_order:
             # Which cohort comes first, from the shared state files only (user 11-16 'dispatch lock queue lock 걸려
@@ -1876,6 +1950,7 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
             # ineligible offer would keep its retained control lock: drop both.
             for i in tuple(offers):
                 if i not in eligible:discard_offer(i)
+                elif time.time()-offers[i].get('shared_at',time.time())>SCAN_SHARE_SECONDS:discard_offer(i)  # inspect afresh
             if limit!=spill_report and limit>active_rank and limit<len(cohort_order):
                 print(f'[{worker}] nothing claimable now in earlier cohorts; also serving {cohort_order[limit]} '
                       '(earlier cohorts keep priority; one task at a time on this GPU group)',flush=True)
@@ -1944,6 +2019,7 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                 if scan.error is not None:
                     give_up(index,pool,scan.kind,scan.error);progressed=True;continue
                 action,offer=scan.result
+                if scan.kind=='task inspection':share_scan(index,pool,scan,action,offer)
                 if action=='verified':
                     initialized.add(index);progressed=True
                     if claim_ok:
@@ -1986,6 +2062,16 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                 # starting node verify one after another behind it (WAIT_QUEUE_LOCK) and time out.
                 scans[index]=TaskScan(pool,runtime,worker,stop,None,verify=True,retry=retry)
                 continue
+            if index in initialized:
+                shared=shared_scan(index,pool)
+                if shared is not None:
+                    action,offer,row=shared;control_waits.pop(index,None)
+                    pool.observation=dict(row.get('observation') or {},shared_from=row.get('worker'),
+                                          shared_age_seconds=round(time.time()-row['at'],1))
+                    if action=='ready':offers[index]=dict(offer,shared_at=row['at']);progressed=True  # claim_offered revalidates it
+                    try:runtime.heartbeat(None)
+                    except (OSError,NodeFailure):pass
+                    continue
             try:
                 control_context=pool.control();control=control_context.__enter__()
             except NODE_LOCAL as exc:
@@ -2024,8 +2110,10 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                         if state['phase'] in PHASES and (not state.get('failure') or aggregate_task_failure(state['failure'])):
                             action='waiting'
                             if getattr(runtime,'independent_startup',False):
+                                marks=queue_marks(pool)
                                 scans[index]=TaskScan(pool,runtime,worker,stop,control.fd,
                                     retain_offer=bool(cohort_order and claim_ok and index in node_rechecks))
+                                scans[index].marks=marks
                             else:
                                 action,offer=pool.tick(runtime,worker,stop,claim=False,offer=True)
                                 if action=='ready':offers[index]=offer
@@ -2098,10 +2186,11 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                     for i,(p,_) in enumerate(pairs):
                         if i not in terminal:give_up(i,p,'queue access',exc)
                     gate_held=False;progressed=True
+                if not gate_held and offers:gate_busy=True  # another node is claiming; this offer keeps its lease
                 if gate_held:
                     # Kernel-held task leases, not heartbeat age or stale running labels, are
                     # authoritative. Claim while this same shared lock remains held.
-                    live={i:len(pool.held_leases()) for i,(pool,_) in enumerate(pairs)
+                    live={i:0 if distinct_ranks else len(pool.held_leases()) for i,(pool,_) in enumerate(pairs)
                           if i in initialized and i not in terminal and i in offers and i in eligible}
                     # Sequential: the earliest cohort in the order first; archival: fewest live leases.
                     order=sorted(live,key=lambda i:((rank(pairs[i][0]) if cohort_order else 0),live[i],(i-cursor)%len(pairs)))
@@ -2299,7 +2388,16 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                 return 1
         if not dispatched and not progressed:
             report_wait(active,claim_ok,busy)
-            stop.wait(min(poll,.05) if short_claim_wait else poll)
+            wait=min(poll,.05) if short_claim_wait else min(poll,.5) if gate_busy else poll
+            # A pending verification/inspection is collected as soon as it finishes, not one whole poll later
+            # (each of startup -> verification -> inspection -> claim cost up to a poll on an idle node).
+            pending=[scan for i,scan in scans.items() if i not in terminal]
+            if pending and not any(scan.finished.is_set() for scan in pending):
+                deadline=time.monotonic()+wait
+                while (not stop.is_set() and time.monotonic()<deadline
+                       and not any(scan.finished.is_set() for scan in pending)):
+                    stop.wait(min(.05,max(0,deadline-time.monotonic())))
+            else:stop.wait(min(wait,.05) if pending else wait)
     diagnostic.publish('STOPPED',None,'stop requested; checkpoints and queue retained')
     return 75
 
@@ -2993,7 +3091,7 @@ class Runtime:
         done.set();thread.join(timeout=10);return process.returncode
 
 
-def main(argv=None,*,selected_cohorts=None,cohort_order=None):
+def main(argv=None,*,selected_cohorts=None,cohort_order=None,not_served=None):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('cohort',nargs='?',default='all',help='default: finish olmo_math, qwen_mbpp, olmo_mbpp and qwen_math in order')
     parser.add_argument('--runner-root',type=Path,default=os.environ.get('V8_RUNNER_ROOT',str(Path.cwd()/'v8/experiments')))
@@ -3085,7 +3183,7 @@ def main(argv=None,*,selected_cohorts=None,cohort_order=None):
                                 retry=args.retry_failed,gpu_gate=GpuGate(gpus) if inventory is not None else None,
                                 max_attempts=args.max_attempts,retry_delay=args.retry_delay,
                                 preflight=inventory is not None and os.environ.get('V8_PREFLIGHT','1')!='0',
-                                cohort_order=cohorts if cohort_order is None else cohort_order)
+                                cohort_order=cohorts if cohort_order is None else cohort_order,not_served=not_served)
     finally:
         for signum,handler in previous.items():signal.signal(signum,handler)
         for lock in reversed(locks):lock.close()

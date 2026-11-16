@@ -101,10 +101,11 @@ def main(argv=None):
     if any(not (control/name).is_file() for name in required):
         raise ValueError('Shared dispatcher files are missing; run git pull in the complete existing checkout')
     plan=private_cache()/('dispatch-plan-'+uuid.uuid4().hex+'.json')
-    for cohort,error in getattr(groups,'skipped',{}).items():
+    not_served={**getattr(groups,'unqueued',{}),**getattr(groups,'skipped',{})}
+    for cohort,error in not_served.items():
         print(f'V8 startup: {cohort} not served by this node ({error})',file=sys.stderr,flush=True)
     plan.write_text(json.dumps(dict(schema=1,root=str(groups.root),argv=argv,entries=entries,errors=groups.errors,
-                                    order=getattr(groups,'order',[]))))
+                                    order=getattr(groups,'order',[]),not_served=not_served)))
     child_env=dict(env,V8_ROOT=str(groups.root),V8_RUNNER_ROOT=entries[0]['runner'])
     os.execvpe(env['V8_PYTHON'],[env['V8_PYTHON'],str(control/'v8_dispatch.py'),str(plan)],child_env)
     return 0

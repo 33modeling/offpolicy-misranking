@@ -1,5 +1,6 @@
 """Versioned sequential-cohort dispatcher over exact numerical runtimes; local socketpairs only."""
 import hashlib
+import inspect
 import json
 import math
 import os
@@ -111,6 +112,9 @@ class RuntimeProxy:
         return reply.get('result')
 
     def verify_node(self):
+        # A runtime that failed to start reports its own startup error, not a missing attribute of the
+        # policy receipt below (seen: "'RuntimeProxy' object has no attribute 'streaming_ready_tasks'").
+        if self.error:raise nodes.NodeFailure(f'{self.cohort}: runtime actor unavailable on this node: {self.error}')
         # This is called by TaskScan under the cohort control lease, outside the
         # dispatch loop. One publisher writes the shared policy receipt; joining
         # workers reuse it instead of every actor fsyncing the same path at startup.
@@ -162,6 +166,15 @@ class RuntimeProxy:
                 except subprocess.TimeoutExpired:self.process.kill();self.process.wait(timeout=2)
         if self.pending_barrier is not None:
             os.close(self.pending_barrier[1]);self.pending_barrier=None
+
+
+def serving_lines(worker,serves,not_served):
+    """Loud startup summary: every cohort this node serves (claim order) and every one it does not, with why."""
+    bar='[v8] '+'='*100
+    lines=[bar,f'[v8] NODE {worker} SERVES {len(serves)}: '+(' -> '.join(serves) or 'nothing')+'  (claim order; later = when earlier have nothing ready)']
+    lines+=[f'[v8] NODE {worker} NOT SERVING {cohort}: {reason}' for cohort,reason in not_served.items()]
+    if not not_served:lines.append(f'[v8] NODE {worker} NOT SERVING: none')
+    return lines+[bar]
 
 
 def main():
@@ -225,8 +238,10 @@ def main():
         i+=1
     if len(entries)==1:args.insert(0,next(iter(entries)))
     for cohort,error in plan['errors'].items():print(f'V8 startup: {cohort} blocked: {error}',file=sys.stderr,flush=True)
+    not_served={**plan.get('not_served',{}),**plan['errors']}
+    for line in serving_lines(plan['worker'],[c for c in cohort_order if c in entries],not_served):print(line,flush=True)
     try:
-        result=nodes.main(args,selected_cohorts=tuple(entries),cohort_order=cohort_order)
+        result=nodes.main(args,selected_cohorts=tuple(entries),cohort_order=cohort_order,**({'not_served':not_served} if 'not_served' in inspect.signature(nodes.main).parameters else {}))
         return result or (1 if plan['errors'] else 0)
     except (OSError,ValueError,RuntimeError) as error:
         print(f'V8 queue error: {type(error).__name__}: {error}',file=sys.stderr,flush=True);return 1
