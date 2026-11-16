@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """V8 queue status in the same layout as `sh scripts/run_srgc.sh <dataset> status` (read-only).
 
-    sh scripts/v8_status.sh            # one snapshot of olmo_math, qwen_mbpp and olmo_mbpp
-    sh scripts/v8_status.sh --watch    # refresh every 60 s until Ctrl-C (--watch 30 for 30 s)
+    sh scripts/v8_status.sh            # one snapshot of all four experiments (same as run_v8_nodes.sh status)
+    sh scripts/v8_status.sh --watch    # refresh every 3 s until Ctrl-C (--watch 30 for 30 s)
+
+The screen, top to bottom: header and this node; time left per experiment and for all of them (KST clock, what
+makes the range wide); per experiment the stage and "done N of M" per stage with how many are running / can start /
+restart by themselves / waiting / STOPPED; every unfinished task grouped by what happens next (running: where, how
+far, time left; waiting: the step it waits for); the seed x branch grid; live nodes and why idle ones are idle.
 
 No locks, signals, Torch imports or queue writes.
 """
@@ -964,7 +969,7 @@ def node_table(bases, cohorts, now, this_host=None, models=None):
             out.append(dict(base, state='busy', experiment=label, doing=doing))
             continue
         ready = sum(info[c]['ready'] for c in live if c in info)
-        doing = (f"idle while {ready} task{'s are' if ready != 1 else ' is'} ready (GPU busy? see its console)"
+        doing = (f"idle although {ready} task{'s' if ready != 1 else ''} could start (GPU busy? see its console)"
                  if ready else 'waiting for work')
         if silent:
             doing += ' · not serving ' + ', '.join(COHORT_LABEL.get(c, c) for c in silent) + ' (gave up? see its console)'
@@ -1012,16 +1017,7 @@ STATES = ('done', 'running', 'ready', 'retrying', 'waiting', 'person')
 MARK = {'done': '✓', 'running': '▶', 'ready': '○', 'retrying': '↻', 'waiting': '·', 'person': '✗'}
 MARK_STATE = {v: k for k, v in MARK.items()}
 PLAN_PHASE = {'train': 'train', 'extension': 'ext', 'primary_evaluation': 'eval', 'evaluation': 'eval'}
-LEGEND_LINES = (
-    "읽는 법: 줄=시드, 열=branch (On=On-policy 궤적, SR50=50 업데이트에서 SR로 전환, U=그 시드의 전환점에서 Uniform으로 전환)",
-    "  train=학습, ext=예산 연장 학습, eval=평가. train·ext 칸은 작업 1개, eval 칸은 끝난 수/전체 수 (275 평가 + 예산 끝점 평가)",
-    "  ✓ 끝남  ▶ 실행 중 (▶120 = 120 업데이트째, ext 의 ▶81% = 예산 81% 씀)  ○ 바로 시작 가능  ↻ 실패·중단, 다음 빈 노드가 체크포인트부터 자동 재시작",
-    "  · 앞 단계가 끝나야 시작  ✗ 자동 재시도 끝, 사람이 봐야 함  - 작업 없음.  eval 칸 1/3▶↻ = 3개 중 1개 끝, 1개 실행, 1개 재시작 대기",
-    "아래 표: train/ext/eval = 끝난 작업/전체 작업 (전체 = 만든 작업 + 계획상 꼭 만들어질 작업). run ready retry wait ✗ = 위 칸 기호 수",
-    "  done = 끝난 일의 비율 (업데이트·평가를 잰 시간으로 환산).  ? = 잰 시간이 아직 없거나 이 실험을 돌리는 GPU 묶음이 없음",
-    "  left = 아직 안 만든 연장·예산 끝점 평가·U까지 남은 모든 일을 잰 시간으로 환산해, 이 실험을 돌리는 GPU 묶음 수와 앞뒤 순서로 나눈 범위 (짧은 쪽 = 예상, 긴 쪽 = 작업이 잰 속도로 돌면 늘지 않는 상한)",
-    "노드 줄: progress = 학습은 update 87 of 275, 연장은 update 287 · budget 81% (예산이 다 차면 멈춤), 평가는 question 87 of 300 · left = 그 작업이 끝날 때까지 남은 시간 · ran for = 그 작업이 돈 시간",
-)
+
 
 
 def number(value):
@@ -1336,14 +1332,16 @@ def task_model(base, cohort, now):
                     add(key=f"planned.eval.s{b['seed']}.{b['col']}@{H}", phase='eval', seed=b['seed'], col=b['col'],
                         planned=True, state='waiting', update=H)
         if open_u:
-            later = '·'.join(w for p, w in (('train', '학습'), ('ext', '연장'), ('eval', '평가')) if p not in sealed)
-            model['more'].append(f"U(Uniform) {later} 최대 {len(open_u)}개씩 더: "
-                                 f"{', '.join(f's{s}' for s in open_u)}의 On이 끝나면 전환 여부로 정해짐")
+            later = [w for p, w in (('train', 'training'), ('ext', 'extension'), ('eval', 'evaluation')) if p not in sealed]
+            later = ', '.join(later[:-1]) + ' and ' + later[-1] if len(later) > 1 else ''.join(later)
+            model['more'].append(f"up to {len(open_u)} more U branches ({later} each) for "
+                                 f"{', '.join(f's{s}' for s in open_u)}: decided when that seed's On run finishes")
         if 'eval' not in sealed:
-            model['more'].append("예산 끝점 평가가 더 생길 수 있음: 연장 학습이 끝나 예산 평가 계획이 서면 수가 정해짐 (left 에는 미리 넣어 셈)")
+            model['more'].append("budget-end evaluations are counted once the extensions finish and their plan is made "
+                                 "(the time left already includes them)")
     elif sealed != {'train', 'ext', 'eval'}:
-        why = ('설정 파일을 못 읽어' if not cfg else '이 큐의 시드가 설정과 달라')
-        model['more'].append(f"{why} 아직 안 만든 작업을 셀 수 없음: 전체 수는 지금까지 만든 작업 수")
+        why = ('the runner config cannot be read' if not cfg else "this queue's seeds differ from the config")
+        model['more'].append(f"{why}, so tasks not created yet cannot be counted: totals are the tasks created so far")
 
     # Measured wall time of one update (On trajectory and SR/U branches separately: the On run also refreshes and
     # checks) and of one evaluation: medians over finished tasks (wall time of the last attempt / updates that
@@ -1697,53 +1695,6 @@ def model_eta(model):
     return out
 
 
-def eta_work_text(model, eta):
-    """'train 812 · ext 1240–1600 updates · eval 96–130' of the work still to come."""
-    def count(scenario):
-        items = eta[scenario]['items']
-        sp = model['speed']
-        tr = sum(it['dur'] / sp['on' if i[2] == 'On' else 'branch'][0 if scenario == 'low' else 1]
-                 for i, it in items.items() if i[0] == 'train')
-        ex = sum(it['dur'] / sp['branch'][0 if scenario == 'low' else 1] for i, it in items.items() if i[0] == 'ext')
-        ev = sum(1 for i in items if i[0] in ('eval', 'budget-eval'))
-        return int(round(tr)), int(round(ex)), ev
-    lo, hi = count('low'), count('high')
-    r = lambda a, b: f"{a}" if a == b else f"{a}–{b}"
-    return f"train {r(lo[0], hi[0])} · ext {r(lo[1], hi[1])} updates · {r(lo[2], hi[2])} evals"
-
-
-def eta_lines(models, now, width):
-    """One line per open experiment: finish clock (KST) and the work still to come that the time left is made of."""
-    import textwrap
-    out = []
-    for model in models:
-        if not model['started'] or not any(t['state'] != 'done' for t in model['tasks']):
-            continue
-        eta = model.get('eta')
-        if eta is None:
-            missing = [name for k, name in (('branch', 'training update'), ('eval', 'evaluation'))
-                       if not (model.get('speed') or {}).get(k)]
-            why = model.get('eta_error') or f"no {' or '.join(missing) or 'task'} has been timed yet"
-            out.append(paint(clip(f"   {model['label']} time left ?: {why}", width), 'dim'))
-            continue
-        work = f"{span(eta['low']['work'])}" + ('' if span(eta['low']['work']) == span(eta['high']['work'])
-                                                 else f"–{span(eta['high']['work'])}")
-        g = eta['groups']
-        if 'left' in eta['low']:
-            lo, hi = now + eta['low']['left'], now + eta['high']['left']
-            when = f"finish {kst(lo)}" + ('' if kst(lo) == kst(hi) else f"–{kst(hi)[6:] if kst(hi)[:5] == kst(lo)[:5] else kst(hi)}") + " KST"
-        else:
-            when = "finish ?: no live GPU group serves it"
-        text = (f"{model['label']} {when} · work left {work} GPU-group time ({eta_work_text(model, eta)}) on "
-                f"{g} GPU group{'s' if g != 1 else ''} · longest chain {span(eta['low']['chain'])}")
-        if model.get('notes'):
-            text += ' · ' + '; '.join(model['notes'])
-        for part in textwrap.wrap(text, max(60, width - 2), break_on_hyphens=False, initial_indent='   ',
-                                  subsequent_indent='     ')[:3]:
-            out.append(paint(part, 'dim'))
-    return out
-
-
 def kst(t):
     return time.strftime('%m-%d %H:%M', time.gmtime(t + 9 * 3600))
 
@@ -1770,22 +1721,231 @@ def model_progress(model):
     return pct, '~' + span(lo) + ('' if span(lo) == span(hi) else '–' + span(hi))
 
 
-def cell_text(items, phase):
-    """One grid cell. train/ext hold one task: its symbol (▶120 = running at update 120). An eval cell, or any cell
-    with several tasks: finished/total, then one mark per non-waiting unfinished task (▶×2 = two running)."""
-    if not items:
-        return '-'
-    if phase != 'eval' and len(items) == 1:
-        t = items[0]
-        if t['state'] == 'running' and phase == 'ext' and t.get('budget') is not None:
-            return f"▶{int(100 * t['budget'])}%"   # budget spent: the update count says nothing about the stop
-        return f"▶{t['shown_u']}" if t['state'] == 'running' and type(t.get('shown_u')) is int else MARK[t['state']]
-    text = f"{sum(t['state'] == 'done' for t in items)}/{len(items)}"
-    for st in ('running', 'ready', 'retrying', 'person'):
-        k = sum(t['state'] == st for t in items)
-        if k:
-            text += MARK[st] + (f"×{k}" if k > 1 else '')
+# ---- The screen, laid out like `run_srgc.sh <dataset> status` (srgc_live_status.render) ------------------------
+# User 11-16 '아직도 저 메커니즘 이해를 못했어 다시 만들어 그냥 status 전부다 직관적으로 처음부터. 비슷하게':
+# header, this node, then (1) time left, (2) one block per experiment with plain counts per stage, (3) every task that
+# is not finished, grouped by what happens next, (4) the seed x branch grid, (5) live nodes. Every number is a count
+# over task_model() records, and check_screen() reads sections 2-5 back and prints a red line if any disagree.
+
+STAGE_WORD = {'train': 'training', 'ext': 'extension', 'eval': 'evaluation'}
+STAGE_UNIT = {'train': 'training runs', 'ext': 'extension runs', 'eval': 'evaluations'}
+STATE_WORDS = (('running', 'running'), ('ready', 'can start'), ('retrying', 'restart by themselves'),
+               ('waiting', 'waiting'), ('person', 'STOPPED'))
+CELL_LEGEND = ("cells: ✓ done (extension 312✓ = stopped at update 312) · 187▶ running at update 187 (extension 81%▶ = "
+               "budget used, eval 36%▶ = questions answered) · ready = can start now · wait = needs an earlier step · "
+               "retry = restarts by itself · FAIL = stopped, needs you · - = no such run")
+RETRY_COMMAND = 'sh scripts/run_v8_nodes.sh --retry-failed'
+
+
+def is_budget_eval(t, H):
+    return t['phase'] == 'eval' and (t['of_ext'] or (t.get('update') is not None and t['update'] != H))
+
+
+def tname(t, model):
+    """'s5 SR100 training', 's5 SR100 extension', 's5 SR100 eval at 275', 's5 SR100 budget eval at 350'."""
+    head = f"s{t['seed']} {t['col']}"
+    if t['phase'] != 'eval':
+        return f"{head} {STAGE_WORD[t['phase']]}"
+    if is_budget_eval(t, model.get('H')):
+        return f"{head} budget eval" + (f" at {t['update']}" if t.get('update') is not None else '')
+    return f"{head} eval at {t['update'] if t.get('update') is not None else model.get('H') or '?'}"
+
+
+def progress_words(t):
+    """'update 187 of 275', 'update 287, budget 81%', 'question 182 of 500'."""
+    p = (t.get('progress') or '').replace(' · ', ', ').replace('budget ?', 'budget not read')
+    return p
+
+
+def left_words(t):
+    if t.get('left_s') is None:
+        return 'time left unknown'
+    return '<1m left' if t['left_s'] < 60 else f"~{span(t['left_s'])} left"
+
+
+def retry_words(why):
+    m = re.match(r'failure (\d+)/(\d+), (.*)', why or '')
+    if m:
+        return f"failed {m.group(1)} of {m.group(2)} so far ({m.group(3)})"
+    return {'interrupted': 'was interrupted', 'stopped': 'was stopped'}.get(why, why or 'was stopped')
+
+
+def person_words(why):
+    m = re.match(r'stopped after (\d+) failures(.*?), no more automatic retries · last: (.*)', why or '')
+    if m:
+        return f"failed {m.group(1)} times{m.group(2)}, no more automatic retries · last error: {m.group(3)}"
+    return why or 'needs a look'
+
+
+def task_index(model):
+    if '_index' not in model:
+        model['_index'] = {(t['phase'], t['seed'], t['col']): t for t in model['tasks'] if t['phase'] != 'eval'}
+    return model['_index']
+
+
+def blocker(t, model):
+    """(blocking task record or None, words) for a waiting task, by the planner's creation rules (matrix.build_stage,
+    ready_side_tasks): a branch starts when its seed's On run reaches its switch point, U once that run is complete,
+    an extension after its branch and the budget freeze, a matched evaluation after its training run, a budget-end
+    evaluation after its extension (On: after the budget freeze)."""
+    idx, s, c = task_index(model), t['seed'], t['col']
+    on = idx.get(('train', s, 'On'))
+    def freeze():
+        if model.get('frozen'):
+            return None
+        refs = [x for x in model['tasks'] if x['phase'] == 'train' and x['state'] != 'done' and
+                (x['col'] == 'On' or x['col'] == f"SR{(model.get('u_tau') or {}).get(x['seed'])}")]
+        names = ', '.join(tname(x, model) for x in refs[:3]) + (f", … {len(refs) - 3} more" if len(refs) > 3 else '')
+        return (None, 'the budget freeze' + (f", which needs {names} to finish" if refs else ' (made at the next queue scan)'))
+    if t['phase'] == 'train':
+        if c != 'On' and on is not None and on['state'] != 'done':
+            m = re.fullmatch(r'SR(\d+)', c)
+            if c == 'U':
+                return (on, None)
+            if m and (on.get('done_u') or 0) < int(m.group(1)):
+                return (on, f"to reach update {m.group(1)}")
+        return (None, 'their start checkpoint file (not on disk yet)')
+    if t['phase'] == 'ext':
+        b = idx.get(('train', s, c))
+        if b is not None and b['state'] != 'done':
+            return (b, None)
+        return freeze() or (None, 'their start checkpoint file (not on disk yet)')
+    if is_budget_eval(t, model.get('H')):
+        if c == 'On':
+            return freeze() or (None, 'their checkpoint file (not on disk yet)')
+        e = idx.get(('ext', s, c))
+        if e is not None and e['state'] != 'done':
+            return (e, None)
+        return (None, 'their checkpoint file (not on disk yet)')
+    b = idx.get(('train', s, c))
+    if b is not None and b['state'] != 'done':
+        return (b, None)
+    return (None, 'their checkpoint file (not on disk yet)')
+
+
+def state_phrase(t):
+    """What a blocking task is doing, in words."""
+    st = t['state']
+    if st == 'running':
+        return f"running, {left_words(t)}"
+    if st == 'ready':
+        return 'can start now'
+    if st == 'retrying':
+        return 'will restart by itself'
+    if st == 'person':
+        return 'STOPPED, needs you: these never start until it is fixed'
+    if st == 'waiting':
+        return 'itself waiting'
+    return 'done; picked up at the next queue scan'
+
+
+def time_left(model, now):
+    """(short 'about 13h04m–44h21m', sentence with the KST clock, low s, high s); low/high None when unknown."""
+    tasks = model['tasks']
+    if not model['started']:
+        return 'not started', 'not started', None, None
+    if not any(t['state'] != 'done' for t in tasks):
+        return 'finished', 'finished', 0.0, 0.0
+    eta = model.get('eta')
+    if eta is None:
+        missing = [name for k, name in (('branch', 'training update'), ('eval', 'evaluation'))
+                   if not (model.get('speed') or {}).get(k)]
+        why = (f"no finished {' or '.join(missing)} measured yet" if missing else
+               model.get('eta_error') or 'no finished task measured yet')
+        return 'time left unknown', f"unknown — {why}", None, None
+    if 'left' not in eta['low']:
+        return 'time left unknown', 'unknown — no live node is working on it', None, None
+    lo, hi = eta['low']['left'], eta['high']['left']
+    return range_text(lo, hi, now)[0], range_text(lo, hi, now)[1], lo, hi
+
+
+def range_text(lo, hi, now):
+    short = 'about ' + span(lo) + ('' if span(lo) == span(hi) else '–' + span(hi))
+    a, b = kst(now + lo), kst(now + hi)
+    when = a if a == b else f"{a} – {b[6:] if a[:5] == b[:5] else b}"
+    return short, f"{short} left, done around {when} KST"
+
+
+def range_reasons(model):
+    """What the longer end of the range adds (eta_items 'high' scenario), in a few words."""
+    out = []
+    if model.get('open_u'):
+        out.append('U branches are added for ' + ', '.join(f's{s}' for s in model['open_u']))
+    planned_ext = sum(1 for t in model['tasks'] if str(t['key']).startswith('planned.ext.'))
+    if planned_ext and type(model.get('CAP')) is int:
+        out.append(f"the {planned_ext} extensions not created yet run to update {model['CAP']}")
+    sp = model.get('speed') or {}
+    if any(v and v[1] > v[0] * 1.05 for v in sp.values()):
+        out.append('runs take as long as the slowest quarter measured so far')
+    if 'eval' not in model.get('sealed', ()):
+        out.append('each branch needs 2 budget-end evaluations')
+    return out
+
+
+def stage_counts(model):
+    out = {ph: {s: 0 for s in (*STATES, 'total')} for ph in ('train', 'ext', 'eval')}
+    for t in model['tasks']:
+        out[t['phase']][t['state']] += 1
+        out[t['phase']]['total'] += 1
+    return out
+
+
+def short_state(t):
+    return {'running': f"running, {left_words(t)}", 'ready': 'can start now', 'retrying': 'will restart by itself',
+            'waiting': 'waiting', 'person': 'STOPPED, needs you'}[t['state']]
+
+
+def stage_line(model, ph, c):
+    text = f"     {STAGE_WORD[ph]:<11} done {c['done']} of {c['total']} {STAGE_UNIT[ph]}"
+    planned = sum(1 for t in model['tasks'] if t['phase'] == ph and t['planned'] and t['state'] != 'done')
+    parts = [f"{c[s]} {w}" + (f" ({planned} not created yet)" if s == 'waiting' and planned else '')
+             for s, w in STATE_WORDS if c[s]]
+    if parts:
+        text += ' · ' + ' · '.join(parts)
+    left = [t for t in model['tasks'] if t['phase'] == ph and t['state'] != 'done']
+    if 0 < len(left) <= 4:   # user 11-16 'ext 50/54 왜 안바뀜': name the last few
+        text += ' → not done: ' + '; '.join(f"{tname(t, model)} ({short_state(t)})" for t in left)
     return text
+
+
+STAGE_RE = re.compile(r'^     (training|extension|evaluation) +done (\d+) of (\d+) ')
+
+
+def read_stage_line(line):
+    """Counts back from a drawn stage line (check_screen)."""
+    m = STAGE_RE.match(line)
+    if not m:
+        return None
+    ph = {v: k for k, v in STAGE_WORD.items()}[m.group(1)]
+    c = {s: 0 for s in (*STATES, 'total')}
+    c['done'], c['total'] = int(m.group(2)), int(m.group(3))
+    body = line.split(' → not done: ')[0]
+    for s, w in STATE_WORDS:
+        k = re.search(r' · (\d+) ' + re.escape(w) + r'(?= ·| \(|$)', body)
+        c[s] = int(k.group(1)) if k else 0
+    return ph, c
+
+
+def cell_word(t):
+    st = t['state']
+    if st == 'done':
+        return f"{t['done_u']}✓" if t['phase'] == 'ext' and type(t.get('done_u')) is int else '✓'
+    if st == 'running':
+        if t['phase'] == 'eval':
+            return f"{int(100 * t['frac'])}%▶"
+        if t['phase'] == 'ext' and t.get('budget') is not None:
+            return f"{int(100 * t['budget'])}%▶"
+        return f"{t['shown_u']}▶" if type(t.get('shown_u')) is int else '▶'
+    if st == 'person':
+        return 'HUNG' if t['row'] is not None and t['row']['status'] == 'running' else 'FAIL'
+    return {'ready': 'ready', 'retrying': 'retry', 'waiting': 'wait'}[st]
+
+
+def cell_text(items, phase=None):
+    """One grid cell: one word per task (several budget-end evaluations: joined by ',')."""
+    rank = {s: i for i, s in enumerate(STATES)}
+    items = sorted(items, key=lambda t: (rank[t['state']], t.get('update') if type(t.get('update')) is int else -1))
+    return ','.join(cell_word(t) for t in items) if items else '-'
 
 
 def cell_counts(text):
@@ -1793,100 +1953,325 @@ def cell_counts(text):
     c = {s: 0 for s in (*STATES, 'total', 'unreadable')}
     if text == '-':
         return c
-    m = re.fullmatch(r'(\d+)/(\d+)((?:[▶○↻✗](?:×\d+)?)*)', text)
-    if m:
-        c['total'], c['done'] = int(m.group(2)), int(m.group(1))
-        for sym, k in re.findall(r'([▶○↻✗])(?:×(\d+))?', m.group(3)):
-            c[MARK_STATE[sym]] += int(k or 1)
-        c['waiting'] = c['total'] - sum(c[s] for s in STATES if s != 'waiting')
-        return c
-    c['total'] = 1
-    c[MARK_STATE.get(text[:1], 'unreadable')] += 1
+    for word in text.split(','):
+        c['total'] += 1
+        state = ('done' if word.endswith('✓') else 'running' if word.endswith('▶') else
+                 {'ready': 'ready', 'retry': 'retrying', 'wait': 'waiting', 'FAIL': 'person', 'HUNG': 'person'}.get(word))
+        c[state or 'unreadable'] += 1
     return c
 
 
 def mark_style(mark):
     mark = mark.strip()
-    if not mark or mark == '-' or mark == '·':
+    if mark in ('', '-', 'wait'):
         return 'dim'
-    if '✗' in mark:
+    if 'FAIL' in mark or 'HUNG' in mark:
         return 'bad'
     if '▶' in mark:
         return 'run'
-    if '↻' in mark:
+    if 'retry' in mark:
         return 'warn'
-    if mark == '✓':
+    if 'ready' in mark:
+        return 'info'
+    if mark.endswith('✓'):
         return 'done'
-    m = re.fullmatch(r'(\d+)/(\d+)', mark)
-    if m:
-        return 'done' if m.group(1) == m.group(2) else 'dim' if m.group(1) == '0' else None
     return None
 
 
-def experiment_lines(model, width):
-    """Seed grids of one experiment and the counts read back from the drawn cells."""
-    title = f"{model['label']} · {model['phase']} "
-    lines = [paint(title, 'head') + paint('─' * max(3, min(width, 100) - len(title)), 'dim')]
+GRID_BLOCKS = (('train', 'training'), ('ext', 'extension'), ('eval275', 'eval@H'), ('evalend', 'eval@budget'))
+
+
+def grid_lines(model, width):
+    """Seed x branch grid of one experiment and the counts read back from the drawn cells."""
     drawn = {ph: {s: 0 for s in (*STATES, 'total', 'unreadable')} for ph in ('train', 'ext', 'eval')}
-    seeds, cols = model['seeds'], model['cols']
-    if not model['tasks']:
-        lines.append('  (no tasks yet)')
-        return lines, drawn
+    seeds, cols, H = model['seeds'], model['cols'], model.get('H')
+    lines = [paint(f" {model['label']} by seed and branch", 'head')]
     place = {}
     for t in model['tasks']:
-        place.setdefault((t['phase'], t['seed'], t['col']), []).append(t)
-    phases = [ph for ph in ('train', 'ext', 'eval') if any(t['phase'] == ph for t in model['tasks'])] or ['train']
-    table = {(ph, s, c): cell_text(place.get((ph, s, c), []), ph) for ph in phases for s in seeds for c in cols}
-    for (ph, _s, _c), text in table.items():
+        block = t['phase'] if t['phase'] != 'eval' else 'evalend' if is_budget_eval(t, H) else 'eval275'
+        place.setdefault((block, t['seed'], t['col']), []).append(t)
+    blocks = [(b, (f"eval@{H}" if b == 'eval275' and H else 'eval' if b == 'eval275' else name))
+              for b, name in GRID_BLOCKS if any(k[0] == b for k in place)]
+    table = {(b, s, c): cell_text(place.get((b, s, c), [])) for b, _ in blocks for s in seeds for c in cols}
+    for (b, _s, _c), text in table.items():
         for k, v in cell_counts(text).items():
-            drawn[ph][k] += v
-    widths = {c: max(len(c), *(len(table[(ph, s, c)]) for ph in phases for s in seeds)) for c in cols}
-    def row_text(first, cells, header=False):
-        plain = '  '.join([first, *(f'{cells[c]:<{widths[c]}}' for c in part)])
-        if len(plain) > width:
-            return clip(plain, width)
-        return '  '.join([paint(first, 'dim') if header else first,
-                          *(paint(f'{cells[c]:<{widths[c]}}', 'dim' if header else mark_style(cells[c])) for c in part)])
-    chunks, chunk, used = [], [], 6
-    for c in cols:   # wider than the screen: split the columns, never cut cells off
+            drawn['eval' if b.startswith('eval') else b][k] += v
+    widths = {c: max(len(c), *(len(table[(b, s, c)]) for b, _ in blocks for s in seeds)) for c in cols}
+    first = 12
+    def row_text(head, cells, header=False):
+        plain = '  '.join([f'{head:<{first}}', *(f'{cells[c]:<{widths[c]}}' for c in part)]).rstrip()
+        if len(plain) > width or not COLOR:
+            return clip(plain, width) if not header else paint(clip(plain, width), 'dim')
+        return '  '.join([paint(f'{head:<{first}}', 'dim' if header else None),
+                          *(paint(f'{cells[c]:<{widths[c]}}', 'dim' if header else mark_style(cells[c])) for c in part)]).rstrip()
+    chunks, chunk, used = [], [], first
+    for c in cols:
         if chunk and used + 2 + widths[c] > width:
-            chunks.append(chunk); chunk, used = [], 6
+            chunks.append(chunk); chunk, used = [], first
         chunk.append(c); used += 2 + widths[c]
     chunks.append(chunk)
     for part in chunks:
-        for ph in phases:
-            lines.append(row_text(f' {ph:<5}', {c: c for c in part}, header=True))
+        for b, name in blocks:
+            lines.append(row_text(f' {name}', {c: c for c in part}, header=True))
             for s in seeds:
-                lines.append(row_text(f'{s!s:>6}', {c: table[(ph, s, c)] for c in part}))
+                lines.append(row_text(f'   s{s}', {c: table[(b, s, c)] for c in part}))
+    cols_note = "columns: On = on-policy run · SR50 = switches to SR at update 50"
     if model['u_tau']:
-        lines.append(paint(clip("   U = Uniform at the seed's switch point: " +
-                                ' · '.join(f"s{k} @{v}" for k, v in sorted(model['u_tau'].items(), key=lambda x: str(x[0]))), width), 'dim'))
-    for note in model['more']:
-        lines.append(paint(clip('   + ' + note, width), 'dim'))
+        cols_note += " · U = switches to Uniform at the seed's switch point (" + \
+            ', '.join(f"s{k} at {v}" for k, v in sorted(model['u_tau'].items(), key=lambda x: str(x[0]))) + ')'
+    lines += [paint(part, 'dim') for part in wrap('   ' + cols_note, width, '     ')]
     return lines, drawn
 
 
-def check_screen(models, table_rows, drawn, node_rows):
-    """Invariants of what is drawn (user 11-16 '아니 일관되지가 않는다고'): per experiment and phase, the table's
-    finished/total equals the sum of the drawn cells; run/ready/retry/wait/✗ equal the marks in the cells; the
-    running tasks are exactly the ▶ node rows and the hung ones the ✗ node rows. Returns red lines (empty if all hold)."""
+def wrap(text, width, indent='     '):
+    import textwrap
+    return textwrap.wrap(text, max(60, width - 1), break_on_hyphens=False, break_long_words=False,
+                         subsequent_indent=indent) or ['']
+
+
+def task_order(t):
+    return ({'train': 0, 'ext': 1, 'eval': 2}[t['phase']], str(t['seed']), natural(t['col']), str(t.get('update')))
+
+
+def dependent_name(t, b, model):
+    """A waiting task named relative to the step it waits for ('extension', 'eval at 275' of the same branch)."""
+    if b is not None and (t['seed'], t['col']) == (b['seed'], b['col']):
+        return tname(t, model).split(' ', 2)[2]
+    if b is not None and t['seed'] == b['seed']:
+        return tname(t, model).split(' ', 1)[1]
+    return tname(t, model)
+
+
+def waiting_lines(model, waiting):
+    """Waiting tasks grouped by the step they wait for: one line per running step (with its time left), and one
+    line each for steps that are STOPPED, restart by themselves, can start, are waiting, and the budget freeze."""
+    groups = {}
+    for t in waiting:
+        b, words = blocker(t, model)
+        if b is None and t['planned'] and 'freeze' not in words:
+            words = 'the planner to create them at its next queue scan'
+        if b is not None and words and words.startswith('to reach update'):
+            words = 'to reach the switch points'   # one line per On run, not per switch point
+        groups.setdefault(b['key'] if b is not None else words, (b, words, []))[2].append(t)
+    def deps(b, items):
+        names, runs = [], {}
+        for t in sorted(items, key=task_order):
+            name = dependent_name(t, b, model)
+            m = re.fullmatch(r'(SR\d+|On|U) (training|extension)', name)
+            if m and b is not None:   # 'SR75, SR100, SR125 training' instead of the word on every one
+                if m.group(2) not in runs:
+                    runs[m.group(2)] = len(names)
+                    names.append([m.group(2)])
+                names[runs[m.group(2)]].insert(-1, m.group(1))
+            else:
+                names.append(name)
+        names = [n if isinstance(n, str) else ', '.join(n[:-1]) + ' ' + n[-1] for n in names]
+        new = sum(t['planned'] for t in items)
+        return ', '.join(names) + (' (not created yet)' if new == len(items) and new else
+                                   f" ({new} not created yet)" if new else '')
+    out = []
+    merged = (('person', 'a STOPPED step — they never start until it is fixed', 'bad'),
+              ('retrying', 'a step that restarts by itself', 'warn'), ('ready', 'a step that can start now', None),
+              ('waiting', 'a step that is itself waiting', 'dim'), ('done', 'a finished step (picked up at the next queue scan)', 'dim'))
+    running = sorted((g for g in groups.values() if g[0] is not None and g[0]['state'] == 'running'),
+                     key=lambda g: (g[0].get('left_s') is None, g[0].get('left_s') or 0))
+    for st, words, style in merged[:1]:
+        part = [g for g in groups.values() if g[0] is not None and g[0]['state'] == st]
+        if part:
+            n = sum(len(g[2]) for g in part)
+            out.append((f"after {words} ({n}): " + '; '.join(f"{tname(b, model)} → {deps(b, items)}" for b, _, items in part), style))
+    for b, words, items in running[:6]:
+        out.append((f"after {tname(b, model)}{' ' + words if words else ''} ({state_phrase(b)}): {deps(b, items)}", None))
+    if len(running) > 6:
+        rest = running[6:]
+        out.append((f"after {len(rest)} more running steps ({sum(len(g[2]) for g in rest)}): " +
+                    '; '.join(f"{tname(b, model)} → {deps(b, items)}" for b, _, items in rest), None))
+    for st, words, style in merged[1:]:
+        part = [g for g in groups.values() if g[0] is not None and g[0]['state'] == st]
+        if part:
+            n = sum(len(g[2]) for g in part)
+            out.append((f"after {words} ({n}): " + '; '.join(f"{tname(b, model)} → {deps(b, items)}" for b, _, items in part), style))
+    for b, words, items in groups.values():
+        if b is None:
+            out.append((f"waiting for {words} ({len(items)}): {deps(None, items)}", 'dim'))
+    return out
+
+
+def unfinished_lines(model, width, node_of, idle_nodes):
+    """Every task that is not done, grouped by what happens next. Returns (lines, counts per state as listed)."""
+    tasks = [t for t in model['tasks'] if t['state'] != 'done']
+    listed = {s: 0 for s in STATES}
+    lines = [paint(f" {model['label']}: not finished {len(tasks)} of {len(model['tasks'])}", 'head')]
+    if not tasks:
+        return [], listed
+    by = {s: [t for t in tasks if t['state'] == s] for s in STATES}
+    out = lines
+    def head(text, style):
+        out.append(paint('   ' + text, style))
+    if by['person']:
+        listed['person'] = len(by['person'])
+        head(f"STOPPED — needs you ({len(by['person'])}):", 'bad')
+        for t in by['person'][:12]:
+            for part in wrap(f"     {tname(t, model)}: {person_words(t['why'])}", width, '       '):
+                out.append(paint(part, 'bad'))
+        if len(by['person']) > 12:
+            out.append(paint(f"     … {len(by['person']) - 12} more: " +
+                             ', '.join(tname(t, model) for t in by['person'][12:18]), 'bad'))
+        if any(t['row'] is None or t['row']['status'] != 'running' for t in by['person']):
+            out.append(paint(f"     → fix the cause, then run `{RETRY_COMMAND}` on one node (the next free node restarts them)", 'bad'))
+    if by['running']:
+        listed['running'] = len(by['running'])
+        head(f"running now ({len(by['running'])}):", 'run')
+        rows = [(tname(t, model), f"on {node_of.get(t['key'], (t['row'] or {}).get('host') or '?')}",
+                 progress_words(t), left_words(t)) for t in sorted(by['running'], key=task_order)]
+        w = [max(len(r[i]) for r in rows) for i in range(3)]
+        for r in rows[:16]:
+            out.append(clip(f"     {r[0]:<{w[0]}}  {r[1]:<{w[1]}}  {r[2]:<{w[2]}}  {r[3]}", width))
+        if len(rows) > 16:
+            out.append(f"     … {len(rows) - 16} more")
+    if by['retrying']:
+        listed['retrying'] = len(by['retrying'])
+        head(f"will restart by itself on the next free node, from its last checkpoint ({len(by['retrying'])}):", 'warn')
+        for t in by['retrying'][:6]:
+            for part in wrap(f"     {tname(t, model)}: {retry_words(t['why'])}", width, '       ')[:3]:
+                out.append(paint(part, 'warn'))
+        if len(by['retrying']) > 6:
+            rest = by['retrying'][6:]
+            for part in wrap(f"     … {len(rest)} more: " + ', '.join(tname(t, model) for t in rest[:5]) +
+                             (', …' if len(rest) > 5 else ''), width, '       '):
+                out.append(paint(part, 'warn'))
+    if by['ready']:
+        listed['ready'] = len(by['ready'])
+        why = (f"{idle_nodes} node{'s are' if idle_nodes != 1 else ' is'} idle — see nodes below for why" if idle_nodes
+               else 'every live node is busy')
+        head(f"can start now, waiting for a free node ({len(by['ready'])}; {why}):", 'info')
+        for part in wrap('     ' + ', '.join(tname(t, model) for t in by['ready'][:8]) +
+                         (f", … {len(by['ready']) - 8} more" if len(by['ready']) > 8 else ''), width, '       '):
+            out.append(part)
+    if by['waiting']:
+        listed['waiting'] = len(by['waiting'])
+        head(f"waiting for an earlier step ({len(by['waiting'])}):", 'dim')
+        for line, style in waiting_lines(model, by['waiting']):
+            parts = wrap('     ' + line, width, '       ')
+            if len(parts) > 3:
+                parts = parts[:3]
+                parts[2] = clip(parts[2] + ' …', width)
+            for part in parts:
+                out.append(paint(part, style) if style else part)
+    return out, listed
+
+
+def live_stage(row, doing):
+    """'answering question 75 of 500 on each GPU, 5s ago': the newest rank progress record (short_progress), with
+    the per-GPU question count said to be per GPU so it is not read as the task's own progress."""
+    if not row.get('_events') or not doing:
+        return None
+    text = re.sub(r' question (\d+) of (\S+?)(?=,| \(|$)', r' question \1 of \2 on each GPU', doing)
+    text = re.sub(r', \d+ tok', '', text)
+    return re.sub(r' \((\S+(?: min)?) ago\)$', r', \1 ago', text)
+
+
+def node_lines(nodes, models_by, all_nodes, wanted, width):
+    """Live nodes only: what each one does in words, then one summary line with why the idle ones are idle."""
+    shown = nodes if all_nodes else [r for r in nodes if r['state'] not in ('gone', 'finished')]
+    per = {}
+    for r in nodes:
+        per.setdefault(r['state'], set()).add((r['host'], r['pid']))
+    n = lambda k: len(per.get(k, ()))
+    alive = sum(n(k) for k in ('running', 'busy', 'starting', 'idle'))
+    out = []
+    if not nodes:
+        return [paint(' nodes', 'head') + ': no worker has started yet' +
+                (f" · {wanted} tasks could start now" if wanted else '')]
+    from collections import Counter
+    idle_why = Counter(r['doing'] for r in nodes if r['state'] == 'idle')
+    parts = [f"{n('running')} working"] + [f"{n(k)} {k}" for k in ('busy', 'starting') if n(k)]
+    if n('idle'):
+        why = '; '.join(w for w, k in idle_why.most_common(3))
+        parts.append(f"{n('idle')} idle — why: {why}")
+    head = paint(f" nodes: {alive} live", 'head') + ' — ' + ', '.join(parts)
+    if n('hung'):
+        head += ' · ' + paint(f"{n('hung')} HUNG: " + ', '.join(sorted(h for h, _ in per['hung'])), 'bad')
+    out.extend(wrap(head, width + (len(head) - len(re.sub(r'\033\[[0-9;]*m', '', head))), '   '))
+    word = {'running': 'working', 'hung': 'HUNG', 'busy': 'busy', 'starting': 'starting', 'idle': 'idle',
+            'gone': 'gone', 'finished': 'finished'}
+    rows = []
+    for r in shown:
+        model = models_by.get((r.get('base'), r.get('cohort'))) if r.get('key') else None
+        t = (model or {}).get('by_key', {}).get(r.get('key')) if model else None
+        task = tname(t, model) if t else r.get('task') or ''
+        beat = f"seen {r['beat']}"
+        if r['state'] == 'running' and t is not None:
+            what, left = progress_words(t) or r['doing'], left_words(t)
+            stage = live_stage(t['row'], r['doing'])
+            # silent node: 'no heartbeat 4 min, task lock held …' says more than the heartbeat age
+            beat = f"now {stage}" if stage else r['doing'] if r['doing'].startswith('no heartbeat') else beat
+        else:
+            what, left = r['doing'], ''
+        rows.append(dict(host=r['host'] + (f"  GPU {r['gpus']}" if r.get('gpus') and r['gpus'] != '?' else ''),
+                         state=word[r['state']], exp=r.get('experiment') or '', task=task, what=what, left=left,
+                         ran=f"ran {r['took']}" if r.get('took') else '', beat=beat,
+                         style={'hung': 'bad', 'busy': 'warn', 'starting': 'info', 'idle': 'dim'}.get(r['state'])))
+    if rows:
+        # one experiment running: its name on every row says nothing (phone width)
+        one = len({x['exp'] for x in rows if x['exp']}) <= 1 and len(models_by) <= 1
+        keys = ('host', 'state', *(() if one else ('exp',)), 'task', 'what', 'left')
+        busy = [x for x in rows if x['state'] == 'working'] or rows
+        w = {k: max(len(x[k]) for x in busy) for k in keys}
+        w['host'] = max(len(x['host']) for x in rows)
+        w['state'] = max(len(x['state']) for x in rows)
+        for x in rows:
+            if x['state'] == 'working':
+                text = '   ' + '  '.join(f"{x[k]:<{w[k]}}" for k in keys) + '  ' + x['beat']
+            else:   # hung, idle, busy, starting: the worker's own sentence
+                text = '   ' + '  '.join([f"{x['host']:<{w['host']}}", f"{x['state']:<{w['state']}}"] +
+                                         ([x['exp']] if x['exp'] and not one else []) +
+                                         ([x['task'] + ':'] if x['task'] else []) + [x['what']]) + ' · ' + x['beat']
+            out.append(paint(clip(text, width), x['style']))
+    more = max(0, wanted - alive)
+    out.append(paint(f"   {wanted} task{'s' if wanted != 1 else ''} could run now (running + can start + will restart) "
+                     f"on {alive} live node{'s' if alive != 1 else ''}", 'dim') +
+               (paint(f" → {more} more node{'s' if more != 1 else ''} would finish sooner", 'info') if more else ''))
+    hidden = [f"{n(k)} {k}" for k in ('gone', 'finished') if n(k)]
+    if hidden and not all_nodes:
+        out.append(paint(f"   ({', '.join(hidden)} not shown; --all-nodes)", 'dim'))
+    older = [r for r in shown if r['code'].startswith('different')]
+    if older:
+        out.append(paint(clip("   older dispatch code on " + ', '.join(f"{r['host']}.{r['pid']} ({r['code']})" for r in older[:4]) +
+                              ": restart it with the current bundle", width), 'warn'))
+    if n('hung'):
+        out.append(paint("   HUNG = its task lock is still held but silent over 10 min, so no other node can take that task: "
+                         "stop that process and run the same command again", 'dim'))
+    return out
+
+
+def check_screen(models, sec1, sec2, grid, node_rows):
+    """Invariants of what is drawn (user 11-16 '위 아래 일관성'): per experiment, the stage lines (read back from the
+    text), the not-finished list and the grid cells (read back) give the same done/total and the same count of
+    running / can start / restart / waiting / stopped tasks, and the running tasks are exactly the working node rows."""
     out = []
     for model in models:
         if not model['tasks']:
             continue
-        label, shown, cells = model['label'], table_rows[model['label'], model['base']], drawn[model['label'], model['base']]
+        key = model['label'], model['base']
+        top, cells, listed = sec1.get(key, {}), grid.get(key, {}), sec2.get(key, {})
+        label = model['label']
         for ph in ('train', 'ext', 'eval'):
-            d, n = (int(x) for x in shown[ph].split('/'))
-            if (d, n) != (cells[ph]['done'], cells[ph]['total']):
+            a = top.get(ph) or {s: 0 for s in (*STATES, 'total')}
+            b = cells.get(ph) or {s: 0 for s in (*STATES, 'total', 'unreadable')}
+            if (a['done'], a['total']) != (b['done'], b['total']):
                 ids = [t['key'] for t in model['tasks'] if t['phase'] == ph][:6]
-                out.append(f"{label} {ph}: table {d}/{n} but cells {cells[ph]['done']}/{cells[ph]['total']} (tasks {', '.join(ids)})")
-            if cells[ph]['unreadable']:
-                out.append(f"{label} {ph}: {cells[ph]['unreadable']} cell(s) with an unknown mark")
-        for st, name in (('running', 'run'), ('ready', 'ready'), ('retrying', 'retry'), ('waiting', 'wait'), ('person', '✗')):
-            in_cells = sum(cells[ph][st] for ph in cells)
-            if int(shown[name]) != in_cells:
+                out.append(f"{label} {STAGE_WORD[ph]}: stage line {a['done']} of {a['total']} but grid "
+                           f"{b['done']} of {b['total']} (tasks {', '.join(ids)})")
+            if b.get('unreadable'):
+                out.append(f"{label} {STAGE_WORD[ph]}: {b['unreadable']} grid cell(s) with an unknown word")
+        for st, word in STATE_WORDS:
+            a = sum((top.get(ph) or {}).get(st, 0) for ph in ('train', 'ext', 'eval'))
+            b = sum((cells.get(ph) or {}).get(st, 0) for ph in ('train', 'ext', 'eval'))
+            c = listed.get(st, 0)
+            if not a == b == c:
                 ids = [t['key'] for t in model['tasks'] if t['state'] == st][:6]
-                out.append(f"{label} {name}: table {shown[name]} but {in_cells} {MARK[st]} in the cells (tasks {', '.join(ids)})")
+                out.append(f"{label} {word}: stage lines {a}, grid {b}, list {c} (tasks {', '.join(ids)})")
     for kind, states in (('running', ('running',)), ('hung', ('hung',))):
         expect = {(m['base'], m['cohort'], t['key']) for m in models for t in m['tasks']
                   if t['row'] is not None and t['row']['status'] == 'running' and
@@ -1898,164 +2283,172 @@ def check_screen(models, table_rows, drawn, node_rows):
     return out
 
 
+def side_note(model):
+    st = model['state']
+    side = st.get('ready_side_work')
+    if not (model['started'] and isinstance(side, dict) and st.get('phase') != 'complete' and
+            isinstance(st.get('execution_order'), dict) and
+            st['execution_order'].get('policy') == 'ready-checkpoint-evaluation-extension-v1'):
+        return [], []
+    if side.get('budget_ready'):
+        note = 'budget frozen; ext/eval join the rotation when their checkpoints are ready'
+    elif side.get('evaluation_independent_of_budget'):
+        note = 'eval: published matched checkpoints run independently; ext: waiting for reference-policy cost budget'
+        if side.get('budget_error'):
+            note += '; budget error: ' + str(side['budget_error'])
+    elif side.get('reason') == 'reference_endpoint_unfinished':
+        note = 'waiting for the selected reference-policy endpoint to finish before freezing budget'
+    else:
+        note = 'waiting for complete reference-policy endpoints and measured costs before freezing budget'
+    warn = [f"{kind} planner blocked: {error}; other ready work remains eligible"
+            for kind, error in (side.get('planning_errors') or {}).items()]
+    return [note], warn
+
+
 def _render_clean(bases, now, gpus, host, cohorts, width, all_nodes):
     models = [task_model(base, cohort, now) for base in bases for cohort in cohorts]
-    out, drawn, table_rows, mine = [], {}, {}, None
-    for model in models:
-        if not model['started']:
-            continue
-        lines, drawn[model['label'], model['base']] = experiment_lines(model, width)
-        out += [*lines, '']
-        if mine is None:
-            job = next((t for t in model['tasks'] if t['state'] == 'running' and t['row'].get('host') == host), None)
-            if job:
-                mine = f"▶ {task_name(job['row'], model['runs'])} ({model['label']})"
-    for part in LEGEND_LINES:
-        out.append(paint(part, 'dim'))
+    started = [m for m in models if m['started']]
+    models_by = {(m['base'], m['cohort']): m for m in started}
+    nodes = node_table(bases, cohorts, now, host, models=models_by)
+    node_of = {r['key']: r['host'] for r in nodes if r.get('key') and r['state'] == 'running'}
+    working = {}
+    for r in nodes:
+        if r['state'] == 'running' and r.get('cohort'):
+            working.setdefault((r.get('base'), r['cohort']), set()).add((r['host'], r['pid']))
+    idle_nodes = len({(r['host'], r['pid']) for r in nodes if r['state'] == 'idle'})
+    mine = None
+    for m in started:
+        job = next((t for t in m['tasks'] if t['state'] == 'running' and t['row'].get('host') == host), None)
+        if job and mine is None:
+            mine = f"{tname(job, m)} ({m['label']}) · {progress_words(job)} · {left_words(job)}"
+
+    # header, as in srgc_live_status.render
     stamp = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(now))
-    head = f"━━ V8 status · {code_version()} · {stamp} "
-    out.append(paint(head + '━' * max(3, min(width, 100) - len(head)), 'head'))
-    out.append(paint('   ' + ', '.join(str(b) for b in bases), 'dim'))
+    gpu_line = ' '.join(f'{u}%' for i, u, _ in gpus) if gpus else 'unknown'
+    out = [paint(f"V8 status · {code_version()} · {stamp}", 'head'),
+           paint(', '.join(str(b) for b in bases), 'dim'),
+           f"this node ({host}): " + (paint(mine, 'run') if mine else 'no V8 task here') + f" · GPU {gpu_line}", '']
 
-    # 1. one row per experiment; every number is a count over task_model()
-    cols = ('phase', 'train', 'ext', 'eval', 'run', 'ready', 'retry', 'wait', '✗', 'done', 'left')
-    rows, wanted = [], 0
-    for model in models:
-        if not model['started']:
-            rows.append(dict(name=model['label'], phase='not started'))
+    # 1. time left: the first thing on the screen (user 11-16 '남은 시간도 모르겠어 얼마나 남은건지')
+    out.append(paint(' time left', 'head'))
+    lows, highs, unknown = [], [], []
+    for m in models:
+        _, sentence, lo, hi = time_left(m, now)
+        if not m['started']:
             continue
-        phases, states = model_counts(model)
-        pct, left = model_progress(model)
-        row = dict(name=model['label'], phase=model['phase'],
-                   **{ph: f"{phases[ph]['done']}/{phases[ph]['total']}" for ph in phases},
-                   run=str(states['running']), ready=str(states['ready']), retry=str(states['retrying']),
-                   wait=str(states['waiting']), **{'✗': str(states['person'])},
-                   done='?' if pct is None else f"{pct}%", left=left)
-        table_rows[model['label'], model['base']] = row
-        rows.append(row)
-        wanted += states['running'] + states['ready'] + states['retrying']
-    name_w = max(10, *(len(r['name']) for r in rows)) if rows else 10
-    w = {c: max(len(c), *(len(str(r.get(c, ''))) for r in rows)) for c in cols}
-    right = set(cols) - {'phase', 'left'}
-    fmt = lambda c, v: f"{v:>{w[c]}}" if c in right else f"{v:<{w[c]}}"
-    out.append(paint(' ' + ' ' * name_w + '  ' + '  '.join(fmt(c, c) for c in cols), 'dim'))
-    for r in rows:
-        parts = [paint(f" {r['name']:<{name_w}}", 'head')]
-        for c in cols:
-            v = fmt(c, str(r.get(c, '')))
-            busy = v.strip() not in ('0', '')
-            parts.append(paint(v, 'bad' if c == '✗' and busy else 'warn' if c == 'retry' and busy else
-                               'run' if c == 'run' and busy else 'dim' if not busy else None))
-        out.append('  '.join(parts).rstrip())
-    for line in eta_lines(models, now, width):
-        out.append(line)
-
-    # 2. what will restart by itself, what needs a person, planner notes
-    import textwrap
-    for model in models:
-        retry = [t for t in model['tasks'] if t['state'] == 'retrying']
-        if retry:
-            text = (f" ↻ {model['label']} restarts by itself on the next free node: " +
-                    '; '.join(f"{task_name(t['row'], model['runs'])} ({t['why']})" for t in retry[:4]) +
-                    (f"; … {len(retry) - 4} more" if len(retry) > 4 else ''))
-            for part in textwrap.wrap(text, max(60, width - 2), break_on_hyphens=False, subsequent_indent='   ')[:3]:
-                out.append(paint(part, 'warn'))
-        st = model['state']
-        side = st.get('ready_side_work')
-        if model['started'] and isinstance(side, dict) and st.get('phase') != 'complete' and \
-                isinstance(st.get('execution_order'), dict) and st['execution_order'].get('policy') == 'ready-checkpoint-evaluation-extension-v1':
-            if side.get('budget_ready'):
-                note = 'budget frozen; ext/eval join the rotation when their checkpoints are ready'
-            elif side.get('evaluation_independent_of_budget'):
-                note = 'eval: published matched checkpoints run independently; ext: waiting for reference-policy cost budget'
-                if side.get('budget_error'):
-                    note += '; budget error: ' + str(side['budget_error'])
-            elif side.get('reason') == 'reference_endpoint_unfinished':
-                note = 'waiting for the selected reference-policy endpoint to finish before freezing budget'
-            else:
-                note = 'waiting for complete reference-policy endpoints and measured costs before freezing budget'
-            out.append(paint(f" {model['label']} ext/eval: {note}", 'dim'))
-            for kind, error in (side.get('planning_errors') or {}).items():
-                out.append(paint(clip(f" {model['label']} {kind} planner blocked: {error}; other ready work remains eligible", width), 'warn'))
-        if model['started'] and st.get('base_planning_error'):
-            out.append(paint(clip(f" {model['label']} stage planner blocked: {st['base_planning_error']}", width), 'warn'))
-    person = []
-    for model in models:
-        if not model['started']:
-            continue
-        if model['state'].get('failure'):
-            person.append(f"✗ {model['label']}: queue failure: {model['state']['failure']}")
-        queue = Path(model['base']) / model['cohort'] / '.multi-node'
-        unreadable = access_problems(queue) + ([f"{len(model['state']['_unreadable_jobs'])} unreadable job record(s): " +
-                                                ', '.join(model['state']['_unreadable_jobs'][:3])]
-                                               if model['state'].get('_unreadable_jobs') else [])
-        person += [f"✗ {model['label']}: cannot read {u}" for u in unreadable[:3]]
-        person += [f"✗ {model['label']} {task_name(t['row'], model['runs'])}: {t['why']}"
-                   for t in model['tasks'] if t['state'] == 'person']
-    if person:
-        out += ['', paint(f" needs a person ({len(person)})", 'head')]
-        for line in person[:12]:
-            for k, part in enumerate(textwrap.wrap(line, max(60, width - 3), break_on_hyphens=False, subsequent_indent='    ')[:2]):
-                out.append(paint('  ' + part, 'bad'))
-        if len(person) > 12:
-            out.append(paint(f"   … {len(person) - 12} more (sh scripts/run_v8_nodes.sh --status lists every task)", 'dim'))
-
-    # 3. nodes: live heartbeats (and task locks still held) only, nothing kept from old logs
-    out.append('')
-    nodes = node_table(bases, cohorts, now, host, models={(m['base'], m['cohort']): m for m in models if m['started']})
-    shown = nodes if all_nodes else [r for r in nodes if r['state'] not in ('gone', 'finished')]
-    order = ('hung', 'running', 'busy', 'starting', 'idle', 'gone', 'finished')
-    per = {k: sorted({(r['host'], r['pid']) for r in nodes if r['state'] == k}) for k in order}
-    alive = sum(len(per[k]) for k in ('running', 'busy', 'starting', 'idle'))
-    if nodes:
-        hosts = len({r['host'] for r in nodes if r['state'] not in ('gone', 'finished')})
-        hidden = [f"{len(per[k])} {k}" for k in ('gone', 'finished') if per[k]]
-        counts = ' · '.join(f"{len(per[k])} {k}" for k in ('running', 'busy', 'starting', 'idle') if per[k]) or '0 running'
-        line = paint(f" nodes ({hosts} host{'s' if hosts != 1 else ''})", 'head') + f"  {counts}"
-        if per['hung']:
-            line += '  ' + paint(f"✗ {len(per['hung'])} hung: {', '.join(h for h, _ in per['hung'])}", 'bad')
-        out.append(line)
-        more = max(0, wanted - alive)
-        out.append(paint(f"   tasks that can run now {wanted} (run + ready + retry) · alive workers {alive}", 'dim') +
-                   (paint(f"  → {more} more 4-GPU node{'s' if more != 1 else ''} would help", 'info') if more else '') +
-                   (paint(f"   ({', '.join(hidden)} not shown; --all-nodes)", 'dim') if hidden and not all_nodes else ''))
-        if shown:
-            ncols = (('host', 'host'), ('gpus', 'gpus'), ('state', 'state'), ('experiment', 'exp'), ('task', 'task'),
-                     ('progress', 'progress'), ('left', 'left'), ('took', 'ran for'), ('beat', 'beat'))
-            listed = [dict(r, beat=r['beat'].replace(' ago', ''), progress=r.get('progress') or '', left=r.get('left') or '')
-                      for r in shown]
-            nw = {k: max(len(t), *(len(str(r[k])) for r in listed)) for k, t in ncols}
-            out.append(paint('   ' + '  '.join(f"{t:<{nw[k]}}" for k, t in ncols) + '  now', 'dim'))
-            for r in listed:
-                mark = '✗' if r['state'] == 'hung' else '▶' if r['state'] == 'running' else '·' if r['state'] == 'busy' else ' '
-                text = clip(f" {mark} " + '  '.join(f"{str(r[k]):<{nw[k]}}" for k, _ in ncols) + f"  {r['doing']}", width)
-                out.append(paint(text, {'hung': 'bad', 'busy': 'warn', 'starting': 'info', 'idle': 'dim'}.get(r['state'])))
-            older = [r for r in listed if r['code'].startswith('different')]
-            if older:
-                out.append(paint(clip("   older dispatch code on " + ', '.join(f"{r['host']}.{r['pid']} ({r['code']})" for r in older[:4]) +
-                                      ": restart it with the current bundle", width), 'warn'))
-            if per['hung']:
-                out.append(paint("   hung = its task lock is still held but silent over 10 min, so no other node can take that task: "
-                                 "stop that process and run the same command again", 'dim'))
+        k = len(working.get((m['base'], m['cohort']), ()))
+        out.append(f"   {m['label']}: {sentence}" + (f" ({k} node{'s' if k != 1 else ''} working on it)"
+                                                    if sentence not in ('finished',) else ''))
+        if lo is None:
+            unknown.append(m['label'])
+        elif sentence != 'finished':
+            lows.append(lo); highs.append(hi)
+            reasons = range_reasons(m)
+            if reasons and span(lo) != span(hi):
+                for part in wrap('     longer end if ' + ' · '.join(reasons), width, '       '):
+                    out.append(paint(part, 'dim'))
+    not_started = [m['label'] for m in models if not m['started']]
+    if started:
+        if unknown:
+            total = f"unknown until {', '.join(unknown)} has a measured time"
+        elif lows:
+            total = range_text(max(lows), max(highs), now)[1]
+        else:
+            total = 'finished'
+        for part in wrap(f"   All experiments: {total}" +
+                         (f" (not started, not counted: {', '.join(not_started)})" if not_started else ''), width):
+            out.append(part)
     else:
-        out.append(paint(' nodes', 'head') + '  no worker has started yet' + (f" · tasks that can run now {wanted}" if wanted else ''))
+        out.append('   no experiment has started yet')
+    out.append('')
 
-    # 4. invariants of everything above, then this node
-    broken = check_screen([m for m in models if m['started']], table_rows, drawn, nodes)
+    # 2. one block per experiment: stage, plain counts per stage
+    sec1 = {}
+    out.append(paint(' experiments', 'head'))
+    wanted = 0
+    for m in models:
+        if not m['started']:
+            out.append(f"   {m['label']} · not started")
+            continue
+        pct, _ = model_progress(m)
+        short, _, lo, _ = time_left(m, now)
+        k = len(working.get((m['base'], m['cohort']), ()))
+        out.append(paint(f"   {m['label']}", 'head') + f" · stage: {m['phase']}" +
+                   (f" · {pct}% of the work done" if pct is not None else '') +
+                   (f" · {short}{' left' if lo is not None and short.startswith('about') else ''}" if short != 'finished' else ' · finished') +
+                   f" · {k} node{'s' if k != 1 else ''} working on it")
+        counts = stage_counts(m)
+        sec1[m['label'], m['base']] = {}
+        for ph in ('train', 'ext', 'eval'):
+            if not counts[ph]['total'] and ph != 'train':
+                sec1[m['label'], m['base']][ph] = counts[ph]
+                continue
+            line = stage_line(m, ph, counts[ph])
+            back = read_stage_line(line)
+            sec1[m['label'], m['base']][back[0]] = back[1]
+            for part in wrap(line, width, '         '):
+                out.append(part)
+        wanted += sum(t['state'] in ('running', 'ready', 'retrying') for t in m['tasks'])
+        notes, warns = side_note(m)
+        for note in m['more'] + notes:
+            for part in wrap('     note: ' + note, width, '       '):
+                out.append(paint(part, 'dim'))
+        for w in warns + ([f"stage planner blocked: {m['state']['base_planning_error']}"] if m['state'].get('base_planning_error') else []):
+            out.append(paint(clip('     ' + w, width), 'warn'))
+        if m.get('notes'):
+            out.append(paint(clip('     note: ' + '; '.join(m['notes']), width), 'dim'))
+    out.append('')
+
+    # 3. every task that is not finished, by what happens next (user 11-16 'ext 50/54 왜 안바뀜')
+    sec2 = {}
+    problems = []
+    for m in started:
+        if m['state'].get('failure'):
+            problems.append(f"{m['label']}: the queue itself stopped: {m['state']['failure']}")
+        queue = Path(m['base']) / m['cohort'] / '.multi-node'
+        unreadable = access_problems(queue) + ([f"{len(m['state']['_unreadable_jobs'])} unreadable job record(s): " +
+                                                ', '.join(m['state']['_unreadable_jobs'][:3])]
+                                               if m['state'].get('_unreadable_jobs') else [])
+        problems += [f"{m['label']}: cannot read {u}" for u in unreadable[:3]]
+        lines, sec2[m['label'], m['base']] = unfinished_lines(m, width, node_of, idle_nodes)
+        if lines:
+            out += [*lines, '']
+    if problems:
+        out.append(paint(f" STOPPED — needs you: problems with the queue itself ({len(problems)})", 'bad'))
+        for p in problems:
+            for part in wrap('   ' + p, width, '     '):
+                out.append(paint(part, 'bad'))
+        out.append('')
+
+    # 4. seed x branch grid (SRGC's seed table)
+    grid = {}
+    for m in started:
+        if not m['tasks']:
+            continue
+        lines, grid[m['label'], m['base']] = grid_lines(m, width)
+        out += lines
+    if grid:
+        for part in wrap('   ' + CELL_LEGEND, width, '     '):
+            out.append(paint(part, 'dim'))
+        out.append('')
+
+    # 5. nodes: live heartbeats (and task locks still held) only, nothing kept from old logs
+    out += node_lines(nodes, models_by, all_nodes, wanted, width)
+
+    # invariants of everything above
+    broken = check_screen(started, sec1, sec2, grid, nodes)
     if broken:
         out.append(paint(f" ✗ screen counts disagree ({len(broken)}): report this; the queue itself is not changed", 'bad'))
         for line in broken[:8]:
             out.append(paint(clip('   ' + line, width), 'bad'))
     idle = gpus is not None and len(gpus) > 0 and not any(u >= 10 for _, u, _ in gpus)
-    for model in models:
-        for t in model['tasks']:
+    for m in started:
+        for t in m['tasks']:
             r = t['row']
             if idle and r is not None and r['status'] == 'running' and r.get('host') == host and (r.get('activity_age') or 0) > 1800:
-                out.append(paint(clip(f" WARNING {model['label']} {task_name(r, model['runs'])}: no log or progress record for "
+                out.append(paint(clip(f" WARNING {m['label']} {tname(t, m)}: no log or progress record for "
                                       f"{age_text(r['activity_age'])} and this node's GPUs are idle (stack dumps: "
-                                      f"{Path(model['base']) / model['cohort'] / '.multi-node' / 'stacks'})", width), 'bad'))
-    gpu_line = ' '.join(f'{u}%' for i, u, _ in gpus) if gpus else 'unknown'
-    out.append(paint(' this node', 'head') + f"  {host} · GPU {gpu_line} · " + (paint(mine, 'run') if mine else paint('no V8 task here', 'dim')))
+                                      f"{Path(m['base']) / m['cohort'] / '.multi-node' / 'stacks'})", width), 'bad'))
     return '\n'.join(out) + '\n'
 
 

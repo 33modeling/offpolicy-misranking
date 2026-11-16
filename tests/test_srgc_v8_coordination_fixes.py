@@ -265,13 +265,14 @@ def test_status_grid_never_hides_extension_or_evaluation_states(tmp_path):
         job(dict(kind='evaluate',run_id=f's5.r{i}',training_seed=5,task_id=f'eval.{i}',snapshot_path='/absent',
                  snapshot_sha256=nodes.digest(['s',i]),evaluation_spec_hash=nodes.digest('e')),'evaluation',state)
     out=v8_status.render([tmp_path/'v8'],now=time.time(),gpus=[],host='h',cohorts=('olmo_math',))
-    grid=out.split('━━')[0].splitlines()
-    def cells(phase):
-        i=next(k for k,line in enumerate(grid) if line.startswith(' '+phase))
-        return dict(zip(grid[i].split()[1:],next(l for l in grid[i+1:] if l.split()[:1]==['5']).split()[1:]))
+    grid=out.split(' by seed and branch\n')[1].splitlines()
+    def cells(block):
+        i=next(k for k,line in enumerate(grid) if line.split()[:1]==[block])
+        return dict(zip(grid[i].split()[1:],next(l for l in grid[i+1:] if l.split()[:1]==['s5']).split()[1:]))
     # the branch stays done, its extension restarts by itself, and the three evaluations are all counted
-    assert cells('train')['On']=='✓' and cells('train')['SR50']=='✓' and cells('ext')['SR50']=='↻',out
-    assert cells('eval')['?']=='1/3↻',out
+    assert cells('training')['On']=='✓' and cells('training')['SR50']=='✓' and cells('extension')['SR50']=='retry',out
+    assert cells('eval@275')['?']=='✓,retry,wait',out
+    assert 'screen counts disagree' not in out,out
 
 
 def test_queue_written_by_another_account_stops_this_node_without_traceback(tmp_path,capsys):
@@ -369,7 +370,7 @@ def test_launcher_words_watch_seconds_other_cohorts_and_stop_note(tmp_path):
     bindir=tmp_path/'bin';bindir.mkdir()  # no nvidia-smi: status must not query GPUs here
     out=subprocess.run([sys.executable,str(SCRIPTS/'v8_status.py'),'--cohort','qwen_math'],capture_output=True,text=True,
                        env=dict(PATH=str(bindir),V8_ROOT=str(tmp_path/'v8'),HOME=str(tmp_path),PYTHONDONTWRITEBYTECODE='1'),timeout=30)
-    assert out.returncode==0 and 'V8 status · ' in out.stdout and 'Qwen MATH not started' in ' '.join(out.stdout.split()),out.stderr
+    assert out.returncode==0 and 'V8 status · ' in out.stdout and 'Qwen MATH · not started' in ' '.join(out.stdout.split()),out.stderr
 
 
 def test_supervisor_waits_for_a_safe_update_boundary_before_sigkill(tmp_path):

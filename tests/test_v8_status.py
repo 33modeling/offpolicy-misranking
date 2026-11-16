@@ -137,31 +137,34 @@ def test_node_table_one_row_per_worker_with_what_it_does(tmp_path):
         text = status.render_clean([base], now=now, gpus=[("0", 97, 61000)], host="h100-a01", width=200)
     finally:
         os.close(fd)
-    bottom = text.split("V8 status · ")[1].splitlines()
-    head = next(line for line in bottom if line.startswith(" nodes ("))
+    bottom = text.split(" nodes: ")[1].splitlines()
+    head = " nodes: " + bottom[0]
     # a03's task lock is free, so the next free node resumes s6 SR50: a03 is just gone (user: '새노드 할당되면 알아서');
     # a04 still holds its lock while silent, so nobody else can take that task: the only node shown as a problem.
-    assert head.startswith(" nodes (5 hosts)  3 running · 1 starting · 1 idle  ✗ 1 hung: h100-a04"), head
-    assert "(2 gone not shown; --all-nodes)" in bottom[bottom.index(head) + 1]
-    rows = [line for line in bottom if line[:3] in (" ▶ ", " ✗ ", " · ", "   ") and " h100-" in line[:12]]
-    assert [r.split()[1] if r[1] in "▶✗·" else r.split()[0] for r in rows] == \
+    assert head.startswith(" nodes: 5 live — 3 working, 1 starting, 1 idle — why: ") and head.endswith("· 1 HUNG: h100-a04"), head
+    assert any("(2 gone not shown; --all-nodes)" in line for line in bottom)
+    rows = [line for line in bottom if line.startswith("   h100-")]
+    assert [r.split()[0] for r in rows] == \
         ["h100-a04", "h100-a01", "h100-a02", "h100-b10", "h100-b10", "h100-b11"]   # hung, running, starting, idle
     by = {}
     for r in rows:
-        by.setdefault(r.split()[1] if r[1] in "▶✗·" else r.split()[0], []).append(r)
+        by.setdefault(r.split()[0], []).append(r)
     a2 = by["h100-a02"][0]
-    assert a2.startswith(" ▶ ") and " 0-3 " in a2 and " OLMo " in a2 and " s6 SR25 " in a2 and " 3h02m " in a2 \
-        and "scoring questions (20s ago)" in a2 and " update ? of 275 " in a2   # no update recorded yet: '?', not the start
+    assert " working " in a2 and " GPU 0-3 " in a2 and " OLMo MATH " in a2 and " s6 SR25 training " in a2 \
+        and "now scoring questions, 20s ago" in a2 and " update ? of 275 " in a2   # no update recorded yet: '?', not the start
     assert "h100-a03" not in by and "DEAD" not in text
-    assert by["h100-a04"][0].startswith(" ✗ ") and " hung " in by["h100-a04"][0] and "lock still held" in by["h100-a04"][0]
+    assert " HUNG " in by["h100-a04"][0] and "lock still held" in by["h100-a04"][0]
     assert "no other node can take that task" in text
     b10 = by["h100-b10"]
-    assert " 0-3 or 4-7 " in b10[0] and " Qwen " in b10[0] and " s7 On " in b10[0] and " 40m " in b10[0]
+    assert " 0-3 or 4-7 " in b10[0] and " Qwen MBPP " in b10[0] and " s7 On training " in b10[0]
     assert " starting " in b10[1] and "loading runtime / checking node" in b10[1]
-    assert " idle " in by["h100-b11"][0] and "idle while 2 tasks are ready" in by["h100-b11"][0]   # a03's task, free to take over
+    assert " idle " in by["h100-b11"][0] and "idle although 2 tasks could start" in by["h100-b11"][0]   # a03's task, free to take over
     assert "h100-b12" not in by and not any(" gone " in r for r in rows)   # 'gone 보기 싫어': gone workers are only counted
+    # the running tasks are named the same way in the not-finished list, with how far they are and the time left
+    listed = text.split(" OLMo MATH: not finished ")[1].split("\n\n")[0]
+    assert "s6 SR25 training" in listed and "on h100-a02" in listed and "~10h25m left" in listed
     everything = status.render_clean([base], now=now, gpus=[("0", 97, 61000)], host="h100-a01", width=200, all_nodes=True)
-    assert " h100-b12 " in everything and " gone " in everything
+    assert "   h100-b12 " in everything and " gone " in everything
     assert not (q / "leases" / "j2.lock").exists()   # the probe never creates lease files
 
 
@@ -195,8 +198,8 @@ def two_cohort_base(tmp_path, now, olmo_phase="train"):
 
 
 def node_rows(text):
-    bottom = text.split("V8 status · ")[1].splitlines()
-    return [line for line in bottom if line[:3] in (" ▶ ", " ✗ ", " · ", "   ") and " h-" in line[:10]]
+    bottom = text.split(" nodes: ")[1].splitlines() if " nodes: " in text else []
+    return [line for line in bottom if line.startswith("   h-")]
 
 
 def test_removed_node_disappears_within_90_seconds(tmp_path):
@@ -221,7 +224,7 @@ def test_busy_in_other_cohort_is_not_idle(tmp_path):
     worker_beat(m, "h-cpu.1", 2, None, now); worker_beat(q, "h-cpu.1", 150, None, now)
     log = q / "logs" / "cpu-freeze-abc.log"; log.parent.mkdir(parents=True); log.write_text("x\n"); os.utime(log, (now - 2, now - 2))
     rows = node_rows(status.render_clean([base], now=now, gpus=[], host="viewer", width=200))
-    assert len(rows) == 1 and rows[0].startswith(" · ") and " busy " in rows[0] and " OLMo " in rows[0] \
+    assert len(rows) == 1 and " busy " in rows[0] and " OLMo MATH " in rows[0] \
         and "CPU stage budget freeze, log 2s ago" in rows[0]
     base2, q2, m2 = two_cohort_base(tmp_path / "b", now)
     worker_beat(m2, "h-scan.1", 2, None, now); worker_beat(q2, "h-scan.1", 150, None, now)
@@ -253,11 +256,11 @@ def test_assigned_task_uses_the_lease_lock_not_heartbeat_age(tmp_path):
     finally:
         os.close(fd)
     by = {next(w for w in r.split() if w.startswith("h-")): r for r in node_rows(text)}
-    assert " running " in by["h-load"] and "no heartbeat 4 min, task lock held" in by["h-load"]
-    assert " running " in by["h-blip"] and not by["h-blip"].startswith(" ✗ ")   # 'free' lock + 2 min: still running
+    assert " working " in by["h-load"] and "no heartbeat 4 min, task lock held" in by["h-load"]
+    assert " working " in by["h-blip"] and " HUNG " not in by["h-blip"]   # 'free' lock + 2 min: still running
     # 'free' lock + over 3 min: the next free node takes the task over (srgc_v8_nodes claim), so it counts as ready
     # and its old node is not listed (user: '새노드 할당되면 알아서 거기에 시작하면 되지 왜 표시를 해놓는거냐')
-    assert "h-gone" not in by and "DEAD" not in text and "h-gone" not in text.split("V8 status · ")[1].split(" nodes (")[0]
+    assert "h-gone" not in by and "DEAD" not in text and "h-gone" not in text.split(" nodes: ")[0]
     states = status.model_counts(model)[1]
     assert states["running"] == 2 and states["retrying"] == 1 and states["person"] == 0   # h-gone's task: next node resumes it
 
@@ -270,7 +273,7 @@ def test_idle_with_ready_work_says_so(tmp_path):
           "training_seed": 5, "run_id": "r", "horizon": 275, "parent": {"path": str(parent)}}, "attempts": []})
     worker_beat(q, "h-idle.1", 1, None, now); worker_beat(m, "h-idle.1", 1, None, now)
     rows = node_rows(status.render_clean([base], now=now, gpus=[], host="viewer", width=220))
-    assert " idle " in rows[0] and "idle while 1 task is ready" in rows[0]
+    assert " idle " in rows[0] and "idle although 1 task could start" in rows[0]
 
 
 def test_one_scan_per_cohort_per_refresh_and_fast_watch(tmp_path, monkeypatch):
@@ -336,14 +339,13 @@ def test_healthy_nodes_never_get_an_x_and_attention_is_at_the_bottom(tmp_path):
           "training_seed": 8, "run_id": "i"}, "attempts": [{"id": "ia", "started_at": now - 400, "ended_at": now - 300}]})
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
     rows = node_rows(text)
-    assert len(rows) == 4 and all(r.startswith(" ▶ ") and " running " in r for r in rows), rows
+    assert len(rows) == 4 and all(" working " in r and " HUNG " not in r for r in rows), rows
     states = status.model_counts(status.task_model(base, "olmo_math", now))[1]
     assert states["running"] == 4 and states["person"] == 0 and "DEAD" not in text
-    top, bottom = text.split("V8 status · ")
     # its first failure retries by itself, so nothing needs a person (user 11-10: 'needs attention 은 노드가
     # 날아갔는데도 왜 남아있는거냐. 현재 노드 정보나 뿌려')
-    assert "needs a person" not in text and " ↻ OLMo MATH restarts by itself on the next free node: " in bottom
-    assert "s9 SR50 (failure 0/4, task exit=1)" in bottom   # old record without exit code: the dispatcher counts 0 and "s8 On (interrupted)" in bottom
+    assert "STOPPED — needs you" not in text and "   will restart by itself on the next free node, from its last checkpoint (2):" in text
+    assert "s9 SR50 training: failed 0 of 4 so far (task exit=1)" in text and "s8 On training: was interrupted" in text   # old record without exit code: the dispatcher counts 0 and "s8 On (interrupted)" in bottom
     assert states["retrying"] == 2
 
 
@@ -383,7 +385,7 @@ def test_failed_tasks_say_why_and_whether_it_is_a_real_failure(tmp_path):
     write(q / "workers" / (hashlib.sha256(json.dumps("h-new.1").encode()).hexdigest() + ".json"),
           {"worker": "h-new.1", "at": now - 2, "task": None, "dispatch_policy": "new-v10"})
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
-    bottom = text.split("━━ V8 status · ")[1]
+    bottom = text
     notes = failure_notes(base, "olmo_math", now)
     names = {"  ! OLMo MATH s5 SR25 marked failed ": "kill", "  ✗ OLMo MATH s6 SR50 FAILED ": "oom",
              "  ! OLMo MATH s7 On marked failed ": "fin", "  ✗ OLMo MATH s8 U50 FAILED ": "rank",
@@ -392,7 +394,7 @@ def test_failed_tasks_say_why_and_whether_it_is_a_real_failure(tmp_path):
         return notes[names[head]]
     # every one of them retries by itself (or is already complete): nothing under needs attention
     # every one of them retries by itself, and the run that is complete counts as done
-    assert "needs a person" not in bottom and " ↻ OLMo MATH restarts by itself on the next free node: " in bottom
+    assert "STOPPED — needs you" not in bottom and "   will restart by itself on the next free node, from its last checkpoint (6):" in bottom
     k = block("  ! OLMo MATH s5 SR25 marked failed ")
     assert "at update 120/275" in k and "NOT a training error: killed from outside (SIGKILL, exit 9)" in k
     assert "check dmesg on h-kill first" in k and "not retried yet: a node started with the current bundle retries" in k
@@ -407,11 +409,9 @@ def test_failed_tasks_say_why_and_whether_it_is_a_real_failure(tmp_path):
     model = status.task_model(base, "olmo_math", now)
     assert {t["key"]: t["state"] for t in model["tasks"] if not t["planned"]} == \
         {"kill": "retrying", "oom": "retrying", "fin": "done", "rank": "retrying", "stall": "retrying", "old": "retrying", "rfile": "retrying"}
-    table = text.split("━━ V8 status")[0]
-    lines = table.splitlines()
-    start = next(i for i, line in enumerate(lines) if line.startswith(" train "))
-    grid = "\n".join(line for line in lines[start + 1:] if line.strip()[:1].isdigit())   # seed rows of the tables
-    assert "↻" in grid and "✗" not in grid and "!" not in grid
+    grid = "\n".join(line for line in text.split(" by seed and branch\n")[1].split("   columns:")[0].splitlines()
+                     if line.split()[:1] and line.split()[0].startswith("s"))   # seed rows of the grid
+    assert "retry" in grid and "FAIL" not in grid and "!" not in grid
 
 
 
@@ -433,11 +433,12 @@ def test_failure_next_step_follows_the_default_retry_rule(tmp_path):
     assert "retried automatically: attempt 2/3 starts in 40s" in notes["soon"]
     assert "retried automatically: attempt 3/3 is waiting for the next free node" in notes["ready"]
     assert "BLOCKED: failure cap reached (3 recorded; limit 3); no more automatic retries; failed checkpoints/logs retained; repair required" in notes["spent"]
-    bottom = text.split("━━ V8 status · ")[1]
+    stopped = text.split("   STOPPED — needs you (1):\n")[1].split("\n   will restart")[0]
     # one line per blocked task; no why/next/log blocks of old nodes (user 11-10 '현재 노드 정보나 뿌려')
-    assert " needs a person (1)" in bottom and "  ✗ OLMo MATH s7 SR25: stopped after 3 failures, no more automatic retries · last: exit 1" in bottom
-    assert " s5 SR25" not in bottom.split(" needs a person")[1] and "      why:" not in bottom and "      log:" not in bottom
-    assert "s5 SR25 (failure 1/3, exit 1)" in bottom and "s6 SR25 (failure 2/3, exit 1)" in bottom
+    assert "     s7 SR25 training: failed 3 times, no more automatic retries · last error: exit 1" in stopped
+    assert status.RETRY_COMMAND in stopped
+    assert " s5 SR25" not in stopped and "      why:" not in text and "      log:" not in text
+    assert "s5 SR25 training: failed 1 of 3 so far (exit 1)" in text and "s6 SR25 training: failed 2 of 3 so far (exit 1)" in text
 
 
 
@@ -459,10 +460,10 @@ def test_default_screen_lists_all_four_experiments(tmp_path):
         (base / cohort / ".multi-node" / "jobs").mkdir(parents=True)
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=200)
     assert status.COHORTS == ("olmo_math", "olmo_mbpp", "qwen_math", "qwen_mbpp")
-    summary = [line.split("  ")[0].strip() for line in text.split("━━ V8 status · ")[1].splitlines()
-               if line.startswith((" OLMo", " Qwen"))]
+    summary = [line.split(" · ")[0].strip() for line in text.split(" experiments\n")[1].split("\n\n")[0].splitlines()
+               if line.startswith(("   OLMo", "   Qwen"))]
     assert summary == ["OLMo MATH", "OLMo MBPP", "Qwen MATH", "Qwen MBPP"]
-    assert "OLMo MBPP · training" in text and "Qwen MATH · training" in text
+    assert "OLMo MBPP · stage: training" in text and "Qwen MATH · stage: training" in text
 
 
 
@@ -489,9 +490,10 @@ def test_native_crash_says_where_the_rank_crashed(tmp_path):
                         "outcome": "failed", "error": "task exit=-11; output verified=False",
                         "child_failure": {"failures": [failure, {"rank": 0, "message": "Signal 15 (SIGTERM) received"}]}}]})
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=120)
-    auto = re.sub(r"\n {3}", " ", text.split("V8 status · ")[1])
-    assert "needs a person" not in auto
-    assert ("s6 eval ?@275 (failure 1/4, SIGSEGV (exit -11) in embedding (torch/nn/functional.py:2551) ← generate (srgc_rebuttal/torch_backend.py:412))") in auto, auto
+    auto = re.sub(r"\s+", " ", text)   # wrapped lines joined
+    assert "STOPPED — needs you" not in auto
+    assert ("s6 ? eval at 275: failed 1 of 4 so far (SIGSEGV (exit -11) in embedding (torch/nn/functional.py:2551) ← "
+            "generate (srgc_rebuttal/torch_backend.py:412))") in auto, auto
     # crashed on three different nodes (TASK_NATIVE_HOST_LIMIT 3, 0f877d7): no node retries it, a person must look
     job = json.loads((q / "jobs" / "n.json").read_text())
     for i, host in enumerate(("h-m", "h-o")):
@@ -499,11 +501,10 @@ def test_native_crash_says_where_the_rank_crashed(tmp_path):
     job["attempts"][-1].update(host="h-n")
     write(q / "jobs" / "n.json", job)
     text = status.render_clean([base], now=now, gpus=[], host="viewer", width=120)
-    bottom = text.split("V8 status · ")[1]
-    assert " needs a person (1)" in bottom
-    joined = re.sub(r"\n {4,}(?=\S)", " ", bottom)          # an item may wrap onto one indented line
-    line = next(x for x in joined.splitlines() if x.startswith("  ✗ OLMo MATH s6 eval"))
-    assert "stopped after 3 failures on 3 nodes (h-o, h-m, h-n)" in line and \
+    assert "   STOPPED — needs you (1):" in text
+    joined = re.sub(r"\n {7,}(?=\S)", " ", text)          # an item may wrap onto indented lines
+    line = next(x for x in joined.splitlines() if x.startswith("     s6 ? eval at 275: "))
+    assert "failed 3 times on 3 nodes (h-o, h-m, h-n), no more automatic retries" in line and \
         "SIGSEGV (exit -11) in embedding (torch/nn/functional.py:2551)" in line, line
     note = failure_notes(base, "olmo_math", now)["n"]
     assert "BLOCKED: SIGSEGV (exit -11) on 3 different nodes (h-o, h-m, h-n)" in note

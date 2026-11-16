@@ -28,7 +28,7 @@ def test_parent_description_alone_does_not_prove_checkpoint_was_loaded(tmp_path)
     _,rows=status.collect(base,'olmo_math',now)
     assert next(r for r in rows if r['run_id']=='traj-5')['done'] is None
     text=status.render_clean([base],now=now,gpus=[],host='node01',width=180)
-    node_row=next(line for line in text.splitlines() if line.startswith(' ▶ node01'))
+    node_row=next(line for line in text.split(' nodes: ')[1].splitlines() if line.startswith('   node01'))
     assert 'update 0 of 275' not in node_row and 'update ? of 275' in node_row
 
 

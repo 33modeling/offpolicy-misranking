@@ -11,6 +11,7 @@ either."""
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 import random
 import shutil
@@ -357,10 +358,15 @@ def test_time_left_counts_work_the_planner_has_not_created_yet(tmp_path):
     lo, hi = m["eta"]["low"]["left"], m["eta"]["high"]["left"]
     assert m["eta"]["low"]["work"] / 5 <= lo <= hi
     text = status.render_clean([base], now=NOW, gpus=[], host="viewer", width=200)
-    row = next(l for l in text.splitlines() if l.startswith(" OLMo MATH ") and "training" in l)
-    assert row.rstrip().endswith(f"~{status.span(lo)}–{status.span(hi)}"), row
-    line = next(l for l in text.splitlines() if l.startswith("   OLMo MATH finish "))
-    assert "KST" in line and "on 5 GPU groups" in line and "evals" in line, line
+    rng = f"about {status.span(lo)}–{status.span(hi)}"
+    head = next(l for l in text.splitlines() if l.startswith("   OLMo MATH · stage: "))
+    assert f" · {rng} left · " in head, head
+    # the first block of the screen says it as a sentence with the KST clock, and why the range is wide
+    top = text.split(" time left\n")[1].split("\n\n")[0]
+    line = next(l for l in top.splitlines() if l.startswith("   OLMo MATH: "))
+    assert line.startswith(f"   OLMo MATH: {rng} left, done around ") and "KST" in line, line
+    assert "longer end if U branches are added for s5, s6, s7, s8, s9" in re.sub(r"\s+", " ", top), top
+    assert "   All experiments: " + rng in top, top
 
 
 def test_budget_extension_shows_budget_spent_from_its_cost_ledger(tmp_path):
@@ -391,6 +397,6 @@ def test_budget_extension_shows_budget_spent_from_its_cost_ledger(tmp_path):
     assert t["progress"] == f"update {H + 12} · budget 89%", t["progress"]
     assert t["end"] == H + 12 + 13, t
     text = status.render_clean([base], now=NOW, gpus=[], host="viewer", width=200)
-    node = next(l for l in text.splitlines() if l.startswith(" ▶ h "))
-    assert f"update {H + 12} · budget 89%" in node and "left" in node and "/" not in node.split("OLMo MATH")[1], node
-    assert "▶89%" in text.split("━━")[0]
+    node = next(l for l in text.split(" nodes: ")[1].splitlines() if l.startswith("   h "))
+    assert f"update {H + 12}, budget 89%" in node and " left" in node and "/" not in node, node
+    assert "89%▶" in text.split(" by seed and branch")[1]

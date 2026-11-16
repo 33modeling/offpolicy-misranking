@@ -1,52 +1,92 @@
-OLMo MATH · training ───────────────────────────────────────────────────────────────────────────────
- train  On    SR25  SR50  SR75  SR100  SR125  SR150  SR175  SR200  SR225  SR250
-     5  ↻     ↻     ✓     ·     ·      ·      ·      ·      ·      ·      ·    
-     6  ✓     ✓     ▶233  ✓     ▶140   ↻      ·      ·      ·      ·      ·    
-     7  ✗     ✓     ↻     ·     ·      ·      ·      ·      ·      ·      ·    
-     8  ✓     ✓     ↻     ·     ·      ·      ·      ·      ·      ·      ·    
-     9  ↻     ✓     ·     ·     ·      ·      ·      ·      ·      ·      ·    
- ext    On    SR25  SR50  SR75  SR100  SR125  SR150  SR175  SR200  SR225  SR250
-     5  -     ·     ·     ·     ·      ·      ·      ·      ·      ·      ·    
-     6  -     ·     ·     ·     ·      ·      ·      ·      ·      ·      ·    
-     7  -     ·     ·     ·     ·      ·      ·      ·      ·      ·      ·    
-     8  -     ·     ·     ·     ·      ·      ·      ·      ·      ·      ·    
-     9  -     ·     ·     ·     ·      ·      ·      ·      ·      ·      ·    
- eval   On    SR25  SR50  SR75  SR100  SR125  SR150  SR175  SR200  SR225  SR250
-     5  0/1   0/1   0/1↻  0/1   0/1    0/1    0/1    0/1    0/1    0/1    0/1  
-     6  0/1○  0/1   0/1   0/1○  0/1    0/1    0/1    0/1    0/1    0/1    0/1  
-     7  0/1   0/1↻  0/1   0/1   0/1    0/1    0/1    0/1    0/1    0/1    0/1  
-     8  0/1▶  1/1   0/1   0/1   0/1    0/1    0/1    0/1    0/1    0/1    0/1  
-     9  0/1   0/1↻  0/1   0/1   0/1    0/1    0/1    0/1    0/1    0/1    0/1  
-   + U(Uniform) 학습·연장·평가 최대 3개씩 더: s5, s7, s9의 On이 끝나면 전환 여부로 정해짐
-   + 예산 끝점 평가가 더 생길 수 있음: 연장 학습이 끝나 예산 평가 계획이 서면 수가 정해짐 (left 에는 미리 넣어 셈)
+V8 status · CODE · 2027-01-15 17:00:00
+<root>
+this node (viewer): no V8 task here · GPU 97%
 
-읽는 법: 줄=시드, 열=branch (On=On-policy 궤적, SR50=50 업데이트에서 SR로 전환, U=그 시드의 전환점에서 Uniform으로 전환)
-  train=학습, ext=예산 연장 학습, eval=평가. train·ext 칸은 작업 1개, eval 칸은 끝난 수/전체 수 (275 평가 + 예산 끝점 평가)
-  ✓ 끝남  ▶ 실행 중 (▶120 = 120 업데이트째, ext 의 ▶81% = 예산 81% 씀)  ○ 바로 시작 가능  ↻ 실패·중단, 다음 빈 노드가 체크포인트부터 자동 재시작
-  · 앞 단계가 끝나야 시작  ✗ 자동 재시도 끝, 사람이 봐야 함  - 작업 없음.  eval 칸 1/3▶↻ = 3개 중 1개 끝, 1개 실행, 1개 재시작 대기
-아래 표: train/ext/eval = 끝난 작업/전체 작업 (전체 = 만든 작업 + 계획상 꼭 만들어질 작업). run ready retry wait ✗ = 위 칸 기호 수
-  done = 끝난 일의 비율 (업데이트·평가를 잰 시간으로 환산).  ? = 잰 시간이 아직 없거나 이 실험을 돌리는 GPU 묶음이 없음
-  left = 아직 안 만든 연장·예산 끝점 평가·U까지 남은 모든 일을 잰 시간으로 환산해, 이 실험을 돌리는 GPU 묶음 수와 앞뒤 순서로 나눈 범위 (짧은 쪽 = 예상, 긴 쪽 = 작업이 잰 속도로 돌면 늘지 않는 상한)
-노드 줄: progress = 학습은 update 87 of 275, 연장은 update 287 · budget 81% (예산이 다 차면 멈춤), 평가는 question 87 of 300 · left = 그 작업이 끝날 때까지 남은 시간 · ran for = 그 작업이 돈 시간
-━━ V8 status · CODE · 2027-01-15 17:00:00 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   <root>
-             phase        train   ext  eval  run  ready  retry  wait  ✗  done  left          
- OLMo MATH   training      8/55  0/50  1/55    3      2      9   136  1    7%  ~59h07m–87h48m
- OLMo MBPP   not started
- Qwen MATH   not started
- Qwen MBPP   not started
-   OLMo MATH finish 01-18 04:07–01-19 08:48 KST · work left 176h29m–248h31m GPU-group time (train 5920–6670 · ext
-     6250–6625 updates · 109–168 evals) on 3 GPU groups · longest chain 3h27m
- ↻ OLMo MATH restarts by itself on the next free node: s9 On (failure 2/4, exit 1); s7 SR50 (failure 2/4, exit 1); s5
-   SR25 (failure 1/4, exit 1); s8 SR50 (failure 2/4, exit 1); … 5 more
+ time left
+   OLMo MATH: about 59h07m–87h48m left, done around 01-18 04:07 – 01-19 08:48 KST (3 nodes working on it)
+     longer end if U branches are added for s5, s7, s9 · the 50 extensions not created yet run to update 400 · runs
+       take as long as the slowest quarter measured so far · each branch needs 2 budget-end evaluations
+   All experiments: about 59h07m–87h48m left, done around 01-18 04:07 – 01-19 08:48 KST (not started, not counted: OLMo
+     MBPP, Qwen MATH, Qwen MBPP)
 
- needs a person (1)
-  ✗ OLMo MATH s7 On: stopped after 5 failures, no more automatic retries · last: exit 1
+ experiments
+   OLMo MATH · stage: training · 7% of the work done · about 59h07m–87h48m left · 3 nodes working on it
+     training    done 8 of 55 training runs · 2 running · 6 restart by themselves · 38 waiting (38 not created yet) · 1
+         STOPPED
+     extension   done 0 of 50 extension runs · 50 waiting (50 not created yet)
+     evaluation  done 1 of 55 evaluations · 1 running · 2 can start · 3 restart by themselves · 48 waiting (48 not
+         created yet)
+     note: up to 3 more U branches (training, extension and evaluation each) for s5, s7, s9: decided when that seed's
+       On run finishes
+     note: budget-end evaluations are counted once the extensions finish and their plan is made (the time left already
+       includes them)
+   OLMo MBPP · not started
+   Qwen MATH · not started
+   Qwen MBPP · not started
 
- nodes (3 hosts)  3 running
-   tasks that can run now 14 (run + ready + retry) · alive workers 3  → 11 more 4-GPU nodes would help   (1 gone not shown; --all-nodes)
-   host  gpus  state    exp        task            progress             left       ran for  beat  now
- ▶ h06   ?     running  OLMo MATH  s6 SR50         update 233 of 275    ~17m left  1h40m    38s   started, no output yet
- ▶ h08   ?     running  OLMo MATH  s6 SR100        update 140 of 275    ~55m left  54m      32s   started, no output yet
- ▶ h22   ?     running  OLMo MATH  s8 eval On@275  question 171 of 500  ~34m left  1h03m    41s   answering question 25…
- this node  viewer · GPU 97% · no V8 task here
+ OLMo MATH: not finished 151 of 160
+   STOPPED — needs you (1):
+     s7 On training: failed 5 times, no more automatic retries · last error: exit 1
+     → fix the cause, then run `sh scripts/run_v8_nodes.sh --retry-failed` on one node (the next free node restarts them)
+   running now (3):
+     s6 SR50 training   on h06  update 233 of 275    ~17m left
+     s6 SR100 training  on h08  update 140 of 275    ~55m left
+     s8 On eval at 275  on h22  question 171 of 500  ~34m left
+   will restart by itself on the next free node, from its last checkpoint (9):
+     s9 On training: failed 2 of 4 so far (exit 1)
+     s7 SR50 training: failed 2 of 4 so far (exit 1)
+     s5 SR25 training: failed 1 of 4 so far (exit 1)
+     s8 SR50 training: failed 2 of 4 so far (exit 1)
+     s6 SR125 training: its node stopped sending heartbeats
+     s5 On training: was interrupted
+     … 3 more: s5 SR50 eval at 275, s7 SR25 eval at 275, s9 SR25 eval at 275
+   can start now, waiting for a free node (2; every live node is busy):
+     s6 On eval at 275, s6 SR75 eval at 275
+   waiting for an earlier step (136):
+     after a STOPPED step — they never start until it is fixed (9): s7 On training → SR75, SR100, SR125, SR150, SR175,
+       SR200, SR225, SR250 training, eval at 275 (not created yet)
+     after s6 SR50 training (running, ~17m left): extension, eval at 275 (not created yet)
+     after s6 SR100 training (running, ~55m left): extension, eval at 275 (not created yet)
+     after a step that restarts by itself (27): s5 On training → SR75, SR100, SR125, SR150, SR175, SR200, SR225, SR250
+       training, eval at 275 (not created yet); s9 On training → SR50, SR75, SR100, SR125, SR150, SR175, SR200, SR225,
+       SR250 training, eval at 275 (not created yet); s7 SR50 training → extension, eval at 275 (not created yet); s5 …
+     after a step that is itself waiting (76): s5 SR75 training → extension, eval at 275 (not created yet); s5 SR100
+       training → extension, eval at 275 (not created yet); s5 SR125 training → extension, eval at 275 (not created
+       yet); s5 SR150 training → extension, eval at 275 (not created yet); s5 SR175 training → extension, eval at 275 …
+     waiting for the planner to create them at its next queue scan (14): s6 SR150 training, s6 SR175 training, s6 SR200
+       training, s6 SR225 training, s6 SR250 training, s8 SR75 training, s8 SR100 training, s8 SR125 training, s8 SR150
+       training, s8 SR175 training, s8 SR200 training, s8 SR225 training, s8 SR250 training, s6 SR25 eval at 275 (not …
+     waiting for the budget freeze, which needs s9 On training, s7 On training, s5 On training to finish (6): s5 SR50
+       extension, s6 SR25 extension, s6 SR75 extension, s7 SR25 extension, s8 SR25 extension, s9 SR25 extension (not
+       created yet)
+
+ OLMo MATH by seed and branch
+ training     On     SR25   SR50   SR75   SR100  SR125  SR150  SR175  SR200  SR225  SR250
+   s5         retry  retry  ✓      wait   wait   wait   wait   wait   wait   wait   wait
+   s6         ✓      ✓      233▶   ✓      140▶   retry  wait   wait   wait   wait   wait
+   s7         FAIL   ✓      retry  wait   wait   wait   wait   wait   wait   wait   wait
+   s8         ✓      ✓      retry  wait   wait   wait   wait   wait   wait   wait   wait
+   s9         retry  ✓      wait   wait   wait   wait   wait   wait   wait   wait   wait
+ extension    On     SR25   SR50   SR75   SR100  SR125  SR150  SR175  SR200  SR225  SR250
+   s5         -      wait   wait   wait   wait   wait   wait   wait   wait   wait   wait
+   s6         -      wait   wait   wait   wait   wait   wait   wait   wait   wait   wait
+   s7         -      wait   wait   wait   wait   wait   wait   wait   wait   wait   wait
+   s8         -      wait   wait   wait   wait   wait   wait   wait   wait   wait   wait
+   s9         -      wait   wait   wait   wait   wait   wait   wait   wait   wait   wait
+ eval@275     On     SR25   SR50   SR75   SR100  SR125  SR150  SR175  SR200  SR225  SR250
+   s5         wait   wait   retry  wait   wait   wait   wait   wait   wait   wait   wait
+   s6         ready  wait   wait   ready  wait   wait   wait   wait   wait   wait   wait
+   s7         wait   retry  wait   wait   wait   wait   wait   wait   wait   wait   wait
+   s8         34%▶   ✓      wait   wait   wait   wait   wait   wait   wait   wait   wait
+   s9         wait   retry  wait   wait   wait   wait   wait   wait   wait   wait   wait
+   columns: On = on-policy run · SR50 = switches to SR at update 50
+   cells: ✓ done (extension 312✓ = stopped at update 312) · 187▶ running at update 187 (extension 81%▶ = budget used,
+     eval 36%▶ = questions answered) · ready = can start now · wait = needs an earlier step · retry = restarts by
+     itself · FAIL = stopped, needs you · - = no such run
+
+ nodes: 3 live — 3 working
+   h06  working  s6 SR50 training   update 233 of 275    ~17m left  seen 38s ago
+   h08  working  s6 SR100 training  update 140 of 275    ~55m left  seen 32s ago
+   h22  working  s8 On eval at 275  question 171 of 500  ~34m left  now answering question 25 of 125 on each GPU, 3s ago
+   14 tasks could run now (running + can start + will restart) on 3 live nodes → 11 more nodes would finish sooner
+   (1 gone not shown; --all-nodes)

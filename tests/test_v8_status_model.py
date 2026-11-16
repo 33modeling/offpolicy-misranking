@@ -231,10 +231,30 @@ def random_queue(base, rnd, cohort="olmo_math"):
 
 
 def table_row(text, label="OLMo MATH"):
-    bottom = text.split("━━ V8 status · ")[1]
-    line = next(l for l in bottom.splitlines() if l.startswith(f" {label} "))
-    head = next(l for l in bottom.splitlines() if l.split()[:2] == ["phase", "train"])
-    return dict(zip(head.split(), line[len(label) + 1:].split()[-len(head.split()):]))
+    """The experiment block's stage lines read back: train/ext/eval as 'done/total', run/ready/retry/wait/✗ summed."""
+    lines = text.split(" experiments\n")[1].split("\n\n")[0].splitlines()
+    i = next(k for k, l in enumerate(lines) if l.startswith(f"   {label} · "))
+    joined = []
+    for line in lines[i + 1:]:
+        if line.startswith("   ") and not line.startswith("     "):
+            break   # the next experiment
+        if line.startswith("         ") and joined:
+            joined[-1] += " " + line.strip()   # wrapped part of a stage line
+        else:
+            joined.append(line)
+    got = dict(b for b in map(status.read_stage_line, joined) if b)
+    row = {ph: f"{got[ph]['done']}/{got[ph]['total']}" if ph in got else "0/0" for ph in ("train", "ext", "eval")}
+    for st, name in (("running", "run"), ("ready", "ready"), ("retrying", "retry"), ("waiting", "wait"), ("person", "✗")):
+        row[name] = str(sum(c[st] for c in got.values()))
+    return row
+
+
+def grid_cells(text, block, seed, label="OLMo MATH"):
+    """{column: cell} of one seed row in one block of the seed x branch grid."""
+    grid = text.split(f" {label} by seed and branch\n")[1].splitlines()
+    i = next(k for k, l in enumerate(grid) if l.split()[:1] == [block])
+    row = next(l for l in grid[i + 1:] if l.split()[:1] == [f"s{seed}"])
+    return dict(zip(grid[i].split()[1:], row.split()[1:]))
 
 
 def test_random_queues_keep_every_invariant(tmp_path):
@@ -244,7 +264,7 @@ def test_random_queues_keep_every_invariant(tmp_path):
         base = tmp_path / f"q{i}" / "v8"
         qu, expect = random_queue(base, rnd)
         text = status.render_clean([base], now=NOW, gpus=[], host="viewer", width=200)
-        assert "screen counts disagree" not in text, text.split("━━ V8 status")[1]
+        assert "screen counts disagree" not in text, text
         row = table_row(text)
         for ph in ("train", "ext", "eval"):
             assert int(row[ph].split("/")[1]) == expect["planned"][ph], (i, ph, row, expect)
@@ -252,9 +272,12 @@ def test_random_queues_keep_every_invariant(tmp_path):
         existing = {s: sum(1 for t in model["tasks"] if not t["planned"] and t["state"] == s) for s in status.STATES}
         assert existing == expect["states"], (i, existing, expect["states"])
         assert int(row["run"]) == qu.expect["running"]
-        nodes = [l for l in text.splitlines() if l.startswith(" ▶ ")]
+        nodes = [l for l in text.split(" nodes: ")[1].splitlines() if re.match(r"   \S+ +working ", l)]
         assert len(nodes) == qu.expect["running"]
-        assert "≥" not in text and "+ ext" not in text
+        listed = text.split(" not finished ")[1].split(" by seed and branch")[0] if " not finished " in text else ""
+        m = re.search(r"running now \((\d+)\)", listed)
+        assert int(m.group(1) if m else 0) == qu.expect["running"]
+        assert "≥" not in text and "+ ext" not in text and not re.search(r"\b\d+/\d+\b", text.split(" by seed and branch")[-1].split(" nodes: ")[0])
         checked += 1
     assert checked == 300
 
@@ -269,14 +292,12 @@ def test_failure_under_the_retry_limit_restarts_by_itself_and_only_the_limit_nee
         t = qu.train_task(5, f"bank_sr_t{tau:03d}", tau, on["run_id"])
         qu.job(t, "train", "failed", [attempt(f"f{tau}{i}", "h.1", NOW - 500, NOW - 400, 1, "failed") for i in range(fails)])
     text = status.render_clean([base], now=NOW, gpus=[], host="viewer", width=200)
-    grid = text.split("━━")[0]
-    s5 = next(l for l in grid.splitlines() if l.startswith("     5"))
-    cols = next(l for l in grid.splitlines() if l.startswith(" train")).split()[1:]
-    cells = dict(zip(cols, s5.split()[1:]))
-    assert cells["SR50"] == "↻" and cells["SR100"] == "↻" and cells["SR150"] == "✗"
+    cells = grid_cells(text, "training", 5)
+    assert cells["SR50"] == "retry" and cells["SR100"] == "retry" and cells["SR150"] == "FAIL"
     row = table_row(text)
     assert row["retry"] == "2" and row["✗"] == "1"
-    assert "failure 1/4" in text and "failure 3/4" in text and "stopped after 4 failures" in text
+    assert "s5 SR50 training: failed 1 of 4 so far" in text and "s5 SR100 training: failed 3 of 4 so far" in text
+    assert "s5 SR150 training: failed 4 times, no more automatic retries" in text and status.RETRY_COMMAND in text
 
 
 def test_every_view_prints_the_same_numbers(tmp_path, monkeypatch):
@@ -344,7 +365,7 @@ def golden_screen(tmp_path, stage):
                 (stage != "early" or not (qu.q / "plans" / "train.json").exists()):
             break
     text = status.render_clean([base], now=NOW, gpus=[("0", 97, 61000)], host="viewer", width=120)
-    text = re.sub(r"━━ V8 status · \S+ · ", "━━ V8 status · CODE · ", text).replace(str(base), "<root>")
+    text = re.sub(r"V8 status · \S+ · ", "V8 status · CODE · ", text).replace(str(base), "<root>")
     return text
 
 
@@ -357,3 +378,21 @@ def test_golden_screens(tmp_path):
             path.write_text(text)
         assert text == path.read_text(), stage
         assert "screen counts disagree" not in text
+
+
+def test_screen_check_names_any_section_that_disagrees(tmp_path, monkeypatch):
+    """The red line is not decoration: a grid cell, a stage line or a node row that counts differently is named."""
+    golden_screen(tmp_path, "extension")
+    base = tmp_path / "extension" / "v8"
+    clean = status.render_clean([base], now=NOW, gpus=[], host="viewer", width=200)
+    assert "screen counts disagree" not in clean
+    with monkeypatch.context() as m:   # a running task drawn as waiting in the grid
+        original = status.cell_word
+        m.setattr(status, "cell_word", lambda t: "wait" if t["state"] == "running" else original(t))
+        text = status.render_clean([base], now=NOW, gpus=[], host="viewer", width=200)
+        assert "screen counts disagree" in text and "OLMo MATH running: stage lines 13, grid 0, list 13" in text, text
+    with monkeypatch.context() as m:   # a stage line that drops one finished training run
+        original_line = status.stage_line
+        m.setattr(status, "stage_line", lambda model, ph, c: original_line(model, ph, dict(c, done=c["done"] - (ph == "train"))))
+        text = status.render_clean([base], now=NOW, gpus=[], host="viewer", width=200)
+        assert "OLMo MATH training: stage line 30 of 58 but grid 31 of 58" in text, text
