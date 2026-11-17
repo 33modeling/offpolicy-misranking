@@ -91,6 +91,37 @@ def describe_processes(remaining):
     return ', '.join(f'{count} {names.get(kind,kind)}' for kind,count in sorted(kinds.items()))
 
 
+def update_interval(environment=None):
+    """Seconds between idle-node code checks (V8_AUTO_UPDATE_SECONDS, default 600; 0 turns it off)."""
+    value=(os.environ if environment is None else environment).get('V8_AUTO_UPDATE_SECONDS','600')
+    try:return max(0.0,float(value))
+    except ValueError:return 600.0
+
+
+def checkout_update(repo,run=subprocess.run):
+    """Fast-forward the code checkout to its upstream; return (old, new) when HEAD moved, else None.
+
+    Never merges, rebases or touches local edits: a diverged or conflicting checkout is left as it is."""
+    def git(*args,timeout=60):
+        result=run(['git','-C',str(repo),*args],capture_output=True,text=True,timeout=timeout)
+        return result.returncode,result.stdout.strip()
+    try:
+        if not (Path(repo)/'.git').exists():return None
+        if git('fetch','-q',timeout=180)[0]:return None
+        code,old=git('rev-parse','HEAD');code2,upstream=git('rev-parse','@{u}')
+        if code or code2 or not old or old==upstream:return None
+        if git('merge-base','--is-ancestor','HEAD','@{u}')[0]:return None
+        if git('merge','--ff-only','-q','@{u}')[0]:return None
+        code,new=git('rev-parse','HEAD')
+        return (old,new) if not code and new!=old else None
+    except (OSError,subprocess.SubprocessError):return None
+
+
+def launch_busy(rows,launch):
+    """A training/evaluation process of this launch is running (no code update under a task)."""
+    return any(rows[pid].get('kind') for pid in select(rows,tag=launch) if pid in rows)
+
+
 def main():
     args=sys.argv[1:];bootstrap=Path(__file__).with_name('v8_bootstrap.py')
     if any(a in ('--status','--help','-h') for a in args):
@@ -140,7 +171,25 @@ def main():
                                    stdin=subprocess.DEVNULL,stdout=handle,stderr=subprocess.STDOUT)
         relay_thread=threading.Thread(target=relay,args=(log,),daemon=True);relay_thread.start()
         threading.Thread(target=report,daemon=True).start()
+        interval=update_interval();next_check=time.monotonic()+interval;idle_checks=0
+        repo=Path(__file__).resolve().parents[1]
         while child.poll() is None:
+            if interval and time.monotonic()>=next_check:
+                # User 11-17 'idle인것도 고쳐줘': an idle node picks up pushed fixes by itself. Only between tasks
+                # (two checks in a row with no task process of this launch), fast-forward only, then the
+                # launch stops (resumable, nothing claimed) and this supervisor restarts with the new code.
+                next_check=time.monotonic()+interval
+                idle_checks=0 if launch_busy(table(),launch) else idle_checks+1
+                moved=checkout_update(repo) if idle_checks>=2 else None
+                if moved and not launch_busy(table(),launch):
+                    emit(f'[v8] idle node: code updated {moved[0][:7]} -> {moved[1][:7]}; restarting this node '
+                         'with it (no task was running; queue and checkpoints untouched)')
+                    remaining=stop(select(table(),tag=launch),tag=launch,grace=stop_grace())
+                    if remaining:emit('[v8] code-update restart: processes still in kernel wait: '+str(remaining),error=True)
+                    else:
+                        finished.set()
+                        for sig,handler in previous.items():signal.signal(sig,handler)
+                        os.execv(sys.executable,[sys.executable,str(Path(__file__).resolve()),*args])
             if disconnected.is_set():
                 disconnected.clear()
                 try:
