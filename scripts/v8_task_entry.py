@@ -374,8 +374,13 @@ def main():
         @functools.wraps(original_diagnostics)
         def diagnostics(*args,**kwargs):
             result=original_diagnostics(*args,**kwargs)
-            # Keep the original periodic/SIGUSR1 diagnostics, then restore the
-            # attempt's fatal-signal FD overwritten by the historical initializer.
+            # The historical initializer also arms faulthandler.dump_traceback_later(1800, repeat=True).
+            # Its watchdog thread walks every thread's frames without the GIL; on Python 3.12 this
+            # SIGSEGVs the rank while generation is running. Every V8 native crash (11-08..11-16, all
+            # cohorts) ended 30/60/90 min after start, the stack file stopping mid-'Timeout (0:30:00)!'
+            # dump. Keep the SIGUSR1 and fatal-signal dumps; drop only the periodic one.
+            if os.environ.get('V8_PERIODIC_STACK_DUMP')!='1':faulthandler.cancel_dump_traceback_later()
+            # Restore the attempt's fatal-signal FD overwritten by the historical initializer.
             install_native_fault_handler()
             return result
         module.install_diagnostics=diagnostics
