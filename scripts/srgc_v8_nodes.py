@@ -52,6 +52,11 @@ EVAL_NATIVE_RECOVERY = 'evaluation-sigsegv-recovery-v1'
 # attempt. Never renewed by a restart/new node/hash; attempts, failures and checkpoints are kept; a native
 # crash place stays excluded for that task.
 USER_RETRY_GRANT = 'user-retry-blocked-v1-20261113'
+# 11-17: every V8 SIGSEGV since 11-08 came from the pinned child's 30-min faulthandler watchdog
+# (dump_traceback_later), which v8_task_entry.py now cancels. Tasks blocked by those crashes get one fresh
+# budget, once per task, from a node whose checkout carries that fix (user: '새노드 잡히면 알아서 복구되면서 시작').
+WATCHDOG_FIX_GRANT = 'periodic-stack-dump-sigsegv-fixed-v1-20261117'
+GRANT_POLICIES = (USER_RETRY_GRANT, WATCHDOG_FIX_GRANT)
 NODE_NATIVE_FAILURE_LIMIT = 2
 # Node verification hashes this node's frozen trainer and inputs; on a shared volume with many nodes starting
 # together it takes minutes. It runs without the queue control.lock and has its own limit (user 11-11:
@@ -232,7 +237,7 @@ def budget_attempts(job,attempts):
 def granted_view(job):
     """The job as seen by its one user retry grant: only attempts after the grant, no older replay receipt."""
     grant=job.get('user_retry_grant') if isinstance(job,dict) else None
-    if (not isinstance(grant,dict) or grant.get('policy')!=USER_RETRY_GRANT or not isinstance(job.get('task'),dict)
+    if (not isinstance(grant,dict) or grant.get('policy') not in GRANT_POLICIES or not isinstance(job.get('task'),dict)
             or grant.get('task_sha256')!=digest(semantic_task(job['task']))):return None
     attempts=[a for a in job.get('attempts',[]) if isinstance(a,dict)]
     ids=[a.get('id') for a in attempts]
@@ -988,6 +993,7 @@ class Pool:
             self.recover_budget_api_failure(recover,worker)
             self.recover_failed(recover,worker)
             self.grant_user_retry(worker)
+            self.grant_watchdog_fix_retry(worker)
         if self.automatic_retry:self.enable_automatic_retry(worker)
         state=read(state_path)
         if retry:
@@ -1031,6 +1037,44 @@ class Pool:
             atomic(self.root/'state.json',state)
             print(f'[v8] {self.binding.get("cohort")}: {len(granted)} blocked task(s) restart once more from their '
                   'checkpoints (user retry grant; failures and logs kept; never on the node where they crashed)',flush=True)
+        return granted
+
+    def grant_watchdog_fix_retry(self,worker):
+        """WATCHDOG_FIX_GRANT: a task blocked by native crashes restarts from its checkpoint once more, once per task,
+        only when this checkout's task entry cancels the periodic dump. History and the earlier grant are kept."""
+        if '0' in (os.environ.get('V8_WATCHDOG_FIX_GRANT','1'),os.environ.get('V8_USER_RETRY_GRANT','1')):return []   # tests that pin the cap
+        try:fixed='cancel_dump_traceback_later' in Path(__file__).with_name('v8_task_entry.py').read_text()
+        except OSError:fixed=False
+        if not fixed:return []
+        state=self.queue_state();failure=state.get('failure')
+        if failure and not aggregate_task_failure(failure):return []   # input/setup/identity failures stay
+        granted=[]
+        for path in sorted(self.root.glob('jobs/*.json')):
+            job=read(path)
+            if job.get('state') not in ('failed','pending','interrupted') or not job.get('attempts'):continue
+            if (job.get('user_retry_grant') or {}).get('policy')==WATCHDOG_FIX_GRANT:continue
+            if not fatal_native_failure(job) or not (native_failure_blocks(job) or self.retry_limit_reached(job)):continue
+            lease=Lock(self.root/'leases'/(path.stem+'.lock'))
+            if not lease.acquire():continue
+            try:
+                job=read(path);last=job['attempts'][-1] if job.get('attempts') else {}
+                if (job.get('user_retry_grant') or {}).get('policy')==WATCHDOG_FIX_GRANT or last.get('id') is None:continue
+                if job.get('user_retry_grant'):job.setdefault('retry_grant_history',[]).append(job['user_retry_grant'])
+                job['user_retry_grant']=dict(policy=WATCHDOG_FIX_GRANT,after_attempt=last['id'],
+                    task_sha256=digest(semantic_task(job['task'])),failures_before=retry_budget_failures(job),
+                    crash_places=native_crash_hosts(job),worker=worker,at=time.time(),
+                    reason='sigsegv_from_periodic_faulthandler_dump_fixed_in_task_entry_20261117')
+                job['state']='pending';atomic(path,job);granted.append(path.stem)
+            finally:lease.close()
+        if granted:
+            state=self.queue_state()
+            if state.get('failure') and aggregate_task_failure(state['failure']):
+                state.setdefault('failure_history',[]).append(state['failure']);state['failure']=None
+            state.setdefault('actions',[]).append(dict(action='watchdog_fix_retry_grant',policy=WATCHDOG_FIX_GRANT,
+                                                       tasks=granted,worker=worker,at=time.time()))
+            atomic(self.root/'state.json',state)
+            print(f'[v8] {self.binding.get("cohort")}: {len(granted)} task(s) stopped by the 30-min stack-dump SIGSEGV '
+                  'restart from their checkpoints (dump now off; failures and logs kept)',flush=True)
         return granted
 
     def recover_budget_api_failure(self,controller,worker):
