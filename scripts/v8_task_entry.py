@@ -1,6 +1,7 @@
 """Run the exact original v8 child with a separately receipted decode observer."""
 import hashlib
 import copy
+import errno
 import functools
 import gc
 import importlib.util
@@ -23,6 +24,13 @@ MBPP_VERIFIER_HASHES={'5062befe4ed5a8e21f6de01a73dca4f1d3544dd033c5d2c846bff391d
                       '5d2414c2ef8c6091aeace48ac8eccadce3357b5e0854e658980b33bd854a1522'}
 _NATIVE_FAULT_STATE=None
 ZERO_UPDATE_RUNNER_SHA256='f14d92eed0d8dd139e3ea7602112bae148a6fd860ed883c22f55512f6fe8c732'
+# MBPP checker launch robustness (no scoring change). The bootstrap's handshake gets its own window, so a
+# slow interpreter start on a loaded node (4 ranks loading a model from the shared volume) is not a task
+# failure and does not eat the checker's own wall timeout. Fork/exec EAGAIN/ENOMEM is retried a few times.
+MBPP_STARTUP_SECONDS_DEFAULT=60.0
+MBPP_SPAWN_ATTEMPTS=5
+MBPP_SPAWN_RETRY_SECONDS=0.5
+_sleep=time.sleep
 
 
 def repair_budget_fork_checkpoint(runner):
@@ -110,6 +118,19 @@ def repair_mbpp_subprocess(verifier):
     original=namespace['subprocess'];limits=namespace['_limits']
     memory=namespace['CODE_MEMORY_BYTES'];cpu=int(namespace['CODE_TIMEOUT_SECONDS'])+1
     fsize=namespace.get('CODE_RESULT_BYTES',1<<20)
+    try:startup=float(os.environ.get('V8_MBPP_STARTUP_SECONDS') or MBPP_STARTUP_SECONDS_DEFAULT)
+    except ValueError:startup=MBPP_STARTUP_SECONDS_DEFAULT
+    # select() overflows on inf/huge values; an unusable setting falls back to the default window.
+    if not 0<startup<=86400:startup=MBPP_STARTUP_SECONDS_DEFAULT
+    def spawn(command,pos,kwargs):
+        for attempt in range(1,MBPP_SPAWN_ATTEMPTS+1):
+            try:return original.Popen(command,*pos,**kwargs)
+            except OSError as error:
+                if error.errno not in (errno.EAGAIN,errno.ENOMEM) or attempt>=MBPP_SPAWN_ATTEMPTS:raise
+                delay=MBPP_SPAWN_RETRY_SECONDS*2**(attempt-1)
+                print(f'MBPP checker spawn failed ({errno.errorcode.get(error.errno,error.errno)}), '
+                      f'retry {attempt}/{MBPP_SPAWN_ATTEMPTS-1} in {delay:.1f}s',file=sys.stderr,flush=True)
+                _sleep(delay)
     class ProcessModule:
         def __getattr__(self,name):return getattr(original,name)
         def Popen(self,args,*pos,**kwargs):
@@ -120,16 +141,16 @@ def repair_mbpp_subprocess(verifier):
             try:
                 kwargs['pass_fds']=(*kwargs.get('pass_fds',()),writer)
                 command=[*args[:3],'-c',_MBPP_EXEC_BOOTSTRAP,str(writer),str(memory),str(cpu),str(fsize),*args[3:]]
-                process=original.Popen(command,*pos,**kwargs);started=time.monotonic()
+                process=spawn(command,pos,kwargs)
                 os.close(writer);writer=None
-                ready,_,_=select.select([reader],[],[],float(namespace['CODE_TIMEOUT_SECONDS']))
-                status=os.read(reader,4096) if ready else b'startup timeout'
+                # Startup handshake: its own window, separate from the checker's wall timeout.
+                ready,_,_=select.select([reader],[],[],startup)
+                status=os.read(reader,4096) if ready else f'startup timeout after {startup:g}s'.encode()
                 if status!=b'OK':
                     raise original.SubprocessError('MBPP checker limits/setup failed after exec: '+status.decode(errors='replace'))
-                elapsed=time.monotonic()-started;wait=process.wait
-                # Keep the original wall timeout measured from Popen's exec completion.
-                def timed_wait(timeout=None):return wait(timeout=None if timeout is None else max(0,timeout-elapsed))
-                process.wait=timed_wait
+                # The limits are set and the bootstrap now execs the exact checker command. The frozen verifier's
+                # process.wait(timeout=CODE_TIMEOUT_SECONDS) therefore starts at that exec, as with its original
+                # preexec_fn launch, where Popen returned after the checker's exec. Nothing is subtracted.
                 return process
             except BaseException:
                 if process is not None:
@@ -143,9 +164,11 @@ def repair_mbpp_subprocess(verifier):
     cloned=dict(namespace,subprocess=ProcessModule())
     fixed=types.FunctionType(verifier.__code__,cloned,verifier.__name__,verifier.__defaults__,verifier.__closure__)
     functools.update_wrapper(fixed,verifier)
-    receipt=dict(policy='mbpp-limits-after-exec-v2',original_verifier_sha256=digest,
+    receipt=dict(policy='mbpp-limits-after-exec-v3',original_verifier_sha256=digest,
                  code_verifier_version=namespace['CODE_REWARD_VERSION'],preexec_fn=False,
-                 memory_bytes=memory,cpu_seconds=cpu,file_bytes=fsize,reward_rule_changed=False)
+                 memory_bytes=memory,cpu_seconds=cpu,file_bytes=fsize,reward_rule_changed=False,
+                 wall_timeout_seconds=float(namespace['CODE_TIMEOUT_SECONDS']),wall_timeout_starts='checker exec',
+                 startup_handshake_seconds=startup,spawn_attempts=MBPP_SPAWN_ATTEMPTS,spawn_retry_errors=['EAGAIN','ENOMEM'])
     fixed._v8_mbpp_spawn=receipt
     return fixed,receipt
 
@@ -362,8 +385,20 @@ def retain_cuda_failure(exc):
     except Exception as error:print(f'Cannot retain CUDA failure context: {error}',file=sys.stderr,flush=True)
 
 
+def disable_periodic_stack_dump():
+    """Old frozen children arm faulthandler.dump_traceback_later(V8_STACK_DUMP_SECONDS) and skip it at <=0.
+
+    Set it to 0 in this rank's environment before the child is loaded, so the periodic dump stays off even
+    where the install_diagnostics wrapper below does not reach. V8_PERIODIC_STACK_DUMP=1 keeps the old value.
+    """
+    if os.environ.get('V8_PERIODIC_STACK_DUMP')=='1':return False
+    os.environ['V8_STACK_DUMP_SECONDS']='0'
+    return True
+
+
 def main():
     install_native_fault_handler()
+    disable_periodic_stack_dump()
     path=Path(sys.argv[1]);expected=os.environ.get('V8_ORIGINAL_CHILD_SHA256')
     if not expected or hashlib.sha256(path.read_bytes()).hexdigest()!=expected:
         raise ValueError('Original v8 child bytes differ from the selected runner identity')

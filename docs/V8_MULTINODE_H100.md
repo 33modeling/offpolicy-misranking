@@ -294,6 +294,15 @@ V14는 MBPP 채점 subprocess의 Python `preexec_fn`을 제거하고 exec 뒤에
 제한 설정에 실패하면 학습 오류로 전달하고 보상0으로 바꾸지 않는다. 제한 설정 뒤 같은
 PID에서 원래 `python -I -B code_check.py ...`를 exec해 `__main__`·loader·argv도 보존한다.
 이 수정이 실제 H100 SIGSEGV 원인과 일치하는지는 rank 로그로 확인해야 한다.
+11-18부터 제한 설정 bootstrap의 시작 확인은 채점 wall timeout(10초)과 따로 기본 60초
+(`V8_MBPP_STARTUP_SECONDS`)를 기다린다. 이전에는 10초 안에 확인이 오지 않으면 rank가
+작업 실패로 끝났고, 늦은 시작 시간만큼 채점 시간이 줄었다. 이제 채점 10초는 원래 verifier처럼
+`code_check.py` exec 시점부터 잰다. Popen이 `EAGAIN`/`ENOMEM`으로 실패하면 0.5·1·2·4초 간격으로
+최대 5회 시도한다. 메모리·CPU·파일 크기 제한, 채점 timeout, 통과 판정은 그대로다. 60초 안에
+시작하지 못하거나 5회 모두 실패하면 이전처럼 학습 오류이며 보상 0으로 바꾸지 않는다.
+작업 진입점은 rank 환경에 `V8_STACK_DUMP_SECONDS=0`을 넣는다. 예전 frozen
+`cluster_child.py`는 이 값이 0 이하이면 30분 주기 stack dump를 켜지 않는다.
+`V8_PERIODIC_STACK_DUMP=1`일 때만 노드 값을 그대로 둔다.
 
 원래 child 실행 전부터 `faulthandler`를 켜고 `.multi-node/progress/<attempt>/`에
 `native-fault-rank-N-<invocation>.log`와 해당 JSON 메타데이터를 남긴다. torchrun의
