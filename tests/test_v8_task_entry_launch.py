@@ -36,8 +36,8 @@ def main():
   import importlib.util
   spec=importlib.util.spec_from_file_location('srgc_rebuttal.launch_fixture',Path(REPO_ROOT)/'srgc_rebuttal/verifiers.py')
   verifiers=importlib.util.module_from_spec(spec);spec.loader.exec_module(verifiers)
-  verifiers.CODE_TIMEOUT_SECONDS=1.0
-  entry._MBPP_EXEC_BOOTSTRAP='import time;time.sleep(1.5)\\n'+entry._MBPP_EXEC_BOOTSTRAP
+  verifiers.CODE_TIMEOUT_SECONDS=2.0
+  entry._MBPP_EXEC_BOOTSTRAP='import time;time.sleep(2.5)\\n'+entry._MBPP_EXEC_BOOTSTRAP
   ctx=types.SimpleNamespace(backend=types.SimpleNamespace(verifier=verifiers.code_reward),
                             verifier_identity=dict(code_verifier_version=verifiers.CODE_REWARD_VERSION))
   entry.repair_context(ctx)

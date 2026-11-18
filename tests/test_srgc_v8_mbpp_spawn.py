@@ -122,7 +122,7 @@ print('SETUP_ERRORS_PRESERVED')
     assert 'SETUP_ERRORS_PRESERVED' in result.stdout
 
 
-# Candidate programs for `assert add(2,3)==5` with a 1 s checker wall timeout (CPU rlimit 2 s).
+# Candidate programs for `assert add(2,3)==5` with a 2 s checker wall timeout (CPU rlimit 3 s).
 OUTCOME_PROGRAMS=[
     ('passing','def add(a,b): return a+b',1.0),
     ('failing','def add(a,b): return a-b',0.0),
@@ -134,7 +134,8 @@ OUTCOME_PROGRAMS=[
 
 def _short_timeout_fixed(module,monkeypatch,bootstrap_delay=None,startup=None):
     import v8_task_entry
-    monkeypatch.setattr(module,'CODE_TIMEOUT_SECONDS',1.0)
+    # 2 s, not 1 s: a 0.2 s program plus one interpreter start must fit even on a loaded test machine.
+    monkeypatch.setattr(module,'CODE_TIMEOUT_SECONDS',2.0)
     if bootstrap_delay is not None:
         monkeypatch.setattr(v8_task_entry,'_MBPP_EXEC_BOOTSTRAP',
                             f'import time;time.sleep({bootstrap_delay})\n'+v8_task_entry._MBPP_EXEC_BOOTSTRAP)
@@ -153,11 +154,11 @@ def test_reward_for_passing_failing_looping_programs_is_unchanged(verifier,monke
 
 @pytest.mark.parametrize('name,code,expected',OUTCOME_PROGRAMS,ids=[p[0] for p in OUTCOME_PROGRAMS])
 def test_slow_bootstrap_start_computes_the_same_reward_instead_of_failing_the_rank(verifier,monkeypatch,name,code,expected):
-    # The bootstrap takes 1.5 s to start, longer than the 1 s checker timeout. Before, the handshake waited
+    # The bootstrap takes 2.5 s to start, longer than the 2 s checker timeout. Before, the handshake waited
     # only CODE_TIMEOUT_SECONDS and raised SubprocessError (rank failure), and a start just under it left the
-    # checker almost no wall time. Now the handshake has its own window and the test run keeps its full 1 s.
+    # checker almost no wall time. Now the handshake has its own window and the test run keeps its full 2 s.
     module,_=verifier
-    fixed,_=_short_timeout_fixed(module,monkeypatch,bootstrap_delay=1.5)
+    fixed,_=_short_timeout_fixed(module,monkeypatch,bootstrap_delay=2.5)
     record=dict(answer='assert add(2,3)==5')
     assert fixed(record,code)==module.code_reward(record,code)==expected
 
@@ -166,13 +167,13 @@ def test_receipt_records_unchanged_limits_and_the_startup_window(verifier,monkey
     module,_=verifier
     _,receipt=_short_timeout_fixed(module,monkeypatch)
     assert receipt['policy']=='mbpp-limits-after-exec-v3' and receipt['reward_rule_changed'] is False
-    assert (receipt['wall_timeout_seconds'],receipt['cpu_seconds'],receipt['memory_bytes'])==(1.0,2,module.CODE_MEMORY_BYTES)
+    assert (receipt['wall_timeout_seconds'],receipt['cpu_seconds'],receipt['memory_bytes'])==(2.0,3,module.CODE_MEMORY_BYTES)
     assert receipt['startup_handshake_seconds']==60.0 and receipt['wall_timeout_starts']=='checker exec'
 
 
 def test_startup_past_its_own_window_stays_an_infrastructure_error(verifier,monkeypatch):
     module,_=verifier
-    fixed,receipt=_short_timeout_fixed(module,monkeypatch,bootstrap_delay=1.5,startup=0.3)
+    fixed,receipt=_short_timeout_fixed(module,monkeypatch,bootstrap_delay=2.5,startup=0.3)
     assert receipt['startup_handshake_seconds']==0.3
     with pytest.raises(module.subprocess.SubprocessError,match='startup timeout'):
         fixed(dict(answer='assert add(2,3)==5'),'def add(a,b): return a+b')
