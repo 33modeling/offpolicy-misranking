@@ -285,3 +285,38 @@ def test_reserve_off_restores_plain_spill(tmp_path,monkeypatch):
         assert not finish(children,stop)
     finally:
         release_all(tmp_path);finish(children,stop,timeout=5)
+
+
+def test_reserve_nodes_share_an_inspection_while_a_first_cohort_task_is_blocked_for_good(tmp_path,monkeypatch):
+    """A task blocked for good (failure cap) gives the same answer on every node, so the reserve nodes reuse one
+    inspection instead of each inspecting the whole queue under its control lock on every poll (11-16 lock storm)."""
+    from test_srgc_v8_idle_1116 import Actor,queue,node_rows,start as start_thread
+    from test_srgc_v8_sequential_cohorts import events
+    full_name,next_name='qwen_mbpp','olmo_math'
+    monkeypatch.setattr(nodes,'SPILL_STALL_SECONDS',.3)
+    full=queue(tmp_path,Actor(tmp_path,full_name,3));queue(tmp_path,Actor(tmp_path,next_name,2))
+    paths=sorted(full.root.glob('jobs/*.json'));held=[]
+    for path in paths[:2]:   # two tasks run on other nodes
+        lease=nodes.Lock(full.root/'leases'/(path.stem+'.lock'));assert lease.acquire();held.append(lease)
+    job=nodes.read(paths[2]);job['state']='failed'
+    job['attempts']=[dict(id=f'f{i}',outcome='failed',exit_code=1,error='task exit=1; output verified=False',
+                          host='elsewhere',gpus=['0'],worker='elsewhere.1',started_at=1.0+i,ended_at=2.0+i)
+                     for i in range(nodes.MAX_ATTEMPTS+2)]
+    nodes.atomic(paths[2],job)
+    inspections={full_name:0,next_name:0};original=nodes.Pool.tick
+    def counted(self,*args,**kwargs):
+        inspections[self.binding['cohort']]+=1;return original(self,*args,**kwargs)
+    monkeypatch.setattr(nodes.Pool,'tick',counted)
+    stop=threading.Event()
+    threads=[start_thread(node_rows(tmp_path,2),f'node{n}',stop,.05) for n in range(4)]
+    try:
+        assert until(lambda:len([r for r in events(tmp_path) if r['stage']=='execute'])==2,30)
+        time.sleep(12)   # past the reserve warm-up
+        before=dict(inspections);time.sleep(3);after=dict(inspections)
+        assert sum(s.get('state')=='WAIT_RESERVE' for s in statuses(tmp_path))==2
+    finally:
+        stop.set()
+        for t in threads:t.join(10)
+        for lease in held:lease.close()
+    assert after[full_name]-before[full_name]<=4,(before,after)
+    assert len(nodes.read(paths[2])['attempts'])==nodes.MAX_ATTEMPTS+2   # the blocked task was not started

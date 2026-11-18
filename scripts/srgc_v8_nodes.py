@@ -1484,7 +1484,7 @@ class Pool:
                 return 'waiting',None
             raise ValueError('No tasks produced for '+phase+'; refusing to declare an empty experiment complete')
         pending=[];all_done=True;active=False;failed=[];later=False
-        leased=native_count=dependencies=retry_wait=0;self.observed_leases=[]
+        leased=native_count=dependencies=retry_wait=place_failed=0;self.observed_leases=[]
         for path,job in jobs:
             lease=Lock(self.root/'leases'/(path.stem+'.lock'))
             if not lease.acquire():
@@ -1506,7 +1506,11 @@ class Pool:
                     # were checked; never interrupt a live task or discard a result.
                     job['state']='failed';atomic(path,job)
                 if not self.retryable(job,state=state):
-                    if job['state']=='failed':failed.append(path.stem)
+                    if job['state']=='failed':
+                        failed.append(path.stem)
+                        # Blocked for good is the same answer on every node; anything else (a crash place, a retry
+                        # delay, no automatic retry here) may differ on another node and is never shared.
+                        place_failed+=not (native_failure_blocks(job) or self.retry_limit_reached(job))
                     if self.retry_later(job,state):
                         later=True   # retry_wait: this GPU set may run it after its retry time (not a crash place)
                         retry_wait+=not native_failure_blocks(job,None if getattr(self,'readmitted',False) else self.place())
@@ -1515,7 +1519,7 @@ class Pool:
                 pending.append((path,job))
             finally:lease.close()
         self.observation=dict(checked_at=time.time(),phase=phase,ready=len(pending),leased=leased,
-                              native_busy=native_count,dependencies=dependencies,failed=len(failed),
+                              native_busy=native_count,dependencies=dependencies,failed=len(failed),place_failed=place_failed,
                               recovery_wait=later,retry_wait=retry_wait,planning_error=base_error,deferred_budget=deferred_base,
                               planning_errors=(state.get('ready_side_work') or {}).get('planning_errors'),
                               unsealed_plan=all_done and not sealed)
@@ -2038,10 +2042,13 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
     def share_scan(index,pool,scan,action,offer):
         if not cohort_order or SCAN_SHARE_SECONDS<=0 or action not in ('ready','waiting') or getattr(scan,'marks',None) is None:return
         observation=dict(getattr(pool,'observation',{}) or {})
-        # 'waiting' is shared only when it holds for every node: failed tasks and recovery waits depend on the
-        # inspecting node's place. Running tasks are shared with their lease names; a reader inspects afresh as
-        # soon as one of those leases is free (a dead node frees its lease without changing any queue file).
-        if action=='waiting' and any(observation.get(k) for k in ('ready','metadata_error','recovery_wait','failed')):return
+        # 'waiting' is shared only when it holds for every node: failed tasks that are not blocked for good and
+        # recovery waits depend on the inspecting node's place. Tasks blocked for good are the same everywhere and
+        # are shared (else every idle node re-inspects the whole queue each poll, the 11-16 lock storm). Running
+        # tasks are shared with their lease names; a reader inspects afresh as soon as one of those leases is free
+        # (a dead node frees its lease without changing any queue file).
+        if action=='waiting' and (any(observation.get(k) for k in ('ready','metadata_error','recovery_wait','place_failed'))
+                                  or (observation.get('failed') and 'place_failed' not in observation)):return
         leases=list(getattr(pool,'observed_leases',None) or ()) if action=='waiting' else []
         if action=='waiting' and observation.get('leased') and len(leases)!=observation.get('leased'):return
         at=time.time()
@@ -2061,7 +2068,8 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
             used_shares[index]=row['at'];return 'ready',row['offer'],row
         if row.get('action')=='waiting' and row.get('marks') is not None and row['marks']==queue_marks(pool):
             observation=row.get('observation') or {}
-            if any(observation.get(k) for k in ('recovery_wait','failed')):return None   # written by an older node
+            if observation.get('recovery_wait') or observation.get('place_failed'):return None
+            if observation.get('failed') and 'place_failed' not in observation:return None   # written by an older node
             keys=row.get('leased_keys') or []
             if observation.get('leased') and len(keys)!=observation.get('leased'):return None
             for key in keys:   # every task seen running must still hold its lease
