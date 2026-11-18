@@ -637,6 +637,9 @@ sh scripts/run_v8_nodes.sh
 - 새 코드가 있으면 그 launch의 hold 파일(`code-update-hold.json`)을 쓴다. 노드는 새 작업을 받지 않고 상태를 `WAIT_UPDATE`로 표시한다.
   실행 중인 작업은 멈추지 않는다. 작업이 끝나고 작업 프로세스와 배정·preflight·결과 기록 상태가 모두 없으면 노드를 정지하고,
   fast-forward한 뒤 새 코드로 다시 시작한다. 이전에는 연속 두 번의 10분 idle 확인이 필요해 바쁜 노드는 갱신되지 않았다.
+- 재시작 전에 노드가 hold 뒤에 쓴 `WAIT_UPDATE` 상태 기록이 있어야 한다. 노드는 hold 때문에 작업을 받지 않은 루프 한 바퀴를 마친 뒤에만,
+  그리고 CPU 단계가 진행 중이지 않을 때만 이 기록을 쓴다. 그래서 hold 직전에 시작한 작업 배정·CPU 단계·GPU 재검사는 끊기지 않는다.
+- 이 노드에서 손으로 `git pull`을 했거나 다른 노드와 같은 checkout을 써서 HEAD가 이미 바뀐 경우도 새 코드로 보고 같은 방식으로 다시 시작한다.
 - hold는 그 supervisor가 살아 있을 때만 유효하다. supervisor가 사라진 child는 hold를 무시하고 계속 작업을 받는다.
 - 노드 자동 재실행: child가 rc 1로 끝난 이유가 다음 둘 중 하나면 supervisor가 같은 명령으로 다시 띄운다.
   `EXIT: ... task inspection did not finish`(검사 시간 초과로 큐 잠금을 풀려고 종료), 그리고 모든 작업이 실패 상한에 걸려 할 일이 없는 종료

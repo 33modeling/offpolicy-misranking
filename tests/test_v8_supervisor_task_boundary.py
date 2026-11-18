@@ -270,3 +270,87 @@ def test_update_hold_is_ignored_without_its_supervisor(tmp_path):
     assert nodes.update_hold({'V8_UPDATE_HOLD': str(hold)}).startswith('code update pending (abcdef0)')
     hold.write_text(json.dumps(dict(target='abcdef0123', supervisor_pid=os.getppid() + 999999)))
     assert nodes.update_hold({'V8_UPDATE_HOLD': str(hold)}) is None, 'an orphaned child must not idle forever'
+
+
+def test_hold_is_acknowledged_only_after_a_pending_cpu_stage_ends(tmp_path, monkeypatch):
+    """Real node loop, CPU fixture: while a CPU stage runs in the runtime actor the node never publishes WAIT_UPDATE
+    (the supervisor's restart signal), and it claims no task while the hold exists."""
+    import threading
+    sys.path.insert(0, str(ROOT / 'tests'))
+    from scripts import srgc_v8_nodes as nodes
+    from test_srgc_v8_sequential_cohorts import pairs, events
+    hold = tmp_path / 'hold.json'
+    hold.write_text(json.dumps(dict(target='abcdef0123', supervisor_pid=os.getppid(), at=time.time())))
+    monkeypatch.setenv('V8_UPDATE_HOLD', str(hold))
+    rows = pairs(tmp_path, cohorts=('qwen_mbpp',))
+    release = threading.Event()
+    for _, runtime in rows:
+        runtime.independent_startup = True; runtime.pending_barrier = None
+        def begin(action, fd, stop, device_fds, runtime=runtime):
+            runtime.barrier(action, fd, stop, device_fds); runtime.pending_barrier = (action, os.dup(fd))
+        def poll(stop, runtime=runtime):
+            if runtime.pending_barrier is None or not release.is_set():
+                return None
+            action, held = runtime.pending_barrier; runtime.pending_barrier = None
+            return action, held, None
+        runtime.begin_barrier = begin; runtime.poll_barrier = poll
+    stop = threading.Event(); result = []
+    thread = threading.Thread(target=lambda: result.append(nodes.worker_loop_many(
+        rows, 'cpu-node', stop, poll=.02, cohort_order=('qwen_mbpp',))))
+    thread.start()
+    status = tmp_path / '.v8-worker-status' / (nodes.digest('cpu-node') + '.json')
+    seen = []
+    try:
+        assert wait_for(lambda: rows[0][1].pending_barrier is not None, 30)
+        end = time.monotonic() + 2
+        while time.monotonic() < end:
+            if status.exists():
+                seen.append(json.loads(status.read_text())['state'])
+            time.sleep(.02)
+        assert seen and 'WAIT_UPDATE' not in seen, seen
+        release.set()
+        assert wait_for(lambda: status.exists() and json.loads(status.read_text())['state'] == 'WAIT_UPDATE', 30)
+        time.sleep(.5)
+        assert not [e for e in events(tmp_path) if e['stage'] == 'execute'], 'a task was claimed under the hold'
+        hold.unlink()
+        thread.join(60)
+        assert result == [0]
+        runs = [e['task'] for e in events(tmp_path) if e['stage'] == 'execute']
+        assert len(runs) == len(set(runs)) == 4
+    finally:
+        stop.set(); release.set(); thread.join(10)
+
+
+def test_restart_needs_the_nodes_wait_update_record_after_the_hold(tmp_path):
+    sys.path.insert(0, str(ROOT / 'scripts'))
+    import v8_supervisor as sup
+    from scripts import srgc_v8_nodes as nodes
+    rows = {4242: dict(env={sup.TAG: 'L', 'V8_ROOT': str(tmp_path)}, kind=None, ppid=1)}
+    folder = tmp_path / '.v8-worker-status'; folder.mkdir()
+    path = folder / (nodes.digest('h.4242') + '.json')
+    def write(state, at):
+        path.write_text(json.dumps(dict(worker='h.4242', launch_id='L', state=state, at=at)))
+    write('CHECKING', 200.0)   # e.g. a GPU re-admission that started after the hold
+    assert not sup.node_acknowledged(rows, 'L', tmp_path, 100.0, host='h')
+    write('WAIT_UPDATE', 50.0)  # an older hold's record
+    assert not sup.node_acknowledged(rows, 'L', tmp_path, 100.0, host='h')
+    write('WAIT_UPDATE', 150.0)
+    assert sup.node_acknowledged(rows, 'L', tmp_path, 100.0, host='h')
+    assert not sup.node_acknowledged(rows, 'other', tmp_path, 100.0, host='h')
+
+
+def test_checkout_moved_under_the_supervisor_counts_as_an_update(checkout):
+    tmp_path, work, dev, base = checkout
+    sys.path.insert(0, str(ROOT / 'scripts'))
+    import v8_supervisor as sup
+    updates = sup.Updates(work, 3600)
+    try:
+        assert updates.check() is None
+        push_v2(dev)
+        git(work, 'pull', '-q', '--ff-only')   # manual pull (or another node on a shared checkout)
+        head = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=work, capture_output=True, text=True).stdout.strip()
+        assert updates.check() == head and head != updates.start
+        (work / 'scripts' / 'version.txt').write_text('local edit\n')
+        assert updates.check() is None, 'a checkout with local edits is never taken'
+    finally:
+        updates.closed.set(); updates.kick()

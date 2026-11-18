@@ -1967,6 +1967,7 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                         'primary_finalize':'extension','finalize':'complete'}[action]
         atomic(pool.root/'state.json',state)
         print(f'[{worker}] {cohort(pool)}: CPU stage finished; phase={state["phase"]}',flush=True)
+    def barrier_pending():return any(getattr(r,'pending_barrier',None) is not None for _,r in pairs)
     def report_wait(active,claim_ok,busy):
         candidates=[i for i,(p,_) in enumerate(pairs) if cohort(p)==active] if cohort_order else [i for i in range(len(pairs)) if i not in terminal]
         if not candidates:return
@@ -1983,7 +1984,8 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
         pool,runtime=pairs[i];name=cohort(pool)
         facts=dict(getattr(pool,'observation',{}));facts['order']=list(cohort_order)
         if held_elsewhere:facts['nothing_claimable_in']=held_elsewhere
-        if not claim_ok:diagnostic.publish('WAIT_UPDATE' if str(busy).startswith('code update pending') else 'WAIT_GPU',name,str(busy),**facts)
+        if not claim_ok and not update_held(busy):diagnostic.publish('WAIT_GPU',name,str(busy),**facts)
+        elif not claim_ok and not barrier_pending():diagnostic.publish('WAIT_UPDATE',name,str(busy),**facts)
         elif i in scans:
             detail=getattr(runtime,'verification_stage',scans[i].kind) if scans[i].kind=='node verification' else getattr(runtime,'inspection_stage',scans[i].kind)
             diagnostic.publish('CHECKING',name,detail+'; no GPU task assigned',**facts)
@@ -2579,7 +2581,11 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                 try:print(f'[v8] NODE {worker} '+idle_reason(),flush=True)
                 except Exception as exc:print(f'[v8] NODE {worker} IDLE (reason unavailable: {type(exc).__name__}: {exc})',flush=True)
         if not dispatched and not progressed:
-            if retry_at and len(terminal)==len(pairs):
+            if not claim_ok and update_held(busy) and not barrier_pending():
+                # The supervisor restarts this launch only after this record: written at the end of a loop pass that
+                # claimed nothing because of the hold, with no CPU stage and no GPU re-admission in flight.
+                diagnostic.publish('WAIT_UPDATE',active,str(busy),order=list(cohort_order))
+            elif retry_at and len(terminal)==len(pairs):
                 first=min(retry_at,key=lambda i:retry_at[i]['due'])
                 diagnostic.publish('WAIT_RETRY',cohort(pairs[first][0]),'NOT SERVING '+cohort(pairs[first][0])+' '+retry_text(first))
             else:report_wait(active,claim_ok,busy)
@@ -2981,6 +2987,12 @@ PREFLIGHT_RETRY_SECONDS=float(os.environ.get('V8_PREFLIGHT_RETRY_SECONDS','120')
 PREFLIGHT_CHECK=node_preflight  # module attribute so CPU tests can substitute the node
 
 
+UPDATE_HOLD_PREFIX='code update pending ('
+
+
+def update_held(busy):return isinstance(busy,str) and busy.startswith(UPDATE_HOLD_PREFIX)
+
+
 def update_hold(environment=None):
     """Pushed code waits for this node's next task boundary (11-18): while the supervisor's hold file exists, this
     launch takes no new task; the running task is never touched. Ignored once that supervisor is gone (an orphaned
@@ -2990,7 +3002,7 @@ def update_hold(environment=None):
     try:record=json.loads(Path(path).read_text())
     except (OSError,ValueError):return None
     if not isinstance(record,dict) or record.get('supervisor_pid')!=os.getppid():return None
-    return ('code update pending ('+str(record.get('target','?'))[:7]+'): this node takes no new task; '
+    return (UPDATE_HOLD_PREFIX+str(record.get('target','?'))[:7]+'): this node takes no new task; '
             'the V8 supervisor restarts it with the pushed code now that no task is running here')
 
 

@@ -197,6 +197,21 @@ def node_busy(rows,launch,base,host=None):
     return False
 
 
+def node_acknowledged(rows,launch,base,since,host=None):
+    """The launch's dispatcher published WAIT_UPDATE at or after `since` (the hold's wall time): a whole loop pass
+    then claimed nothing because of the hold, with no CPU stage pending (srgc_v8_nodes). Without this record the
+    restart waits, so a claim, a CPU stage or a GPU re-admission that began just before the hold is never cut off."""
+    host=host or socket.gethostname()
+    owned={pid:row for pid,row in rows.items() if row['env'].get(TAG)==launch}
+    folders={Path(row['env']['V8_ROOT']) for row in owned.values() if row['env'].get('V8_ROOT')} or {Path(base)}
+    for folder in folders:
+        for pid in owned:
+            record=worker_status(folder,host+'.'+str(pid))
+            if (record and record.get('launch_id')==launch and record.get('state')=='WAIT_UPDATE'
+                    and record.get('at',0)>=since):return True
+    return False
+
+
 def relaunch_reason(console):
     """Why the node child exited with rc 1, when relaunching it is safe; None otherwise (configuration errors,
     BLOCKED input, a node that cannot serve the active cohort, shared queue failures, unknown exits)."""
@@ -215,19 +230,39 @@ def relaunch_reason(console):
 
 
 class Updates:
-    """Background `git fetch`: the newest fast-forward target, checked every interval and when kicked."""
-    def __init__(self,repo,interval,skip=None):
-        self.repo,self.interval,self.skip=repo,interval,skip
+    """Background `git fetch`: the newest fast-forward target, checked every interval and when kicked.
+
+    A checkout moved under this supervisor (a manual `git pull`, or a checkout shared by several nodes that another
+    node already fast-forwarded) also counts: this launch still runs the code it started with."""
+    def __init__(self,repo,interval,skip=None,run=subprocess.run):
+        self.repo,self.interval,self.skip,self.git=repo,interval,skip,run
+        self.start=self.head()
         self.target=None;self.kicked=threading.Event();self.closed=threading.Event()
         threading.Thread(target=self.run,daemon=True).start()
 
     def kick(self):self.kicked.set()
 
+    def head(self):
+        try:
+            if not (Path(self.repo)/'.git').exists():return None
+            code,value=_git(self.repo,self.git,'rev-parse','HEAD')
+            return value if not code and value else None
+        except (OSError,subprocess.SubprocessError):return None
+
+    def check(self):
+        target=pending_update(self.repo,self.git,skip=self.skip)
+        if target is None:
+            head=self.head()
+            try:clean=bool(head) and _clean(self.repo,self.git)
+            except (OSError,subprocess.SubprocessError):clean=False
+            if clean and self.start and head!=self.start and head!=self.skip:target=head
+        return target
+
     def run(self):
         while not self.closed.is_set():
             self.kicked.wait(self.interval);self.kicked.clear()
             if self.closed.is_set():return
-            self.target=pending_update(self.repo,skip=self.skip)
+            self.target=self.check()
 
 
 def main():
@@ -282,7 +317,7 @@ def main():
         threading.Thread(target=report,daemon=True).start()
         interval=update_interval();repo=Path(__file__).resolve().parents[1];host=socket.gethostname()
         updates=Updates(repo,interval,skip=os.environ.get('V8_SUPERVISOR_SKIP_UPDATE')) if interval else None
-        next_sample=0.0;was_busy=False;ran_task=False;held=None;held_at=0.0;settle=settle_seconds()
+        next_sample=0.0;was_busy=False;ran_task=False;held=None;held_at=0.0;held_wall=0.0;settle=settle_seconds()
         def clear_hold():
             try:hold.unlink()
             except OSError:pass
@@ -310,7 +345,8 @@ def main():
                     # The dispatcher takes no new task while this hold exists; the running task is never touched.
                     try:
                         hold.parent.mkdir(parents=True,exist_ok=True)
-                        tmp=hold.with_name(hold.name+'.tmp');tmp.write_text(json.dumps(dict(target=target,supervisor_pid=os.getpid(),at=time.time())))
+                        held_wall=time.time()
+                        tmp=hold.with_name(hold.name+'.tmp');tmp.write_text(json.dumps(dict(target=target,supervisor_pid=os.getpid(),at=held_wall)))
                         os.replace(tmp,hold);held=target;held_at=now
                         emit(f'[v8] pushed code {target[:7]} is ready; this node takes no new task and restarts with it '
                              +('when its running task ends (the task is not stopped)' if busy else 'now (no task running)'))
@@ -318,13 +354,15 @@ def main():
                         # Without the hold a claim could race the restart: no automatic update for this launch.
                         emit(f'[v8] cannot write the code-update hold {hold}: {exc}; automatic code update is off '
                              'for this launch',error=True);updates.closed.set();updates.kick();updates=None
-                elif target and not busy and now-held_at>=settle and not node_busy(table(),launch,root(env),host):
+                elif (target and not busy and now-held_at>=settle and node_acknowledged(table(),launch,root(env),held_wall,host)
+                      and not node_busy(table(),launch,root(env),host)):
                     emit(f'[v8] task boundary: restarting this node with pushed code {target[:7]} '
                          '(no task running; queue and checkpoints untouched)')
                     remaining=stop(select(table(),tag=launch),tag=launch,grace=stop_grace())
                     if remaining:emit('[v8] code-update restart: processes still in kernel wait: '+str(remaining),error=True)
                     else:
                         moved=fast_forward(repo,target)
+                        if not moved and updates.head()==target:moved=(updates.start or '?',target)  # checkout already there
                         if moved:emit(f'[v8] code updated {moved[0][:7]} -> {moved[1][:7]}; restarting this node with it')
                         else:emit(f'[v8] code update to {target[:7]} was refused by git (fast-forward only); '
                                   'restarting on the current code; this commit is not tried again by this node',error=True)
