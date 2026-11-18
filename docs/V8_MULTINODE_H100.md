@@ -658,3 +658,26 @@ sh scripts/run_v8_nodes.sh
   이어 간다. 고친 코드에서 난 충돌(`periodic_stack_dump=cancelled`)과 `V8_PERIODIC_STACK_DUMP=1`로 켠 dump 충돌은 전처럼 센다.
   작업당 환급은 최대 20회이므로 같은 작업이 끝없이 다시 시작하지 않는다.
 - 새 attempt마다 `task_entry_sha256`·`periodic_stack_dump`를 기록한다. 학습·평가 설정, 예산, 재시도 상한 값은 바꾸지 않았다.
+
+### 작업 경계에서 새 코드 적용과 노드 자동 재실행 (2026-11-18)
+
+기본 동작이며 환경변수나 인자 없이 적용된다. 학습·평가 설정, 예산, 재시도 상한은 바꾸지 않는다.
+
+- 코드 확인: supervisor는 120초마다(`V8_AUTO_UPDATE_SECONDS`, 0이면 끔) `git fetch`를 하고, 이 노드의 작업이 끝난 직후에도 한 번 더 확인한다.
+  로컬 수정이 있거나 갈라진 checkout이면 적용하지 않는다. 적용은 fast-forward만 한다.
+- 새 코드가 있으면 그 launch의 hold 파일(`code-update-hold.json`)을 쓴다. 노드는 새 작업을 받지 않고 상태를 `WAIT_UPDATE`로 표시한다.
+  실행 중인 작업은 멈추지 않는다. 작업이 끝나고 작업 프로세스와 배정·preflight·결과 기록 상태가 모두 없으면 노드를 정지하고,
+  fast-forward한 뒤 새 코드로 다시 시작한다. 이전에는 연속 두 번의 10분 idle 확인이 필요해 바쁜 노드는 갱신되지 않았다.
+- 재시작 전에 노드가 hold 뒤에 쓴 `WAIT_UPDATE` 상태 기록이 있어야 한다. 노드는 hold 때문에 작업을 받지 않은 루프 한 바퀴를 마친 뒤에만,
+  그리고 CPU 단계가 진행 중이지 않을 때만 이 기록을 쓴다. 그래서 hold 직전에 시작한 작업 배정·CPU 단계·GPU 재검사는 끊기지 않는다.
+- 이 노드에서 손으로 `git pull`을 했거나 다른 노드와 같은 checkout을 써서 HEAD가 이미 바뀐 경우도 새 코드로 보고 같은 방식으로 다시 시작한다.
+- hold는 그 supervisor가 살아 있을 때만 유효하다. supervisor가 사라진 child는 hold를 무시하고 계속 작업을 받는다.
+- 노드 자동 재실행: child가 rc 1로 끝난 이유가 다음 둘 중 하나면 supervisor가 같은 명령으로 다시 띄운다.
+  `EXIT: ... task inspection did not finish`(검사 시간 초과로 큐 잠금을 풀려고 종료), 그리고 모든 작업이 실패 상한에 걸려 할 일이 없는 종료
+  (`STOPPED: no eligible work remains beside failed tasks`, 또는 `STOPPED: ... is not complete`와 `N task(s) failed; no independent ready/running work remains`).
+  대기는 60초에서 시작해 작업 없이 재실행될 때마다 두 배가 되고 최대 1800초다(`V8_RELAUNCH_SECONDS`, 0이면 끔). 작업을 한 번이라도 실행하면 다시 60초부터 센다.
+  재실행 전에 받을 새 코드가 있으면 먼저 fast-forward한다.
+- 재실행하지 않는 종료: 입력 오류(`planning_errors`), 공유 큐의 입력·설정 실패, 이 노드에 runtime이 없는 `BLOCKED`, 현재 cohort를 처리할 수 없는 `EXIT`, 시작 오류(`V8 startup`, `V8 queue error`).
+- 재실행은 작업·실패 횟수·checkpoint를 초기화하지 않는다. 실패 상한에 걸린 작업은 재실행 뒤에도 다시 돌지 않는다.
+- 자동 재시작(코드 갱신, 재실행)은 `--new-queue`를 빼고 같은 명령을 다시 띄운다. 새 큐는 처음 한 번만 만든다.
+- 이 기능은 이 수정 이후 시작한 노드부터 적용된다. e34e750 이후 supervisor로 idle 상태인 노드는 스스로 갱신된다. 작업 중인 예전 노드는 작업이 끝난 뒤 한 번 `git pull && sh scripts/run_v8_nodes.sh stop && sh scripts/run_v8_nodes.sh`로 다시 시작한다.

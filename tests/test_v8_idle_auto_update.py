@@ -12,7 +12,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = ('v8_supervisor.py', 'v8_processes.py', 'v8_probe.py', 'v8_control_output.py', 'v8_progress_text.py')
-BOOT = '''import os,subprocess,sys,time
+BOOT = '''import hashlib,json,os,socket,subprocess,sys,time
 from pathlib import Path
 here=Path(__file__).resolve().parent
 version=(here/'version.txt').read_text().strip()
@@ -21,7 +21,15 @@ if os.environ.get('FAKE_TASK'):
     # a training child of this launch (v8_processes marks cluster_child.py as a task)
     (here/'cluster_child.py').write_text('import time\\ntime.sleep(60)\\n')
     subprocess.Popen([sys.executable,str(here/'cluster_child.py')])
-time.sleep(60)
+# Like the real node loop: once the supervisor's hold exists, a loop pass that claims nothing records WAIT_UPDATE.
+worker=socket.gethostname()+'.'+str(os.getpid())
+status=Path(os.environ['V8_ROOT'])/'.v8-worker-status'/(hashlib.sha256(json.dumps(worker).encode()).hexdigest()+'.json')
+end=time.time()+60
+while time.time()<end:
+    if os.path.exists(os.environ.get('V8_UPDATE_HOLD','')) and not status.exists():
+        status.parent.mkdir(parents=True,exist_ok=True)
+        status.write_text(json.dumps(dict(worker=worker,launch_id=os.environ['V8_LAUNCH_ID'],state='WAIT_UPDATE',at=time.time())))
+    time.sleep(.05)
 '''
 
 
