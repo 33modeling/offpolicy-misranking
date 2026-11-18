@@ -85,6 +85,7 @@ def until(condition,seconds):
 def test_idle_nodes_do_not_reinspect_a_full_cohort_on_every_poll(tmp_path,monkeypatch):
     """Four nodes, the first cohort full on other nodes, three ready tasks next: three claim them, one has
     nothing. Before: every node re-inspected both whole queues every poll under their control locks."""
+    monkeypatch.setattr(nodes,'ACTIVE_RESERVE',0)   # held leases stand for busy nodes; spill mechanics only
     monkeypatch.setattr(nodes,'SPILL_STALL_SECONDS',.3)
     full=queue(tmp_path,Actor(tmp_path,FULL));queue(tmp_path,Actor(tmp_path,NEXT,3))
     held=hold_all_leases(full)
@@ -111,6 +112,7 @@ def test_idle_nodes_do_not_reinspect_a_full_cohort_on_every_poll(tmp_path,monkey
 def test_spare_nodes_claim_from_a_recent_inspection_of_another_node_once_each(tmp_path,monkeypatch):
     """The next cohort's ready offer, found by another node, is claimed through the same claim_offered()
     revalidation under its control lock, without a whole-DAG inspection per node; each task exactly once."""
+    monkeypatch.setattr(nodes,'ACTIVE_RESERVE',0)   # held leases stand for busy nodes; spill mechanics only
     monkeypatch.setattr(nodes,'SPILL_STALL_SECONDS',.3)
     full=queue(tmp_path,Actor(tmp_path,FULL));nxt=queue(tmp_path,Actor(tmp_path,NEXT,2))
     held=hold_all_leases(full)
@@ -141,6 +143,7 @@ def test_spare_nodes_claim_from_a_recent_inspection_of_another_node_once_each(tm
 
 def test_status_of_a_spilled_node_names_the_cohort_it_works_on_and_what_it_serves(tmp_path,monkeypatch):
     """Before: 'WAIT_QUEUE_LOCK qwen_mbpp' for minutes while the node was verifying/starting the next cohort."""
+    monkeypatch.setattr(nodes,'ACTIVE_RESERVE',0)   # held leases stand for busy nodes; spill mechanics only
     monkeypatch.setattr(nodes,'SPILL_STALL_SECONDS',.3)
     full=queue(tmp_path,Actor(tmp_path,FULL));queue(tmp_path,Actor(tmp_path,NEXT,1))
     held=hold_all_leases(full)

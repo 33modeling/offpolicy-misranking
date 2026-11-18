@@ -627,3 +627,31 @@ sh scripts/run_v8_nodes.sh
 - SIGABRT(-6) 가 `crash_class=nccl_watchdog_abort` 이면 대개 다른 rank 의 먼저 난 충돌·멈춤 때문에 NCCL watchdog 이 프로세스를
   끝낸 것이다(`TORCH_NCCL_ASYNC_ERROR_HANDLING=1`). 같은 작업의 다른 rank 의 SIGSEGV 가 원인 쪽이다.
 - 이 점검과 기록은 SIGSEGV 원인 수정이 아니다. 원인은 다음 충돌의 `crash_frames`·`env`·`preflight` 로 확인한다.
+
+### 첫 조합 우선: 예비 노드·30분 stack dump 충돌 환급 (2026-11-18)
+
+사용자 지시(11-18): qwen_mbpp가 중간에 자주 실패·종료되고 노드가 다른 조합으로 넘어간다. qwen_mbpp를 먼저 끝내야 한다.
+기본 동작이며 환경 변수나 인자는 필요 없다. 실행 중인 작업은 멈추지 않는다.
+
+- 예비 노드: 순서상 첫 미완료 조합(현재 qwen_mbpp)에 다른 노드에서 실행 중이거나 준비된 작업이 있거나, 이 GPU 묶음이 재시도
+  시각 뒤에 받을 작업이 있으면, 그 조합의 idle 노드 중 이름순 앞의 2개(`V8_ACTIVE_RESERVE`, 기본 2, 0이면 끔)는 다음 조합으로
+  넘어가지 않는다. 노드가 죽어 lease가 풀린 작업이나 부모 checkpoint가 나온 자식 작업을 몇 초 안에 받는다.
+  idle 노드는 heartbeat가 30초 이내이고 작업이 없는 노드만 센다. 예비를 넘는 노드는 전처럼 다음 조합으로 간다.
+  첫 조합에 실행 중인 작업도 재시도 대기도 없으면 전과 같다. 충돌 장소라서 이 노드가 받을 수 없는 실패 작업은
+  예비 이유가 되지 않는다(다른 노드가 준비된 작업으로 본다). status는 `WAIT_RESERVE`다.
+- 첫 조합의 노드 검증·초기화·작업 검사가 끝나기 전에는 다음 조합으로 넘어가는 30초 타이머(`V8_SPILL_STALL_SECONDS`)를
+  시작하지 않고, 검사 중에는 10초 유예(`V8_SPILL_LOCK_GRACE`)와 관계없이 다음 조합 작업을 claim하지 않는다.
+  검사 자체의 시간 상한은 그대로다.
+- 다른 노드의 검사 결과 공유(`.v8-scan-share`): 실패 작업이나 재시도 대기가 있는 'waiting' 결과는 노드 위치에 따라 다르므로
+  공유하지 않는다. 실행 중 작업이 있는 결과는 그 lease 이름과 함께 공유하고, 받는 노드는 그 lease가 하나라도 풀렸으면
+  직접 다시 검사한다.
+- 첫 조합의 노드별 포기(give-up) 재시도 간격은 최대 120초다. 다른 조합은 600초부터 두 배씩, 최대 3600초 그대로다.
+- 30분 stack dump 충돌 환급(`periodic-stack-dump-crash-refund-v1-20261118`): 9b31912 이전 task entry의
+  `faulthandler.dump_traceback_later(1800)`가 낸 SIGSEGV는 실패 횟수·native 충돌 수·충돌 장소·GPU 묶음 격리
+  (`NODE_NATIVE_FAILURE_LIMIT`)에 세지 않는다. 판정 조건은 SIGSEGV가 시작 후 30분 이후에 났고, 다음 중 하나다.
+  attempt의 `periodic_stack_dump=armed`(task entry에 취소 코드가 없음), 이 기록이 없는 attempt를 수정 전 controller가 띄움,
+  rank stack 파일이 `Timeout (0:` dump로 끝남. attempt 기록·영수증·로그는 지우지 않고 attempt에 `periodic_dump_refund`를 더한다.
+  노드 합류 때와 5분마다(`V8_REFUND_CHECK_SECONDS`) 큐 전체에 적용하며, 막혔던 작업은 `pending`으로 돌아가 마지막 checkpoint부터
+  이어 간다. 고친 코드에서 난 충돌(`periodic_stack_dump=cancelled`)과 `V8_PERIODIC_STACK_DUMP=1`로 켠 dump 충돌은 전처럼 센다.
+  작업당 환급은 최대 20회이므로 같은 작업이 끝없이 다시 시작하지 않는다.
+- 새 attempt마다 `task_entry_sha256`·`periodic_stack_dump`를 기록한다. 학습·평가 설정, 예산, 재시도 상한 값은 바꾸지 않았다.

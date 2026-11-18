@@ -59,8 +59,9 @@ def test_diagnostic_heartbeat_does_not_reset_same_state_or_invent_model_progress
 
 
 @pytest.mark.parametrize('mode,expected',[('parent','WAIT_CHECKPOINT'),('leased','WAIT_OTHER_WORKERS'),('gpu','WAIT_GPU')])
-def test_worker_logs_observed_wait_reason_and_only_then_serves_later_cohort(tmp_path,capsys,mode,expected):
+def test_worker_logs_observed_wait_reason_and_only_then_serves_later_cohort(tmp_path,capsys,monkeypatch,mode,expected):
     from test_srgc_v8_sequential_cohorts import pairs,events
+    if mode=='leased':monkeypatch.setattr(nodes,'ACTIVE_RESERVE',0)   # held leases stand for busy nodes; spill only
     rows=pairs(tmp_path);pool,runtime=rows[0];pool.initialize()
     state=pool.queue_state();state['phase']='train';nodes.atomic(pool.root/'state.json',state)
     leases=[]

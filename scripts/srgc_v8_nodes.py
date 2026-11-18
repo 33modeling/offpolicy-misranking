@@ -46,6 +46,12 @@ SPILL_STALL_SECONDS = float(os.environ.get('V8_SPILL_STALL_SECONDS', '30'))
 # revalidation under the control lock (no claim rule changes), and 'nothing ready' with unchanged
 # jobs/ and state.json is not inspected again until it expires.
 SCAN_SHARE_SECONDS = float(os.environ.get('V8_SCAN_SHARE_SECONDS', '60'))
+# 11-18 (user: 'qwen_mbpp 먼저 끝내'): while the first unfinished cohort has a task running on another node (or one
+# this node may retry after its delay), this many of its live idle nodes stay with it instead of spilling, so an
+# orphaned or newly ready task is claimed within seconds. Nodes beyond the reserve spill as before. 0 turns it off.
+try:ACTIVE_RESERVE = max(0, int(os.environ.get('V8_ACTIVE_RESERVE', '2')))
+except ValueError:ACTIVE_RESERVE = 2
+ACTIVE_GIVEUP_RETRY_CAP = 120.0   # seconds: a node-local give-up of the first unfinished cohort is retried this soon
 EVAL_NATIVE_RECOVERY = 'evaluation-sigsegv-recovery-v1'
 # User 11-13 '자꾸 에러 난거 먼저 처리해서 다시 시작하게 해야지': every task that was BLOCKED (failure cap or native
 # crashes on two places) when this policy first met it gets ONE fresh failure budget, counted from its last
@@ -57,6 +63,18 @@ USER_RETRY_GRANT = 'user-retry-blocked-v1-20261113'
 # budget, once per task, from a node whose checkout carries that fix (user: '새노드 잡히면 알아서 복구되면서 시작').
 WATCHDOG_FIX_GRANT = 'periodic-stack-dump-sigsegv-fixed-v1-20261117'
 GRANT_POLICIES = (USER_RETRY_GRANT, WATCHDOG_FIX_GRANT)
+# 11-18: a SIGSEGV from that periodic dump is not a task or GPU fault. Such an attempt keeps its record and gets a
+# periodic_dump_refund receipt; it then counts toward no failure cap, crash place or GPU-set quarantine, so blocked
+# tasks resume from their checkpoints (user: 'qwen_mbpp 먼저 끝내'). Evidence, SIGSEGV at least 30 min after start:
+# the attempt's task entry armed the dump, or it was launched before the fix by a controller that predates it, or its
+# rank stack file ends in a 'Timeout (0:' dump. Crashes on fixed code count as before; at most
+# PERIODIC_DUMP_REFUND_LIMIT refunds per task, so no task restarts forever.
+PERIODIC_DUMP_REFUND = 'periodic-stack-dump-crash-refund-v1-20261118'
+PERIODIC_DUMP_REFUND_LIMIT = 20
+PERIODIC_DUMP_SECONDS = 1800   # dump_traceback_later(1800, repeat=True) in the pinned child
+# srgc_v8_nodes.py at fc352ed..e34e750: its checkout's task entry cancels the dump (9b31912)
+FIXED_DUMP_CONTROLLERS = frozenset({'b6342f58767e056c08958b1028475e384df217e179f029c4295327d9a5eb6444'})
+REFUND_CHECK_SECONDS = float(os.environ.get('V8_REFUND_CHECK_SECONDS', '300'))
 NODE_NATIVE_FAILURE_LIMIT = 2
 # Node verification hashes this node's frozen trainer and inputs; on a shared volume with many nodes starting
 # together it takes minutes. It runs without the queue control.lock and has its own limit (user 11-11:
@@ -205,10 +223,16 @@ def failure_limit(value):
     return value if type(value) is int and value>0 else MAX_ATTEMPTS
 
 
+def dump_refunded(attempt):
+    """The attempt carries a periodic-dump crash refund receipt (kept as history, counted nowhere)."""
+    return isinstance(attempt,dict) and (attempt.get('periodic_dump_refund') or {}).get('policy')==PERIODIC_DUMP_REFUND
+
+
 def counted_failures(job):
     """Original SRGC accounting: intentional interruptions and node-local launch faults are refunded."""
     count=0
     for attempt in job.get('attempts',[]):
+        if dump_refunded(attempt):continue
         outcome=attempt.get('outcome')
         if outcome is None and attempt.get('exit_code') not in (None,0,75):outcome='failed'  # pre-outcome records
         count+=outcome=='failed'
@@ -219,7 +243,7 @@ def misclassified_stops(job):
     """Recognize the old whole-history SIGSEGV check; retain every original field."""
     prior_native=False;corrected=[]
     for attempt in job.get('attempts',[]):
-        native=fatal_native_failure(dict(attempts=[attempt]))
+        native=native_signal(attempt)
         if (prior_native and not native and attempt.get('id') and attempt.get('outcome')=='failed'
                 and attempt.get('exit_code')==75 and not attempt.get('output_validation_error')
                 and not (attempt.get('child_failure') or {}).get('failures')
@@ -334,16 +358,72 @@ def native_failure_blocks(job,place=None):
     return bool(fatal_native_failure(dict(attempts=replay))) or counted_failures(dict(attempts=budget_attempts(job,replay)))>=1
 
 
-def fatal_native_failure(job):
-    """A native crash is not repaired by another identical torchrun invocation."""
-    for attempt in reversed(job.get('attempts',[])):
-        rc=attempt.get('exit_code')
-        if rc in (-4,-6,-7,-8,-11,132,134,135,136,139):
-            return dict(signal=-rc if rc<0 else rc-128,attempt=attempt.get('id'))
-        for failure in (attempt.get('child_failure') or {}).get('failures',[]):
-            if failure.get('signal') in (4,6,7,8,11):
-                return dict(signal=failure['signal'],attempt=attempt.get('id'))
+def native_signal(attempt):
+    """The attempt's native crash signal as recorded, refunded or not."""
+    rc=attempt.get('exit_code')
+    if rc in (-4,-6,-7,-8,-11,132,134,135,136,139):
+        return dict(signal=-rc if rc<0 else rc-128,attempt=attempt.get('id'))
+    for failure in (attempt.get('child_failure') or {}).get('failures',[]):
+        if isinstance(failure,dict) and failure.get('signal') in (4,6,7,8,11):
+            return dict(signal=failure['signal'],attempt=attempt.get('id'))
     return None
+
+
+def fatal_native_failure(job):
+    """A native crash is not repaired by another identical torchrun invocation.
+    Crashes refunded as periodic-dump SIGSEGVs (PERIODIC_DUMP_REFUND) are not counted."""
+    for attempt in reversed(job.get('attempts',[])):
+        if not isinstance(attempt,dict) or dump_refunded(attempt):continue
+        fault=native_signal(attempt)
+        if fault:return fault
+    return None
+
+
+def periodic_dump_evidence(root,job,attempt):
+    """Why this attempt's SIGSEGV came from the old 30-min periodic faulthandler dump, or None."""
+    if not isinstance(attempt,dict) or dump_refunded(attempt):return None
+    fault=native_signal(attempt)
+    if not fault or fault['signal']!=11:return None
+    started,ended=attempt.get('started_at'),attempt.get('ended_at')
+    if not all(isinstance(v,(int,float)) for v in (started,ended)) or ended-started<PERIODIC_DUMP_SECONDS-10:
+        return None   # the dump first fires 30 min after the child starts
+    mode=attempt.get('periodic_stack_dump')
+    if mode=='armed':return dict(rule='task_entry_armed_periodic_dump',task_entry_sha256=attempt.get('task_entry_sha256'))
+    if mode is None and attempt.get('controller_sha256') not in FIXED_DUMP_CONTROLLERS:
+        return dict(rule='launched_by_controller_before_periodic_dump_fix',controller_sha256=attempt.get('controller_sha256'))
+    if mode not in (None,'unknown'):return None   # 'cancelled' (no dump ran) or 'armed-by-env' (V8_PERIODIC_STACK_DUMP=1)
+    task=job.get('task') if isinstance(job.get('task'),dict) else {}
+    label=task.get('task_id') or task.get('run_id');stacks=Path(root)/'stacks'
+    if not label or not stacks.is_dir():return None
+    for path in sorted(stacks.glob(f'{label}-rank*.txt')):
+        try:mtime=path.stat().st_mtime
+        except OSError:continue
+        if not started<=mtime<=ended+120:continue
+        text=_tail(path,65536);at=text.rfind('Timeout (0:')
+        if at>=0 and 'Fatal Python error' not in text[at:]:
+            return dict(rule='rank_stack_file_ends_in_periodic_dump',stack_file=str(path))
+    return None
+
+
+def refund_periodic_dump(root,job,worker):
+    """Mark this job's periodic-dump SIGSEGV attempts (receipt on the attempt, nothing removed). Returns their ids."""
+    attempts=[a for a in job.get('attempts',[]) if isinstance(a,dict)]
+    used=sum(dump_refunded(a) for a in attempts);marked=[]
+    for attempt in attempts:
+        if used>=PERIODIC_DUMP_REFUND_LIMIT:break
+        evidence=periodic_dump_evidence(root,job,attempt)
+        if evidence is None:continue
+        attempt['periodic_dump_refund']=dict(policy=PERIODIC_DUMP_REFUND,worker=worker,at=time.time(),
+            signal=11,elapsed_seconds=round(attempt['ended_at']-attempt['started_at']),**evidence,
+            reason='sigsegv_from_30min_periodic_faulthandler_dump; not counted as a task failure, crash place or node fault')
+        used+=1;marked.append(attempt.get('id'))
+    return marked
+
+
+def node_fault_count(row):
+    """Native crashes recorded for a GPU set, without refunded periodic-dump crashes."""
+    refunded=set(row.get('refunded_attempts') or ())
+    return sum(1 for f in row.get('failures',[]) if f.get('attempt') not in refunded)
 
 
 def node_native_identity(pool,runtime):
@@ -367,7 +447,7 @@ def record_node_native_fault(pool,runtime,attempt):
     if not any(f.get('attempt')==attempt['id'] for f in row['failures']):
         row['failures'].append(dict(attempt=attempt['id'],worker=attempt.get('worker'),
             signal=fault['signal'],at=time.time(),log=str(pool.root/'logs'/(attempt['id']+'.log'))))
-        row['quarantined']=len(row['failures'])>=NODE_NATIVE_FAILURE_LIMIT
+        row['quarantined']=node_fault_count(row)>=NODE_NATIVE_FAILURE_LIMIT
         atomic(path,row)
 
 
@@ -377,10 +457,10 @@ def node_native_hold(pool,runtime):
     row=read(path)
     if row.get('identity')!=node_native_identity(pool,runtime):raise NodeFailure('Node native-fault identity differs')
     if getattr(pool,'readmitted',False):
-        if len(row.get('failures',[]))<=pool.readmit_fault_baseline:return None
+        if node_fault_count(row)<=pool.readmit_fault_baseline:return None
         return 'A new native crash followed successful GPU re-admission; stop this node instead of repeating recovery'
-    if len(row.get('failures',[]))>=NODE_NATIVE_FAILURE_LIMIT:
-        return (f'This GPU set recorded {len(row["failures"])} native crashes for this cohort/controller; '
+    if node_fault_count(row)>=NODE_NATIVE_FAILURE_LIMIT:
+        return (f'This GPU set recorded {node_fault_count(row)} native crashes for this cohort/controller; '
                 f'no further tasks on this GPU set. Other nodes/cohorts and saved checkpoints are retained. '
                 f'Original evidence: {path}; underlying native cause remains unconfirmed')
     return None
@@ -392,7 +472,7 @@ def recheck_crashed_node(pool,runtime,device_fds,worker,diagnostic):
     identity=node_native_identity(pool,runtime)
     path=pool.root/'node-native-reentry'/(digest(identity)+'.json')
     faults=node_native_path(pool,runtime)
-    count=len(read(faults).get('failures',[])) if faults.exists() else 0
+    count=node_fault_count(read(faults)) if faults.exists() else 0
     previous=read(path) if path.exists() else None
     if previous and previous.get('state')=='passed' and previous.get('fault_count')==count:
         receipt=Path(previous['receipt'])
@@ -824,6 +904,14 @@ class Pool:
         self.automatic_retry=False  # enabled by the node loop only after normal node admission
         self.host=socket.gethostname()  # a native-crash retry never returns to the GPU set where the task crashed
         self.gpus=()                    # set by the worker loop from its runtime (node_native_identity's GPU set)
+        # Recorded on every attempt: whether this checkout's task entry still lets the pinned child's periodic dump run.
+        try:
+            entry=Path(__file__).with_name('v8_task_entry.py').read_bytes()
+            self.task_entry_sha256=hashlib.sha256(entry).hexdigest()
+            self.periodic_stack_dump=('armed' if b'cancel_dump_traceback_later' not in entry else
+                                      'armed-by-env' if os.environ.get('V8_PERIODIC_STACK_DUMP')=='1' else 'cancelled')
+        except OSError:self.task_entry_sha256=None;self.periodic_stack_dump='unknown'
+        self.refund_checked_at=-float('inf');self.refund_cleared=set()
         self.root.mkdir(parents=True,exist_ok=True)
 
     def retry_requested(self,state=None):
@@ -989,6 +1077,7 @@ class Pool:
                 state['failure']=None;atomic(state_path,state)
                 print(f'[v8] {self.binding.get("cohort")}: kept failed task {failure["task"]}; '
                       'independent ready jobs may continue. The failed task was not retried.',flush=True)
+        self.refund_periodic_dump_crashes(worker,force=True)
         if recover:
             self.recover_budget_api_failure(recover,worker)
             self.recover_failed(recover,worker)
@@ -1003,6 +1092,59 @@ class Pool:
             if state['failure']:
                 state['failure_history'].append(state['failure']);state['failure']=None
             atomic(state_path,state)
+
+    def refund_periodic_dump_crashes(self,worker,force=False):
+        """PERIODIC_DUMP_REFUND, called under control.lock at join and every REFUND_CHECK_SECONDS: periodic-dump
+        SIGSEGVs recorded by any node stop counting; a task they blocked reopens from its checkpoint."""
+        now=time.monotonic()
+        if not force and now-getattr(self,'refund_checked_at',-float('inf'))<REFUND_CHECK_SECONDS:return []
+        self.refund_checked_at=now
+        if not isinstance(getattr(self,'refund_cleared',None),set):self.refund_cleared=set()
+        reopened=[];refunded=0;ids=set()
+        for path in sorted(self.root.glob('jobs/*.json')):
+            try:job=read(path)
+            except (OSError,ValueError):continue
+            if not isinstance(job,dict):continue
+            attempts=[a for a in job.get('attempts',[]) if isinstance(a,dict)]
+            ids.update(a.get('id') for a in attempts if dump_refunded(a))
+            fresh=[a for a in attempts if not dump_refunded(a) and a.get('id') not in self.refund_cleared]
+            if not any(periodic_dump_evidence(self.root,job,a) for a in fresh):
+                # A finished attempt's evidence never changes: do not read its stack files again.
+                self.refund_cleared.update(a.get('id') for a in fresh if a.get('ended_at') is not None and a.get('id'))
+                continue
+            lease=Lock(self.root/'leases'/(path.stem+'.lock'))
+            if not lease.acquire():continue   # running: refunded at a later check
+            try:
+                job=read(path)
+                blocked=native_failure_blocks(job) or self.retry_limit_reached(job)
+                failures=retry_budget_failures(job);places=native_crash_hosts(job)
+                marked=refund_periodic_dump(self.root,job,worker)
+                if not marked:continue
+                ids.update(marked);refunded+=len(marked)
+                job.setdefault('periodic_dump_refunds',[]).append(dict(policy=PERIODIC_DUMP_REFUND,attempts=marked,
+                    failures_before=failures,failures_after=retry_budget_failures(job),crash_places_before=places,
+                    crash_places_after=native_crash_hosts(job),worker=worker,at=time.time()))
+                if blocked and not (native_failure_blocks(job) or self.retry_limit_reached(job)) and job.get('state')=='failed':
+                    job['state']='pending';reopened.append(path.stem)
+                atomic(path,job)
+            finally:lease.close()
+        for path in sorted(self.root.glob('node-native-faults/*.json')):
+            try:row=read(path)
+            except (OSError,ValueError):continue
+            mine=sorted(ids.intersection(f.get('attempt') for f in row.get('failures',[]) if isinstance(f,dict)))
+            if not mine or mine==sorted(row.get('refunded_attempts') or ()):continue
+            row['refunded_attempts']=mine;row['refund_policy']=PERIODIC_DUMP_REFUND
+            row['quarantined']=node_fault_count(row)>=NODE_NATIVE_FAILURE_LIMIT;atomic(path,row)
+        if refunded:
+            state=self.queue_state()
+            if reopened and state.get('failure') and aggregate_task_failure(state['failure']):
+                state.setdefault('failure_history',[]).append(state['failure']);state['failure']=None
+            state.setdefault('actions',[]).append(dict(action='periodic_dump_crash_refund',policy=PERIODIC_DUMP_REFUND,
+                attempts=refunded,reopened=reopened,worker=worker,at=time.time()))
+            atomic(self.root/'state.json',state)
+            print(f'[v8] {self.binding.get("cohort")}: {refunded} SIGSEGV(s) from the old 30-min stack dump no longer '
+                  f'count as failures; {len(reopened)} blocked task(s) resume from their checkpoints (records kept)',flush=True)
+        return reopened
 
     def grant_user_retry(self,worker):
         """USER_RETRY_GRANT: blocked tasks get one fresh failure budget, once per task, history kept."""
@@ -1253,6 +1395,8 @@ class Pool:
         if read(self.root/'binding.json')!=self.binding:
             raise BindingMismatch(f"{self.binding.get('cohort')}: another node replaced this queue's code/Python record "
                                   "while this worker was running; restart this worker with the same bundle as the others.")
+        self.observed_leases=[]   # task leases held by others in this inspection (shared with its 'waiting' result)
+        self.refund_periodic_dump_crashes(worker)
         state=self.prioritize_primary_results(runtime)
         if isinstance(state.get('failure'),dict) and state['failure'].get('task'):
             # A still-running historical worker can publish its old cohort-wide
@@ -1340,11 +1484,11 @@ class Pool:
                 return 'waiting',None
             raise ValueError('No tasks produced for '+phase+'; refusing to declare an empty experiment complete')
         pending=[];all_done=True;active=False;failed=[];later=False
-        leased=native_count=dependencies=0
+        leased=native_count=dependencies=retry_wait=0;self.observed_leases=[]
         for path,job in jobs:
             lease=Lock(self.root/'leases'/(path.stem+'.lock'))
             if not lease.acquire():
-                all_done=False;active=True;leased+=1;continue
+                all_done=False;active=True;leased+=1;self.observed_leases.append(path.stem);continue
             try:
                 native_busy=runtime.native_busy(job['task'])
                 active=active or native_busy
@@ -1363,13 +1507,16 @@ class Pool:
                     job['state']='failed';atomic(path,job)
                 if not self.retryable(job,state=state):
                     if job['state']=='failed':failed.append(path.stem)
-                    later=later or self.retry_later(job,state);continue
+                    if self.retry_later(job,state):
+                        later=True   # retry_wait: this GPU set may run it after its retry time (not a crash place)
+                        retry_wait+=not native_failure_blocks(job,None if getattr(self,'readmitted',False) else self.place())
+                    continue
                 if not runtime.ready(job['task']):dependencies+=1;continue
                 pending.append((path,job))
             finally:lease.close()
         self.observation=dict(checked_at=time.time(),phase=phase,ready=len(pending),leased=leased,
                               native_busy=native_count,dependencies=dependencies,failed=len(failed),
-                              recovery_wait=later,planning_error=base_error,deferred_budget=deferred_base,
+                              recovery_wait=later,retry_wait=retry_wait,planning_error=base_error,deferred_budget=deferred_base,
                               planning_errors=(state.get('ready_side_work') or {}).get('planning_errors'),
                               unsealed_plan=all_done and not sealed)
         if aggregate and (all_done or active or later or pending):
@@ -1452,7 +1599,9 @@ class Pool:
             if not lease.acquire():continue
             attempt=dict(id=uuid.uuid4().hex,worker=worker,host=self.place()[0],gpus=list(self.place()[1]),
                          started_at=time.time(),pid=os.getpid(),
-                         controller_sha256=self.controller_sha256,controller_policy=DISPATCH_POLICY)
+                         controller_sha256=self.controller_sha256,controller_policy=DISPATCH_POLICY,
+                         task_entry_sha256=getattr(self,'task_entry_sha256',None),
+                         periodic_stack_dump=getattr(self,'periodic_stack_dump','unknown'))
             if job.get('retry_epoch'):
                 attempt.update(retry_epoch=dict(job['retry_epoch']),retry_budget_failures_before_start=retry_budget_failures(job))
             if job['state']=='running' and job['attempts']:
@@ -1513,6 +1662,9 @@ class Pool:
             state.setdefault('task_failures',[]).append(dict(detail=f'task exit={rc}; output verified={done}',
                                                            task=key,attempt=job['attempts'][-1]['id'],at=time.time()))
             atomic(self.root/'state.json',state)
+        if refund_periodic_dump(self.root,job,attempt.get('worker')):
+            print(f'[v8] {key}: SIGSEGV from the 30-min periodic stack dump; not counted as a failure or crash place; '
+                  'the task resumes from its checkpoint',flush=True)
         if job['state'] in ('failed','interrupted'):self.arm_evaluation_recovery(job,attempt.get('worker'))
         if rc not in (0,75,None) or fatal_native_failure(dict(attempts=[attempt])):
             try:attempt.update(crash_fields(self.root,attempt,rc,job.get('task')))
@@ -1644,6 +1796,7 @@ def quiescent_failure(pairs):
         with pool.control() as control:
             if control is None:return None
             if read(pool.root/'binding.json')!=pool.binding:return None
+            if pool.refund_periodic_dump_crashes(None):return None   # reopened work: not quiescent
             state=pool.queue_state()
             if state.get('failure'):faults.append(dict(cohort=pool.binding.get('cohort'),queue_failure=state['failure']))
             errors=dict((state.get('ready_side_work') or {}).get('planning_errors') or {})
@@ -1885,11 +2038,16 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
     def share_scan(index,pool,scan,action,offer):
         if not cohort_order or SCAN_SHARE_SECONDS<=0 or action not in ('ready','waiting') or getattr(scan,'marks',None) is None:return
         observation=dict(getattr(pool,'observation',{}) or {})
-        if action=='waiting' and (observation.get('ready') or observation.get('metadata_error')):return
+        # 'waiting' is shared only when it holds for every node: failed tasks and recovery waits depend on the
+        # inspecting node's place. Running tasks are shared with their lease names; a reader inspects afresh as
+        # soon as one of those leases is free (a dead node frees its lease without changing any queue file).
+        if action=='waiting' and any(observation.get(k) for k in ('ready','metadata_error','recovery_wait','failed')):return
+        leases=list(getattr(pool,'observed_leases',None) or ()) if action=='waiting' else []
+        if action=='waiting' and observation.get('leased') and len(leases)!=observation.get('leased'):return
         at=time.time()
         try:atomic(share_root/(cohort(pool)+'.json'),dict(schema=1,cohort=cohort(pool),binding_sha256=digest(pool.binding),
                    at=at,worker=worker,action=action,offer=offer if action=='ready' else None,
-                   observation=observation,marks=scan.marks))
+                   observation=observation,marks=scan.marks,leased_keys=leases))
         except (OSError,ValueError,TypeError):return  # a missing cache only means a full inspection
         if action=='ready':used_shares[index]=at  # this node already holds that offer
     def shared_scan(index,pool):
@@ -1902,6 +2060,15 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
         if row.get('action')=='ready' and isinstance(row.get('offer'),dict) and used_shares.get(index)!=row['at']:
             used_shares[index]=row['at'];return 'ready',row['offer'],row
         if row.get('action')=='waiting' and row.get('marks') is not None and row['marks']==queue_marks(pool):
+            observation=row.get('observation') or {}
+            if any(observation.get(k) for k in ('recovery_wait','failed')):return None   # written by an older node
+            keys=row.get('leased_keys') or []
+            if observation.get('leased') and len(keys)!=observation.get('leased'):return None
+            for key in keys:   # every task seen running must still hold its lease
+                lease=Lock(pool.root/'leases'/(str(key)+'.lock'))
+                try:free=lease.acquire()
+                except NodeFailure:return None
+                if free:lease.close();return None
             return 'waiting',None,row
         return None
     # Spill (user 11-15): when every cohort up to `limit` has nothing this node can claim now,
@@ -1927,6 +2094,40 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
         runtime.heartbeat=heartbeat
     def cohort(pool):
         return pool.binding.get('cohort','?')
+    def first_unfinished():
+        try:return unfinished_cohort(pairs,cohort_order,check_leases=False)
+        except (OSError,ValueError):return None
+    reserve_state={'text':None,'started':time.monotonic()}
+    def reserve_hold(active):
+        """Why this node stays with the first unfinished cohort (ACTIVE_RESERVE), or None when it may spill."""
+        if not cohort_order or ACTIVE_RESERVE<=0 or active is None:return None
+        mine=[i for i,(p,_) in enumerate(pairs) if cohort(p)==active and i not in terminal]
+        if not mine:return None   # this node does not serve it now
+        pool=pairs[mine[0]][0];obs=getattr(pool,'observation',None) or {}
+        def count(key):
+            try:return int(obs.get(key) or 0)
+            except (TypeError,ValueError):return 0
+        # A ready task seen in the last inspection counts too: this node may just have lost its claim to another node.
+        running,retrying=count('leased')+count('native_busy')+count('ready'),count('retry_wait')
+        if not (running or retrying):return None
+        # Live idle workers of this cohort: fresh heartbeat and no task (a busy or starting node writes its task).
+        fresh=max(30.0,4*poll);now=time.time();idle={worker}
+        try:
+            for path in (pool.root/'workers').glob('*.json'):
+                try:row=read(path)
+                except (OSError,ValueError):continue
+                if (isinstance(row,dict) and row.get('worker') and row.get('task') is None
+                        and isinstance(row.get('at'),(int,float)) and -5<=now-row['at']<=fresh):idle.add(str(row['worker']))
+        except OSError:pass
+        position=sorted(idle).index(worker)
+        # Just started: the other nodes' heartbeats may not be in yet, so hold until they had time to write one.
+        warming=time.monotonic()-reserve_state['started']<min(fresh,2*poll+5)
+        if position>=ACTIVE_RESERVE and not warming:return None
+        why=', '.join(t for t in (f'{running} running or ready' if running else '',f'{retrying} waiting for a retry' if retrying else '') if t)
+        if position>=ACTIVE_RESERVE:
+            return f'{active} has {why}; reading the other idle nodes before deciding whether this node may move on'
+        return (f'reserve node {position+1} of {ACTIVE_RESERVE} for {active} ({why}; {len(idle)} idle node(s)); '
+                'later cohorts are left to the other nodes')
     def give_up(index,pool,kind,exc):
         discard_offer(index)
         shared_failures.discard(index)  # node/source faults need fresh admission, not automatic rejoining
@@ -1934,6 +2135,7 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
         print(f'[{worker}] {cohort(pool)}: {kind} failed: {type(exc).__name__}: {exc}',flush=True)
         if giveup_retryable(kind,exc):
             giveups[index]=giveups.get(index,0)+1;delay=giveup_retry_delay(giveups[index])
+            if cohort_order and cohort(pool)==first_unfinished():delay=min(delay,ACTIVE_GIVEUP_RETRY_CAP)
             retry_at[index]=dict(due=time.monotonic()+delay,until=time.time()+delay,retry=giveups[index],kind=kind,
                                  reason=f'{kind} failed: {type(exc).__name__}: {exc}')
             print(f'[v8] NODE {worker} NOT SERVING {cohort(pool)} {retry_text(index)}',flush=True)
@@ -2076,7 +2278,7 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
         return moved
     while not stop.is_set():
         progressed=False;dispatched=False;short_claim_wait=False;gate_busy=False
-        active=None
+        active=None;active_rank=len(cohort_order);held=None
         if retry_at and retry_due():progressed=True
         if cohort_order:
             # Which cohort comes first, from the shared state files only (user 11-16 'dispatch lock queue lock 걸려
@@ -2121,6 +2323,9 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                       'experiments wait for it, so this worker exits instead of idling. Fix the cause and start the '
                       'same command again; queues and checkpoints are kept.',flush=True)
                 return 1
+            for i,row in retry_at.items():   # the first unfinished cohort is retried within ACTIVE_GIVEUP_RETRY_CAP
+                if cohort(pairs[i][0])==active and row['due']-time.monotonic()>ACTIVE_GIVEUP_RETRY_CAP:
+                    row['due']=time.monotonic()+ACTIVE_GIVEUP_RETRY_CAP;row['until']=time.time()+ACTIVE_GIVEUP_RETRY_CAP
             limit=max(active_rank,spill_rank)
             # A started scan or CPU stage keeps its cohort eligible until it is collected.
             eligible={i for i,(pool,runtime) in enumerate(pairs) if rank(pool)<=limit or i in scans
@@ -2148,6 +2353,7 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                     if control is None:continue
                     if read(pool.root/'binding.json')!=pool.binding:
                         raise BindingMismatch('Queue identity changed while waiting for shared recovery')
+                    pool.refund_periodic_dump_crashes(worker)
                     state=pool.queue_state()
                     if index in initialized and pool.recover_budget_api_failure(controller_sha256,worker):state=pool.queue_state()
                     if state.get('failure'):continue
@@ -2375,6 +2581,15 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                     order=sorted(live,key=lambda i:((rank(pairs[i][0]) if cohort_order else 0),live[i],(i-cursor)%len(pairs)))
                     for candidate in order:
                         pool,runtime=pairs[candidate]
+                        if cohort_order and rank(pool)>active_rank:
+                            first=[i for i,(p,_) in enumerate(pairs) if cohort(p)==active and i not in terminal]
+                            if first and (first[0] in scans or first[0] not in initialized):
+                                break   # the first unfinished cohort is still being inspected or started here: wait for it
+                            held=reserve_hold(active)
+                            if held:
+                                for other in tuple(offers):
+                                    if rank(pairs[other][0])>active_rank:discard_offer(other)
+                                spill_rank=-1;break
                         if cohort_order and any(scan.kind=='task inspection' and rank(pairs[j][0])<rank(pool)
                                                 and time.monotonic()-scan.started<SPILL_LOCK_GRACE for j,scan in scans.items()):
                             short_claim_wait=True;break  # an earlier cohort is being inspected right now: it may offer work
@@ -2440,6 +2655,11 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
             spill_rank=-1
             pool,runtime=pairs[index]
             lease,key,task,attempt=claimed;cursor=(index+1)%len(pairs)
+            for other,(_,other_runtime) in enumerate(pairs):
+                # Not an idle reserve node of any other cohort while this task runs (reserve_hold counts idle rows).
+                if other in terminal:continue
+                try:other_runtime.heartbeat(f'busy {cohort(pool)} {key}')
+                except Exception:pass
             log=pool.root/'logs'/(attempt['id']+'.log')
             diagnostic.publish('ASSIGNED',cohort(pool),'task lease acquired; waiting for child work records',
                                task=key,kind=task['kind'],run_id=task.get('run_id'),seed=task.get('training_seed'),
@@ -2540,10 +2760,17 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
         # A short queue-lock wait is another node's metadata write, not proof the cohort has no work.
         lock_wait=any(i in eligible and time.monotonic()-since<SPILL_LOCK_GRACE for i,since in control_waits.items())
         if dispatched or offers:stall_since=time.monotonic()
+        if cohort_order:
+            # The spill timer starts only after this node finished starting and inspecting the first unfinished cohort.
+            first=[i for i,(p,_) in enumerate(pairs) if cohort(p)==active and i not in terminal]
+            if first and (first[0] in scans or first[0] not in initialized):stall_since=time.monotonic()
         stalled=cohort_order and not offers and time.monotonic()-stall_since>=SPILL_STALL_SECONDS
         if cohort_order and claim_ok and ((idle and not lock_wait) or stalled):
             following=[rank(p) for i,(p,_) in enumerate(pairs) if i not in terminal and rank(p)>limit]
-            if following:
+            if following and not held:held=reserve_hold(active)
+            if following and held:
+                stall_since=time.monotonic();spill_rank=-1
+            elif following:
                 report_wait(active,claim_ok,busy)  # why the earlier cohort has nothing for this node
                 if stalled and not idle:
                     print(f'[{worker}] no task from {cohort_order[limit] if limit<len(cohort_order) else "earlier cohorts"} for '
@@ -2551,7 +2778,10 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                           f'{cohort_order[min(following)]}',flush=True)
                 stall_since=time.monotonic()
                 spill_rank=min(following);continue  # strictly increases: bounded, never a busy loop
-        if idle and not retry_at:  # a pending node-local retry is waited for, never a reason to exit
+        if held!=reserve_state['text']:
+            if held and not reserve_state['text']:print(f'[{worker}] {held}',flush=True)
+            reserve_state['text']=held
+        if idle and not retry_at and not held:  # a pending node-local retry is waited for, never a reason to exit
             if cohort_order:
                 # Exit only when every cohort this node still serves is blocked by its own failures.
                 inspected=[pair for i,pair in enumerate(pairs) if i not in terminal]
@@ -2579,6 +2809,7 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
             if retry_at and len(terminal)==len(pairs):
                 first=min(retry_at,key=lambda i:retry_at[i]['due'])
                 diagnostic.publish('WAIT_RETRY',cohort(pairs[first][0]),'NOT SERVING '+cohort(pairs[first][0])+' '+retry_text(first))
+            elif held:diagnostic.publish('WAIT_RESERVE',active,held,order=list(cohort_order))
             else:report_wait(active,claim_ok,busy)
             wait=min(poll,.05) if short_claim_wait else min(poll,.5) if gate_busy else poll
             if retry_at:wait=max(.01,min(wait,min(row['due'] for row in retry_at.values())-time.monotonic()))

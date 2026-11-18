@@ -47,6 +47,7 @@ class Broken(Actor):
 
 
 def test_idle_node_explains_each_cohort(tmp_path,monkeypatch,capsys):
+    monkeypatch.setattr(nodes,'ACTIVE_RESERVE',0)   # held leases stand for busy nodes; spill mechanics only
     monkeypatch.setattr(nodes,'SPILL_STALL_SECONDS',.3);monkeypatch.setattr(nodes,'IDLE_REPORT_SECONDS',.3)
     full=queue(tmp_path,Actor(tmp_path,FULL,2));queue(tmp_path,Waiting(tmp_path,DEPS,3))
     held=hold_all_leases(full)
