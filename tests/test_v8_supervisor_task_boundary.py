@@ -354,3 +354,11 @@ def test_checkout_moved_under_the_supervisor_counts_as_an_update(checkout):
         assert updates.check() is None, 'a checkout with local edits is never taken'
     finally:
         updates.closed.set(); updates.kick()
+
+
+def test_automatic_restart_never_repeats_new_queue():
+    sys.path.insert(0, str(ROOT / 'scripts'))
+    import v8_supervisor as sup
+    assert sup.restart_args(['qwen_mbpp', '--new-queue', '--retry-failed']) == ['qwen_mbpp', '--retry-failed']
+    assert sup.restart_args(['--n', '--new', '--new-q', '--', '--gpus', '0,1']) == ['--', '--gpus', '0,1']
+    assert sup.restart_args(['--cohorts', 'qwen_mbpp']) == ['--cohorts', 'qwen_mbpp']

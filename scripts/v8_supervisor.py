@@ -212,6 +212,11 @@ def node_acknowledged(rows,launch,base,since,host=None):
     return False
 
 
+def restart_args(args):
+    """Arguments for an automatic restart of this supervisor: the same command without the one-time --new-queue."""
+    return [a for a in args if not (len(a)>=3 and '--new-queue'.startswith(a))]  # argparse also takes --new, --new-q
+
+
 def relaunch_reason(console):
     """Why the node child exited with rc 1, when relaunching it is safe; None otherwise (configuration errors,
     BLOCKED input, a node that cannot serve the active cohort, shared queue failures, unknown exits)."""
@@ -329,7 +334,8 @@ def main():
             os.environ.update(extra)
             deadline=time.monotonic()+.5
             for done in list(_pending):done.wait(max(0,deadline-time.monotonic()))  # bounded flush of messages
-            os.execv(sys.executable,[sys.executable,str(Path(__file__).resolve()),*args])
+            # --new-queue is a one-time operator action: an automatic restart must never start another fresh queue.
+            os.execv(sys.executable,[sys.executable,str(Path(__file__).resolve()),*restart_args(args)])
         while child.poll() is None:
             now=time.monotonic()
             if now>=next_sample:

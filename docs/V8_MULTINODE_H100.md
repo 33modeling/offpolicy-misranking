@@ -648,4 +648,5 @@ sh scripts/run_v8_nodes.sh
   재실행 전에 받을 새 코드가 있으면 먼저 fast-forward한다.
 - 재실행하지 않는 종료: 입력 오류(`planning_errors`), 공유 큐의 입력·설정 실패, 이 노드에 runtime이 없는 `BLOCKED`, 현재 cohort를 처리할 수 없는 `EXIT`, 시작 오류(`V8 startup`, `V8 queue error`).
 - 재실행은 작업·실패 횟수·checkpoint를 초기화하지 않는다. 실패 상한에 걸린 작업은 재실행 뒤에도 다시 돌지 않는다.
+- 자동 재시작(코드 갱신, 재실행)은 `--new-queue`를 빼고 같은 명령을 다시 띄운다. 새 큐는 처음 한 번만 만든다.
 - 이 기능은 이 수정 이후 시작한 노드부터 적용된다. e34e750 이후 supervisor로 idle 상태인 노드는 스스로 갱신된다. 작업 중인 예전 노드는 작업이 끝난 뒤 한 번 `git pull && sh scripts/run_v8_nodes.sh stop && sh scripts/run_v8_nodes.sh`로 다시 시작한다.
