@@ -211,3 +211,13 @@ def test_spawn_retries_are_bounded_and_other_errors_are_not_retried(verifier,mon
     monkeypatch.setattr(module.subprocess,'Popen',failing(errno.EACCES))
     with pytest.raises(PermissionError):fixed(record,'def add(a,b): return a+b')
     assert len(calls)==1 and sleeps==[]
+
+
+@pytest.mark.parametrize('value',['inf','1e300','nan','-1','0','junk'])
+def test_unusable_startup_window_setting_falls_back_to_the_default(verifier,monkeypatch,value):
+    module,_=verifier
+    monkeypatch.setenv('V8_MBPP_STARTUP_SECONDS',value)
+    import v8_task_entry
+    fixed,receipt=v8_task_entry.repair_mbpp_subprocess(module.code_reward)
+    assert receipt['startup_handshake_seconds']==v8_task_entry.MBPP_STARTUP_SECONDS_DEFAULT
+    assert fixed(dict(answer='assert add(2,3)==5'),'def add(a,b): return a+b')==1.0

@@ -120,7 +120,8 @@ def repair_mbpp_subprocess(verifier):
     fsize=namespace.get('CODE_RESULT_BYTES',1<<20)
     try:startup=float(os.environ.get('V8_MBPP_STARTUP_SECONDS') or MBPP_STARTUP_SECONDS_DEFAULT)
     except ValueError:startup=MBPP_STARTUP_SECONDS_DEFAULT
-    if not startup>0:startup=MBPP_STARTUP_SECONDS_DEFAULT
+    # select() overflows on inf/huge values; an unusable setting falls back to the default window.
+    if not 0<startup<=86400:startup=MBPP_STARTUP_SECONDS_DEFAULT
     def spawn(command,pos,kwargs):
         for attempt in range(1,MBPP_SPAWN_ATTEMPTS+1):
             try:return original.Popen(command,*pos,**kwargs)
