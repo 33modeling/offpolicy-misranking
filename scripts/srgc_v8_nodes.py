@@ -1983,7 +1983,7 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
         pool,runtime=pairs[i];name=cohort(pool)
         facts=dict(getattr(pool,'observation',{}));facts['order']=list(cohort_order)
         if held_elsewhere:facts['nothing_claimable_in']=held_elsewhere
-        if not claim_ok:diagnostic.publish('WAIT_GPU',name,str(busy),**facts)
+        if not claim_ok:diagnostic.publish('WAIT_UPDATE' if str(busy).startswith('code update pending') else 'WAIT_GPU',name,str(busy),**facts)
         elif i in scans:
             detail=getattr(runtime,'verification_stage',scans[i].kind) if scans[i].kind=='node verification' else getattr(runtime,'inspection_stage',scans[i].kind)
             diagnostic.publish('CHECKING',name,detail+'; no GPU task assigned',**facts)
@@ -2159,6 +2159,9 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                     progressed=True
             except Exception as exc:give_up(index,pool,'queue recovery check',exc)
         claim_ok,busy=(True,None) if gpu_gate is None else gpu_gate()
+        if claim_ok:
+            held=update_hold()
+            if held:claim_ok,busy=False,held
         if not claim_ok:
             for index in tuple(offer_controls):discard_offer(index)
         if not claim_ok and time.monotonic()-busy_report>=300:
@@ -2976,6 +2979,19 @@ class PreflightFailed(NodeFailure):
 PREFLIGHT_MODE=os.environ.get('V8_PREFLIGHT','record').strip().lower()   # record (default) | block | 0 (off)
 PREFLIGHT_RETRY_SECONDS=float(os.environ.get('V8_PREFLIGHT_RETRY_SECONDS','120'))
 PREFLIGHT_CHECK=node_preflight  # module attribute so CPU tests can substitute the node
+
+
+def update_hold(environment=None):
+    """Pushed code waits for this node's next task boundary (11-18): while the supervisor's hold file exists, this
+    launch takes no new task; the running task is never touched. Ignored once that supervisor is gone (an orphaned
+    child must not idle forever). Scheduling only: no queue, budget or task record changes."""
+    path=(os.environ if environment is None else environment).get('V8_UPDATE_HOLD')
+    if not path:return None
+    try:record=json.loads(Path(path).read_text())
+    except (OSError,ValueError):return None
+    if not isinstance(record,dict) or record.get('supervisor_pid')!=os.getppid():return None
+    return ('code update pending ('+str(record.get('target','?'))[:7]+'): this node takes no new task; '
+            'the V8 supervisor restarts it with the pushed code now that no task is running here')
 
 
 class GpuGate:

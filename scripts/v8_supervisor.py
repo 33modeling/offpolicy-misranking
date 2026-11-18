@@ -1,7 +1,9 @@
 """Bounded V8 Ctrl-C handling without changing trainer/runtime queue identities."""
 import os
 import json
+import math
 from pathlib import Path
+import re
 import signal
 import socket
 import subprocess
@@ -13,7 +15,7 @@ import uuid
 
 from v8_processes import TAG,select,progress_every,stop,stop_grace,table
 from v8_probe import read,root,snapshot,tail,worker_status
-from v8_control_output import emit,run_control
+from v8_control_output import _pending,emit,run_control
 from v8_progress_text import describe,scheduler_text
 
 
@@ -91,35 +93,141 @@ def describe_processes(remaining):
     return ', '.join(f'{count} {names.get(kind,kind)}' for kind,count in sorted(kinds.items()))
 
 
+DEFAULT_UPDATE_SECONDS=120.0
+DEFAULT_SETTLE_SECONDS=8.0     # > 2 dispatcher polls (3 s): a claim already in flight shows up before the restart
+DEFAULT_RELAUNCH_SECONDS=60.0
+RELAUNCH_CAP_SECONDS=1800.0
+# Worker scheduler states (srgc_v8_nodes WorkerStatus) in which this launch holds a task without a task process yet
+# (claimed, preflight, recording its result) or runs a CPU stage: never restart there.
+TASK_STATES=frozenset({'ASSIGNED','PREFLIGHT','RECORDING_RESULT','CPU_STAGE'})
+# Last line a node child prints before rc 1 (srgc_v8_nodes worker loop / main); 'WORKER EXIT' summaries are skipped.
+EXIT_LINE=re.compile(r'^\[[^\]]*\] (?:EXIT|STOPPED|BLOCKED|\S+: FAILED):|^V8 (?:queue error|startup)')
+# srgc_v8_nodes.aggregate_task_failure: every task failed up to its cap (never an input/setup/identity failure).
+AGGREGATE_FAILURE=re.compile(r'"detail":"\d+ task\(s\) failed; no independent ready/running work remains\.[^"]*","task":null')
+
+
+def _seconds(environment,name,default):
+    value=(os.environ if environment is None else environment).get(name,'')
+    try:seconds=float(value) if value.strip() else default
+    except ValueError:return default
+    return max(0.0,seconds) if math.isfinite(seconds) else default
+
+
 def update_interval(environment=None):
-    """Seconds between idle-node code checks (V8_AUTO_UPDATE_SECONDS, default 600; 0 turns it off)."""
-    value=(os.environ if environment is None else environment).get('V8_AUTO_UPDATE_SECONDS','600')
-    try:return max(0.0,float(value))
-    except ValueError:return 600.0
+    """Seconds between code checks (V8_AUTO_UPDATE_SECONDS, default 120; 0 turns updates off).
+    A check also runs right after each task of this node ends."""
+    return _seconds(environment,'V8_AUTO_UPDATE_SECONDS',DEFAULT_UPDATE_SECONDS)
+
+
+def settle_seconds(environment=None):
+    return _seconds(environment,'V8_UPDATE_SETTLE_SECONDS',DEFAULT_SETTLE_SECONDS)
+
+
+def relaunch_base(environment=None):
+    """First delay before relaunching a node child that exited on a stuck inspection or a quiescent block
+    (V8_RELAUNCH_SECONDS, default 60; 0 turns relaunching off)."""
+    return _seconds(environment,'V8_RELAUNCH_SECONDS',DEFAULT_RELAUNCH_SECONDS)
+
+
+def relaunch_delay(count,base):
+    """Doubling backoff, bounded by RELAUNCH_CAP_SECONDS (count = relaunches in a row without a task run)."""
+    return min(max(base,RELAUNCH_CAP_SECONDS),base*2**min(max(int(count),1)-1,32))
+
+
+def _git(repo,run,*args,timeout=60):
+    result=run(['git','-C',str(repo),*args],capture_output=True,text=True,timeout=timeout)
+    return result.returncode,result.stdout.strip()
+
+
+def _clean(repo,run):
+    code,changes=_git(repo,run,'status','--porcelain','--untracked-files=no')
+    return code==0 and not changes
+
+
+def pending_update(repo,run=subprocess.run,skip=None):
+    """Fetch and return the upstream commit a fast-forward would reach, else None. Never touches the working tree.
+
+    None for a checkout with local edits, a diverged checkout, no upstream, or the commit in `skip`."""
+    try:
+        if not (Path(repo)/'.git').exists():return None
+        if _git(repo,run,'fetch','-q',timeout=180)[0]:return None
+        if not _clean(repo,run):return None
+        code,old=_git(repo,run,'rev-parse','HEAD');code2,upstream=_git(repo,run,'rev-parse','@{u}')
+        if code or code2 or not old or not upstream or old==upstream or upstream==skip:return None
+        if _git(repo,run,'merge-base','--is-ancestor','HEAD',upstream)[0]:return None
+        return upstream
+    except (OSError,subprocess.SubprocessError):return None
+
+
+def fast_forward(repo,target,run=subprocess.run):
+    """Fast-forward HEAD to exactly `target`; return (old, new) when HEAD moved, else None. Never merges,
+    rebases or touches local edits."""
+    try:
+        if not _clean(repo,run):return None
+        code,old=_git(repo,run,'rev-parse','HEAD')
+        if code or not old or old==target:return None
+        if _git(repo,run,'merge-base','--is-ancestor','HEAD',target)[0]:return None
+        if _git(repo,run,'merge','--ff-only','-q',target)[0]:return None
+        code,new=_git(repo,run,'rev-parse','HEAD')
+        return (old,new) if not code and new==target else None
+    except (OSError,subprocess.SubprocessError):return None
 
 
 def checkout_update(repo,run=subprocess.run):
-    """Fast-forward the code checkout to its upstream; return (old, new) when HEAD moved, else None.
-
-    Never merges, rebases or touches local edits: a diverged or conflicting checkout is left as it is."""
-    def git(*args,timeout=60):
-        result=run(['git','-C',str(repo),*args],capture_output=True,text=True,timeout=timeout)
-        return result.returncode,result.stdout.strip()
-    try:
-        if not (Path(repo)/'.git').exists():return None
-        if git('fetch','-q',timeout=180)[0]:return None
-        code,old=git('rev-parse','HEAD');code2,upstream=git('rev-parse','@{u}')
-        if code or code2 or not old or old==upstream:return None
-        if git('merge-base','--is-ancestor','HEAD','@{u}')[0]:return None
-        if git('merge','--ff-only','-q','@{u}')[0]:return None
-        code,new=git('rev-parse','HEAD')
-        return (old,new) if not code and new!=old else None
-    except (OSError,subprocess.SubprocessError):return None
+    """Fast-forward the code checkout to its upstream; return (old, new) when HEAD moved, else None."""
+    target=pending_update(repo,run)
+    return fast_forward(repo,target,run) if target else None
 
 
 def launch_busy(rows,launch):
     """A training/evaluation process of this launch is running (no code update under a task)."""
     return any(rows[pid].get('kind') for pid in select(rows,tag=launch) if pid in rows)
+
+
+def node_busy(rows,launch,base,host=None):
+    """A task process runs, or the launch's dispatcher holds a task (claimed/preflight/recording) or a CPU stage."""
+    if launch_busy(rows,launch):return True
+    host=host or socket.gethostname()
+    owned={pid:row for pid,row in rows.items() if row['env'].get(TAG)==launch}
+    folders={Path(row['env']['V8_ROOT']) for row in owned.values() if row['env'].get('V8_ROOT')} or {Path(base)}
+    for folder in folders:
+        for pid in owned:
+            record=worker_status(folder,host+'.'+str(pid))
+            if record and record.get('launch_id')==launch and record.get('state') in TASK_STATES:return True
+    return False
+
+
+def relaunch_reason(console):
+    """Why the node child exited with rc 1, when relaunching it is safe; None otherwise (configuration errors,
+    BLOCKED input, a node that cannot serve the active cohort, shared queue failures, unknown exits)."""
+    for line in reversed(tail(console,65536)):
+        line=line.strip()
+        if not EXIT_LINE.search(line):continue
+        if '] EXIT: ' in line and ' did not finish in ' in line and 'queue lock is released' in line:
+            return 'task inspection timed out'
+        if ('] STOPPED: no eligible work remains beside failed tasks' in line
+                and 'planning_errors' not in line and 'queue_failure' not in line):
+            return 'every task it can serve is blocked by recorded failures'
+        if ' is not complete; later cohorts remain queued; ' in line and '] STOPPED: ' in line and AGGREGATE_FAILURE.search(line):
+            return 'every task it can serve is blocked by recorded failures'
+        return None
+    return None
+
+
+class Updates:
+    """Background `git fetch`: the newest fast-forward target, checked every interval and when kicked."""
+    def __init__(self,repo,interval,skip=None):
+        self.repo,self.interval,self.skip=repo,interval,skip
+        self.target=None;self.kicked=threading.Event();self.closed=threading.Event()
+        threading.Thread(target=self.run,daemon=True).start()
+
+    def kick(self):self.kicked.set()
+
+    def run(self):
+        while not self.closed.is_set():
+            self.kicked.wait(self.interval);self.kicked.clear()
+            if self.closed.is_set():return
+            self.target=pending_update(self.repo,skip=self.skip)
 
 
 def main():
@@ -129,6 +237,7 @@ def main():
     launch=uuid.uuid4().hex;env=dict(os.environ,**{TAG:launch})
     progress=root(env)/'.node-progress'/socket.gethostname()/launch
     env['SRGC_PROGRESS_DIR']=str(progress)
+    hold=progress/'code-update-hold.json';env['V8_UPDATE_HOLD']=str(hold)
     stopped=threading.Event();force=threading.Event();finished=threading.Event();disconnected=threading.Event();received=[]
     child=None;relay_thread=None
     def interrupt(sig,*_):
@@ -171,25 +280,55 @@ def main():
                                    stdin=subprocess.DEVNULL,stdout=handle,stderr=subprocess.STDOUT)
         relay_thread=threading.Thread(target=relay,args=(log,),daemon=True);relay_thread.start()
         threading.Thread(target=report,daemon=True).start()
-        interval=update_interval();next_check=time.monotonic()+interval;idle_checks=0
-        repo=Path(__file__).resolve().parents[1]
+        interval=update_interval();repo=Path(__file__).resolve().parents[1];host=socket.gethostname()
+        updates=Updates(repo,interval,skip=os.environ.get('V8_SUPERVISOR_SKIP_UPDATE')) if interval else None
+        next_sample=0.0;was_busy=False;ran_task=False;held=None;held_at=0.0;settle=settle_seconds()
+        def clear_hold():
+            try:hold.unlink()
+            except OSError:pass
+        def restart(extra):
+            """Replace this supervisor (and so the launch) with a fresh one from the checkout as it is now."""
+            finished.set();clear_hold()
+            if relay_thread:relay_thread.join(timeout=2)
+            for sig,handler in previous.items():signal.signal(sig,handler)
+            os.environ.update(extra)
+            deadline=time.monotonic()+.5
+            for done in list(_pending):done.wait(max(0,deadline-time.monotonic()))  # bounded flush of messages
+            os.execv(sys.executable,[sys.executable,str(Path(__file__).resolve()),*args])
         while child.poll() is None:
-            if interval and time.monotonic()>=next_check:
-                # User 11-17 'idle인것도 고쳐줘': an idle node picks up pushed fixes by itself. Only between tasks
-                # (two checks in a row with no task process of this launch), fast-forward only, then the
-                # launch stops (resumable, nothing claimed) and this supervisor restarts with the new code.
-                next_check=time.monotonic()+interval
-                idle_checks=0 if launch_busy(table(),launch) else idle_checks+1
-                moved=checkout_update(repo) if idle_checks>=2 else None
-                if moved and not launch_busy(table(),launch):
-                    emit(f'[v8] idle node: code updated {moved[0][:7]} -> {moved[1][:7]}; restarting this node '
-                         'with it (no task was running; queue and checkpoints untouched)')
+            now=time.monotonic()
+            if now>=next_sample:
+                next_sample=now+1.0
+                busy=node_busy(table(),launch,root(env),host);ran_task=ran_task or busy
+                # User 11-17/18: pushed fixes must reach busy nodes too. A task boundary (no task of this launch any
+                # more) triggers a check at once; a periodic check runs every V8_AUTO_UPDATE_SECONDS.
+                if updates and was_busy and not busy:updates.kick()
+                was_busy=busy
+                target=updates.target if updates else None
+                if target is None and held:clear_hold();held=None
+                elif target and target!=held:
+                    # The dispatcher takes no new task while this hold exists; the running task is never touched.
+                    try:
+                        hold.parent.mkdir(parents=True,exist_ok=True)
+                        tmp=hold.with_name(hold.name+'.tmp');tmp.write_text(json.dumps(dict(target=target,supervisor_pid=os.getpid(),at=time.time())))
+                        os.replace(tmp,hold);held=target;held_at=now
+                        emit(f'[v8] pushed code {target[:7]} is ready; this node takes no new task and restarts with it '
+                             +('when its running task ends (the task is not stopped)' if busy else 'now (no task running)'))
+                    except OSError as exc:
+                        # Without the hold a claim could race the restart: no automatic update for this launch.
+                        emit(f'[v8] cannot write the code-update hold {hold}: {exc}; automatic code update is off '
+                             'for this launch',error=True);updates.closed.set();updates.kick();updates=None
+                elif target and not busy and now-held_at>=settle and not node_busy(table(),launch,root(env),host):
+                    emit(f'[v8] task boundary: restarting this node with pushed code {target[:7]} '
+                         '(no task running; queue and checkpoints untouched)')
                     remaining=stop(select(table(),tag=launch),tag=launch,grace=stop_grace())
                     if remaining:emit('[v8] code-update restart: processes still in kernel wait: '+str(remaining),error=True)
                     else:
-                        finished.set()
-                        for sig,handler in previous.items():signal.signal(sig,handler)
-                        os.execv(sys.executable,[sys.executable,str(Path(__file__).resolve()),*args])
+                        moved=fast_forward(repo,target)
+                        if moved:emit(f'[v8] code updated {moved[0][:7]} -> {moved[1][:7]}; restarting this node with it')
+                        else:emit(f'[v8] code update to {target[:7]} was refused by git (fast-forward only); '
+                                  'restarting on the current code; this commit is not tried again by this node',error=True)
+                        restart({'V8_SUPERVISOR_RELAUNCHES':'0',**({} if moved else {'V8_SUPERVISOR_SKIP_UPDATE':target})})
             if disconnected.is_set():
                 disconnected.clear()
                 try:
@@ -216,9 +355,30 @@ def main():
         # No stdout pipe join: descendants cannot trap the controller in read().
         remaining=stop(select(table(),tag=launch),tag=launch,grace=1)
         if remaining:emit('[v8 stop] remaining owned processes: '+str(remaining),error=True)
-        return 3 if remaining else child.returncode if child.returncode>=0 else 128-child.returncode
+        if remaining:return 3
+        reason=relaunch_reason(log) if child.returncode==1 and not stopped.is_set() else None
+        base=relaunch_base()
+        if reason and base:
+            # MISSED-2 (11-18): a stuck task inspection or a quiescent block ends the node child with rc 1; the node
+            # comes back by itself (doubling delay up to RELAUNCH_CAP_SECONDS). Configuration/BLOCKED input exits
+            # are not relaunched. A relaunch never resets a task, a failure count or a checkpoint.
+            try:count=0 if ran_task else int(os.environ.get('V8_SUPERVISOR_RELAUNCHES','0') or 0)
+            except ValueError:count=0
+            count+=1;delay=relaunch_delay(count,base)
+            emit(f'[v8] node child exited rc=1 ({reason}); relaunching this node in {delay:.0f}s '
+                 f'(relaunch {count} without a task run in between; delay doubles up to {max(base,RELAUNCH_CAP_SECONDS):.0f}s; '
+                 'queues and checkpoints untouched; Ctrl-C cancels). Console log: '+str(log))
+            if stopped.wait(delay):return 128+received[0]
+            extra={'V8_SUPERVISOR_RELAUNCHES':str(count)}
+            if interval:
+                moved=checkout_update(repo)  # no child runs now: a pending fast-forward is safe
+                if moved:emit(f'[v8] code updated {moved[0][:7]} -> {moved[1][:7]} before the relaunch')
+            restart(extra)
+        return child.returncode if child.returncode>=0 else 128-child.returncode
     finally:
         finished.set()
+        try:hold.unlink()
+        except OSError:pass
         leftovers=select(table(),tag=launch)
         if leftovers:stop(leftovers,tag=launch,grace=0 if stopped.is_set() else 1)
         if relay_thread:relay_thread.join(timeout=.2)
