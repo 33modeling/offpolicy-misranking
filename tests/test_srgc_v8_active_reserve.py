@@ -320,3 +320,24 @@ def test_reserve_nodes_share_an_inspection_while_a_first_cohort_task_is_blocked_
         for lease in held:lease.close()
     assert after[full_name]-before[full_name]<=4,(before,after)
     assert len(nodes.read(paths[2])['attempts'])==nodes.MAX_ATTEMPTS+2   # the blocked task was not started
+
+
+def test_quarantined_gpu_set_is_no_reserve_and_moves_on(tmp_path):
+    """A GPU set with two counted native crashes for the first cohort could never take its orphan. It must not
+    hold itself (and count as an idle node there) as a reserve; it gives the cohort up and serves later work."""
+    rows=flow_pairs(tmp_path);pool,first=rows[0]
+    pool.initialize();state=pool.queue_state();state['phase']='train';nodes.atomic(pool.root/'state.json',state)
+    for task in first.plan('train')[0]:pool.register(task,'train')
+    p=[q for q in (pool.root/'jobs').glob('*.json') if nodes.read(q)['task']['run_id']==f'{FIRST}-P'][0]
+    lease=nodes.Lock(pool.root/'leases'/(p.stem+'.lock'));assert lease.acquire()   # P runs on another node
+    nodes.atomic(nodes.node_native_path(pool,first),dict(schema=1,identity=nodes.node_native_identity(pool,first),
+                 max_native_failures=nodes.NODE_NATIVE_FAILURE_LIMIT,failures=[dict(attempt='x1'),dict(attempt='x2')]))
+    stop=threading.Event();claimed=[]
+    for _,runtime in rows:
+        def execute(task,matrix,fd,stop_,device_fds,attempt,runtime=runtime):
+            claimed.append(runtime.cohort);stop.set();return 75
+        runtime.execute=execute
+    timer=threading.Timer(40,stop.set);timer.start()
+    try:nodes.worker_loop_many(rows,'solo',stop,poll=.005,cohort_order=ORDER)
+    finally:timer.cancel();lease.close()
+    assert claimed==[LATER],'the quarantined node held itself in reserve for a cohort it cannot run'

@@ -2111,7 +2111,13 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
         if not cohort_order or ACTIVE_RESERVE<=0 or active is None:return None
         mine=[i for i,(p,_) in enumerate(pairs) if cohort(p)==active and i not in terminal]
         if not mine:return None   # this node does not serve it now
-        pool=pairs[mine[0]][0];obs=getattr(pool,'observation',None) or {}
+        pool,runtime=pairs[mine[0]];obs=getattr(pool,'observation',None) or {}
+        # A GPU set quarantined for this cohort could never take its orphan: it is no reserve. Give it up now, as
+        # its first offer would, so it stops counting as an idle node of this cohort and another node holds instead.
+        try:quarantine=node_native_hold(pool,runtime)
+        except (OSError,ValueError,NodeFailure):quarantine=None
+        if quarantine:
+            give_up(mine[0],pool,'native crash quarantine',NodeFailure(quarantine));return None
         def count(key):
             try:return int(obs.get(key) or 0)
             except (TypeError,ValueError):return 0
