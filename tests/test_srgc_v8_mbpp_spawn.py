@@ -1,7 +1,9 @@
 """Frozen MBPP verifier parity and thread-safe launch controls; CPU, no CUDA inference."""
 import concurrent.futures
+import errno
 import importlib.util
 import json
+import os
 from pathlib import Path
 import sys
 import subprocess
@@ -118,3 +120,94 @@ print('SETUP_ERRORS_PRESERVED')
     result=subprocess.run([sys.executable,'-c',script,str(ROOT),filename],text=True,capture_output=True,timeout=10)
     assert result.returncode==0,result.stdout+result.stderr
     assert 'SETUP_ERRORS_PRESERVED' in result.stdout
+
+
+# Candidate programs for `assert add(2,3)==5` with a 1 s checker wall timeout (CPU rlimit 2 s).
+OUTCOME_PROGRAMS=[
+    ('passing','def add(a,b): return a+b',1.0),
+    ('failing','def add(a,b): return a-b',0.0),
+    ('looping','while True: pass',0.0),
+    ('sleeps-within-timeout','import time\ntime.sleep(0.2)\ndef add(a,b): return a+b',1.0),
+    ('sleeps-past-timeout','import time\ntime.sleep(3)\ndef add(a,b): return a+b',0.0),
+]
+
+
+def _short_timeout_fixed(module,monkeypatch,bootstrap_delay=None,startup=None):
+    import v8_task_entry
+    monkeypatch.setattr(module,'CODE_TIMEOUT_SECONDS',1.0)
+    if bootstrap_delay is not None:
+        monkeypatch.setattr(v8_task_entry,'_MBPP_EXEC_BOOTSTRAP',
+                            f'import time;time.sleep({bootstrap_delay})\n'+v8_task_entry._MBPP_EXEC_BOOTSTRAP)
+    if startup is None:monkeypatch.delenv('V8_MBPP_STARTUP_SECONDS',raising=False)
+    else:monkeypatch.setenv('V8_MBPP_STARTUP_SECONDS',str(startup))
+    return v8_task_entry.repair_mbpp_subprocess(module.code_reward)
+
+
+@pytest.mark.parametrize('name,code,expected',OUTCOME_PROGRAMS,ids=[p[0] for p in OUTCOME_PROGRAMS])
+def test_reward_for_passing_failing_looping_programs_is_unchanged(verifier,monkeypatch,name,code,expected):
+    module,_=verifier
+    fixed,_=_short_timeout_fixed(module,monkeypatch)
+    record=dict(answer='assert add(2,3)==5')
+    assert module.code_reward(record,code)==fixed(record,code)==expected
+
+
+@pytest.mark.parametrize('name,code,expected',OUTCOME_PROGRAMS,ids=[p[0] for p in OUTCOME_PROGRAMS])
+def test_slow_bootstrap_start_computes_the_same_reward_instead_of_failing_the_rank(verifier,monkeypatch,name,code,expected):
+    # The bootstrap takes 1.5 s to start, longer than the 1 s checker timeout. Before, the handshake waited
+    # only CODE_TIMEOUT_SECONDS and raised SubprocessError (rank failure), and a start just under it left the
+    # checker almost no wall time. Now the handshake has its own window and the test run keeps its full 1 s.
+    module,_=verifier
+    fixed,_=_short_timeout_fixed(module,monkeypatch,bootstrap_delay=1.5)
+    record=dict(answer='assert add(2,3)==5')
+    assert fixed(record,code)==module.code_reward(record,code)==expected
+
+
+def test_receipt_records_unchanged_limits_and_the_startup_window(verifier,monkeypatch):
+    module,_=verifier
+    _,receipt=_short_timeout_fixed(module,monkeypatch)
+    assert receipt['policy']=='mbpp-limits-after-exec-v3' and receipt['reward_rule_changed'] is False
+    assert (receipt['wall_timeout_seconds'],receipt['cpu_seconds'],receipt['memory_bytes'])==(1.0,2,module.CODE_MEMORY_BYTES)
+    assert receipt['startup_handshake_seconds']==60.0 and receipt['wall_timeout_starts']=='checker exec'
+
+
+def test_startup_past_its_own_window_stays_an_infrastructure_error(verifier,monkeypatch):
+    module,_=verifier
+    fixed,receipt=_short_timeout_fixed(module,monkeypatch,bootstrap_delay=1.5,startup=0.3)
+    assert receipt['startup_handshake_seconds']==0.3
+    with pytest.raises(module.subprocess.SubprocessError,match='startup timeout'):
+        fixed(dict(answer='assert add(2,3)==5'),'def add(a,b): return a+b')
+
+
+@pytest.mark.parametrize('code',[errno.EAGAIN,errno.ENOMEM])
+def test_transient_spawn_errors_are_retried_and_the_reward_is_computed(verifier,monkeypatch,code):
+    module,fixed=verifier
+    import v8_task_entry
+    original=module.subprocess.Popen;calls=[];sleeps=[]
+    def flaky(command,*a,**kwargs):
+        calls.append(command)
+        if len(calls)<=2:raise OSError(code,os.strerror(code))
+        return original(command,*a,**kwargs)
+    monkeypatch.setattr(module.subprocess,'Popen',flaky)
+    monkeypatch.setattr(v8_task_entry,'_sleep',sleeps.append)
+    record=dict(answer='assert add(2,3)==5')
+    assert fixed(record,'def add(a,b): return a+b')==1.0
+    assert len(calls)==3 and len(sleeps)==2 and sleeps[0]<sleeps[1]
+
+
+def test_spawn_retries_are_bounded_and_other_errors_are_not_retried(verifier,monkeypatch):
+    module,fixed=verifier
+    import v8_task_entry
+    calls=[];sleeps=[]
+    def failing(number):
+        def popen(command,*a,**kwargs):
+            calls.append(command);raise OSError(number,os.strerror(number))
+        return popen
+    monkeypatch.setattr(v8_task_entry,'_sleep',sleeps.append)
+    record=dict(answer='assert add(2,3)==5')
+    monkeypatch.setattr(module.subprocess,'Popen',failing(errno.EAGAIN))
+    with pytest.raises(OSError):fixed(record,'def add(a,b): return a+b')
+    assert len(calls)==v8_task_entry.MBPP_SPAWN_ATTEMPTS and len(sleeps)==v8_task_entry.MBPP_SPAWN_ATTEMPTS-1
+    calls.clear();sleeps.clear()
+    monkeypatch.setattr(module.subprocess,'Popen',failing(errno.EACCES))
+    with pytest.raises(PermissionError):fixed(record,'def add(a,b): return a+b')
+    assert len(calls)==1 and sleeps==[]
