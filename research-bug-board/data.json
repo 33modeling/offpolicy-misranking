@@ -1,13 +1,13 @@
 {
   "schema": 1,
   "title": "논문 코드 버그 현황판",
-  "recorded_at": "2026-11-20T10:20:56+09:00",
+  "recorded_at": "2026-11-20T11:42:24+09:00",
   "repository": "https://github.com/33modeling/offpolicy-misranking",
   "coverage": {
-    "source_commit": "7e001bd18769f76b9062f73b2bf3bd98c47937e0",
-    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/7e001bd18769f76b9062f73b2bf3bd98c47937e0",
-    "all_available_commits": 1458,
-    "fix_commit_records": 150,
+    "source_commit": "c0d9b2229346376c8ec127cc829901af60324c76",
+    "source_url": "https://github.com/33modeling/offpolicy-misranking/commit/c0d9b2229346376c8ec127cc829901af60324c76",
+    "all_available_commits": 1460,
+    "fix_commit_records": 152,
     "gemma_named_commits": 51,
     "first_commit": "510ceca0aa2f840ae78a401d3328efa7c82af2c2",
     "first_commit_at": "2026-08-07T05:56:48+09:00",
@@ -86,7 +86,7 @@
       "refs/remotes/origin/fix/mbpp-queue-readiness:09c95b9b954d0aa47a1ee60b11f2037ce6a6f615",
       "refs/remotes/origin/fix/selector-pair-branch-queue:db7f0c25282d9ef1d4ea71a35ce9410f3c31d742",
       "refs/remotes/origin/hotfix/valgrads-memory:d36ce61a4735ee9c2b86552c8b3a6021902b7ee4",
-      "refs/remotes/origin/master:7e001bd18769f76b9062f73b2bf3bd98c47937e0"
+      "refs/remotes/origin/master:48bd73021fa0c03526ac7826122c4c927a124f3c"
     ]
   },
   "incidents": [
@@ -10394,6 +10394,24 @@
           "text": "V9 가짜 클러스터 e2e(가짜 V8 bank 포함)에서 eval-budget 행렬에 연장 실행의 275 뒤 끝점 평가가 없음을 확인. 원인은 budget_eval_tasks 가 ep 실행이 아니라 행의 분기 run_id 로 스냅숏을 찾는 것. V8 코드는 진행 중 실험 때문에 고치지 않았고, V9 freeze-tau 는 값이 빠지면 matched update 로 물러나도록 작성(7e001bd). CPU 재현이며 클러스터 실제 큐 결과로 확인한 것은 아님.",
           "evidence_kind": "code_test",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/7e001bd18769f76b9062f73b2bf3bd98c47937e0"
+        },
+        {
+          "at": "2026-11-20",
+          "actor": "Claude",
+          "type": "correction",
+          "status": "open",
+          "text": "영향 범위 정정: 클러스터 V8 큐 코디네이터(scripts/srgc_v8_nodes.py 평가 단계)는 cluster.py budget_eval_tasks 를 쓰지 않고 EvaluationBank.budget_endpoint 가 고른 끝점의 run_id 로 평가를 만든다. 그래서 큐가 만든 예산 끝점 평가는 이 버그의 영향을 받지 않는다. 영향은 수동 'cluster.py matrix eval-budget' 경로와 그 행렬을 쓴 V9 가짜 환경뿐이다. 11-19 영향 서술의 'E6·E7 예산 끝점 보상이 계속 미측정'은 큐 경로에 대해서는 틀렸다.",
+          "evidence_kind": "source_review",
+          "url": "https://github.com/33modeling/offpolicy-misranking/blob/c0d9b2229346376c8ec127cc829901af60324c76/scripts/srgc_v8_nodes.py"
+        },
+        {
+          "at": "2026-11-20",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "c0d9b22: SeedBank 정책 행에 budget_endpoint_run_id(고른 끝점의 실행)를 남기고 budget_eval_tasks 가 그것으로 평가 task 를 만든다. 새 시험 tests/test_v8_budget_source_fixes_1120.py::test_budget_eval_includes_extension_endpoints 는 수정 전 소스에서 실패(KeyError budget_endpoint_run_id)·수정 후 통과. V8 단위 시험 157 통과, 저장소 V8 시험은 수정 전후 같은 21개만 실패(나머지 차이 5개는 부하 중 타이밍, 단독 재실행 시 전후 모두 통과), V9 가짜 클러스터 e2e 통과(freeze-tau basis equal_budget). 진행 중인 큐는 묶인 runner(queue-runtimes.zip)를 그대로 쓰므로 바뀌지 않는다. CPU 시험이며 GPU 실측 아님.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/c0d9b2229346376c8ec127cc829901af60324c76"
         }
       ]
     },
@@ -10433,6 +10451,24 @@
           "text": "V9 가짜 클러스터에서 남은 예산이 한 업데이트보다 작은 연장을 돌리면 'retained snapshots missing from snapshots.jsonl: [275]' 로 실패함을 확인. V8 은 고치지 않고 V9 x2 가 이 경우 연장을 만들지 않게 함(7e001bd). CPU 재현이며 클러스터 실제 실패 기록으로 확인한 것은 아님.",
           "evidence_kind": "code_test",
           "url": "https://github.com/33modeling/offpolicy-misranking/commit/7e001bd18769f76b9062f73b2bf3bd98c47937e0"
+        },
+        {
+          "at": "2026-11-20",
+          "actor": "Claude",
+          "type": "correction",
+          "status": "open",
+          "text": "정정: 이 실패는 11-09 192f533 에서 이미 진입 보정(scripts/v8_task_entry.py repair_budget_fork_checkpoint)으로 큐 경로에서 처리됐다. 보정은 runner.py 해시가 f14d92ee… 일 때 _execute_train 의 시작 스냅숏 저장 조건에 extension_of 를 더해 0-update 연장도 부모 끝점을 자기 스냅숏으로 남긴다(tests/test_srgc_v8_zero_update_extension.py). 11-19 재현은 보정 없이 runner 를 직접 부른 V9 가짜 환경에서 난 것이다. 원래 원인은 _finalize 가 아니라 시작 스냅숏 저장 조건(latest.exists())이다.",
+          "evidence_kind": "source_review",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/192f533"
+        },
+        {
+          "at": "2026-11-20",
+          "actor": "Claude",
+          "type": "source_fix_verified",
+          "status": "code_fixed",
+          "text": "c0d9b22: 진입 보정과 같은 변경을 runner.py 소스에 넣음(시작 스냅숏 저장 조건 latest.exists() or method.extension_of). runner 해시가 바뀌어 보정은 새 runner 에 적용되지 않고(해시 불일치 시 None), 예전 runner 에 묶인 큐는 queue-runtimes.zip 의 원본+보정으로 계속 돈다. 새 시험 test_zero_update_extension_finishes_on_source_runner(보정 없이 0-update 연장 완료, 스냅숏 75 의 모델·옵티마이저·RNG 해시가 부모와 같음)는 수정 전 소스에서 'retained snapshots missing [75]' 로 실패·수정 후 통과. CPU 시험이며 GPU 실측 아님.",
+          "evidence_kind": "code_test",
+          "url": "https://github.com/33modeling/offpolicy-misranking/commit/c0d9b2229346376c8ec127cc829901af60324c76"
         }
       ]
     }

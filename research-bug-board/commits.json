@@ -15292,6 +15292,26 @@
       "attribution": [],
       "is_fix": false,
       "gemma": false
+    },
+    {
+      "hash": "48bd73021fa0c03526ac7826122c4c927a124f3c",
+      "at": "2026-11-20T10:21:11+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Bug board: V8-160 eval-budget skips extension endpoints, V8-161 zero-update extension fails",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/48bd73021fa0c03526ac7826122c4c927a124f3c",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "c0d9b2229346376c8ec127cc829901af60324c76",
+      "at": "2026-11-20T11:42:04+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8: fix budget eval for extension endpoints and zero-update budget extensions in source (V8-160, V8-161)",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/c0d9b2229346376c8ec127cc829901af60324c76",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
     }
   ]
 }
