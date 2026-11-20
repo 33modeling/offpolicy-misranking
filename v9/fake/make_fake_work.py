@@ -134,8 +134,8 @@ def build_cohort(work, cohort, *, backend, seeds, taus, eval_seeds, budget=False
         cluster.cmd_freeze_budget(args)
         B = json.loads((root / "frozen" / "budget.json").read_text())["value"]
         tasks, notes = mx.build_stage("budget-extension", cfg, loc, root, seeds=seeds, budget=B)
-        # V8 runner fails a budget extension that cannot take a single update (offset + one update > B:
-        # _finalize finds no retained snapshot at the parent update); skip those, as V9 x2 does.
+        # A budget extension that cannot take a single update (offset + one update > B) is skipped, as V9 x2
+        # does (the V8 runner before V8-161's fix failed it without the queue entry overlay).
         tasks = [t for t in tasks if t["cost_offset_gpu_seconds"] + t["est_update_gpu_seconds"] <= B]
         for t in tasks:
             run(t)
@@ -145,8 +145,8 @@ def build_cohort(work, cohort, *, backend, seeds, taus, eval_seeds, budget=False
            if t["training_seed"] in eval_seeds]
     if budget:
         evs += cluster.budget_eval_tasks(root, cfg, data, B)
-        # cluster.budget_eval_tasks evaluates (policy row run_id, endpoint update); an endpoint inside a budget
-        # extension belongs to the extension run, so it is missed there. Evaluate the endpoints themselves.
+        # Before V8-160's fix cluster.budget_eval_tasks missed endpoints inside a budget extension run;
+        # evaluating the selected endpoints directly keeps the fake work identical either way.
         from switching.bank import SeedBank
         for s in seeds:
             b = SeedBank(root, cfg, cohort, s, "rebuttal_bank", evals={})

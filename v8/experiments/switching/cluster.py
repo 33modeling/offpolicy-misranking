@@ -171,7 +171,8 @@ def budget_eval_tasks(root, cfg, data, budget):
         bank = SeedBank(root, cfg, cfg["cohort_id"], seed, "rebuttal_bank", evals={})
         for row in bank.policy_rows(budget=budget):
             if row.get("budget_status") == "selected":
-                keep.add((row["run_id"], row["budget_endpoint_update"]))
+                # the endpoint snapshot may live in the budget-extension run, not in the branch run
+                keep.add((row.get("budget_endpoint_run_id") or row["run_id"], row["budget_endpoint_update"]))
     tasks = []
     for rid, u in sorted(keep):
         tasks += mx.eval_tasks(cfg, data, root, [rid], split="final", updates={u})

@@ -82,6 +82,6 @@ CUDA_VISIBLE_DEVICES= python -m pytest v9/tests
 5. X4: fresh seed bundle이 seed 5 bundle의 split·캐시를 재사용한다는 V8 가정(V8 README §8.5).
 6. X2: V8 평가 파일과 같은 snapshot·spec이면 재사용하므로 verifier 신원이 V8 평가와 같아야 한다(다르면 child가 거부).
 7. 여러 노드가 동시에 돌 때 group volume에서 flock lease가 동작하는지(V8 run 잠금과 같은 방식).
-8. V8 코드에서 찾은 두 가지(로컬 가짜 환경에서 재현, V8은 고치지 않음).
-   - `switching/cluster.py::budget_eval_tasks`는 정책 행의 `run_id`(분기)와 endpoint update로 평가 task를 만든다. 예산 endpoint가 budget extension run(update > 275) 안에 있으면 분기에는 그 스냅샷이 없어 평가가 만들어지지 않는다. 클러스터 V8 큐가 이 코드로 eval-budget을 돌렸다면 freeze-tau의 같은 예산 기준이 "budget endpoint selected (unmeasured)"로 비고, 사전 규칙대로 matched-update 기준으로 넘어간다. tau.json의 `basis`와 `basis_missing`을 확인한다.
-   - `switching/runner.py`는 한 번도 update할 수 없는 budget extension(분기 비용 + 한 update > B)을 `_finalize`에서 "retained snapshots missing … [275]"로 실패 처리한다. V9 x2는 그런 경우 extension을 만들지 않고 분기 자체에서 B 안의 endpoint를 고른다.
+8. V8 코드에서 찾은 두 가지(현황판 V8-160·V8-161, 11-20 소스 수정). 클러스터 V8 큐는 두 경우 모두 이미 피했다: 큐 코디네이터(`scripts/srgc_v8_nodes.py`)는 선택된 endpoint의 run으로 평가를 만들고, 한 번도 update할 수 없는 extension은 `v8_task_entry.repair_budget_fork_checkpoint`(192f533)가 처리한다. 진행 중인 큐는 묶인 runner 그대로 돈다.
+   - `switching/cluster.py::budget_eval_tasks`(수동 `eval-budget` 행렬)는 정책 행의 분기 `run_id`로 평가 task를 만들어, budget extension run(update > 275) 안의 endpoint를 빠뜨렸다. 이제 `budget_endpoint_run_id`를 쓴다.
+   - `switching/runner.py`는 한 번도 update할 수 없는 budget extension을 `_finalize`에서 "retained snapshots missing … [275]"로 실패시켰다(진입 보정 없이 돌릴 때). 이제 시작 스냅샷을 자기 기록으로 남긴다. V9 x2는 그런 경우 extension을 만들지 않고 분기에서 B 안의 endpoint를 고르는 방식을 그대로 쓴다(결과는 같다).

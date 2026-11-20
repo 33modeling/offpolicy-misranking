@@ -219,7 +219,8 @@ class SeedBank:
                 if be["status"] in ("selected", "capped_at_horizon"):
                     ep = be["endpoint"]
                     br, _, _ = self._reward(ep["run_id"], ep["completed_update"])
-                    row.update(budget_endpoint_update=ep["completed_update"], budget_reward_fraction=br,
+                    row.update(budget_endpoint_update=ep["completed_update"], budget_endpoint_run_id=ep["run_id"],
+                               budget_reward_fraction=br,
                                budget_eval_status="measured" if br is not None else "unmeasured",
                                budget_slack_gpu_seconds=be["slack"])
             rows.append(row)
@@ -363,7 +364,8 @@ def prospective_rows(out_root, cfg, cohort, role, seeds, *, evals=None, prefix_c
                     if be["status"] in ("selected", "capped_at_horizon"):
                         u = be["endpoint"]["completed_update"]
                         br = evals.get((man["run_id"], u, split))
-                        row.update(budget_endpoint_update=u, budget_reward_fraction=br["reward_fraction"] if br else None,
+                        row.update(budget_endpoint_update=u, budget_endpoint_run_id=man["run_id"],
+                                   budget_reward_fraction=br["reward_fraction"] if br else None,
                                    budget_eval_status="measured" if br else "unmeasured", budget_slack_gpu_seconds=be["slack"])
                 rows.append(row)
                 # deduplicated arms (e.g. fixed_sr_tuned at tau=25 = sr_early, a no-switch sampled draw = On)

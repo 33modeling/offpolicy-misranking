@@ -413,8 +413,9 @@ def _execute_train(task, ctx, rdir):
         # index it from its own bytes (never regenerate), then write a snapshot still missing at this step.
         with critical():
             ctx.primary(lambda: _repair_snapshot_index(ctx, rdir, task, retained, engine.step))
+        # A budget-extension fork that the budget lets take no update still records its start (V8-161).
         if ctx.broadcast(ctx.primary(lambda: engine.step in retained and engine.step not in _snapshot_index(rdir)
-                                     and latest.exists())):
+                                     and (latest.exists() or method.get("extension_of")))):
             _save_retained(ctx, engine, rdir, task, ledger_paths)
         deltas, last_cost = [], None
         attempt_start = engine.step

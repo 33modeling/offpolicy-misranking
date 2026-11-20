@@ -190,8 +190,8 @@ def _x2_cohort(cohort, tau):
                                         "extension_of": man["run_id"], "v9_budget_sha": B})
             task["est_update_gpu_seconds"] = own / max(1, H - man["task"]["parent"]["completed_update"])
             if offset + task["est_update_gpu_seconds"] > B:
-                # not one more update fits in B: no extension run (the V8 runner cannot finish a zero-update
-                # extension); the endpoint is chosen on the branch itself from cost metadata
+                # not one more update fits in B: no extension run (queues bound to the pre-V8-161 runner fail a
+                # zero-update extension); the endpoint is chosen on the branch itself from cost metadata
                 be = b.budget_endpoint("fixed_sr", t, man, B, include_check=False)
                 if be["status"] in ("selected", "capped_at_horizon"):
                     ep = be["endpoint"]
