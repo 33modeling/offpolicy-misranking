@@ -14614,6 +14614,16 @@
       "gemma": false
     },
     {
+      "hash": "6e559456d8710986e42ae4a32a03ce5bf37acdce",
+      "at": "2026-11-16T04:17:53+09:00",
+      "author": "33modeling",
+      "title": "Add Llama update-count check script",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/6e559456d8710986e42ae4a32a03ce5bf37acdce",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
       "hash": "27371f0de0ee328ca2509f4db8fb4e13cf2e46fd",
       "at": "2026-11-11T00:33:56+09:00",
       "author": "33modeling",
@@ -14651,6 +14661,636 @@
       "url": "https://github.com/33modeling/offpolicy-misranking/commit/f333a647134be18dec5d17c4df0cb37f100652e6",
       "attribution": [],
       "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "35f80a52e006051310bae6d48f454eabfeb2b8de",
+      "at": "2026-11-11T00:55:45+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Bug board: repair f333a64 - V8-159 fix recorded as an appended event only",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/35f80a52e006051310bae6d48f454eabfeb2b8de",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "42dc3c3f32ef4fe150e6dfdd464ce89afb6dee43",
+      "at": "2026-11-11T01:19:12+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 tests: all 514 pass - bootstrap stub, and hang guards that tripped under machine load",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/42dc3c3f32ef4fe150e6dfdd464ce89afb6dee43",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "fe43b0bdf793b56bf991748080d051fd220709b9",
+      "at": "2026-11-11T20:04:03+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8: one command writes all cohort results to ~/v8-results.txt",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/fe43b0bdf793b56bf991748080d051fd220709b9",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "67e750ba68ed494370fdece7d450971ee4bced0b",
+      "at": "2026-11-11T20:09:32+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8: key-number summary of every cohort to ~/v8-summary.txt",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/67e750ba68ed494370fdece7d450971ee4bced0b",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "45424d4f57723e6c6f7fab91015e1befc6f44efa",
+      "at": "2026-11-12T21:38:41+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8: recount costs and budget endpoints of old-bound queues with the current analysis code (read-only)",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/45424d4f57723e6c6f7fab91015e1befc6f44efa",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "4f013342c6153ee86eb449f062c0ebec2b5c11ba",
+      "at": "2026-11-13T00:15:06+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: eval/ext grid cells agree with the counts below; find native crash stacks at the end of task logs",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/4f013342c6153ee86eb449f062c0ebec2b5c11ba",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "f9f864937f3fe7e0e3274044c67803df85c1c7cc",
+      "at": "2026-11-13T00:32:16+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8: time per evaluation task and remaining evaluations per cohort (read only)",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/f9f864937f3fe7e0e3274044c67803df85c1c7cc",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "fdb6f4c942bacf8e5b3e4c663692848209b51f3e",
+      "at": "2026-11-13T00:40:19+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 collect: include initial SR-cache generation in cold-start cost; recount reports cold-start inputs per seed",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/fdb6f4c942bacf8e5b3e4c663692848209b51f3e",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "b42b96250cd9779cf30b76a4d6cd181af9d01023",
+      "at": "2026-11-13T07:55:19+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 summary and recount: Korean reading under each cohort's numbers (primary, budget cause, P9 outcome, secondary pairs, cold-start gaps)",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/b42b96250cd9779cf30b76a4d6cd181af9d01023",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "d1b16bc6853e61be806cc58d6575f73e37864f0d",
+      "at": "2026-11-13T08:41:51+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8: blocked tasks restart once more on user request (never on their crash node; history kept); status legend in Korean, only running cells green, ▶×k so green cells add up to the run count",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/d1b16bc6853e61be806cc58d6575f73e37864f0d",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "33c4c3855130724f65e96c4b9e2bfd7dd1a42c1c",
+      "at": "2026-11-13T08:58:05+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: split grid columns on narrow screens instead of cutting off right-hand running tasks; name any running task missing from the grid",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/33c4c3855130724f65e96c4b9e2bfd7dd1a42c1c",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "d4fe53bab0b4c383cc6b2352f41f24cadc0ac5d2",
+      "at": "2026-11-13T09:26:26+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8: one command for the Korean reading of every cohort (verdict, usable rows, comparisons, cold-start) -> ~/v8-explain.txt",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/d4fe53bab0b4c383cc6b2352f41f24cadc0ac5d2",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "7ed18ec85e477091c069264c67a53f4f881ccef5",
+      "at": "2026-11-13T11:13:19+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 explain: full Korean report with every raw value (setup, D signals, per-seed policy rows, comparisons, costs) and an explanation of what was run and what came out under each item",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/7ed18ec85e477091c069264c67a53f4f881ccef5",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "cc00adecc4a2662a584500cad760d86023ea3df2",
+      "at": "2026-11-13T12:20:20+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 explain: readable report (summary first, aligned tables, explanations once per group), reward curves from every evaluation, and a gap check of what a finished queue still lacks",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/cc00adecc4a2662a584500cad760d86023ea3df2",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "a39dc1174b345ee4434fda59f4331199caf62fe2",
+      "at": "2026-11-15T22:01:06+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: every count is finished/total, top table, grid and summary use the same totals",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/a39dc1174b345ee4434fda59f4331199caf62fe2",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "8211558cf12ee17bb49d41c112ab81f8b43b659f",
+      "at": "2026-11-15T22:19:47+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: a budget extension's total is its update cap (was shown as 310/275), and one that spent its budget before the cap still counts as complete work",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/8211558cf12ee17bb49d41c112ab81f8b43b659f",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "827fa7b5b289798fc47081828339fb757a8eadbb",
+      "at": "2026-11-15T22:23:27+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: a running task always says how far it is (answering i/N with N from another rank or the finished evaluation of the same spec, update done/total for training, ~time left for an evaluation)",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/827fa7b5b289798fc47081828339fb757a8eadbb",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "cb753e2d1a54e838959b967e4648483a523931f1",
+      "at": "2026-11-15T22:49:35+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 explain/results entries keep bytecode out of the code checkout like every other V8 shell entry (test_shell_entries_never_write_bytecode_into_the_code_checkout failed on master)",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/cb753e2d1a54e838959b967e4648483a523931f1",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "090a17e02d23e1826c11b37e1eade59055caec4e",
+      "at": "2026-11-15T23:08:01+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: time left per experiment from measured task times",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/090a17e02d23e1826c11b37e1eade59055caec4e",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "3f3a48733eb52b5b42ef6c76787369377c701bb0",
+      "at": "2026-11-15T22:43:37+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8: queue-runtimes.zip carries every coordinator/runner through a39dc11",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/3f3a48733eb52b5b42ef6c76787369377c701bb0",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "47217d5571b3783fb6c0d060c86290f41aaf1d3e",
+      "at": "2026-11-15T23:05:54+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8: a node with nothing claimable in its cohort takes ready work from the next cohort",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/47217d5571b3783fb6c0d060c86290f41aaf1d3e",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "f2f9b8d56a9eacf1e637a7f5b361d61bd247cd81",
+      "at": "2026-11-15T23:55:41+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 nodes: never start a queue nobody started; MBPP cohorts first",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/f2f9b8d56a9eacf1e637a7f5b361d61bd247cd81",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "0f877d7d7395446e0dd0018c293a33a25c158f60",
+      "at": "2026-11-15T23:59:57+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 nodes: failed tasks get three immediate retries on the next free node",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/0f877d7d7395446e0dd0018c293a33a25c158f60",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "5f49ec2f662e64c0b46a67a1c386005b08f65d66",
+      "at": "2026-11-16T00:26:37+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: one task model behind every number (table, seed grids, node rows, eval-time view)",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/5f49ec2f662e64c0b46a67a1c386005b08f65d66",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "72a705613c933182364be099a352af61b218ba30",
+      "at": "2026-11-16T00:30:37+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: an attempt without exit code says what its own files show; golden screens",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/72a705613c933182364be099a352af61b218ba30",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "b528bd933d570f8261ec3837056780e305319f37",
+      "at": "2026-11-16T00:36:00+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 native crash: name the crashed rank's real last stage",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/b528bd933d570f8261ec3837056780e305319f37",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "1b61213becf84da32743c1f0b7c05fe06fffd4e0",
+      "at": "2026-11-16T00:50:03+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 nodes: preflight before every task launch; every crash records signal, stage, frames, env",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/1b61213becf84da32743c1f0b7c05fe06fffd4e0",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "2ea385a7fcd38c256ab0acf56d1f12c7d9c90668",
+      "at": "2026-11-16T00:51:03+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 nodes: a GPU set that crashed natively in two cohorts takes no more tasks",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/2ea385a7fcd38c256ab0acf56d1f12c7d9c90668",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "879ca94efd2e65c80144c3c2d026e312f01f64eb",
+      "at": "2026-11-16T00:52:05+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 task child: node-local Triton kernel cache unless one is configured",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/879ca94efd2e65c80144c3c2d026e312f01f64eb",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "8ec3d2f09f6b627420c1c188fa2c1b9bb5ba39af",
+      "at": "2026-11-16T00:52:15+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 task child: say when an MBPP verifier is not audited and keeps its preexec_fn launch",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/8ec3d2f09f6b627420c1c188fa2c1b9bb5ba39af",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "eab758b579d2e59caa3c1a9e3491f38e2f1b9b34",
+      "at": "2026-11-16T00:52:47+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] Docs: V8 node preflight, crash fields, stage fix, cross-cohort quarantine",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/eab758b579d2e59caa3c1a9e3491f38e2f1b9b34",
+      "attribution": [],
+      "is_fix": true,
+      "gemma": false
+    },
+    {
+      "hash": "f69378f8465242a6aae121b8e0f683fc520ce6a2",
+      "at": "2026-11-16T04:17:53+09:00",
+      "author": "33modeling",
+      "title": "Add Llama update-count check script",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/f69378f8465242a6aae121b8e0f683fc520ce6a2",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "e60b632c5ddfef23542116fd918d5b97b71ab4e1",
+      "at": "2026-11-16T04:25:08+09:00",
+      "author": "33modeling",
+      "title": "Save Llama update counts to exports instead of printing",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/e60b632c5ddfef23542116fd918d5b97b71ab4e1",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "3f094ea1c488db0c87dc64fad0f46fc22f3f2f47",
+      "at": "2026-11-16T04:34:22+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 nodes: revert the cross-cohort GPU-set shutout (2ea385a)",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/3f094ea1c488db0c87dc64fad0f46fc22f3f2f47",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "f929c02bff4d29dd7f60cbbc8871e223aa5356ed",
+      "at": "2026-11-16T04:37:00+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 nodes: preflight records by default and never takes a node out of service",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/f929c02bff4d29dd7f60cbbc8871e223aa5356ed",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "6558e403156a1b4e0f20bb873f99d67b2379037a",
+      "at": "2026-11-16T04:59:12+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 nodes: a full earlier cohort whose queue lock is always busy no longer keeps a node idle",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/6558e403156a1b4e0f20bb873f99d67b2379037a",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "e74203e0d4facb2baf5ce0ade4f20c7283560b02",
+      "at": "2026-11-16T05:12:15+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 nodes: no cross-cohort dispatch lock on every loop just to pick the first cohort",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/e74203e0d4facb2baf5ce0ade4f20c7283560b02",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "f1f94ccc433acc226ab1006c5528a0f6dbdebdb1",
+      "at": "2026-11-16T05:26:18+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: evaluation progress without the 'q' prefix",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/f1f94ccc433acc226ab1006c5528a0f6dbdebdb1",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "4245e93c0081151e1e24ced4781c5ca1bcb701e1",
+      "at": "2026-11-16T05:27:29+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status test: expect the evaluation progress without the 'q' prefix",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/4245e93c0081151e1e24ced4781c5ca1bcb701e1",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "f43c6172eea42daff067a2b9512f18dbb7d4bf92",
+      "at": "2026-11-16T08:32:41+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 nodes: a full cohort is reported as held by other nodes, not as a queue-lock wait",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/f43c6172eea42daff067a2b9512f18dbb7d4bf92",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "7adca3cc961dd290722b044b6348b1547f0afbc1",
+      "at": "2026-11-16T09:35:44+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 nodes: spare nodes of a full cohort reach ready work in later cohorts",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/7adca3cc961dd290722b044b6348b1547f0afbc1",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "2838d36f3c17b3e3693857b9f9d8affccdd80666",
+      "at": "2026-11-16T10:20:04+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: time left from all work still to come, budget progress for extensions, units on every number",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/2838d36f3c17b3e3693857b9f9d8affccdd80666",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "93f1901062aa8a92d0c98dbf55385ef592940f27",
+      "at": "2026-11-16T10:26:31+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: an extension whose spent budget cannot be read has unknown time left",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/93f1901062aa8a92d0c98dbf55385ef592940f27",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "1a44714c5cf838fd46dff9860a697e55e9b35d75",
+      "at": "2026-11-16T11:00:20+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 nodes: retry a node-local give-up after a bounded backoff; idle nodes say why",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/1a44714c5cf838fd46dff9860a697e55e9b35d75",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "ed85b859975fbe8cd11146704261ce2e7c37c991",
+      "at": "2026-11-16T14:09:02+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 status: one screen laid out like run_srgc.sh status, time left first",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/ed85b859975fbe8cd11146704261ce2e7c37c991",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "d643a31437c892b024fc2ea9ee7516dde6102943",
+      "at": "2026-11-17T08:01:41+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 crash report: one read-only file with every native-crash attempt's evidence",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/d643a31437c892b024fc2ea9ee7516dde6102943",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "24eba3d7438555aaccf20314c28b3e28157d0824",
+      "at": "2026-11-17T08:15:02+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 crash report: include each task's faulthandler stack files",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/24eba3d7438555aaccf20314c28b3e28157d0824",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "9b319129c6aeb24613c24cc722407cfce1615260",
+      "at": "2026-11-17T10:22:57+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8: stop the 30-min faulthandler watchdog that SIGSEGVs ranks",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/9b319129c6aeb24613c24cc722407cfce1615260",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "fc352ed17799678ed605df6e132209a058180c20",
+      "at": "2026-11-17T10:53:59+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 nodes: tasks stopped by the 30-min stack-dump SIGSEGV restart by themselves",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/fc352ed17799678ed605df6e132209a058180c20",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "ea9cfc90067e17a109d93e2427a6c6eeb806d3b8",
+      "at": "2026-11-17T11:06:05+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 idle report: every node's scheduler record and every unfinished job, read-only",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/ea9cfc90067e17a109d93e2427a6c6eeb806d3b8",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "e34e7507efda44d92f0f541e6fbc7386fdd8b7a9",
+      "at": "2026-11-17T11:43:24+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 supervisor: an idle node picks up pushed code by itself",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/e34e7507efda44d92f0f541e6fbc7386fdd8b7a9",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "27eb6dd143c252c66dc62f10086cfe089aeae10f",
+      "at": "2026-11-18T13:16:20+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 nodes: qwen_mbpp keeps two reserve nodes; 30-min stack-dump SIGSEGVs stop counting",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/27eb6dd143c252c66dc62f10086cfe089aeae10f",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "989e772a8bce1c350d5b0de87f1557d48d41e66e",
+      "at": "2026-11-18T13:38:14+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 nodes: share an inspection when a first-cohort task is blocked for good",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/989e772a8bce1c350d5b0de87f1557d48d41e66e",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "54984e9e122292d8a2a225731539672765f0a29b",
+      "at": "2026-11-18T13:39:49+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 nodes: a GPU set quarantined for the first cohort is no reserve node",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/54984e9e122292d8a2a225731539672765f0a29b",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "2ca4e8211c7676b2a6cfde88a460261c19ed7869",
+      "at": "2026-11-18T12:39:53+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 supervisor: busy nodes take pushed code at the next task boundary; stuck-inspection and failure-capped exits relaunch with backoff",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/2ca4e8211c7676b2a6cfde88a460261c19ed7869",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "f74c092ebe46d80ec79be0f62b237bcea9864f73",
+      "at": "2026-11-18T12:55:18+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 supervisor: restart for pushed code only after the node records WAIT_UPDATE past the hold; a pending CPU stage is never reported as WAIT_UPDATE; a checkout already moved by a manual pull counts as an update",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/f74c092ebe46d80ec79be0f62b237bcea9864f73",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "b715987ab3333d94512845b9957d9a7424eecf5d",
+      "at": "2026-11-18T12:58:54+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 supervisor: automatic restarts and relaunches drop the one-time --new-queue",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/b715987ab3333d94512845b9957d9a7424eecf5d",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "47b39eeb0219373915c87e37e4ed8ca9c63b6f60",
+      "at": "2026-11-18T13:45:40+09:00",
+      "author": "33modeling",
+      "title": "Merge branch 'v8fix-sup-1118' into v8fix-merge-1118",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/47b39eeb0219373915c87e37e4ed8ca9c63b6f60",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "8f04df947ab9e7fd76d702d72261522abada1af4",
+      "at": "2026-11-18T12:18:49+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 task entry: MBPP checker startup gets its own 60 s window, spawn EAGAIN/ENOMEM retried, ranks run without the periodic stack dump",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/8f04df947ab9e7fd76d702d72261522abada1af4",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "ad28426bab2867f7161e54b49c6db50339f80493",
+      "at": "2026-11-18T12:25:09+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 task entry: an infinite or huge MBPP startup window setting falls back to 60 s instead of failing every check",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/ad28426bab2867f7161e54b49c6db50339f80493",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "6042524f453749801864cb0bfa6b738c26a825d5",
+      "at": "2026-11-18T12:45:44+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V8 task entry tests: MBPP startup tests use a 2 s checker timeout so a 0.2 s program does not time out on a loaded machine",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/6042524f453749801864cb0bfa6b738c26a825d5",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "9327865e9fe78f946e4f7138879ec103c66e7dc7",
+      "at": "2026-11-18T13:45:40+09:00",
+      "author": "33modeling",
+      "title": "Merge branch 'v8fix-entry-1118' into v8fix-merge-1118",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/9327865e9fe78f946e4f7138879ec103c66e7dc7",
+      "attribution": [],
+      "is_fix": false,
+      "gemma": false
+    },
+    {
+      "hash": "7e001bd18769f76b9062f73b2bf3bd98c47937e0",
+      "at": "2026-11-19T23:10:51+09:00",
+      "author": "33modeling",
+      "title": "[Skip CI] [skip review] V9: staged-switch experiments (freeze-tau, X1-X5, collect) with one-line node runner and CPU fake-cluster check",
+      "url": "https://github.com/33modeling/offpolicy-misranking/commit/7e001bd18769f76b9062f73b2bf3bd98c47937e0",
+      "attribution": [],
+      "is_fix": false,
       "gemma": false
     }
   ]

@@ -10261,5 +10261,88 @@
         "evidence_kind": "code_test"
       }
     ]
+  },
+  {
+    "id": "V8-160",
+    "title": "eval-budget 가 예산 연장 실행 안의 예산 끝점을 평가 목록에 넣지 않아 E6·E7 예산 끝점 보상이 계속 미측정",
+    "area": "V8 예산 평가(eval-budget)",
+    "severity": "high",
+    "first_reported": "2026-11-19",
+    "introduction_commit": "419072869dc1c9b280c4d3c47e5430b4e97e9d25",
+    "cause": "cluster.py budget_eval_tasks 는 SeedBank.policy_rows(budget=B) 의 selected 행에서 (row['run_id'], row['budget_endpoint_update']) 를 모은다. 그런데 row['run_id'] 는 분기 실행(또는 On 궤적)이고, 예산 끝점이 update 275 뒤에 있으면 그 스냅숏은 budget-extension 실행(extension_of)에 있다. bank.budget_endpoint 가 고른 ep['run_id'] 는 행에 남지 않는다. 그래서 eval_tasks 가 분기 실행의 스냅숏 목록에서 275 뒤 update 를 찾다가 없어 평가 작업을 만들지 않는다.",
+    "impact": "budget-extension 으로 275 뒤까지 간 SR·Random 등 싼 arm 의 예산 끝점은 eval-budget 을 돌려도 평가되지 않고 budget_eval_status 가 unmeasured 로 남는다. 275 이하에서 끝나는 끝점만 평가된다. V9 freeze-tau 의 같은 예산 기준이 이 값이 없으면 matched update(275) 기준으로 물러난다(tau.json 의 basis, basis_missing). 진행 중인 V8 큐 코드와 결과는 바꾸지 않았다.",
+    "attribution": "budget_eval_tasks 는 4190728(11-08)에서 들어옴. Claude 가 11-19 V9 작성 중 가짜 클러스터에서 발견.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "budget_eval_tasks 도입 4190728",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/419072869dc1c9b280c4d3c47e5430b4e97e9d25"
+      },
+      {
+        "kind": "source",
+        "label": "cluster.py budget_eval_tasks",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/7e001bd18769f76b9062f73b2bf3bd98c47937e0/v8/experiments/switching/cluster.py#L164"
+      },
+      {
+        "kind": "source",
+        "label": "bank.py budget_endpoint·policy_rows",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/7e001bd18769f76b9062f73b2bf3bd98c47937e0/v8/experiments/switching/bank.py#L142"
+      },
+      {
+        "kind": "source",
+        "label": "V9 기준 물러남 처리 7e001bd",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/7e001bd18769f76b9062f73b2bf3bd98c47937e0"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-19",
+        "actor": "Claude",
+        "type": "reproduced",
+        "status": "open",
+        "text": "V9 가짜 클러스터 e2e(가짜 V8 bank 포함)에서 eval-budget 행렬에 연장 실행의 275 뒤 끝점 평가가 없음을 확인. 원인은 budget_eval_tasks 가 ep 실행이 아니라 행의 분기 run_id 로 스냅숏을 찾는 것. V8 코드는 진행 중 실험 때문에 고치지 않았고, V9 freeze-tau 는 값이 빠지면 matched update 로 물러나도록 작성(7e001bd). CPU 재현이며 클러스터 실제 큐 결과로 확인한 것은 아님.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/7e001bd18769f76b9062f73b2bf3bd98c47937e0"
+      }
+    ]
+  },
+  {
+    "id": "V8-161",
+    "title": "예산에 업데이트가 하나도 더 안 들어가는 budget-extension 이 'retained snapshots missing [275]' 로 실패",
+    "area": "V8 실행·예산 연장",
+    "severity": "medium",
+    "first_reported": "2026-11-19",
+    "introduction_commit": "19a0161b14877e204aae01f8513c551e60b52d44",
+    "cause": "runner._finalize 는 needed = {retain_updates 중 start < u <= engine.step} ∪ {engine.step} 를 자기 실행의 snapshots.jsonl 에서 찾는다. 연장 실행이 275 스냅숏에서 시작했는데 남은 예산이 한 업데이트 비용보다 작으면 engine.step 이 그대로 275 이고, 275 스냅숏은 부모 실행에만 있어 자기 색인에 없다. 그래서 정상적인 '예산 소진, 0 업데이트' 종료가 ValueError 로 실패한다.",
+    "impact": "예산이 분기의 275 비용에 거의 붙은 arm·seed 에서 budget-extension 작업이 두 번 실패해 멈추고, bank 는 그 연장을 완료로 보지 않아 예산 끝점이 capped_at_horizon 으로 남는다. V9 x2 는 한 업데이트도 안 들어가면 연장 작업을 만들지 않고 275 를 끝점으로 쓴다. V8 코드는 고치지 않았다.",
+    "attribution": "_finalize 의 engine.step 포함 검사는 19a0161(11-08)에서 들어옴. Claude 가 11-19 V9 작성 중 발견.",
+    "evidence": [
+      {
+        "kind": "source",
+        "label": "검사 도입 19a0161",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/19a0161b14877e204aae01f8513c551e60b52d44"
+      },
+      {
+        "kind": "source",
+        "label": "runner.py _finalize",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/7e001bd18769f76b9062f73b2bf3bd98c47937e0/v8/experiments/switching/runner.py#L565"
+      },
+      {
+        "kind": "source",
+        "label": "V9 x2 회피 7e001bd",
+        "url": "https://github.com/33modeling/offpolicy-misranking/blob/7e001bd18769f76b9062f73b2bf3bd98c47937e0/v9/v9lib/stages.py#L193"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-11-19",
+        "actor": "Claude",
+        "type": "reproduced",
+        "status": "open",
+        "text": "V9 가짜 클러스터에서 남은 예산이 한 업데이트보다 작은 연장을 돌리면 'retained snapshots missing from snapshots.jsonl: [275]' 로 실패함을 확인. V8 은 고치지 않고 V9 x2 가 이 경우 연장을 만들지 않게 함(7e001bd). CPU 재현이며 클러스터 실제 실패 기록으로 확인한 것은 아님.",
+        "evidence_kind": "code_test",
+        "url": "https://github.com/33modeling/offpolicy-misranking/commit/7e001bd18769f76b9062f73b2bf3bd98c47937e0"
+      }
+    ]
   }
 ]
