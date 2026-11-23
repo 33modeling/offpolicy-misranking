@@ -41,7 +41,7 @@ def test_status_follows_the_v8_layout(tmp_path, monkeypatch):
                                                      started_at=time.time() - 3700, log=str(log))))
     text = render(fake_plan("llama-s5"))
     order = ["V9 status · ", "this node (", " time left", " experiments", "X1 Staged vs SR vs Alignment at 275: not finished",
-             "by seed and arm", " nodes: 1 working on V9"]
+             "by seed and arm", " nodes: 1 live — 1 working"]
     at = [text.index(x) for x in order]
     assert at == sorted(at), at
     assert "tau · frozen · tau=75" in text
@@ -64,7 +64,7 @@ def test_dead_worker_record_is_not_counted_as_running(tmp_path, monkeypatch):
     text = render(fake_plan("llama-s5"))
     assert "this node (" in text and "no V9 task here" in text
     assert "possibly stopped: Llama MATH s5.on.train" in text and "can start now (2)" in text
-    assert "nodes: 0 working on V9" in text
+    assert "nodes: 0 live" in text
 
 
 def test_tau_not_frozen_says_what_happens(tmp_path, monkeypatch):
@@ -82,3 +82,39 @@ def test_split_key():
     assert status_view.split_key("s5.switch050@B") == ("s5", "switch050@B", "")
     assert status_view.split_key("all") == ("", "all", "")
     assert status_view.split_key("s10.prefix") == ("s10", "prefix", "")
+
+
+def _worker_log(root, host, pid, lines):
+    d = root / "logs";d.mkdir(parents=True, exist_ok=True)
+    p = d / f"worker-{host}-20261123T210000-{pid}.log"
+    p.write_text("\n".join(lines) + "\n")
+    return p
+
+
+def test_working_node_is_found_from_its_worker_log_without_a_record(tmp_path, monkeypatch):
+    root = tmp_path / "v9";monkeypatch.setenv("V9_ROOT", str(root))
+    started = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(time.time() - 3700))
+    _worker_log(root, "run371000-v9-s01-1123-21-00-00", 812, [
+        "[v9] worker start host=run371000-v9-s01-1123-21-00-00 stages=freeze-tau,x1",
+        f"[v9] {started} run371000-v9-s01-1123-21-00-00 stage=x1 cohort=llama_math task=llama-s5",
+        "[13:01:00] Llama / MATH | update 100/275 | reward 0.40",
+        "[14:02:11] Llama / MATH | update 120/275 | reward 0.41"])
+    _worker_log(root, "run371001-v9-s02", 90, [
+        "[v9] worker start host=run371001-v9-s02 stages=freeze-tau,x1",
+        f"[v9] {started} run371001-v9-s02 stage=x1 cohort=llama_math task=llama-s6",
+        "[v9] x1: task llama-s6 FAILED rc=1 (attempt kept; rerunning resumes)"])
+    _worker_log(root, "run371002-v9-s03", 91, [
+        "[v9] worker start host=run371002-v9-s03 stages=freeze-tau,x1", "[v9] nothing more is ready on this node"])
+    text = render(fake_plan("llama-s5"))
+    assert "Llama MATH s5.on.train · on run371000-v9-s01-1123-21-00-00 · for 1h01m · update 120 of 275" in text
+    assert "nodes: 2 live — 1 working, 1 idle" in text
+    assert "run371000-v9-s01-1123-21-00-00     working  X1  Llama MATH s5.on.train" in text
+    assert "run371001-v9-s02" in text and "run371002-v9-s03" not in text
+
+
+def test_old_silent_log_is_not_a_live_node(tmp_path, monkeypatch):
+    root = tmp_path / "v9";monkeypatch.setenv("V9_ROOT", str(root))
+    p = _worker_log(root, "run1", 5, ["[v9] 2026-11-23T01:00:00 run1 stage=x1 cohort=llama_math task=llama-s5"])
+    old = time.time() - status_view.STALE_SECONDS - 60;os.utime(p, (old, old))
+    text = render(fake_plan("llama-s5"))
+    assert "running now (1)" not in text and "nodes: 0 live" in text

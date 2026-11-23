@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import subprocess
 import time
@@ -47,14 +48,81 @@ def running_dir():
     return env.v9_root() / ".state" / "running"
 
 
+LOG_NAME = re.compile(r"worker-(?P<host>.+)-(?P<stamp>\d{8}T\d{6})-(?P<pid>\d+)\.log$")
+TASK_LINE = re.compile(r"^\[v9\] (?P<at>\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d) (?P<host>\S+) stage=(?P<stage>\S+) "
+                       r"cohort=(?P<cohort>\S+) task=(?P<task>\S+)\s*$")
+# Worker lines that mean its current task is over (V9 workers of every version print these).
+TASK_OVER = ("busy on another node", " FAILED rc=", "nothing more is ready", "stopped by signal", "[v9] collect:",
+             "[v9] freeze-tau:", "planning FAILED")
+
+
+def _tail_lines(path, limit=4 << 20):
+    """Lines of the last `limit` bytes of a file (worker logs carry the child's whole output)."""
+    with open(path, "rb") as fh:
+        fh.seek(0, 2)
+        size = fh.tell()
+        fh.seek(max(0, size - limit))
+        return fh.read().decode(errors="replace").splitlines()
+
+
+def worker_logs():
+    """Every worker log under $V9/logs written within STALE_SECONDS: host, pid, current task (or None)."""
+    d = env.v9_root() / "logs"
+    rows = []
+    for p in sorted(d.glob("worker-*.log")) if d.is_dir() else []:
+        m = LOG_NAME.match(p.name)
+        try:
+            quiet = time.time() - p.stat().st_mtime
+        except OSError:
+            continue
+        if not m or quiet >= STALE_SECONDS:
+            continue
+        current, ended = None, False
+        try:
+            lines = _tail_lines(p)
+        except OSError:
+            continue
+        for line in lines:
+            t = TASK_LINE.match(line.strip())
+            if t:
+                current, ended = t.groupdict(), False
+            elif line.startswith("[v9] worker start"):
+                current, ended = None, False
+            elif line.startswith("[v9] ") and ("nothing more is ready" in line or "stopped by signal" in line):
+                current, ended = None, True   # this worker exited
+            elif current is not None and line.startswith("[v9] ") and any(x in line for x in TASK_OVER):
+                current = None
+        if ended:
+            continue
+        rec = dict(host=m["host"], pid=int(m["pid"]), log=str(p), quiet=quiet, live=True, task=current)
+        if current is not None:
+            try:
+                rec["started_at"] = time.mktime(time.strptime(current["at"], "%Y-%m-%dT%H:%M:%S"))
+            except ValueError:
+                rec["started_at"] = p.stat().st_mtime
+            rec.update(task_id=current["task"], stage=current["stage"], cohort=current["cohort"])
+        rows.append(rec)
+    return rows
+
+
 def running_records():
-    """task id -> record, with 'live' (worker log written within STALE_SECONDS, or a live pid on this host)."""
+    """task id -> record of the worker running it, with 'live'.
+
+    Main source: the worker logs (every V9 version writes a `stage=… cohort=… task=…` line when it starts a task
+    and streams the child's output into the same log), so nodes started before the running records existed are
+    seen too. The .state/running records (written since 66d20b7) add tasks whose log is not readable here."""
     out = {}
+    for rec in worker_logs():
+        if rec.get("task_id"):
+            out[rec["task_id"]] = rec
     d = running_dir()
     for p in sorted(d.glob("*.json")) if d.is_dir() else []:
         try:
             r = json.loads(p.read_text())
         except (OSError, ValueError):
+            continue
+        tid = r.get("task_id") or p.stem
+        if tid in out:
             continue
         log = Path(r.get("log") or "")
         try:
@@ -66,11 +134,28 @@ def running_records():
             try:
                 os.kill(int(r["pid"]), 0)
                 live = True
+            except PermissionError:
+                live = True
             except (OSError, ValueError):
                 live = False
         r.update(quiet=quiet, live=live)
-        out[r.get("task_id") or p.stem] = r
+        out[tid] = r
     return out
+
+
+def gpu_text():
+    """This node's GPUs as V8 status shows them: busy count and memory, or 'GPU unknown'."""
+    try:
+        res = subprocess.run(["nvidia-smi", "--query-gpu=utilization.gpu,memory.used,memory.total",
+                              "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=8)
+        rows = [r.split(",") for r in res.stdout.strip().splitlines() if r.strip()]
+        if res.returncode or not rows:
+            return "GPU unknown"
+        busy = sum(1 for r in rows if float(r[0]) > 5 or float(r[1]) > 1024)
+        used = sum(float(r[1]) for r in rows) / 1024
+        return f"GPU {busy}/{len(rows)} busy, {used:.0f} GB used"
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        return "GPU unknown"
 
 
 def last_output(log, width=110):
@@ -99,9 +184,9 @@ def collect_items(plan, task_id):
         for it in got:
             tid = task_id(it["task"]) if it.get("task") else None
             rec = running.get(tid) if tid else None
-            if rec is not None and it["state"] == "ready" and rec["live"]:
+            if rec is not None and it["state"] != "done" and rec["live"]:
                 it = dict(it, state="running", run=rec)
-            elif rec is not None and it["state"] == "ready":
+            elif rec is not None and it["state"] != "done":
                 it = dict(it, stale=rec)
             items.append(it)
     return items, errors, running
@@ -161,6 +246,29 @@ def task_name(i):
     return f"{cname(i['cohort'])} {i['key']}"
 
 
+PROGRESS = re.compile(r"(question|update|step|prompt|batch)\D{0,4}?(\d+)\s*(?:/|of)\s*(\d+)", re.I)
+
+
+def progress(rec):
+    """'update 120 of 275 · ~3h10m left' from the newest progress line in the worker log (V8 status wording)."""
+    try:
+        lines = _tail_lines(rec.get("log", ""), 262144)
+    except OSError:
+        return ""
+    for line in reversed(lines):
+        found = PROGRESS.findall(line)
+        if found:
+            word, n, m = found[-1][0].lower(), int(found[-1][1]), int(found[-1][2])
+            if not 0 < n <= m:
+                continue
+            text = f"{word} {n} of {m}"
+            elapsed = time.time() - rec.get("started_at", time.time())
+            if n < m and elapsed > 60:
+                text += f" · ~{span(elapsed * (m - n) / n)} left"
+            return text
+    return ""
+
+
 def render(plan, task_id, out=print):
     items, errors, running = collect_items(plan, task_id)
     stages = [s for s in env.STAGES if s not in ("freeze-tau", "collect")]
@@ -171,9 +279,10 @@ def render(plan, task_id, out=print):
     out(str(env.v9_root()))
     mine = [i for i in tasks if i["state"] == "running" and i["run"].get("host") == here]
     out(f"this node ({here}): " + (", ".join(f"{STAGE_TITLES[i['stage']].split(' ')[0]} {task_name(i)} running"
-                                             for i in mine) or "no V9 task here"))
+                                             for i in mine) or "no V9 task here") + f" · {gpu_text()}")
 
-    live_nodes = sorted({i["run"].get("host") for i in tasks if i["state"] == "running"})
+    workers = worker_logs()
+    live_nodes = sorted({w["host"] for w in workers} | {i["run"].get("host") for i in tasks if i["state"] == "running"})
     out("\n time left")
     for s in stages:
         its = by_stage[s]
@@ -184,8 +293,19 @@ def render(plan, task_id, out=print):
         if not left:
             out(f"   {STAGE_TITLES[s]}: finished")
         else:
-            out(f"   {STAGE_TITLES[s]}: unknown — V9 has no measured task time yet ({n} node{'s' if n != 1 else ''} "
-                f"working on it)")
+            lefts = []
+            for i in its:
+                if i["state"] == "running":
+                    m = re.search(r"~(\S+) left", progress(i["run"]))
+                    if m:
+                        lefts.append(m.group(1))
+            rest = left - n
+            if lefts:
+                out(f"   {STAGE_TITLES[s]}: running tasks end in about {', '.join(lefts[:6])} "
+                    f"({n} node{'s' if n != 1 else ''} working on it); {rest} more task(s) after them are not timed yet")
+            else:
+                out(f"   {STAGE_TITLES[s]}: unknown — V9 has no measured task time yet ({n} node{'s' if n != 1 else ''} "
+                    f"working on it)")
 
     out("\n experiments")
     tau = (by_stage.get("freeze-tau") or [None])[0]
@@ -236,8 +356,9 @@ def render(plan, task_id, out=print):
             out(f"   running now ({len(run)}):")
             for i in run:
                 r = i["run"]
-                wrap(f"{task_name(i)} · on {r.get('host')} · for {span(time.time() - r.get('started_at', 0))} · "
-                     f"last output {span(r['quiet'])} ago", "     ", "       ", out)
+                prog = progress(r)
+                wrap(f"{task_name(i)} · on {r.get('host')} · for {span(time.time() - r.get('started_at', 0))}"
+                     + (f" · {prog}" if prog else "") + f" · last output {span(r['quiet'])} ago", "     ", "       ", out)
                 line = last_output(r.get("log", ""))
                 if line:
                     out(f"       {line}")
@@ -290,8 +411,24 @@ def render(plan, task_id, out=print):
     out("   cells: ✓ done · ▶ running · ready = can start now · wait = needs an earlier step or V8 result · "
         "FAIL = stopped, needs you · - = no such task")
 
-    out(f"\n nodes: {len(live_nodes)} working on V9" + (" — command on every 4xH100 node: `sh v9/run.sh`" if not live_nodes else ""))
-    for i in sorted((i for i in tasks if i["state"] == "running"), key=lambda i: i["run"].get("host", "")):
+    working = [i for i in tasks if i["state"] == "running"]
+    busy_hosts = {i["run"].get("host") for i in working}
+    known = {i["run"].get("task_id") for i in working}
+    unplanned = [w for w in workers if w.get("task_id") and w["task_id"] not in known]
+    idle = [w for w in workers if not w.get("task_id") and w["host"] not in busy_hosts]
+    out(f"\n nodes: {len(live_nodes)} live — {len(busy_hosts | {w['host'] for w in unplanned})} working, "
+        f"{len({w['host'] for w in idle})} idle (a V9 worker writes its log at least every {STALE_SECONDS // 60} min "
+        "while it runs a task)")
+    for i in sorted(working, key=lambda i: i["run"].get("host", "")):
         r = i["run"]
-        out(f"   {r.get('host'):<34} working  {STAGE_TITLES[i['stage']].split(' ')[0]}  {task_name(i)}  "
-            f"for {span(time.time() - r.get('started_at', 0))}")
+        prog = progress(r)
+        out(f"   {r.get('host'):<34} working  {STAGE_TITLES[i['stage']].split(' ')[0]:<3} {task_name(i):<28} "
+            f"for {span(time.time() - r.get('started_at', 0))}" + (f"  {prog}" if prog else ""))
+    for w in unplanned:
+        out(f"   {w['host']:<34} working  {w['stage']:<3} {cname(w['cohort'])} task {w['task_id']} "
+            f"for {span(time.time() - w.get('started_at', time.time()))}")
+    for w in idle:
+        out(f"   {w['host']:<34} idle     choosing the next task or finishing (last log {span(w['quiet'])} ago)")
+    if not live_nodes:
+        out("   no V9 worker wrote a log in the last %d min — command on every 4xH100 node: `sh v9/run.sh`"
+            % (STALE_SECONDS // 60))
