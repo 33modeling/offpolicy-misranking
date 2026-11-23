@@ -396,9 +396,40 @@ def disable_periodic_stack_dump():
     return True
 
 
+def extend_collective_timeout():
+    """Raise the frozen child's NCCL wait limit (srgc_rebuttal/distributed.py pins 1800 s) for this rank only.
+
+    Evaluation splits the questions over the ranks and each rank generates its share alone; a rank that finishes
+    early then waits in an ALLGATHER while another still writes long MBPP answers. On 11-17 every Qwen MBPP
+    eval/budget-eval failure (15 tasks, 4 attempts each) was rank 1 aborting after exactly 1800000 ms in that
+    ALLGATHER (SeqNum 15) while rank 0 was still on question 74/75. Scores and answers are unchanged; only the
+    wait limit grows. V8_COLLECTIVE_TIMEOUT_SECONDS (default 6 h) sets it; 0 keeps the frozen value.
+    """
+    try:seconds=float(os.environ.get('V8_COLLECTIVE_TIMEOUT_SECONDS','21600'))
+    except ValueError:seconds=21600.0
+    if not seconds>0 or seconds!=seconds:return None
+    try:import torch.distributed as dist
+    except ModuleNotFoundError as exc:
+        if exc.name in ('torch','torch.distributed'):return None
+        raise
+    from datetime import timedelta
+    original=dist.init_process_group
+    if getattr(original,'_v8_collective_timeout',None):return original
+    limit=timedelta(seconds=seconds)
+    @functools.wraps(original)
+    def init_process_group(*args,**kwargs):
+        timeout=kwargs.get('timeout')
+        if timeout is None or timeout<limit:kwargs['timeout']=limit
+        return original(*args,**kwargs)
+    init_process_group._v8_collective_timeout=seconds
+    dist.init_process_group=init_process_group
+    return init_process_group
+
+
 def main():
     install_native_fault_handler()
     disable_periodic_stack_dump()
+    extend_collective_timeout()
     path=Path(sys.argv[1]);expected=os.environ.get('V8_ORIGINAL_CHILD_SHA256')
     if not expected or hashlib.sha256(path.read_bytes()).hexdigest()!=expected:
         raise ValueError('Original v8 child bytes differ from the selected runner identity')
