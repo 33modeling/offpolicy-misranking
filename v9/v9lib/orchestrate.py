@@ -128,7 +128,17 @@ def launch(stage, it):
     lease = v9c(cohort) / "leases" / f"{tid}.lock"
     try:
         with file_lock(lease):
-            return _run_child(stage, cohort, tid, tfile)
+            from .status_view import running_dir
+            if say.path is None:
+                say.path = log_path()   # the record names the log this task's output goes to
+            record = running_dir() / f"{tid}.json"
+            atomic_write_json(record, {"task_id": tid, "stage": stage, "cohort": cohort, "key": it.get("key"),
+                                       "host": socket.gethostname(), "pid": os.getpid(), "started_at": time.time(),
+                                       "log": str(say.path)})
+            try:
+                return _run_child(stage, cohort, tid, tfile)
+            finally:
+                record.unlink(missing_ok=True)
     except Busy:
         return 75
 
@@ -260,26 +270,8 @@ def work(stages):
 
 # ------------------------------------------------------------------ status
 def status():
-    for stage in env.STAGES:
-        try:
-            items = plan(stage)
-        except Exception as exc:  # noqa: BLE001
-            print(f"{stage}: planning error: {type(exc).__name__}: {exc}")
-            continue
-        by_cohort = {}
-        for it in items:
-            by_cohort.setdefault(it["cohort"], []).append(it)
-        for cohort, its in by_cohort.items():
-            n = {s: sum(1 for i in its if i["state"] == s) for s in ("done", "ready", "blocked", "failed")}
-            print(f"{stage} {cohort}: done {n['done']}, ready {n['ready']}, blocked {n['blocked']}, failed {n['failed']}")
-            reasons = {}
-            for i in its:
-                if i["state"] in ("blocked", "failed") or (i["state"] in ("done", "ready") and i["key"] in ("tau", "budget", "files")):
-                    reasons.setdefault((i["state"], i["reason"]), []).append(i["key"])
-            for (state, why), keys in sorted(reasons.items(), key=lambda kv: str(kv[0])):
-                if why:
-                    shown = ", ".join(keys[:6]) + (f" (+{len(keys) - 6})" if len(keys) > 6 else "")
-                    print(f"  {state}: {why} [{shown}]")
+    from .status_view import render
+    render(plan, task_id)
 
 
 def main(argv=None):

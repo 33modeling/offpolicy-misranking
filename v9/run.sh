@@ -1,7 +1,7 @@
 #!/bin/sh
 # V9 (ICML 2027) experiments. Same command on every 4xH100 node, no arguments:
 #   sh v9/run.sh            freeze-tau -> x1 -> x2 -> x5 -> x3 -> x4 -> collect (ready work only)
-#   sh v9/run.sh status     done / ready / blocked counts per stage and cohort, with the reasons
+#   sh v9/run.sh status     what runs where, what FAILED (needs you), done/total and waiting reasons per stage, next task
 #   sh v9/run.sh <stage>    one stage: freeze-tau | x1 | x2 | x3 | x4 | x5 | collect
 #   sh v9/run.sh retry-failed   clear the failure count of tasks that failed twice (history kept)
 # V8 results are read from $WORK/v8 (never written); V9 writes only to $WORK/v9.
