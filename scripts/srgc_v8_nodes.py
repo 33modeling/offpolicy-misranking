@@ -71,6 +71,7 @@ GRANT_POLICIES = (USER_RETRY_GRANT, WATCHDOG_FIX_GRANT)
 # PERIODIC_DUMP_REFUND_LIMIT refunds per task, so no task restarts forever.
 PERIODIC_DUMP_REFUND = 'periodic-stack-dump-crash-refund-v1-20261118'
 PERIODIC_DUMP_REFUND_LIMIT = 20
+COLLECTIVE_TIMEOUT_REFUND_LIMIT = 100   # per task; see collective_timeout_evidence
 PERIODIC_DUMP_SECONDS = 1800   # dump_traceback_later(1800, repeat=True) in the pinned child
 # srgc_v8_nodes.py at fc352ed..e34e750: its checkout's task entry cancels the dump (9b31912)
 FIXED_DUMP_CONTROLLERS = frozenset({'b6342f58767e056c08958b1028475e384df217e179f029c4295327d9a5eb6444'})
@@ -379,10 +380,27 @@ def fatal_native_failure(job):
     return None
 
 
+def collective_timeout_evidence(root,attempt):
+    """A SIGABRT from the frozen child's 1800 s NCCL wait limit (srgc_rebuttal/distributed.py), now raised by
+    v8_task_entry.extend_collective_timeout. 11-17: all 15 stopped Qwen MBPP evals were a rank that finished its
+    eval share early and aborted after exactly 1800000 ms in ALLGATHER while another rank still generated.
+    Not a node or GPU fault: refunded like the periodic-dump crash once the task entry carries the fix."""
+    try:fixed='extend_collective_timeout()' in Path(__file__).with_name('v8_task_entry.py').read_text()
+    except OSError:fixed=False
+    if not fixed or not attempt.get('id'):return None
+    log=Path(root)/'logs'/(str(attempt['id'])+'.log');text=_tail(log,1048576)
+    if 'Watchdog caught collective operation timeout' not in text or 'Timeout(ms)=1800000)' not in text:return None
+    return dict(rule='nccl_1800s_collective_timeout_fixed_in_task_entry',log=str(log))
+
+
 def periodic_dump_evidence(root,job,attempt):
     """Why this attempt's SIGSEGV came from the old 30-min periodic faulthandler dump, or None."""
     if not isinstance(attempt,dict) or dump_refunded(attempt):return None
     fault=native_signal(attempt)
+    # Recorded as SIGABRT (-6) or, by torchrun, as exit 1 with the rank's SIGABRT in the log: read the log either way.
+    if (fault and fault['signal']==6) or attempt.get('outcome')=='failed' or attempt.get('exit_code') not in (None,0,75):
+        evidence=collective_timeout_evidence(root,attempt)
+        if evidence is not None:return evidence
     if not fault or fault['signal']!=11:return None
     started,ended=attempt.get('started_at'),attempt.get('ended_at')
     if not all(isinstance(v,(int,float)) for v in (started,ended)) or ended-started<PERIODIC_DUMP_SECONDS-10:
@@ -408,15 +426,23 @@ def periodic_dump_evidence(root,job,attempt):
 def refund_periodic_dump(root,job,worker):
     """Mark this job's periodic-dump SIGSEGV attempts (receipt on the attempt, nothing removed). Returns their ids."""
     attempts=[a for a in job.get('attempts',[]) if isinstance(a,dict)]
-    used=sum(dump_refunded(a) for a in attempts);marked=[]
+    used=sum(dump_refunded(a) and not a['periodic_dump_refund'].get('rule','').startswith('nccl_') for a in attempts);marked=[]
     for attempt in attempts:
-        if used>=PERIODIC_DUMP_REFUND_LIMIT:break
         evidence=periodic_dump_evidence(root,job,attempt)
         if evidence is None:continue
+        # The 1800 s NCCL abort cannot recur once the entry raises the limit (the rule needs Timeout(ms)=1800000),
+        # so those refunds have their own bound and never use up the periodic-dump budget.
+        if evidence['rule'].startswith('nccl_'):
+            if sum(1 for a in attempts if (a.get('periodic_dump_refund') or {}).get('rule','').startswith('nccl_'))>=COLLECTIVE_TIMEOUT_REFUND_LIMIT:continue
+        elif used>=PERIODIC_DUMP_REFUND_LIMIT:continue
+        timeout=evidence['rule'].startswith('nccl_')
+        started,ended=attempt.get('started_at'),attempt.get('ended_at')
+        elapsed=round(ended-started) if all(isinstance(v,(int,float)) for v in (started,ended)) else None
         attempt['periodic_dump_refund']=dict(policy=PERIODIC_DUMP_REFUND,worker=worker,at=time.time(),
-            signal=11,elapsed_seconds=round(attempt['ended_at']-attempt['started_at']),**evidence,
-            reason='sigsegv_from_30min_periodic_faulthandler_dump; not counted as a task failure, crash place or node fault')
-        used+=1;marked.append(attempt.get('id'))
+            signal=6 if timeout else 11,elapsed_seconds=elapsed,**evidence,
+            reason=('sigabrt_from_frozen_1800s_nccl_collective_timeout_now_raised' if timeout else
+                    'sigsegv_from_30min_periodic_faulthandler_dump')+'; not counted as a task failure, crash place or node fault')
+        used+=not timeout;marked.append(attempt.get('id'))
     return marked
 
 
