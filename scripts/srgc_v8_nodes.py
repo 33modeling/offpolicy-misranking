@@ -62,7 +62,14 @@ USER_RETRY_GRANT = 'user-retry-blocked-v1-20261113'
 # (dump_traceback_later), which v8_task_entry.py now cancels. Tasks blocked by those crashes get one fresh
 # budget, once per task, from a node whose checkout carries that fix (user: '새노드 잡히면 알아서 복구되면서 시작').
 WATCHDOG_FIX_GRANT = 'periodic-stack-dump-sigsegv-fixed-v1-20261117'
-GRANT_POLICIES = (USER_RETRY_GRANT, WATCHDOG_FIX_GRANT)
+# 11-23 (user: 'idle 안 생기게 미리 고쳐놔'): when a queue's only unfinished work is blocked tasks, the queue no
+# longer stops with idle nodes beside it. Each blocked task gets a fresh failure budget from its last attempt, at most
+# IDLE_RETRY_GRANT_LIMIT times per task, so a task that always fails still ends (attempts and logs are kept, a native
+# crash place stays excluded for that task). Input/setup/identity failures are never cleared by it.
+IDLE_RETRY_GRANT = 'idle-retry-blocked-v1-20261123'
+try:IDLE_RETRY_GRANT_LIMIT = max(0, int(os.environ.get('V8_IDLE_RETRY_GRANTS', '3')))
+except ValueError:IDLE_RETRY_GRANT_LIMIT = 3
+GRANT_POLICIES = (USER_RETRY_GRANT, WATCHDOG_FIX_GRANT, IDLE_RETRY_GRANT)
 # 11-18: a SIGSEGV from that periodic dump is not a task or GPU fault. Such an attempt keeps its record and gets a
 # periodic_dump_refund receipt; it then counts toward no failure cap, crash place or GPU-set quarantine, so blocked
 # tasks resume from their checkpoints (user: 'qwen_mbpp 먼저 끝내'). Evidence, SIGSEGV at least 30 min after start:
@@ -270,6 +277,12 @@ def granted_view(job):
     view=dict(job,attempts=attempts[ids.index(grant['after_attempt'])+1:])
     view.pop('evaluation_native_recovery',None);view.pop('user_retry_grant',None)
     return view
+
+
+def grant_policies(job):
+    """Every retry grant policy this job received: the current grant and the ones it replaced."""
+    rows=[job.get('user_retry_grant'),*(job.get('retry_grant_history') or [])] if isinstance(job,dict) else []
+    return [row.get('policy') for row in rows if isinstance(row,dict)]
 
 
 def retry_budget_failures(job):
@@ -1109,6 +1122,7 @@ class Pool:
             self.recover_failed(recover,worker)
             self.grant_user_retry(worker)
             self.grant_watchdog_fix_retry(worker)
+        self.grant_idle_retry(worker)   # after the specific grants: only what they left blocked
         if self.automatic_retry:self.enable_automatic_retry(worker)
         state=read(state_path)
         if retry:
@@ -1220,13 +1234,13 @@ class Pool:
         for path in sorted(self.root.glob('jobs/*.json')):
             job=read(path)
             if job.get('state') not in ('failed','pending','interrupted') or not job.get('attempts'):continue
-            if (job.get('user_retry_grant') or {}).get('policy')==WATCHDOG_FIX_GRANT:continue
+            if WATCHDOG_FIX_GRANT in grant_policies(job):continue
             if not fatal_native_failure(job) or not (native_failure_blocks(job) or self.retry_limit_reached(job)):continue
             lease=Lock(self.root/'leases'/(path.stem+'.lock'))
             if not lease.acquire():continue
             try:
                 job=read(path);last=job['attempts'][-1] if job.get('attempts') else {}
-                if (job.get('user_retry_grant') or {}).get('policy')==WATCHDOG_FIX_GRANT or last.get('id') is None:continue
+                if WATCHDOG_FIX_GRANT in grant_policies(job) or last.get('id') is None:continue
                 if job.get('user_retry_grant'):job.setdefault('retry_grant_history',[]).append(job['user_retry_grant'])
                 job['user_retry_grant']=dict(policy=WATCHDOG_FIX_GRANT,after_attempt=last['id'],
                     task_sha256=digest(semantic_task(job['task'])),failures_before=retry_budget_failures(job),
@@ -1243,6 +1257,51 @@ class Pool:
             atomic(self.root/'state.json',state)
             print(f'[v8] {self.binding.get("cohort")}: {len(granted)} task(s) stopped by the 30-min stack-dump SIGSEGV '
                   'restart from their checkpoints (dump now off; failures and logs kept)',flush=True)
+        return granted
+
+    def grant_idle_retry(self,worker,quiescent=False):
+        """IDLE_RETRY_GRANT: instead of stopping the queue with idle nodes, its blocked tasks restart from their
+        checkpoints with a fresh failure budget, at most IDLE_RETRY_GRANT_LIMIT times per task. Acts only when the
+        queue already carries an aggregate task-failure stop or the caller found it quiescent (no other work)."""
+        if IDLE_RETRY_GRANT_LIMIT<=0 or '0' in (os.environ.get('V8_IDLE_RETRY_GRANT','1'),os.environ.get('V8_USER_RETRY_GRANT','1')):
+            return []   # tests that pin the cap itself
+        state=self.queue_state();failure=state.get('failure')
+        if failure and not aggregate_task_failure(failure):return []   # input/setup/identity failures stay
+        if not failure and not quiescent:return []
+        granted=[]
+        for path in sorted(self.root.glob('jobs/*.json')):
+            try:job=read(path)
+            except (OSError,ValueError):continue
+            if not isinstance(job,dict) or job.get('state') not in ('failed','pending','interrupted') or not job.get('attempts'):continue
+            if grant_policies(job).count(IDLE_RETRY_GRANT)>=IDLE_RETRY_GRANT_LIMIT:continue
+            if not (native_failure_blocks(job) or self.retry_limit_reached(job)):continue
+            lease=Lock(self.root/'leases'/(path.stem+'.lock'))
+            if not lease.acquire():continue
+            try:
+                job=read(path);last=job['attempts'][-1] if job.get('attempts') else {}
+                if last.get('id') is None or not isinstance(job.get('task'),dict):continue
+                if grant_policies(job).count(IDLE_RETRY_GRANT)>=IDLE_RETRY_GRANT_LIMIT:continue
+                if not (native_failure_blocks(job) or self.retry_limit_reached(job)):continue
+                if (job.get('user_retry_grant') or {}).get('after_attempt')==last['id']:continue   # no attempt since the last grant
+                number=grant_policies(job).count(IDLE_RETRY_GRANT)+1
+                if job.get('user_retry_grant'):job.setdefault('retry_grant_history',[]).append(job['user_retry_grant'])
+                job['user_retry_grant']=dict(policy=IDLE_RETRY_GRANT,after_attempt=last['id'],
+                    task_sha256=digest(semantic_task(job['task'])),failures_before=retry_budget_failures(job),
+                    crash_places=native_crash_hosts(job),worker=worker,at=time.time(),
+                    grant=number,limit=IDLE_RETRY_GRANT_LIMIT,
+                    reason='queue_would_stop_with_idle_nodes_beside_blocked_tasks_20261123')
+                job['state']='pending';atomic(path,job);granted.append(path.stem)
+            finally:lease.close()
+        if granted:
+            state=self.queue_state()
+            if state.get('failure') and aggregate_task_failure(state['failure']):
+                state.setdefault('failure_history',[]).append(state['failure']);state['failure']=None
+            state.setdefault('actions',[]).append(dict(action='idle_retry_grant',policy=IDLE_RETRY_GRANT,
+                                                       tasks=granted,worker=worker,at=time.time()))
+            atomic(self.root/'state.json',state)
+            print(f'[v8] {self.binding.get("cohort")}: {len(granted)} blocked task(s) restart from their checkpoints '
+                  f'instead of leaving nodes idle (fresh failure budget, at most {IDLE_RETRY_GRANT_LIMIT} per task; '
+                  'failures and logs kept; never on a GPU set where they crashed)',flush=True)
         return granted
 
     def recover_budget_api_failure(self,controller,worker):
@@ -1559,6 +1618,8 @@ class Pool:
                             'extension':'evaluation','evaluation':'finalize'}[phase]
             atomic(self.root/'state.json',state)
             return 'advance',None
+        if failed and not pending and not active and not later and self.grant_idle_retry(worker,quiescent=True):
+            return 'waiting',None   # blocked tasks reopened instead of stopping the queue: claimed on the next pass
         if failed and not pending and not active and not later:
             state=self.queue_state();state.pop('retry_failed_requested_at',None)
             cap=f'at most {failure_limit(self.max_attempts)} failures over this task lifetime'
@@ -1827,6 +1888,7 @@ def quiescent_failure(pairs):
             if control is None:return None
             if read(pool.root/'binding.json')!=pool.binding:return None
             if pool.refund_periodic_dump_crashes(None):return None   # reopened work: not quiescent
+            if pool.grant_idle_retry(None,quiescent=True):return None   # blocked tasks restart: not quiescent
             state=pool.queue_state()
             if state.get('failure'):faults.append(dict(cohort=pool.binding.get('cohort'),queue_failure=state['failure']))
             errors=dict((state.get('ready_side_work') or {}).get('planning_errors') or {})
@@ -2395,7 +2457,7 @@ def _worker_loop_many(pairs,worker,stop,*,poll,device_fds,retry,gpu_gate,
                     if control is None:continue
                     if read(pool.root/'binding.json')!=pool.binding:
                         raise BindingMismatch('Queue identity changed while waiting for shared recovery')
-                    pool.refund_periodic_dump_crashes(worker)
+                    pool.refund_periodic_dump_crashes(worker);pool.grant_idle_retry(worker)
                     state=pool.queue_state()
                     if index in initialized and pool.recover_budget_api_failure(controller_sha256,worker):state=pool.queue_state()
                     if state.get('failure'):continue

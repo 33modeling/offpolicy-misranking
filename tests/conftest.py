@@ -27,3 +27,6 @@ def no_v8_node_preflight(monkeypatch):
     # V8 CPU fixtures fake nvidia-smi; the per-task node preflight would run the real torch/CUDA smoke
     # in this test Python. Preflight tests call it directly or pass preflight=True.
     monkeypatch.setenv("V8_PREFLIGHT", "0")
+    # Tests written before 11-23 pin the failure cap itself; the idle retry grant has its own tests
+    # (tests/test_srgc_v8_idle_retry_grant.py), which turn it back on.
+    monkeypatch.setenv("V8_IDLE_RETRY_GRANT", "0")
