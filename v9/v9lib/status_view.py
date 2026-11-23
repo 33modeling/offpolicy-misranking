@@ -116,91 +116,182 @@ def stage_failures(limit=3):
     return rows[-limit:]
 
 
+STAGE_TITLES = {
+    "freeze-tau": "tau",
+    "x1": "X1 Staged vs SR vs Alignment at 275",
+    "x2": "X2 equal budget",
+    "x5": "X5 measurements",
+    "x3": "X3 horizon 400",
+    "x4": "X4 fresh seeds 10-14",
+    "collect": "result files",
+}
+COHORT_NAMES = {"olmo_math": "OLMo MATH", "olmo_mbpp": "OLMo MBPP", "qwen_math": "Qwen MATH",
+                "qwen_mbpp": "Qwen MBPP", "llama_math": "Llama MATH", "llama_mbpp": "Llama MBPP", "all": "all"}
+CELL = {"done": "✓", "running": "▶", "ready": "ready", "blocked": "wait", "failed": "FAIL"}
+WIDTH = 118
+
+
+def wrap(text, first, rest, out):
+    """V8 status wrapping: lines up to WIDTH, continuation indented."""
+    words, line = str(text).split(" "), first
+    for w in words:
+        if len(line) + len(w) + 1 > WIDTH and line.strip():
+            out(line.rstrip());line = rest
+        line += w + " "
+    if line.strip():
+        out(line.rstrip())
+
+
+def cname(cohort):
+    return COHORT_NAMES.get(cohort, cohort)
+
+
+def split_key(key):
+    """'s5.on.train' -> ('s5', 'on', 'train'); 's5.switch050@B' -> ('s5', 'switch050@B', ''); 'all' -> ('', 'all', '')."""
+    parts = str(key).split(".")
+    seed = parts[0] if parts and parts[0][:1] == "s" and parts[0][1:].isdigit() else ""
+    rest = parts[1:] if seed else parts
+    tail = rest[-1] if len(rest) > 1 and rest[-1] in ("train", "eval", "prefix") else ""
+    if tail:
+        rest = rest[:-1]
+    return seed, ".".join(rest) or (tail or "-"), tail
+
+
+def task_name(i):
+    return f"{cname(i['cohort'])} {i['key']}"
+
+
 def render(plan, task_id, out=print):
     items, errors, running = collect_items(plan, task_id)
-    tasks = [i for i in items if i["stage"] not in ("freeze-tau", "collect")]
-    count = {s: sum(1 for i in tasks if i["state"] == s) for s in STATES}
-    out(f"V9 status · {code_commit()} · {now_text()}")
-    out(f"  code {env.REPO}   results {env.v9_root()}   V8 (read only) {env.v8_root()}")
+    stages = [s for s in env.STAGES if s not in ("freeze-tau", "collect")]
+    by_stage = {s: [i for i in items if i["stage"] == s] for s in env.STAGES}
+    tasks = [i for s in stages for i in by_stage[s]]
+    here = socket.gethostname()
+    out(f"V9 status · {code_commit()} · {datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')}")
+    out(str(env.v9_root()))
+    mine = [i for i in tasks if i["state"] == "running" and i["run"].get("host") == here]
+    out(f"this node ({here}): " + (", ".join(f"{STAGE_TITLES[i['stage']].split(' ')[0]} {task_name(i)} running"
+                                             for i in mine) or "no V9 task here"))
 
-    tau = next((i for i in items if i["stage"] == "freeze-tau"), None)
-    if tau is None:
-        out("\n tau: unknown (planning error below)")
-    elif tau["state"] == "done":
-        out(f"\n tau: frozen, {tau['reason']}")
-    elif tau["state"] == "ready":
-        out("\n tau: NOT FROZEN yet. OLMo MATH V8 bank is complete; the first `sh v9/run.sh` freezes it (CPU, seconds),"
-            "\n      then x1-x4 and collect unlock. Until then those stages show 'tau is not frozen'.")
-    else:
-        out(f"\n tau: NOT FROZEN and cannot be frozen yet: {tau['reason']}")
-
-    total = len(tasks)
-    out(f"\n tasks: {count['done']} of {total} done · {count['running']} running · {count['ready']} can start now · "
-        f"{count['blocked']} waiting · {count['failed']} FAILED")
-
-    run = [i for i in tasks if i["state"] == "running"]
-    out(f"\n running now ({len(run)}):" if run else "\n running now: nothing")
-    for i in run:
-        r = i["run"]
-        out(f"   {i['stage']} {i['cohort']} {i['key']}  on {r.get('host')}  for {span(time.time() - r.get('started_at', 0))}"
-            f"  last output {span(r['quiet'])} ago")
-        line = last_output(r.get("log", ""))
-        if line:
-            out(f"      {line}")
-    stale = [i for i in tasks if i.get("stale")]
-    for i in stale:
-        r = i["stale"]
-        out(f"   possibly stopped: {i['stage']} {i['cohort']} {i['key']} on {r.get('host')} (no output for {span(r['quiet'])}); "
-            "a free node takes it again and resumes from latest.pt")
-
-    failed = [i for i in tasks if i["state"] == "failed"]
-    if failed or errors:
-        out(f"\n FAILED — needs you ({len(failed) + len(errors)}):")
-        for i in failed:
-            out(f"   {i['stage']} {i['cohort']} {i['key']}: {i['reason']}")
-        for stage, why in errors:
-            out(f"   {stage}: planning error: {why}")
-    for row in stage_failures():
-        out(f"   recent stage error {row.get('at', '?')} {row.get('host', '?')} {row.get('stage', '?')}: "
-            f"{str(row.get('error', ''))[:160]}")
-
-    out("\n stages (done / tasks · waiting reasons):")
-    for stage in env.STAGES:
-        its = [i for i in items if i["stage"] == stage]
-        if stage in ("freeze-tau", "collect"):
-            if its:
-                out(f"   {stage:<10} {its[0]['state']}: {its[0]['reason'] or ''}")
+    live_nodes = sorted({i["run"].get("host") for i in tasks if i["state"] == "running"})
+    out("\n time left")
+    for s in stages:
+        its = by_stage[s]
+        if not its:
             continue
+        n = sum(1 for i in its if i["state"] == "running")
+        left = sum(1 for i in its if i["state"] != "done")
+        if not left:
+            out(f"   {STAGE_TITLES[s]}: finished")
+        else:
+            out(f"   {STAGE_TITLES[s]}: unknown — V9 has no measured task time yet ({n} node{'s' if n != 1 else ''} "
+                f"working on it)")
+
+    out("\n experiments")
+    tau = (by_stage.get("freeze-tau") or [None])[0]
+    if tau is None:
+        out("   tau · unknown (planning error below)")
+    elif tau["state"] == "done":
+        out(f"   tau · frozen · {tau['reason']}")
+    elif tau["state"] == "ready":
+        wrap("tau · NOT FROZEN yet · the first `sh v9/run.sh` freezes it (CPU, seconds); X1-X4 and the result files "
+             "wait for it", "   ", "       ", out)
+    else:
+        wrap(f"tau · NOT FROZEN · cannot be frozen yet: {tau['reason']}", "   ", "       ", out)
+    for s in stages:
+        its = by_stage[s]
+        if not its:
+            continue
+        done = sum(1 for i in its if i["state"] == "done")
+        n = sum(1 for i in its if i["state"] == "running")
+        pct = int(100 * done / len(its)) if its else 0
+        out(f"   {STAGE_TITLES[s]} · {pct}% of the work done · {n} node{'s' if n != 1 else ''} working on it")
         cohorts = {}
         for i in its:
             cohorts.setdefault(i["cohort"], []).append(i)
-        if not cohorts:
-            out(f"   {stage:<10} (no items)")
         for cohort, rows in cohorts.items():
-            n = {s: sum(1 for i in rows if i["state"] == s) for s in STATES}
-            parts = [f"{n['done']}/{len(rows)} done"] + [f"{n[s]} {w}" for s, w in
-                     (("running", "running"), ("ready", "can start"), ("blocked", "waiting"), ("failed", "FAILED")) if n[s]]
-            out(f"   {stage:<10} {cohort:<11} " + " · ".join(parts))
-            why = {}
-            for i in rows:
-                if i["state"] == "blocked":
-                    why.setdefault(i["reason"] or "waiting for an earlier step", []).append(i["key"])
-            for reason, keys in sorted(why.items(), key=lambda kv: -len(kv[1])):
-                shown = ", ".join(keys[:4]) + (f" +{len(keys) - 4}" if len(keys) > 4 else "")
-                out(f"{'':26}waiting ({len(keys)}): {reason} [{shown}]")
-
-    ready = [i for i in tasks if i["state"] == "ready"]
-    if ready:
-        nxt = ready[0]
-        out(f"\n next: a free node takes {nxt['stage']} {nxt['cohort']} {nxt['key']} "
-            f"({len(ready)} task(s) can start now; one per 4xH100 node, command `sh v9/run.sh`)")
-    elif run:
-        out("\n next: nothing can start now; the running tasks unlock the next ones")
-    elif count["blocked"]:
-        out("\n next: nothing can start now; see the waiting reasons above")
-    else:
-        out("\n next: no GPU work left")
-
-    col = next((i for i in items if i["stage"] == "collect"), None)
+            c = {st: sum(1 for i in rows if i["state"] == st) for st in STATES}
+            parts = [f"done {c['done']} of {len(rows)}"] + [f"{c[st]} {w}" for st, w in
+                     (("running", "running"), ("ready", "can start"), ("blocked", "waiting"), ("failed", "STOPPED")) if c[st]]
+            out(f"     {cname(cohort):<12}" + " · ".join(parts))
+    col = (by_stage.get("collect") or [None])[0]
     if col is not None:
-        out(f" result files: {env.v9_root() / 'paper'} ({col['state']}: {col['reason'] or ''})")
+        wrap(f"result files · {col['state']} · {col['reason'] or ''} · {env.v9_root() / 'paper'}", "   ", "       ", out)
+
+    for s in stages:
+        its = [i for i in by_stage[s] if i["state"] != "done"]
+        if not its:
+            continue
+        out(f"\n {STAGE_TITLES[s]}: not finished {len(its)} of {len(by_stage[s])}")
+        failed = [i for i in its if i["state"] == "failed"]
+        if failed:
+            out(f"   STOPPED — needs you ({len(failed)}):")
+            for i in failed[:12]:
+                wrap(f"{task_name(i)}: {i['reason']}", "     ", "       ", out)
+            if len(failed) > 12:
+                wrap("… %d more: %s" % (len(failed) - 12, ", ".join(task_name(i) for i in failed[12:])), "     ", "       ", out)
+            out("     → fix the cause, then run `sh v9/run.sh retry-failed` on one node (the next free node restarts them)")
+        run = [i for i in its if i["state"] == "running"]
+        if run:
+            out(f"   running now ({len(run)}):")
+            for i in run:
+                r = i["run"]
+                wrap(f"{task_name(i)} · on {r.get('host')} · for {span(time.time() - r.get('started_at', 0))} · "
+                     f"last output {span(r['quiet'])} ago", "     ", "       ", out)
+                line = last_output(r.get("log", ""))
+                if line:
+                    out(f"       {line}")
+        stale = [i for i in its if i.get("stale")]
+        for i in stale:
+            r = i["stale"]
+            wrap(f"possibly stopped: {task_name(i)} on {r.get('host')} (no output for {span(r['quiet'])}); a free node "
+                 "takes it again and resumes from latest.pt", "     ", "       ", out)
+        ready = [i for i in its if i["state"] == "ready"]
+        if ready:
+            out(f"   can start now ({len(ready)}): the next free node takes {task_name(ready[0])}")
+            wrap(", ".join(task_name(i) for i in ready[:10]) + (f" … +{len(ready) - 10}" if len(ready) > 10 else ""),
+                 "     ", "       ", out)
+        wait = [i for i in its if i["state"] == "blocked"]
+        if wait:
+            out(f"   waiting for an earlier step ({len(wait)}):")
+            why = {}
+            for i in wait:
+                why.setdefault(i["reason"] or "waiting for an earlier step", []).append(i)
+            for reason, rows in sorted(why.items(), key=lambda kv: -len(kv[1])):
+                names = ", ".join(task_name(i) for i in rows[:6]) + (f" … +{len(rows) - 6}" if len(rows) > 6 else "")
+                wrap(f"{reason} ({len(rows)}): {names}", "     ", "       ", out)
+
+    if errors or stage_failures():
+        out(f"\n STOPPED — needs you: problems with a stage itself ({len(errors) + len(stage_failures())})")
+        for stage, why in errors:
+            wrap(f"{stage}: planning error: {why}", "   ", "     ", out)
+        for row in stage_failures():
+            wrap(f"{row.get('stage', '?')}: {row.get('at', '?')} on {row.get('host', '?')}: {str(row.get('error', ''))[:300]}",
+                 "   ", "     ", out)
+
+    for s in stages:
+        its = [i for i in by_stage[s] if split_key(i["key"])[0]]
+        if not its:
+            continue
+        for cohort in dict.fromkeys(i["cohort"] for i in its):
+            rows = [i for i in its if i["cohort"] == cohort]
+            seeds = sorted({split_key(i["key"])[0] for i in rows}, key=lambda x: int(x[1:]))
+            cols = list(dict.fromkeys(split_key(i["key"])[1] for i in rows))
+            cell = {}
+            for i in rows:
+                sd, col, _ = split_key(i["key"])
+                cell.setdefault((sd, col), []).append(CELL.get(i["state"], i["state"]))
+            texts = {k: ",".join(v) for k, v in cell.items()}
+            width = {c: max([len(c)] + [len(texts.get((sd, c), "-")) for sd in seeds]) + 2 for c in cols}
+            out(f"\n {cname(cohort)} {STAGE_TITLES[s].split(' ')[0]} by seed and arm")
+            out(" " + f"{'':<12}" + "".join(f"{c:<{width[c]}}" for c in cols))
+            for sd in seeds:
+                out("   " + f"{sd:<10}" + "".join(f"{texts.get((sd, c), '-'):<{width[c]}}" for c in cols))
+    out("   cells: ✓ done · ▶ running · ready = can start now · wait = needs an earlier step or V8 result · "
+        "FAIL = stopped, needs you · - = no such task")
+
+    out(f"\n nodes: {len(live_nodes)} working on V9" + (" — command on every 4xH100 node: `sh v9/run.sh`" if not live_nodes else ""))
+    for i in sorted((i for i in tasks if i["state"] == "running"), key=lambda i: i["run"].get("host", "")):
+        r = i["run"]
+        out(f"   {r.get('host'):<34} working  {STAGE_TITLES[i['stage']].split(' ')[0]}  {task_name(i)}  "
+            f"for {span(time.time() - r.get('started_at', 0))}")

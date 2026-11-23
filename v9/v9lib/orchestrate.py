@@ -109,8 +109,8 @@ def plan(stage):
             tid = task_id(it["task"])
             f = failures(tid)
             if f.get("count", 0) >= MAX_FAILURES:
-                it.update(state="failed", reason=f"failed {f['count']} times (last: {f['errors'][-1]['error'][:160]}); "
-                          "fix the cause, then `sh v9/run.sh retry-failed`")
+                it.update(state="failed", reason=f"failed {f['count']} times, no more automatic retries · last error: "
+                          f"{f['errors'][-1]['error'][:160]}")
     return items
 
 
