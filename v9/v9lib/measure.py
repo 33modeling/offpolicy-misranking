@@ -139,8 +139,23 @@ def pearson(x, y):
     return float(np.corrcoef(x, y)[0, 1])
 
 
+def rankdata(values):
+    """Average ranks (1-based, ties share the mean rank), as scipy.stats.rankdata(method='average');
+    numpy only, so x5 and collect do not need scipy on the cluster venv."""
+    values = np.asarray(values, float)
+    order = np.argsort(values, kind='mergesort')
+    ranks = np.empty(len(values), float)
+    i = 0
+    while i < len(order):
+        j = i
+        while j + 1 < len(order) and values[order[j + 1]] == values[order[i]]:
+            j += 1
+        ranks[order[i:j + 1]] = (i + j) / 2 + 1
+        i = j + 1
+    return ranks
+
+
 def spearman(x, y):
-    from scipy.stats import rankdata
     x, y = np.asarray(x, float), np.asarray(y, float)
     ok = np.isfinite(x) & np.isfinite(y)
     if ok.sum() < 3:

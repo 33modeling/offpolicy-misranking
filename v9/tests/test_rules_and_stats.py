@@ -62,3 +62,12 @@ def test_contrast_is_pending_until_every_seed_is_measured():
     assert r["ci_low"] < r["mean_delta_pp"] < r["ci_high"]
     assert "(4/1/0)" in collect.fmt_delta(r, "X1")  # seed 6 is a tie
     assert math.isfinite(r["mean_delta_pp"])
+
+
+def test_rankdata_matches_average_ranks_without_scipy():
+    from v9lib.measure import rankdata, spearman
+    assert list(rankdata([3, 1, 2])) == [3.0, 1.0, 2.0]
+    assert list(rankdata([1, 2, 2, 3])) == [1.0, 2.5, 2.5, 4.0]
+    assert list(rankdata([5, 5, 5])) == [2.0, 2.0, 2.0]
+    assert abs(spearman([1, 2, 3, 4], [10, 20, 30, 40]) - 1.0) < 1e-12
+    assert abs(spearman([1, 2, 3, 4], [4, 3, 2, 1]) + 1.0) < 1e-12
