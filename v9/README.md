@@ -10,15 +10,15 @@
 sh v9/run.sh
 ```
 
-순서: `freeze-tau → x1 → x2 → x5 → x3 → x4 → collect`. 준비된 작업만 하나씩 가져가고, 작업이 끝날 때마다 앞 단계부터 다시 본다. 준비 안 된 단계는 건너뛴다. 한 단계나 작업이 실패하면 그것만 기록하고 나머지를 계속한다. 가져갈 작업이 없으면 collect를 돌리고 상태표를 찍고 끝난다. 끝난 작업은 다시 하지 않고, 멈춘 학습은 `latest.pt`에서 이어 간다. 같은 작업을 두 노드가 동시에 돌리지 않는다(작업별 flock lease, run 폴더 실행 잠금).
+순서: `freeze-tau → x1 → x2 → x5 → x3 → x4 → collect`. 준비된 작업만 하나씩 가져가고, 작업이 끝날 때마다 앞 단계부터 다시 본다. 준비 안 된 단계는 건너뛴다. 한 단계나 작업이 실패하면 그것만 기록하고 나머지를 계속한다. 가져갈 작업이 없어도 바로 끝나지 않는다. 다른 노드가 V9 작업을 돌리고 있거나(앞 단계가 곧 끝나 새 작업이 열림), 기다리는 V8 결과를 만드는 V8 worker가 살아 있으면 5분(`V9_WAIT_SECONDS`)마다 다시 본다. 아무 데서도 돌지 않고 남은 것이 두 번 실패해 멈춘 작업뿐이면, 그 작업을 체크포인트에서 실패 횟수 0으로 다시 시작한다(작업당 최대 3번, `V9_AUTO_RETRIES`, V8 idle-retry와 같은 규칙). 그래도 열릴 작업이 없을 때만 collect를 돌리고 상태표를 찍고 끝난다. worker는 1분마다 `$WORK/v9/.state/workers/<host>-<pid>.json`(하는 일·기다리는 이유)을 쓰고, 끝난 작업의 걸린 시간은 `.state/done-times/`에 남긴다(status의 남은 시간). 끝난 작업은 다시 하지 않고, 멈춘 학습은 `latest.pt`에서 이어 간다. 같은 작업을 두 노드가 동시에 돌리지 않는다(작업별 flock lease, run 폴더 실행 잠금).
 
 | 명령 | 하는 일 |
 |---|---|
-| `sh v9/run.sh status` | 단계·cohort별 done/ready/blocked/failed 수와 막힌 이유(영어 한 줄씩). CPU. V8은 읽기만 하고, V9 쪽에는 V8 locator 사본(`$WORK/v9/<cohort>/locator.json`)만 처음 한 번 쓴다 |
+| `sh v9/run.sh status` (`--watch`면 3초마다 갱신) | V8 status 화면과 같은 순서: 남은 시간(끝난 작업 시간 기준) → 단계·cohort별 done/running/can start/waiting/STOPPED → 끝나지 않은 작업과 이유 → seed×arm 표 → 노드(하트비트: working/waiting과 이유). 화면 숫자가 서로 안 맞으면 빨간 줄. CPU. V8은 읽기만 하고, V9 쪽에는 V8 locator 사본(`$WORK/v9/<cohort>/locator.json`)만 처음 한 번 쓴다 |
 | `sh v9/run.sh freeze-tau` | τ 고정 (CPU, write-once) |
 | `sh v9/run.sh x1` … `x5` | 한 단계만 |
 | `sh v9/run.sh collect` | 원고용 결과 파일 (CPU) |
-| `sh v9/run.sh retry-failed` | 두 번 실패해 멈춘 작업의 실패 횟수를 0으로 (이력은 남김). 원인을 고친 뒤에만 |
+| `sh v9/run.sh retry-failed` | 자동 재시작 3번을 다 쓴 작업의 실패 횟수를 0으로 (이력은 남김). 원인을 고친 뒤에만 |
 
 환경 변수는 V8 런처와 같다: `OM_WORK`/`GROUP_VOLUME`/`OM_USER`(기본 `/group-volume/minsoo3.kim/offpolicy-misranking`), 인터프리터 `V8_PYTHON_<COHORT>`·`QWEN_PYTHON`·`PAIR_PYTHON`(MATH)·`SWITCH_PYTHON`(MBPP)·`V8_PYTHON`, 기본은 `$WORK/.venv-cu126/bin/python`. 학습기 checkout은 `V8_CODE_ROOT`, 없으면 V8 locator에 기록된 경로, 없으면 이 checkout.
 

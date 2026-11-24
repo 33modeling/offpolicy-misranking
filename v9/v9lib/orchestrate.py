@@ -19,6 +19,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 
 from . import env
@@ -29,6 +30,117 @@ from .common import Blocked, item, v9c  # noqa: E402
 
 MAX_FAILURES = 2
 STOP = {"flag": False, "child": None}
+# A worker with nothing ready waits while work can still open up (another node runs a V9 task, or a live V8 worker
+# is producing the V8 results a V9 task waits for), instead of exiting and leaving the opened task to nobody.
+WAIT_SECONDS = float(os.environ.get("V9_WAIT_SECONDS", "300"))
+BEAT_SECONDS = 60
+LIVE_SECONDS = 300          # a heartbeat older than this is not a live worker
+V8_LIVE_SECONDS = 900       # V8 worker heartbeat age that still counts as "V8 is running"
+# When nothing is ready or running anywhere and only stopped tasks remain, each stopped task restarts from its
+# checkpoint with a fresh failure count, at most AUTO_RETRIES times (V8 idle-retry grant, ead4399).
+AUTO_RETRIES = int(os.environ.get("V9_AUTO_RETRIES", "3"))
+
+
+# ------------------------------------------------------------------ heartbeat
+def workers_dir():
+    return env.v9_root() / ".state" / "workers"
+
+
+class Beat:
+    """`.state/workers/<host>-<pid>.json`, rewritten every BEAT_SECONDS: what this worker does now."""
+
+    def __init__(self):
+        self.path = workers_dir() / f"{socket.gethostname()}-{os.getpid()}.json"
+        self.rec = {"host": socket.gethostname(), "pid": os.getpid(), "started": time.time(), "state": "starting",
+                    "doing": "starting"}
+        self.stop = threading.Event()
+        self.thread = None
+
+    def set(self, **fields):
+        for k in ("task_id", "stage", "cohort", "key", "task_started"):
+            self.rec.pop(k, None)
+        self.rec.update(fields)
+        self.write()
+
+    def write(self):
+        from switching.common import atomic_write_json
+        try:
+            self.rec.update(at=time.time(), log=str(say.path) if say.path else None)
+            atomic_write_json(self.path, self.rec)
+        except OSError:
+            pass   # a status aid only; never stops the worker
+
+    def start(self):
+        self.write()
+
+        def loop():
+            while not self.stop.wait(BEAT_SECONDS):
+                self.write()
+        self.thread = threading.Thread(target=loop, daemon=True)
+        self.thread.start()
+
+    def close(self):
+        self.stop.set()
+        try:
+            self.path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+BEAT = {"beat": None}
+
+
+def beat(**fields):
+    if BEAT["beat"] is not None:
+        BEAT["beat"].set(**fields)
+
+
+def live_workers(now=None):
+    """Heartbeat records of live V9 workers (this one included)."""
+    now = time.time() if now is None else now
+    out = []
+    d = workers_dir()
+    for p in sorted(d.glob("*.json")) if d.is_dir() else []:
+        try:
+            r = json.loads(p.read_text())
+        except (OSError, ValueError):
+            continue
+        if now - float(r.get("at", 0)) < LIVE_SECONDS:
+            out.append(r)
+    return out
+
+
+def others_working():
+    me = (socket.gethostname(), os.getpid())
+    return [r for r in live_workers() if r.get("state") == "working" and (r.get("host"), r.get("pid")) != me]
+
+
+def v8_live():
+    """Cohorts whose V8 queue has a worker heartbeat younger than V8_LIVE_SECONDS."""
+    out = []
+    now = time.time()
+    for d in sorted(env.v8_root().glob("*/.multi-node/workers")) if env.v8_root().is_dir() else []:
+        try:
+            if any(now - p.stat().st_mtime < V8_LIVE_SECONDS for p in d.glob("*.json")):
+                out.append(d.parent.parent.name)
+        except OSError:
+            continue
+    return out
+
+
+def done_times_dir():
+    return env.v9_root() / ".state" / "done-times"
+
+
+def record_done_time(stage, it, tid, seconds):
+    """Wall time of a finished task (the status estimates time left from these)."""
+    from switching.common import atomic_write_json
+    try:
+        atomic_write_json(done_times_dir() / f"{tid}.json", {"task_id": tid, "stage": stage, "cohort": it["cohort"],
+                                                             "key": it.get("key"), "seconds": round(seconds, 1),
+                                                             "host": socket.gethostname(), "at": time.time()})
+    except OSError:
+        pass
 
 
 def log_path():
@@ -68,8 +180,7 @@ def failures(task_id):
 def record_failure(task_id, error):
     from switching.common import atomic_write_json, utc_now
     f = failures(task_id)
-    if f.get("cleared_at") and not f.get("count"):
-        f = {"count": 0, "errors": f.get("errors", [])}
+    # a cleared record keeps its history_count and auto_retries (else the restart limit would never be reached)
     f["count"] = int(f.get("count", 0)) + 1
     f.setdefault("errors", []).append({"at": utc_now(), "host": socket.gethostname(), "error": str(error)[:1500]})
     atomic_write_json(failure_file(task_id), f)
@@ -95,6 +206,29 @@ def retry_failed():
     say(f"retry-failed: cleared the failure count of {n} task(s); history kept")
 
 
+def auto_retry(items):
+    """Give each stopped task (failed MAX_FAILURES times) one more fresh failure budget, at most AUTO_RETRIES times
+    per task. Only called when nothing is ready or running anywhere. Returns the task ids granted."""
+    from switching.common import atomic_write_json, utc_now
+    if AUTO_RETRIES <= 0:
+        return []
+    granted = []
+    for it in items:
+        if it["state"] != "failed" or not it.get("task"):
+            continue
+        tid = task_id(it["task"])
+        f = failures(tid)
+        grants = f.setdefault("auto_retries", [])
+        if len(grants) >= AUTO_RETRIES or f.get("count", 0) < MAX_FAILURES:
+            continue
+        grants.append({"at": utc_now(), "host": socket.gethostname(), "count_before": f["count"]})
+        f["history_count"] = f.get("history_count", 0) + f["count"]
+        f["count"], f["cleared_at"] = 0, utc_now()
+        atomic_write_json(failure_file(tid), f)
+        granted.append(tid)
+    return granted
+
+
 # ------------------------------------------------------------------ planning
 def plan(stage):
     from . import stages, tau
@@ -109,8 +243,11 @@ def plan(stage):
             tid = task_id(it["task"])
             f = failures(tid)
             if f.get("count", 0) >= MAX_FAILURES:
-                it.update(state="failed", reason=f"failed {f['count']} times, no more automatic retries · last error: "
-                          f"{f['errors'][-1]['error'][:160]}")
+                left = max(0, AUTO_RETRIES - len(f.get("auto_retries", [])))
+                it.update(state="failed", reason=(f"failed {f['count']} times · restarts by itself from its checkpoint when "
+                                                  f"no other V9 work is left ({left} automatic restart(s) left)" if left else
+                                                  f"failed {f['count']} times, no more automatic retries")
+                          + f" · last error: {f['errors'][-1]['error'][:160]}")
     return items
 
 
@@ -135,10 +272,17 @@ def launch(stage, it):
             atomic_write_json(record, {"task_id": tid, "stage": stage, "cohort": cohort, "key": it.get("key"),
                                        "host": socket.gethostname(), "pid": os.getpid(), "started_at": time.time(),
                                        "log": str(say.path)})
+            t0 = time.time()
+            beat(state="working", doing="running a task", task_id=tid, stage=stage, cohort=cohort, key=it.get("key"),
+                 task_started=t0)
             try:
-                return _run_child(stage, cohort, tid, tfile)
+                rc = _run_child(stage, cohort, tid, tfile)
+                if rc == 0:
+                    record_done_time(stage, it, tid, time.time() - t0)
+                return rc
             finally:
                 record.unlink(missing_ok=True)
+                beat(state="choosing", doing="choosing the next task")
     except Busy:
         return 75
 
@@ -212,17 +356,44 @@ def run_collect():
 GPU_STAGES = ("x1", "x2", "x5", "x3", "x4")
 
 
+def wait_reason(items):
+    """Why this worker should wait instead of exiting (None: nothing can open up)."""
+    # ready items reach here only when this worker already tried them (busy elsewhere or failed once)
+    blocked = [it for it in items if it["state"] in ("blocked", "ready")]
+    if not blocked:
+        return None
+    others = others_working()
+    if others:
+        return (f"{len(blocked)} task(s) cannot start yet; {len(others)} other node(s) run V9 tasks: "
+                + ", ".join(sorted({o['host'] for o in others})[:3]))
+    v8 = [it for it in blocked if "V8" in (it.get("reason") or "")]
+    live = v8_live()
+    if v8 and live:
+        return f"{len(v8)} task(s) wait for V8 results; V8 workers are live on {', '.join(live[:4])}"
+    return None
+
+
+def nap(seconds):
+    end = time.time() + seconds
+    while not STOP["flag"] and time.time() < end:
+        time.sleep(min(5.0, max(0.0, end - time.time())))
+
+
 def work(stages):
     attempted, failed = set(), []
     progressed_once = False
+    last_wait, passes, rounds = None, 0, -1
     while not STOP["flag"]:
+        rounds += 1
         progressed = False
+        seen = []
+        beat(state="choosing", doing="choosing the next task")
         for stage in stages:
             if STOP["flag"]:
                 break
             if stage == "freeze-tau":
                 try:
-                    run_freeze_tau(quiet=progressed_once)
+                    run_freeze_tau(quiet=progressed_once or rounds > 0)
                 except Exception as exc:  # noqa: BLE001
                     record_stage_failure(stage, f"{type(exc).__name__}: {exc}")
                     failed.append(stage)
@@ -237,6 +408,7 @@ def work(stages):
                 failed.append(stage)
                 say(f"{stage} planning FAILED (stage skipped): {type(exc).__name__}: {exc}")
                 continue
+            seen += items
             ready = [it for it in items if it["state"] == "ready" and it.get("task") and
                      task_id(it["task"]) not in attempted]
             for it in ready:
@@ -256,8 +428,30 @@ def work(stages):
                 say(f"{stage}: task {tid} FAILED rc={rc} (attempt kept; rerunning resumes)")
             if progressed:
                 break
-        if not progressed:
+        if progressed or STOP["flag"]:
+            last_wait, passes = None, 0
+            continue
+        why = wait_reason(seen)
+        if why is None and passes < MAX_FAILURES and any(it["state"] == "ready" for it in seen):
+            passes += 1          # a task that failed once gets its second try now (bounded: no endless loop)
+            attempted.clear()
+            continue
+        if why is None and not others_working() and not any(it["state"] == "ready" for it in seen):
+            granted = auto_retry(seen)
+            if granted:
+                say(f"nothing else is left; {len(granted)} stopped task(s) restart from their checkpoints "
+                    f"(automatic restart, at most {AUTO_RETRIES} per task): {', '.join(granted[:6])}")
+                attempted.clear()
+                passes = 0
+                continue
+        if why is None:
             break
+        if why != last_wait:
+            say(f"waiting (checks again every {int(WAIT_SECONDS)} s): {why}")
+            last_wait = why
+        beat(state="waiting", doing=why)
+        nap(WAIT_SECONDS)
+        attempted.clear()   # busy or failed-once tasks may be ready again
     if "collect" in stages and not STOP["flag"]:
         try:
             run_collect()
@@ -281,8 +475,8 @@ def main(argv=None):
         print(__doc__)
         return 0
     if word == "status":
-        status()
-        return 0
+        from .status_view import main as status_main
+        return status_main(plan, task_id, argv[1:])
     if word == "retry-failed":
         retry_failed()
         return 0
@@ -292,6 +486,16 @@ def main(argv=None):
     signal.signal(signal.SIGTERM, _on_signal)
     signal.signal(signal.SIGINT, _on_signal)
     stages = list(env.STAGES) if word == "all" else [word]
+    BEAT["beat"] = Beat()
+    BEAT["beat"].start()
+    try:
+        return _main_work(word, stages)
+    finally:
+        BEAT["beat"].close()
+        BEAT["beat"] = None
+
+
+def _main_work(word, stages):
     say(f"worker start host={socket.gethostname()} stages={','.join(stages)} v8_root={env.v8_root()} "
         f"v9_root={env.v9_root()} code_root={env.code_root()}")
     if word == "freeze-tau":
