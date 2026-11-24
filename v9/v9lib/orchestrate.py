@@ -248,7 +248,11 @@ def plan(stage):
                 it.update(state="failed", reason=(f"failed {f['count']} times · restarts by itself from its checkpoint when "
                                                   f"no other V9 work is left ({left} automatic restart(s) left)" if left else
                                                   f"failed {f['count']} times, no more automatic retries")
-                          + f" · last error: {f['errors'][-1]['error'][:160]}")
+                          + f" · last error: {f['errors'][-1]['error'][:400]}")
+            elif f.get("count", 0) > 0 and f.get("errors"):
+                it["retry_note"] = (f"failed {f['count']} time(s); the next free node retries it from its checkpoint "
+                                    f"(attempt {f['count'] + 1} of {MAX_FAILURES}) · last error: "
+                                    f"{f['errors'][-1]['error'][:400]}")
     return items
 
 
@@ -296,19 +300,24 @@ def _run_child(stage, cohort, tid, tfile):
     nproc = os.environ.get("V9_NPROC", "4")
     cmd = [py, "-m", "torch.distributed.run", "--standalone", f"--nproc_per_node={nproc}", "--max_restarts=0",
            str(env.V9_DIR / "child.py"), "--cohort", cohort, "--task-file", str(tfile), "--root", str(env.v9_root())]
-    child_env = dict(os.environ, V8_EXIT_FILE=str(exit_file), PYTHONUNBUFFERED="1",
+    token = f"{socket.gethostname()}-{os.getpid()}-{time.time_ns()}"
+    child_env = dict(os.environ, V8_EXIT_FILE=str(exit_file), PYTHONUNBUFFERED="1", V8_FAILURE_TOKEN=token,
+                     SRGC_PROGRESS_DIR=str(env.v9_root() / ".state" / "progress" / tid),
                      CUDA_VISIBLE_DEVICES=os.environ.get("CUDA_VISIBLE_DEVICES", "0,1,2,3"))
     say(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {socket.gethostname()} stage={stage} cohort={cohort} task={tid}")
     with open(say.path or log_path(), "a") as fh:
         proc = subprocess.Popen(cmd, env=child_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         STOP["child"] = proc
-        crashes = []
+        crashes, saved = [], None
         for line in proc.stdout:
             sys.stdout.write(line)
             fh.write(line)
             m = RANK_SIGNAL.search(line)
             if m:
                 crashes.append(m.group(2))
+            m = SAVED_UPDATE.search(line)
+            if m:
+                saved = int(m.group(1))
         rc = proc.wait()
         STOP["child"] = None
     child_code = None
@@ -319,7 +328,36 @@ def _run_child(stage, cohort, tid, tfile):
             pass
     exit_file.unlink(missing_ok=True)
     rc, CRASH["why"] = classify_exit(rc, child_code, crashes, STOP["flag"])
+    if CRASH["why"]:
+        where = crash_place(env.v9_root() / ".state" / "progress" / tid, token)
+        CRASH["why"] += (f"; on {socket.gethostname()}" + (f", last saved update {saved}" if saved is not None else "")
+                         + (f"; {where}" if where else "; no fault dump was written"))
     return rc
+
+
+SAVED_UPDATE = re.compile(r"resumes from saved update (\d+)")
+
+
+def crash_place(directory, token):
+    """'rank N <Fatal Python error kind> in f (file:line) <- ...' from this attempt's native fault logs
+    (v8_task_entry.install_native_fault_handler files, read with V8 status's parser), else None."""
+    import hashlib
+    key = hashlib.sha256(token.encode()).hexdigest()[:24]
+    try:
+        sys.path.insert(0, str(env.code_root() / "scripts"))
+        from v8_status import fault_text, native_crash_frames
+    except Exception:  # noqa: BLE001 - no parser: say nothing rather than guess
+        return None
+    for path in sorted(Path(directory).glob(f"native-fault-rank-*-{key}.log")):
+        dump = fault_text(path)
+        if dump and "Fatal Python error" in dump:
+            kind = re.search(r"Fatal Python error: ([A-Za-z ]+)", dump)
+            frames = native_crash_frames(dump)
+            rank = path.name.split("-")[3]
+            return (f"rank {rank} {kind.group(1).strip() if kind else 'native fault'} in "
+                    + (" <- ".join(frames) if frames else "a thread with no Python frame (CUDA/NCCL/native library)")
+                    + f" ({path})")
+    return None
 
 
 # torchrun's failure summary: "traceback : Signal 11 (SIGSEGV) received by PID 620590"

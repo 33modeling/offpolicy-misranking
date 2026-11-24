@@ -557,6 +557,11 @@ def render(plan, task_id, out=print, gpus=None):
                 (f" · {n_late} Random task(s) wait until no other stage has a ready task" if first and n_late else ""))
             wrap(", ".join(task_name(i) for i in ready[:10]) + (f" … +{len(ready) - 10}" if len(ready) > 10 else ""),
                  "     ", "       ", out)
+            again = [i for i in ready if i.get("retry_note")]
+            if again:
+                out(paint(f"   failed before, retried by itself ({len(again)}):", "warn"))
+                for i in again[:12]:
+                    wrap(f"{task_name(i)}: {i['retry_note']}", "     ", "       ", lambda t: out(paint(t, "warn")))
         wait = [i for i in its if i["state"] == "blocked"]
         if wait:
             out(f"   waiting for an earlier step ({len(wait)}):")

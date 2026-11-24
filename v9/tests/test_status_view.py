@@ -177,3 +177,17 @@ def test_stage_that_only_waits_has_no_time(tmp_path, monkeypatch):
     text = render(plan)
     assert "X1 Staged vs SR vs Alignment at 275: unknown — no task of this stage can start now (1 wait for V8 results)" in text
     assert "0m left" not in text
+
+
+def test_ready_task_that_crashed_before_says_so(tmp_path, monkeypatch):
+    monkeypatch.setenv("V9_ROOT", str(tmp_path / "v9"))
+    note = ("failed 1 time(s); the next free node retries it from its checkpoint (attempt 2 of 2) · last error: exit code "
+            "139: a GPU process crashed with SIGSEGV; torchrun then stopped the other ranks")
+
+    def plan(stage):
+        if stage == "x3":
+            return [item("x3", "olmo_math", "s9.alignment.train", "ready", task={"run_id": "h-s9"}, retry_note=note)]
+        return fake_plan("none")(stage)
+    text = render(plan)
+    assert "failed before, retried by itself (1):" in text
+    assert "OLMo MATH s9.alignment.train: failed 1 time(s)" in text and "SIGSEGV" in text

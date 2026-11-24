@@ -41,6 +41,45 @@ def dispatch_factory(original_train, beta=None):
     return dispatch
 
 
+def v8_entry_fixes(root, task_id, *, repairs=True):
+    """The cluster fixes V8 runs every task with (scripts/v8_task_entry.py), for V9 tasks too:
+
+    - the 30-min periodic faulthandler dump that cluster_child.install_diagnostics arms is cancelled: its watchdog
+      thread walks every thread's frames without the GIL and SIGSEGVs a rank on Python 3.12 (every V8 native crash
+      11-08..11-16 ended 30/60/90 min after start). SIGUSR1 and fatal-signal dumps stay;
+    - the NCCL wait limit (srgc_rebuttal pins 1800 s) is raised to V8_COLLECTIVE_TIMEOUT_SECONDS (default 6 h), so a
+      rank that waits for a slower rank's generation does not abort;
+    - a rank that dies of a native signal writes its stack to $V9_ROOT/.state/progress/<task>/native-fault-rank-N-*.log
+      (the worker puts the crash place into the failure reason);
+    - V8's runtime repairs (checkpoint, memory and MBPP checker launch fixes; no scoring change), OLMo/Qwen only.
+    V8_PERIODIC_STACK_DUMP=1 keeps the old periodic dump. Returns the names of the fixes applied."""
+    import faulthandler
+    sys.path.insert(0, str(env.code_root() / "scripts"))
+    import v8_task_entry as entry
+    os.environ.setdefault("SRGC_PROGRESS_DIR", str(Path(root) / ".state" / "progress" / task_id))
+    entry.install_native_fault_handler()
+    done = ["native-fault-log"]
+    if entry.disable_periodic_stack_dump():
+        done.append("periodic-stack-dump-off")
+    if entry.extend_collective_timeout() is not None:
+        done.append("collective-timeout")
+    import cluster_child
+    original = cluster_child.install_diagnostics
+    if not getattr(original, "_v9_fixed", False):
+        def install_diagnostics(*a, **k):
+            handle = original(*a, **k)
+            if os.environ.get("V8_PERIODIC_STACK_DUMP") != "1":
+                faulthandler.cancel_dump_traceback_later()
+            entry.install_native_fault_handler()   # cluster_child rebinds the fatal-signal file; restore ours
+            return handle
+        install_diagnostics._v9_fixed = True
+        cluster_child.install_diagnostics = install_diagnostics
+    if repairs:
+        entry.install_runtime_repairs()
+        done.append("runtime-repairs")
+    return done
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--cohort", required=True)
@@ -57,6 +96,9 @@ def main():
         from fake.fake_child import main as fake_main
         return fake_main(args, task, seed_loc)
     from switching import runner
+    fixes = v8_entry_fixes(args.root, task_id, repairs=not args.cohort.startswith("llama_"))
+    if os.environ.get("RANK", "0") == "0":
+        print(f"V9 child: V8 entry fixes {', '.join(fixes)}", flush=True)
     if args.cohort.startswith("llama_"):
         from v9lib.llama_child import main as llama_main
         runner.execute_train = dispatch_factory(runner.execute_train)

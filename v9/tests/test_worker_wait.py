@@ -89,3 +89,29 @@ def test_rank_crash_is_a_failure_even_when_rank0_wrote_75():
     o.CRASH["why"] = why
     assert o.failure_text(139).startswith("exit code 139: a GPU process crashed with SIGSEGV")
     o.CRASH["why"] = None
+
+
+def test_crash_place_reads_this_attempts_fault_dump(tmp_path):
+    import hashlib
+    from v9lib import orchestrate as o
+    key = hashlib.sha256(b"tokA").hexdigest()[:24]
+    other = hashlib.sha256(b"tokB").hexdigest()[:24]
+    (tmp_path / f"native-fault-rank-1-{other}.log").write_text("Fatal Python error: Aborted\n")
+    assert o.crash_place(tmp_path, "tokA") is None          # another attempt's dump is not this crash
+    (tmp_path / f"native-fault-rank-1-{key}.log").write_text(
+        "V8 native fault context {}\nFatal Python error: Segmentation fault\n\nCurrent thread 0x1 (most recent call first):\n"
+        '  File "/v/site-packages/torch/nn/functional.py", line 10 in linear\n')
+    assert o.crash_place(tmp_path, "tokA").startswith("rank 1 Segmentation fault in linear (torch/nn/functional.py:10)")
+
+
+def test_child_applies_the_v8_entry_fixes(tmp_path, monkeypatch):
+    import os
+    import child
+    monkeypatch.setenv("V8_FAILURE_TOKEN", "t")
+    monkeypatch.delenv("SRGC_PROGRESS_DIR", raising=False)
+    monkeypatch.delenv("V8_PERIODIC_STACK_DUMP", raising=False)
+    done = child.v8_entry_fixes(tmp_path, "task1", repairs=False)
+    assert "periodic-stack-dump-off" in done and os.environ["V8_STACK_DUMP_SECONDS"] == "0"
+    assert list((tmp_path / ".state" / "progress" / "task1").glob("native-fault-rank-0-*.log"))
+    import cluster_child
+    assert cluster_child.install_diagnostics._v9_fixed
