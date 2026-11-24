@@ -16,7 +16,7 @@ $V9_ROOT/paper/
   x5_measure.tex      X5 seed means per snapshot: rho_on, rho_SR, sigma_on, |p_t - p_beta|, outcome KL D_t,
                       sequence KL, fraction of prompts within the Lemma 2 bounds
   x5_rho.dat          Fig. 3(a): OLMo MATH per update: mean and SE over seeds of the split-half rho of Alignment and SR
-  x5_drift.dat        Fig. 3(b): per prompt sqrt(D_t/2) (outcome-distribution KL) and |p_t - p_beta|
+  x5_drift.dat        Fig. 3(b): per prompt sqrt(KL_seq/2) (xseq, the figure's x), |p_t - p_beta| and sqrt(D_t/2)
   x5_summary.csv / x5_summary.json   per seed rows behind x5_measure.tex
   x6_ledger.tex       appendix E.3 / Table 3 Cache: per cohort and seed per-refresh, incremental, cold-start
                       (prefix + cache) costs, cache cost; Llama times exclude restarted work
@@ -507,15 +507,15 @@ def x5_rho_dat(rows, cohort="olmo_math"):
 
 
 def x5_drift_dat(prompts, cohort="olmo_math"):
-    """Fig. 3(b): per prompt x = sqrt(D_t/2) (outcome KL), y = |p_t - p_beta|; infinite D_t rows are left out
-    (their count is in the header comment)."""
+    """Fig. 3(b): per prompt and snapshot, xseq = sqrt(KL_seq/2) (the response-level KL estimate of the caption),
+    y = |p_t - p_beta|, and x = sqrt(D_t/2) with the outcome-distribution KL (nan when D_t = inf)."""
     rs = [p for p in prompts if p["cohort"] == cohort]
-    fin = [p for p in rs if math.isfinite(p["kl_outcome"])]
-    lines = [f"# {cohort}: {len(fin)} prompt-snapshot pairs; {len(rs) - len(fin)} with D_t = inf left out",
+    n_inf = sum(1 for p in rs if not math.isfinite(p["kl_outcome"]))
+    lines = [f"# {cohort}: {len(rs)} prompt-snapshot pairs; x = nan for {n_inf} pairs with D_t = inf",
              "seed update x y xseq"]
-    for p in fin:
-        lines.append(f"{p['seed']} {p['update']} {math.sqrt(p['kl_outcome'] / 2):.5f} {p['abs_dp']:.5f} "
-                     f"{math.sqrt(max(p['kl_seq'], 0.0) / 2):.5f}")
+    for p in rs:
+        x = f"{math.sqrt(p['kl_outcome'] / 2):.5f}" if math.isfinite(p["kl_outcome"]) else "nan"
+        lines.append(f"{p['seed']} {p['update']} {x} {p['abs_dp']:.5f} {math.sqrt(max(p['kl_seq'], 0.0) / 2):.5f}")
     return "\n".join(lines) + "\n"
 
 

@@ -64,8 +64,9 @@ def test_outcome_kl_and_drift_files(tmp_path):
     assert [r["within_dp_le_sqrt_seq"] for r in pr] == [True, False, True]
     prompts = [dict(r, cohort="olmo_math", seed=5, update=100) for r in pr]
     dat = collect.x5_drift_dat(prompts).splitlines()
-    assert dat[0].startswith("# olmo_math: 2 prompt-snapshot pairs; 1 with D_t = inf")
-    assert dat[1] == "seed update x y xseq" and len(dat) == 4
+    assert dat[0].startswith("# olmo_math: 3 prompt-snapshot pairs; x = nan for 1 pairs with D_t = inf")
+    assert dat[1] == "seed update x y xseq" and len(dat) == 5
+    assert dat[3].split()[2] == "nan" and dat[3].split()[4] == f"{math.sqrt(0.005):.5f}"
     rows = [{"cohort": "olmo_math", "seed": s, "update": 100, "status": "measured",
              "rho_on_split_half_pearson": 0.1 * s, "rho_sr_split_half_pearson": 0.5} for s in (5, 6)]
     rho = collect.x5_rho_dat(rows).splitlines()

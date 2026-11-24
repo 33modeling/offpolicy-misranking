@@ -47,7 +47,7 @@ sh v9/run.sh
 | `x4_seeds.tex` | X4. seed 10–14 네 arm 평균, Staged−SR/Alignment(10–14), 합친 seed 5–14 |
 | `x5_measure.tex` | X5. cohort·스냅샷별 seed 평균 ρ_on, ρ_SR, σ_on, \|p_t−p_β\|, 결과 분포 KL D_t = KL(Bern(p_t)‖Bern(p_β)), 응답 수열 KL, Lemma 2 한계(\|p_t−p_β\| ≤ √(KL_seq/2)) 안의 prompt 비율 |
 | `x5_rho.dat` | Fig. 3(a). OLMo MATH 스냅샷별 Alignment·SR split-half ρ의 seed 평균과 SE (`update n al al_se sr sr_se`) |
-| `x5_drift.dat` | Fig. 3(b). prompt별 x = √(D_t/2)(결과 분포 KL), y = \|p_t−p_β\|, 참고로 xseq = √(KL_seq/2). D_t가 무한(p_β가 0 또는 1인데 p_t가 다름)인 쌍은 빼고 개수를 첫 줄에 적는다. 결과 분포 KL에서는 Pinsker 때문에 모든 점이 y = x 아래에 있다 |
+| `x5_drift.dat` | Fig. 3(b). prompt·스냅샷별 xseq = √(KL_seq/2)(그림의 x축, 응답 수열 KL 추정), y = \|p_t−p_β\|, 참고로 x = √(D_t/2)(결과 분포 KL, 무한이면 nan). 원고에는 `bash v9/scripts/import_results.sh $WORK/v9/paper`(원고 저장소)로 복사 |
 | `x5_summary.csv`, `x5_summary.json` | x5_measure.tex의 seed별 원자료 |
 | `x6_ledger.tex` | 부록 E.3, Table 3 Cache. cohort·seed별 Alignment refresh당 비용, 네 방법 증분 비용, prefix, 캐시, cold start(증분 + prefix + 캐시, 캐시는 SR·Staged만). 비용은 run의 살아남은 lineage만 세므로 재시작으로 다시 한 작업(Llama)은 빠진다. 재시작 포함 시간은 `%` 줄 |
 
