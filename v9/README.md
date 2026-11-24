@@ -37,13 +37,21 @@ sh v9/run.sh
 | 파일 | 내용 |
 |---|---|
 | `results.json` | 모든 칸과 상태(measured/pending+이유), tau.json 전체, 열린 항목 목록 |
-| `x1_staged.tex` | cohort별 Random·Staged·SR·Alignment 평균, Staged−SR, Staged−Alignment, Staged−best, Staged−Random: 평균 pp [95% paired-t] (승/무/패). best = 그 cohort에서 평균이 높은 단일 선택기(SR 또는 Alignment) |
-| `x1_per_seed.csv` | cohort, seed, arm, reward_fraction, status, reason |
-| `tau_sweep.tex` | OLMo MATH τ별 평균(선택 기준 행 + 다른 기준 행, 고른 τ 굵게) |
-| `x2_budget.tex` | B(GPU-h), Staged@275, SR@B, Alignment@B, Staged@B의 보상·평균 endpoint update·평균 비용, Staged@275 − 각 arm |
-| `x3_horizon.tex` | 275와 400에서 Alignment·SR 평균과 Staged−SR, Staged−Alignment |
-| `x4_seeds.tex` | seed 10–14 네 arm 평균, Staged−SR/Alignment(10–14), 합친 seed 5–14 |
-| `x5_summary.tex`, `x5_summary.csv`, `x5_summary.json` | cohort·seed·update별 ρ_on, ρ_SR, σ_on, ‖v‖, \|p_t−p_β\|, KL(수열·토큰), Pinsker 범위 안 비율 (그림 입력은 csv) |
+| `p0_tau.tex` | P0. OLMo MATH τ별 평균(선택 기준 행 + 다른 기준 행, 고른 τ₀ 굵게) |
+| `x1_cohorts.tex` | X1. cohort별 Random·Staged·SR·Alignment 평균, Staged−SR, Staged−Alignment, Staged−best, Staged−Random: 평균 pp [95% paired-t] (승/무/패). best = 그 cohort에서 평균이 높은 단일 선택기. 끝의 `%` 줄: 가장 좋은 방법과의 최대 차이, cohort별 Staged ≥ SR 여부 |
+| `x1_cohorts.dat` | Fig. 2 입력(`figures/cohorts-measured.dat`과 같은 `y contrast mean lo hi`, al = Staged−Alignment는 y+0.17, sr = Staged−SR는 y−0.17). 측정이 끝난 cohort만 |
+| `x1_seeds.tex`, `x1_seeds.csv` | 부록 E.2. 여섯 cohort × 네 방법 seed 5–9 최종 보상, 평균, Staged − 각 방법 |
+| `x1_cost.tex` | Table 3 증분 비용. cohort별 Random·Alignment·SR·Staged 평균 GPU-h(공유 상태→275, prefix·캐시·평가 제외, Staged = τ까지 궤적 + SR 분기, SR-GC 점검 제외) |
+| `x2_budget.tex` | X2. B(GPU-h), Staged@275, SR@B, Alignment@B, Staged@B의 보상·평균 endpoint update·평균 비용, Staged@275 − 각 arm. 끝의 `%` 줄: B에서 τ별 평균과 최적 τ, Staged 증분 비용이 Alignment·SR의 몇 %인지 |
+| `x3_horizon.tex` | X3. 275와 400에서 Alignment·SR 평균과 Staged−SR, Staged−Alignment |
+| `x4_seeds.tex` | X4. seed 10–14 네 arm 평균, Staged−SR/Alignment(10–14), 합친 seed 5–14 |
+| `x5_measure.tex` | X5. cohort·스냅샷별 seed 평균 ρ_on, ρ_SR, σ_on, \|p_t−p_β\|, 결과 분포 KL D_t = KL(Bern(p_t)‖Bern(p_β)), 응답 수열 KL, Lemma 2 한계(\|p_t−p_β\| ≤ √(KL_seq/2)) 안의 prompt 비율 |
+| `x5_rho.dat` | Fig. 3(a). OLMo MATH 스냅샷별 Alignment·SR split-half ρ의 seed 평균과 SE (`update n al al_se sr sr_se`) |
+| `x5_drift.dat` | Fig. 3(b). prompt별 x = √(D_t/2)(결과 분포 KL), y = \|p_t−p_β\|, 참고로 xseq = √(KL_seq/2). D_t가 무한(p_β가 0 또는 1인데 p_t가 다름)인 쌍은 빼고 개수를 첫 줄에 적는다. 결과 분포 KL에서는 Pinsker 때문에 모든 점이 y = x 아래에 있다 |
+| `x5_summary.csv`, `x5_summary.json` | x5_measure.tex의 seed별 원자료 |
+| `x6_ledger.tex` | 부록 E.3, Table 3 Cache. cohort·seed별 Alignment refresh당 비용, 네 방법 증분 비용, prefix, 캐시, cold start(증분 + prefix + 캐시, 캐시는 SR·Staged만). 비용은 run의 살아남은 lineage만 세므로 재시작으로 다시 한 작업(Llama)은 빠진다. 재시작 포함 시간은 `%` 줄 |
+
+이름은 원고 저장소 `v9/EXPERIMENTS_TODO.md`의 "받을 파일"과 같다. 예전 이름(`x1_staged.tex`, `x1_per_seed.csv`, `tau_sweep.tex`, `x5_summary.tex`)은 collect가 지운다. 비용은 V8 ledger 이벤트(`runs/*/attempts/*/events.jsonl`)와 prefix·캐시 영수증(`cost-receipts/shared-prefix`, `<bundle>.cache/cost-summary.json`)에서만 읽고, 없으면 `\pending`이다.
 
 보상은 [0,1] 비율, 차이는 pp, 비용은 GPU-seconds(표는 GPU-h). 칸은 그 칸에 필요한 모든 seed가 측정됐을 때만 숫자이고, 아니면 `\pending{Xk}`다(조각마다 `\providecommand{\pending}`가 들어 있다). 추정·보간·다른 cohort 값으로 채우지 않는다.
 

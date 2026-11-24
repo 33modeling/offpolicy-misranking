@@ -1,16 +1,25 @@
 """collect: result files for the manuscript, from recorded outputs only.
 
+File names follow the manuscript checklist (paper repo v9/EXPERIMENTS_TODO.md, "받을 파일"):
 $V9_ROOT/paper/
   results.json        every cell with its status (measured / pending + reason), inputs and the frozen tau
-  x1_per_seed.csv     cohort, seed, arm, reward (pending empty)
-  x1_staged.tex       per cohort: arm means (Random, Staged, SR, Alignment); Staged-SR, Staged-Alignment, Staged-best,
-                      Staged-Random (paired 95% t CI, W/T/L)
-  tau_sweep.tex       OLMo MATH bank: mean reward per tau (the selection basis and the other basis)
-  x2_budget.tex       equal compute at B = mean Staged cost: Staged@275, SR@B, Alignment@B (+ paired deltas)
-  x3_horizon.tex      Alignment / SR / Staged at 275 and 400 (+ paired deltas at 400)
-  x4_seeds.tex        OLMo MATH seeds 10-14 (Random, SR, Alignment, Staged) and pooled 5-14 contrasts
-  x5_summary.csv      cohort, seed, update, rho_on, rho_sr, sigma_on, |p_t - p_beta|, KL (figure input)
-  x5_summary.json / x5_summary.tex
+  p0_tau.tex          P0: OLMo MATH bank mean reward per tau (selection basis and the other basis), tau0 in bold
+  x1_cohorts.tex      X1: per cohort Random, Staged, SR, Alignment means; Staged-SR, Staged-Alignment, Staged-best,
+                      Staged-Random (paired 95% t CI, W/T/L); summary lines (largest gap to the best, Staged >= SR)
+  x1_cohorts.dat      Fig. 2 rows: y contrast mean lo hi (al = Staged-Alignment, sr = Staged-SR; measured cohorts only)
+  x1_seeds.tex        appendix E.2: six cohorts x four methods per-seed final reward and Staged minus each method
+  x1_seeds.csv        cohort, seed, arm, reward_fraction, status, reason
+  x1_cost.tex         Table 3 incremental scope: mean GPU-h per cohort of Random, Alignment, SR, Staged
+  x2_budget.tex       X2 equal compute at B = mean Staged cost (+ paired deltas, best tau at B, Staged cost vs others)
+  x3_horizon.tex      X3 Alignment / SR / Staged at 275 and 400 (+ paired deltas)
+  x4_seeds.tex        X4 OLMo MATH seeds 10-14 and pooled 5-14 contrasts
+  x5_measure.tex      X5 seed means per snapshot: rho_on, rho_SR, sigma_on, |p_t - p_beta|, outcome KL D_t,
+                      sequence KL, fraction of prompts within the Lemma 2 bounds
+  x5_rho.dat          Fig. 3(a): OLMo MATH per update: mean and SE over seeds of the split-half rho of Alignment and SR
+  x5_drift.dat        Fig. 3(b): per prompt sqrt(D_t/2) (outcome-distribution KL) and |p_t - p_beta|
+  x5_summary.csv / x5_summary.json   per seed rows behind x5_measure.tex
+  x6_ledger.tex       appendix E.3 / Table 3 Cache: per cohort and seed per-refresh, incremental, cold-start
+                      (prefix + cache) costs, cache cost; Llama times exclude restarted work
 A cell is a number only when every seed it needs was measured; otherwise it is \\pending{Xk}.
 No value is estimated, interpolated or carried over from another cohort.
 """
@@ -20,6 +29,8 @@ from __future__ import annotations
 import csv
 import json
 import math
+
+from pathlib import Path
 
 from . import env
 from .common import Blocked, item, read_json, tau_path, v9c
@@ -119,8 +130,127 @@ def x1_tables(tau, items):
                      f"{fmt_pct(pct(o['means']['alignment']), 'X1')} & {fmt_delta(o['staged_minus_sr'], 'X1')} & "
                      f"{fmt_delta(o['staged_minus_alignment'], 'X1')} & {fmt_delta(o['staged_minus_best'], 'X1')} & "
                      f"{fmt_delta(o['staged_minus_random'], 'X1')} \\\\")
-    lines += ["\\bottomrule", "\\end{tabular}", ""]
+    lines += ["\\bottomrule", "\\end{tabular}"]
+    summary = x1_summary(out)
+    out["_summary"] = summary
+    lines += [f"% {k}: {v}" for k, v in summary.items()] + [""]
     return out, rows, "\n".join(lines)
+
+
+def x1_summary(out):
+    """Sentences' inputs: the largest shortfall of Staged against the better single selector, and Staged >= SR."""
+    measured = {c: out[c]["staged_minus_best"] for c in env.X1_COHORTS
+                if out[c]["staged_minus_best"].get("status") == "measured"}
+    res = {"cohorts_measured": f"{len(measured)} of {len(env.X1_COHORTS)}"}
+    if measured:
+        c = min(measured, key=lambda k: measured[k]["mean_delta_pp"])
+        r = measured[c]
+        res["largest_gap_to_best"] = (f"{NAMES[c]} Staged - {out[c]['best_arm']} {r['mean_delta_pp']:+.2f} pp "
+                                      f"[{r['ci_low']:+.2f}, {r['ci_high']:+.2f}]")
+    sr = {c: out[c]["staged_minus_sr"] for c in env.X1_COHORTS if out[c]["staged_minus_sr"].get("status") == "measured"}
+    if sr:
+        res["staged_ge_sr_mean"] = ", ".join(f"{NAMES[c]} {'yes' if r['mean_delta_pp'] >= 0 else 'no'}"
+                                             f" ({r['mean_delta_pp']:+.2f})" for c, r in sr.items())
+        res["staged_below_sr_ci_excludes_0"] = ", ".join(NAMES[c] for c, r in sr.items() if r["ci_high"] < 0) or "none"
+    return res
+
+
+FIG2_Y = {"olmo_math": 6, "olmo_mbpp": 5, "qwen_math": 4, "qwen_mbpp": 3, "llama_math": 2, "llama_mbpp": 1}
+
+
+def x1_cohorts_dat(out):
+    """figures/cohorts-measured.dat format: al at y + 0.17, sr at y - 0.17."""
+    lines = ["y contrast mean lo hi"]
+    for cohort in env.X1_COHORTS:
+        for key, tag, dy in (("staged_minus_alignment", "al", 0.17), ("staged_minus_sr", "sr", -0.17)):
+            r = out[cohort][key]
+            if r.get("status") == "measured":
+                lines.append(f"{FIG2_Y[cohort] + dy:.2f} {tag} {r['mean_delta_pp']:.3f} {r['ci_low']:.3f} {r['ci_high']:.3f}")
+    return "\n".join(lines) + "\n"
+
+
+def x1_seeds_tex(out):
+    arms = ("random", "alignment", "sr", "staged")
+    lines = [PREAMBLE, "% X1 per seed (appendix E.2): final reward (\\%) at update 275, seeds 5--9; last column "
+             "Staged minus this method, mean pp [95\\% paired-t CI] (W/T/L)",
+             "\\begin{tabular}{llrrrrrrl}", "\\toprule",
+             "Cohort & Method & 5 & 6 & 7 & 8 & 9 & Mean & Staged$-$method \\\\", "\\midrule"]
+    for i, cohort in enumerate(env.X1_COHORTS):
+        o = out[cohort]
+        if i:
+            lines.append("\\midrule")
+        for j, arm in enumerate(arms):
+            cells = [fmt_pct(pct(o["per_seed"][arm].get(s)), "X1.appx") for s in o["seeds"]]
+            d = "--" if arm == "staged" else fmt_delta(o[f"staged_minus_{arm}"], "X1.appx")
+            lines.append(f"{NAMES[cohort] if j == 0 else ''} & {ARM_NAMES[arm]} & " + " & ".join(cells) +
+                         f" & {fmt_pct(pct(o['means'][arm]), 'X1.appx')} & {d} \\\\")
+    lines += ["\\bottomrule", "\\end{tabular}", ""]
+    return "\n".join(lines)
+
+
+def gpu_h(x):
+    return None if x is None else x / 3600.0
+
+
+def fmt_h(x, tag, d=2):
+    return f"\\pending{{{tag}}}" if x is None else f"{x:.{d}f}"
+
+
+def seed_mean(vals):
+    vals = list(vals)
+    return None if not vals or any(v is None for v in vals) else sum(vals) / len(vals)
+
+
+def x1_cost_tex(costs):
+    arms = ("random", "alignment", "sr", "staged")
+    lines = [PREAMBLE, "% Table 3, incremental scope: mean GPU-hours over seeds 5--9 from the shared 25-update state to "
+             "update 275 (selection, subset preparation, training; prefix, cache, evaluation excluded). Staged = "
+             "trajectory to tau + SR branch; SR-GC monitor checks excluded. A cell needs every seed.",
+             "\\begin{tabular}{lrrrr}", "\\toprule", "Cohort & Random & Alignment & SR & Staged \\\\", "\\midrule"]
+    for cohort in env.X1_COHORTS:
+        rows = costs[cohort]
+        cells = [fmt_h(gpu_h(seed_mean(r["incremental"].get(a) for r in rows.values())), "X1.cost") for a in arms]
+        lines.append(f"{NAMES[cohort]} & " + " & ".join(cells) + " \\\\")
+    lines += ["\\bottomrule", "\\end{tabular}", ""]
+    return "\n".join(lines)
+
+
+def x6_ledger_tex(costs):
+    arms = ("random", "alignment", "sr", "staged")
+    lines = [PREAMBLE, "% X6 cost ledger (appendix E.3), GPU-hours per cohort and seed. Per refresh = Alignment "
+             "candidate scoring per selection round; incremental = shared state to 275 (no prefix, cache, evaluation); "
+             "cold start = incremental + prefix + cache (cache only for SR and Staged); cache = reward cache of the "
+             "initial policy. Algorithm costs keep only the surviving lineage of each run, so restarted work "
+             "(Llama) is excluded.",
+             "\\begin{tabular}{llrrrrrrrrrrr}", "\\toprule",
+             " & & & \\multicolumn{4}{c}{Incremental} & & & \\multicolumn{4}{c}{Cold start} \\\\",
+             "Cohort & Seed & Refresh & Ra & Al & Sr & St & Prefix & Cache & Ra & Al & Sr & St \\\\", "\\midrule"]
+    for i, cohort in enumerate(env.X1_COHORTS):
+        if i:
+            lines.append("\\midrule")
+        rows = costs[cohort]
+        for j, (seed, r) in enumerate(rows.items()):
+            cells = [fmt_h(gpu_h(r["per_refresh_alignment"]), "X6.ledger")]
+            cells += [fmt_h(gpu_h(r["incremental"].get(a)), "X6.ledger") for a in arms]
+            cells += [fmt_h(gpu_h(r["prefix"]), "X6.ledger"), fmt_h(gpu_h(r["cache"]), "X6.cache")]
+            cells += [fmt_h(gpu_h(r["cold_start"].get(a)), "X6.ledger") for a in arms]
+            lines.append(f"{NAMES[cohort] if j == 0 else ''} & {seed} & " + " & ".join(cells) + " \\\\")
+        m = lambda f: fmt_h(gpu_h(seed_mean(f(r) for r in rows.values())), "X6.ledger")  # noqa: E731
+        lines.append(" & mean & " + " & ".join([m(lambda r: r["per_refresh_alignment"])] +
+                                                [m(lambda r, a=a: r["incremental"].get(a)) for a in arms] +
+                                                [m(lambda r: r["prefix"]), m(lambda r: r["cache"])] +
+                                                [m(lambda r, a=a: r["cold_start"].get(a)) for a in arms]) + " \\\\")
+    lines += ["\\bottomrule", "\\end{tabular}"]
+    for cohort in env.X1_COHORTS:
+        for seed, r in costs[cohort].items():
+            if r["cache"] is None:
+                lines.append(f"% cache {cohort} s{seed}: {r['cache_detail'].get('status') or 'incomplete receipts'}")
+            phys = {a: v for a, v in r["physical"].items() if v is not None}
+            if phys:
+                lines.append(f"% physical (restarts included) {cohort} s{seed} GPU-h: " +
+                             ", ".join(f"{a} {v / 3600:.2f}" for a, v in phys.items()))
+    lines.append("")
+    return "\n".join(lines)
 
 
 # ------------------------------------------------------------------ tau sweep
@@ -184,6 +314,34 @@ def x2_tables(x1, items):
     return out, "\n".join(lines)
 
 
+
+def x2_extra(tau, x2, costs):
+    """X2.text / X2.cost inputs: mean reward at B per switch time (best tau at B) and Staged cost against
+    Alignment and SR over the incremental scope."""
+    res, lines = {}, []
+    for cohort, r in x2.items():
+        by_tau = {}
+        for arm, a in r["arms"].items():
+            t = 25 if arm == "sr" else tau if arm == "staged" else int(arm[6:]) if arm.startswith("switch") else None
+            if t is not None and a["mean"] is not None:
+                by_tau[t] = a["mean"]
+        best = max(by_tau, key=lambda t: (by_tau[t], -t)) if by_tau else None
+        inc = {a: seed_mean(v["incremental"].get(a) for v in costs.get(cohort, {}).values())
+               for a in ("alignment", "sr", "staged")}
+        ratio = {a: (100.0 * inc["staged"] / inc[a]) if inc["staged"] is not None and inc[a] else None
+                 for a in ("alignment", "sr")}
+        res[cohort] = {"mean_reward_at_B_by_tau": {str(t): v for t, v in sorted(by_tau.items())},
+                       "best_tau_at_B": best, "all_taus_at_B_measured": len(by_tau) == len(
+                           [a for a in r["arms"] if a == "sr" or a == "staged" or a.startswith("switch")]),
+                       "incremental_gpu_seconds": inc, "staged_cost_percent_of": ratio}
+        lines.append(f"% {cohort}: mean reward at B by tau: " +
+                     (", ".join(f"{t} {100 * v:.2f}" for t, v in sorted(by_tau.items())) or "pending") +
+                     f"; best tau at B: {best if best is not None else 'pending'}")
+        lines.append(f"% {cohort}: Staged incremental cost = " +
+                     ", ".join(f"{'pending' if v is None else f'{v:.1f}%'} of {a}" for a, v in ratio.items()) +
+                     (f"; B = {r['budget_gpu_seconds'] / 3600:.2f} GPU-h" if r.get("budget_gpu_seconds") else ""))
+    return res, "\n".join(lines) + "\n"
+
 # ------------------------------------------------------------------ X3
 def x3_tables(x1, items):
     seeds = [5, 6, 7, 8, 9]
@@ -245,16 +403,56 @@ X5_FIELDS = ("rho_on_split_half_pearson", "rho_on_full_spearman_brown", "rho_on_
              "validation_gradient_norm", "rho_sr_split_half_pearson", "rho_p_split_half_pearson",
              "rho_sr_cache_split_half_pearson", "abs_p_shift_mean", "abs_p_shift_median", "abs_p_shift_max",
              "kl_seq_mean", "kl_seq_median", "kl_token_mean", "fraction_within_pinsker_bound", "mean_p_t", "mean_p_beta")
+X5_EXTRA = ("kl_outcome_mean_finite", "kl_outcome_median", "n_kl_outcome_infinite", "fraction_outcome_kl_le_seq_kl",
+             "fraction_dp_le_sqrt_seq_kl")
+
+
+def bern_kl(p, q):
+    """KL(Bern(p) || Bern(q)); inf when q puts zero mass where p does not."""
+    out = 0.0
+    for a, b in ((p, q), (1.0 - p, 1.0 - q)):
+        if a <= 0.0:
+            continue
+        if b <= 0.0:
+            return math.inf
+        out += a * math.log(a / b)
+    return max(out, 0.0)
+
+
+def x5_prompt_rows(path):
+    """Per prompt: p_t, p_beta, outcome KL D_t (Lemma 2), sequence KL and both Lemma 2 checks."""
+    from switching.common import read_jsonl
+    out = []
+    for r in read_jsonl(path):
+        d = bern_kl(r["p_t"], r["p_beta"])
+        seq = max(r["kl_seq_mean"], 0.0)
+        dp = abs(r["p_t"] - r["p_beta"])
+        out.append({"prompt_id": r["prompt_id"], "p_t": r["p_t"], "p_beta": r["p_beta"], "abs_dp": dp,
+                    "kl_outcome": d, "kl_seq": r["kl_seq_mean"],
+                    "within_dp_le_sqrt_seq": dp <= math.sqrt(seq / 2) + 1e-12,
+                    "within_outcome_le_seq": d <= seq + 1e-12})
+    return out
 
 
 def x5_tables(items):
-    rows = []
+    rows, prompts = [], []
     for i in items:
-        p = v9c(i["cohort"]) / "x5" / f"s{i.get('seed')}" / f"u{i.get('update', 0):03d}" / "summary.json"
+        d = v9c(i["cohort"]) / "x5" / f"s{i.get('seed')}" / f"u{i.get('update', 0):03d}"
+        p = d / "summary.json"
         if i["state"] == "done" and p.is_file():
             s = read_json(p)
+            extra = {}
+            if (d / "rows.jsonl").is_file():
+                pr = x5_prompt_rows(d / "rows.jsonl")
+                fin = [x["kl_outcome"] for x in pr if math.isfinite(x["kl_outcome"])]
+                extra = {"kl_outcome_mean_finite": mean(fin), "kl_outcome_median": float(sorted(
+                             x["kl_outcome"] for x in pr)[len(pr) // 2]) if pr else None,
+                         "n_kl_outcome_infinite": len(pr) - len(fin),
+                         "fraction_outcome_kl_le_seq_kl": mean([float(x["within_outcome_le_seq"]) for x in pr]),
+                         "fraction_dp_le_sqrt_seq_kl": mean([float(x["within_dp_le_sqrt_seq"]) for x in pr])}
+                prompts += [dict(x, cohort=i["cohort"], seed=i["seed"], update=i["update"]) for x in pr]
             rows.append({"cohort": i["cohort"], "seed": i["seed"], "update": i["update"], "status": "measured",
-                         **{k: s.get(k) for k in X5_FIELDS}})
+                         **{k: s.get(k) for k in X5_FIELDS}, **extra})
         elif i.get("seed") is not None:
             rows.append({"cohort": i["cohort"], "seed": i["seed"], "update": i.get("update"), "status": "pending",
                          "reason": i.get("reason")})
@@ -265,21 +463,60 @@ def x5_tables(items):
     summary = []
     for (cohort, u), rs in sorted(agg.items()):
         summary.append({"cohort": cohort, "update": u, "n_seeds": len(rs),
-                        **{k: mean([r[k] for r in rs]) for k in X5_FIELDS}})
-    lines = [PREAMBLE, "% X5: split-half reliability, outcome shift and KL on the On trajectory (seed means)",
-             "\\begin{tabular}{lrrrrrrr}", "\\toprule",
+                        **{k: mean([r.get(k) for r in rs]) for k in X5_FIELDS + X5_EXTRA}})
+    lines = [PREAMBLE, "% X5: split-half reliability, outcome shift and divergence on the On trajectory (seed means). "
+             "D_t = KL(Bern(p_t) || Bern(p_beta)) per prompt (finite values; prompts with p_beta in {0,1} and "
+             "p_t != p_beta have D_t = inf), sequence KL = log pi_t - log beta summed over the response. "
+             "Bound = fraction of prompts with |p_t - p_beta| <= sqrt(KL_seq / 2) (Lemma 2 with the response KL).",
+             "\\begin{tabular}{lrrrrrrrrr}", "\\toprule",
              "Cohort & Update & $n$ & $\\rho_{\\mathrm{on}}$ & $\\rho_{\\mathrm{SR}}$ & $\\sigma_{\\mathrm{on}}$ & "
-             "$|p_t-p_\\beta|$ & KL (seq.) \\\\", "\\midrule"]
+             "$|p_t-p_\\beta|$ & $D_t$ & KL (seq.) & Bound \\\\", "\\midrule"]
     for cohort in env.BANK_COHORTS:
         for u in env.X5_UPDATES:
             s = next((x for x in summary if x["cohort"] == cohort and x["update"] == u), None)
             if s is None and not any(r["cohort"] == cohort for r in rows):
                 continue
-            f = (lambda k, d=3: "\\pending{X5}" if s is None or s[k] is None else f"{s[k]:.{d}f}")
+            f = (lambda k, d=3: "\\pending{X5}" if s is None or s.get(k) is None else f"{s[k]:.{d}f}")
             lines.append(f"{NAMES[cohort]} & {u} & {0 if s is None else s['n_seeds']} & {f('rho_on_split_half_pearson')} & "
-                         f"{f('rho_sr_split_half_pearson')} & {f('sigma_on')} & {f('abs_p_shift_mean')} & {f('kl_seq_mean', 2)} \\\\")
+                         f"{f('rho_sr_split_half_pearson')} & {f('sigma_on')} & {f('abs_p_shift_mean')} & "
+                         f"{f('kl_outcome_mean_finite')} & {f('kl_seq_mean', 2)} & {f('fraction_dp_le_sqrt_seq_kl', 2)} \\\\")
     lines += ["\\bottomrule", "\\end{tabular}", ""]
-    return rows, summary, "\n".join(lines)
+    return rows, summary, "\n".join(lines), prompts
+
+
+def se(xs):
+    xs = [x for x in xs if x is not None]
+    if len(xs) < 2:
+        return None
+    m = sum(xs) / len(xs)
+    return math.sqrt(sum((x - m) ** 2 for x in xs) / (len(xs) - 1) / len(xs))
+
+
+def x5_rho_dat(rows, cohort="olmo_math"):
+    """Fig. 3(a): per update, mean and SE over seeds of split-half rho (Alignment = rho_on, SR = rho_SR)."""
+    lines = ["update n al al_se sr sr_se"]
+    for u in env.X5_UPDATES:
+        rs = [r for r in rows if r["cohort"] == cohort and r["update"] == u and r["status"] == "measured"]
+        if not rs:
+            continue
+        a = [r["rho_on_split_half_pearson"] for r in rs]
+        b = [r["rho_sr_split_half_pearson"] for r in rs]
+        g = lambda x: "nan" if x is None else f"{x:.4f}"  # noqa: E731
+        lines.append(f"{u} {len(rs)} {g(mean(a))} {g(se(a))} {g(mean(b))} {g(se(b))}")
+    return "\n".join(lines) + "\n"
+
+
+def x5_drift_dat(prompts, cohort="olmo_math"):
+    """Fig. 3(b): per prompt x = sqrt(D_t/2) (outcome KL), y = |p_t - p_beta|; infinite D_t rows are left out
+    (their count is in the header comment)."""
+    rs = [p for p in prompts if p["cohort"] == cohort]
+    fin = [p for p in rs if math.isfinite(p["kl_outcome"])]
+    lines = [f"# {cohort}: {len(fin)} prompt-snapshot pairs; {len(rs) - len(fin)} with D_t = inf left out",
+             "seed update x y xseq"]
+    for p in fin:
+        lines.append(f"{p['seed']} {p['update']} {math.sqrt(p['kl_outcome'] / 2):.5f} {p['abs_dp']:.5f} "
+                     f"{math.sqrt(max(p['kl_seq'], 0.0) / 2):.5f}")
+    return "\n".join(lines) + "\n"
 
 
 def write_csv(name, rows, fields=None):
@@ -320,19 +557,35 @@ def collect():
             items[s] = stages.PLANNERS[s]()
         except Exception as exc:  # noqa: BLE001 - one stage's planning error leaves its cells pending
             items[s] = [item(s, "all", "all", "blocked", f"planning error: {type(exc).__name__}: {exc}")]
+    from . import costs as cost_mod
     x1, x1_rows, x1_tex = x1_tables(tau, items["x1"])
     x2, x2_tex = x2_tables(x1, items["x2"])
     x3, x3_tex = x3_tables(x1, items["x3"])
     x4, x4_tex = x4_tables(x1, items["x4"])
-    x5_rows, x5_summary, x5_tex = x5_tables(items["x5"])
-    written = [write("x1_staged.tex", x1_tex), write("tau_sweep.tex", tau_table(rec)), write("x2_budget.tex", x2_tex),
-               write("x3_horizon.tex", x3_tex), write("x4_seeds.tex", x4_tex), write("x5_summary.tex", x5_tex),
-               write_csv("x1_per_seed.csv", x1_rows, ["cohort", "seed", "arm", "reward_fraction", "status", "reason"]),
-               write_csv("x5_summary.csv", x5_rows, ["cohort", "seed", "update", "status", *X5_FIELDS, "reason"])]
+    x5_rows, x5_summary, x5_tex, x5_prompts = x5_tables(items["x5"])
+    try:
+        costs = cost_mod.x1_costs(tau, items["x1"])
+    except Exception as exc:  # noqa: BLE001 - cost files stay pending, the reason goes to results.json
+        costs = {c: {s: {"incremental": {}, "physical": {}, "per_refresh_alignment": None, "prefix": None, "cache": None,
+                         "cache_detail": {"status": f"cost error: {type(exc).__name__}: {exc}"}, "cold_start": {}}
+                     for s in (5, 6, 7, 8, 9)} for c in env.X1_COHORTS}
+    x2x, x2x_tex = x2_extra(tau, x2, costs)
+    written = [write("p0_tau.tex", tau_table(rec)), write("x1_cohorts.tex", x1_tex),
+               write("x1_cohorts.dat", x1_cohorts_dat(x1)), write("x1_seeds.tex", x1_seeds_tex(x1)),
+               write("x1_cost.tex", x1_cost_tex(costs)), write("x2_budget.tex", x2_tex + x2x_tex),
+               write("x3_horizon.tex", x3_tex), write("x4_seeds.tex", x4_tex), write("x5_measure.tex", x5_tex),
+               write("x5_rho.dat", x5_rho_dat(x5_rows)), write("x5_drift.dat", x5_drift_dat(x5_prompts)),
+               write("x6_ledger.tex", x6_ledger_tex(costs)),
+               write_csv("x1_seeds.csv", x1_rows, ["cohort", "seed", "arm", "reward_fraction", "status", "reason"]),
+               write_csv("x5_summary.csv", x5_rows, ["cohort", "seed", "update", "status", *X5_FIELDS, *X5_EXTRA, "reason"])]
     atomic_write_json(paper_dir() / "x5_summary.json", {"per_seed": x5_rows, "seed_means": x5_summary})
+    written.append(paper_dir() / "x5_summary.json")
+    for old in ("x1_staged.tex", "x1_per_seed.csv", "tau_sweep.tex", "x5_summary.tex"):  # names before the checklist
+        (paper_dir() / old).unlink(missing_ok=True)
     blocked = {s: sorted({f"{i['cohort']}: {i['reason']}" for i in its if i["state"] in ("blocked", "failed")})
                for s, its in items.items()}
-    results = {"generated_at": utc_now(), "tau": rec, "x1": x1, "x2": x2, "x3": x3, "x4": x4,
+    results = {"generated_at": utc_now(), "tau": rec, "x1": x1, "x2": x2, "x2_extra": x2x,
+               "costs_gpu_seconds": {c: {str(k): v for k, v in r.items()} for c, r in costs.items()}, "x3": x3, "x4": x4,
                "x5": {"seed_means": x5_summary, "rows": len(x5_rows)}, "open_items": blocked,
                "units": "reward fractions in [0,1]; deltas in percentage points; costs in GPU-seconds unless named",
                "pending_rule": "a cell is pending until every seed it needs is measured; nothing is estimated"}
@@ -356,4 +609,4 @@ def status_items():
     return [item("collect", "all", "files", "ready", "not written yet")]
 
 
-_ = (json, math)
+_ = (json, Path)
