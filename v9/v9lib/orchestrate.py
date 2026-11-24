@@ -13,6 +13,7 @@ Words: status | freeze-tau | x1 | x2 | x3 | x4 | x5 | collect | retry-failed
 from __future__ import annotations
 
 import json
+import re
 import os
 from pathlib import Path
 import signal
@@ -301,19 +302,55 @@ def _run_child(stage, cohort, tid, tfile):
     with open(say.path or log_path(), "a") as fh:
         proc = subprocess.Popen(cmd, env=child_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         STOP["child"] = proc
+        crashes = []
         for line in proc.stdout:
             sys.stdout.write(line)
             fh.write(line)
+            m = RANK_SIGNAL.search(line)
+            if m:
+                crashes.append(m.group(2))
         rc = proc.wait()
         STOP["child"] = None
+    child_code = None
     if rc != 0 and exit_file.is_file():
         try:
-            if json.loads(exit_file.read_text()).get("exit_code") == 75:
-                rc = 75
+            child_code = json.loads(exit_file.read_text()).get("exit_code")
         except ValueError:
             pass
     exit_file.unlink(missing_ok=True)
+    rc, CRASH["why"] = classify_exit(rc, child_code, crashes, STOP["flag"])
     return rc
+
+
+# torchrun's failure summary: "traceback : Signal 11 (SIGSEGV) received by PID 620590"
+RANK_SIGNAL = re.compile(r"Signal (\d+) \((SIG[A-Z0-9]+)\) received by PID")
+STOP_SIGNALS = ("SIGTERM", "SIGINT", "SIGHUP")
+CRASH = {"why": None}
+
+
+def classify_exit(rc, child_code, crashes, stopping):
+    """(rc, reason). A rank that died by its own signal (SIGSEGV, SIGABRT, SIGKILL from the OOM killer, ...)
+    is a failure even when rank 0 then wrote 75: torchrun stops the other ranks with SIGTERM after the first
+    crash, and rank 0 reports that SIGTERM as a resumable interruption. Without this the task never counts a
+    failure and a node can crash on it again and again. A stop this worker asked for, or a SIGTERM/SIGINT/
+    SIGHUP from outside (pod shutdown), stays resumable (75)."""
+    own = [c for c in crashes if c not in STOP_SIGNALS]
+    if rc == 0:
+        return 0, None
+    if own and not stopping:
+        sig = own[0]
+        num = getattr(signal, sig, None)
+        return 128 + int(num) if num is not None else 1, (
+            f"a GPU process crashed with {sig}; torchrun then stopped the other ranks (resumes from its last "
+            f"saved update on the next attempt)")
+    if child_code == 75:
+        return 75, None
+    return rc, None
+
+
+def failure_text(rc):
+    why = CRASH.get("why")
+    return f"exit code {rc}" + (f": {why}" if why else "")
 
 
 def _on_signal(signum, frame):  # noqa: ARG001
@@ -425,9 +462,9 @@ def work(stages):
                 if rc == 75 or STOP["flag"]:
                     say(f"{stage}: {tid} busy on another node or interrupted (resumable)")
                     continue
-                record_failure(tid, f"exit code {rc}")
+                record_failure(tid, failure_text(rc))
                 failed.append(f"{stage}:{tid}")
-                say(f"{stage}: task {tid} FAILED rc={rc} (attempt kept; rerunning resumes)")
+                say(f"{stage}: task {tid} FAILED rc={rc}{(' (' + CRASH['why'] + ')') if CRASH.get('why') else ''} (attempt kept; rerunning resumes)")
             if progressed:
                 break
         # late tasks (X1 Random) only when no other stage had a ready task this round
@@ -445,9 +482,9 @@ def work(stages):
             if rc == 75 or STOP["flag"]:
                 say(f"{stage}: {tid} busy on another node or interrupted (resumable)")
                 continue
-            record_failure(tid, f"exit code {rc}")
+            record_failure(tid, failure_text(rc))
             failed.append(f"{stage}:{tid}")
-            say(f"{stage}: task {tid} FAILED rc={rc} (attempt kept; rerunning resumes)")
+            say(f"{stage}: task {tid} FAILED rc={rc}{(' (' + CRASH['why'] + ')') if CRASH.get('why') else ''} (attempt kept; rerunning resumes)")
         if progressed or STOP["flag"]:
             last_wait, passes = None, 0
             continue

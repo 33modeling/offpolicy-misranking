@@ -69,3 +69,23 @@ def test_random_tasks_run_after_every_other_stage(tmp_path, monkeypatch):
     monkeypatch.setattr(orchestrate, "plan", plan);monkeypatch.setattr(orchestrate, "launch", launch)
     orchestrate.work(["x1", "x2"])
     assert order == ["x1.staged", "x2.a", "x1.rand"]
+
+
+def test_rank_crash_is_a_failure_even_when_rank0_wrote_75():
+    from v9lib import orchestrate as o
+    line = "  traceback : Signal 11 (SIGSEGV) received by PID 620590"
+    crashes = [o.RANK_SIGNAL.search(line).group(2)]
+    assert crashes == ["SIGSEGV"]
+    rc, why = o.classify_exit(1, 75, crashes, stopping=False)
+    assert rc == 139 and "SIGSEGV" in why
+    # the worker itself was asked to stop: stays resumable
+    assert o.classify_exit(1, 75, crashes, stopping=True) == (75, None)
+    # pod shutdown (SIGTERM from outside) stays resumable
+    assert o.classify_exit(1, 75, ["SIGTERM"], stopping=False) == (75, None)
+    # OOM killer is a failure
+    assert o.classify_exit(1, None, ["SIGKILL"], stopping=False)[0] == 137
+    assert o.classify_exit(0, None, [], stopping=False) == (0, None)
+    assert o.classify_exit(1, None, [], stopping=False) == (1, None)
+    o.CRASH["why"] = why
+    assert o.failure_text(139).startswith("exit code 139: a GPU process crashed with SIGSEGV")
+    o.CRASH["why"] = None
