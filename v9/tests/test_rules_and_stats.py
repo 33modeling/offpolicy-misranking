@@ -71,3 +71,20 @@ def test_rankdata_matches_average_ranks_without_scipy():
     assert list(rankdata([5, 5, 5])) == [2.0, 2.0, 2.0]
     assert abs(spearman([1, 2, 3, 4], [10, 20, 30, 40]) - 1.0) < 1e-12
     assert abs(spearman([1, 2, 3, 4], [4, 3, 2, 1]) + 1.0) < 1e-12
+
+
+def test_x1_table_has_random_column_and_contrast():
+    from v9lib.common import item
+    its = []
+    for s in (5, 6, 7, 8, 9):
+        for arm, v in (("staged", 0.5), ("sr", 0.45), ("alignment", 0.47)):
+            its.append(item("x1", "olmo_math", f"s{s}.{arm}", "done", value=v + 0.001 * s, seed=s, arm=arm))
+        its.append(item("x1", "olmo_math", f"s{s}.random.train", "done", seed=s, arm="random"))
+        its.append(item("x1", "olmo_math", f"s{s}.random.eval", "done", value=0.40 + 0.002 * s, seed=s, arm="random"))
+    out, rows, tex = collect.x1_tables(75, its)
+    o = out["olmo_math"]
+    assert abs(o["means"]["random"] - 0.414) < 1e-9
+    assert o["staged_minus_random"]["status"] == "measured"
+    assert "Cohort & Random & Staged & SR & Alignment" in tex and "Staged$-$Random" in tex
+    assert sum(1 for r in rows if r["arm"] == "random" and r["cohort"] == "olmo_math") == 5
+    assert out["qwen_mbpp"]["staged_minus_random"]["status"] == "pending"

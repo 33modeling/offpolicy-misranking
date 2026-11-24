@@ -52,3 +52,20 @@ def test_heartbeat_file_written_and_removed(tmp_path, monkeypatch):
     assert "task_id" not in json.loads(b.path.read_text())
     b.close()
     assert not b.path.exists()
+
+
+def test_random_tasks_run_after_every_other_stage(tmp_path, monkeypatch):
+    monkeypatch.setenv("V9_ROOT", str(tmp_path / "v9"));monkeypatch.setenv("V8_ROOT", str(tmp_path / "v8"))
+    done, order = set(), []
+    plans = {"x1": [("x1.rand", True), ("x1.staged", False)], "x2": [("x2.a", False)]}
+
+    def plan(stage):
+        return [item(stage, "olmo_math", tid, "done" if tid in done else "ready", task={"run_id": tid},
+                     **({"late": True} if late else {})) for tid, late in plans.get(stage, [])]
+
+    def launch(stage, it):
+        order.append(it["task"]["run_id"]);done.add(it["task"]["run_id"])
+        return 0
+    monkeypatch.setattr(orchestrate, "plan", plan);monkeypatch.setattr(orchestrate, "launch", launch)
+    orchestrate.work(["x1", "x2"])
+    assert order == ["x1.staged", "x2.a", "x1.rand"]

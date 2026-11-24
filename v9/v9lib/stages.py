@@ -26,6 +26,10 @@ def x1_items():
 
 
 ARMS = {"staged": None, "sr": "fixed_sr_t025", "alignment": "on_continued"}
+# Random (uniform 4 of 40 fresh candidates every update) from the 25-update prefix to 275. V8 runs Random only on
+# the test seeds 10-14 (X4), so for seeds 5-9 it is new V9 training in every X1 cohort. Its tasks are `late`:
+# a worker takes them only when no other V9 stage has a ready task (they feed the appendix column only).
+RANDOM_METHOD = "uniform_early"
 
 
 def x1_arm_policy(arm, tau):
@@ -39,6 +43,7 @@ def _x1_bank(cohort, tau):
         return [item("x1", cohort, "all", "blocked", "V8 queue has not located this cohort (no locator.json)")]
     c = cfg(cohort)
     evals = {k: v[0] for k, v in eval_records(v8c(cohort)).items()}
+    out += _x1_random_bank(cohort, c)
     for seed in c["seeds"]["training"]:
         try:
             rows = {r["policy_id"]: r for r in bank(cohort, seed, evals=evals).policy_rows()}
@@ -65,6 +70,32 @@ def _x1_bank(cohort, tau):
     return out
 
 
+def _x1_random_bank(cohort, c):
+    """Random arm of a bank cohort: V9 training from the V8 prefix of each seed (V9 locator copy), then eval-final."""
+    from switching import matrix as mx
+    from switching.cluster import ClusterLocator
+    try:
+        loc = ensure_locator(cohort)
+    except Blocked as exc:
+        return [item("x1", cohort, "random", "blocked", str(exc), arm="random", late=True)]
+    root = v9c(cohort)
+    H = c["training"]["matched_update_endpoint"]
+    cl = ClusterLocator(root, c)
+    out = []
+    for seed in c["seeds"]["training"]:
+        key = f"s{seed}.random"
+        try:
+            prefix = cl.prefix(seed)
+        except Exception:  # noqa: BLE001 - no prefix recorded for this seed yet
+            out.append(item("x1", cohort, key + ".train", "blocked", "waiting for the V8 prefix of this seed",
+                            seed=seed, arm="random", late=True))
+            continue
+        task = mx.train_task(c, role="v9_x1", seed=seed, method_id=RANDOM_METHOD, parent=prefix, horizon=H,
+                             stage="x1-random", interval=cl.interval)
+        out += _train_then_eval("x1", cohort, root, task, H, key, seed=seed, arm="random", loc=loc, late=True)
+    return out
+
+
 def _x1_llama(cohort, tau):
     """New training: On trajectory from the 25-update prefix to 275 (snapshots every 25), SR branch at tau,
     SR from the prefix; final evaluations at 275."""
@@ -88,6 +119,8 @@ def _x1_llama(cohort, tau):
         snap = mx.parent_from_snapshot(root, traj["run_id"], tau)
         runs["sr"] = mx.train_task(c, role="v9_x1", seed=seed, method_id="bank_sr_t025", parent=prefix, horizon=H,
                                    stage="x1-llama")
+        runs["random"] = mx.train_task(c, role="v9_x1", seed=seed, method_id=RANDOM_METHOD, parent=prefix, horizon=H,
+                                       stage="x1-llama")
         if snap is not None:
             runs["staged"] = mx.train_task(c, role="v9_x1", seed=seed, method_id=f"bank_sr_t{tau:03d}", parent=snap,
                                            horizon=H, stage="x1-llama", deps=[traj["run_id"]])
@@ -95,7 +128,8 @@ def _x1_llama(cohort, tau):
             out.append(item("x1", cohort, f"s{seed}.staged", "blocked",
                             f"waiting for the V9 Llama trajectory snapshot at {tau}", seed=seed, arm="staged"))
         for arm, task in runs.items():
-            out += _train_then_eval("x1", cohort, root, task, H, f"s{seed}.{arm}", seed=seed, arm=arm, loc=loc)
+            out += _train_then_eval("x1", cohort, root, task, H, f"s{seed}.{arm}", seed=seed, arm=arm, loc=loc,
+                                    **({"late": True} if arm == "random" else {}))
     return out
 
 

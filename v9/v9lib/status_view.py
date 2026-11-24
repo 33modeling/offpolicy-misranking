@@ -549,7 +549,12 @@ def render(plan, task_id, out=print, gpus=None):
                  "takes it again and resumes from latest.pt", "     ", "       ", lambda t: out(paint(t, "warn")))
         ready = [i for i in its if i["state"] == "ready"]
         if ready:
-            out(paint(f"   can start now ({len(ready)}):", "info") + f" the next free node takes {task_name(ready[0])}")
+            first = next((i for i in ready if not i.get("late")), None)
+            n_late = sum(1 for i in ready if i.get("late"))
+            out(paint(f"   can start now ({len(ready)}):", "info") +
+                (f" the next free node takes {task_name(first)}" if first else
+                 " a free node takes them when no other stage has a ready task") +
+                (f" · {n_late} Random task(s) wait until no other stage has a ready task" if first and n_late else ""))
             wrap(", ".join(task_name(i) for i in ready[:10]) + (f" … +{len(ready) - 10}" if len(ready) > 10 else ""),
                  "     ", "       ", out)
         wait = [i for i in its if i["state"] == "blocked"]

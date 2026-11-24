@@ -3,7 +3,8 @@
 $V9_ROOT/paper/
   results.json        every cell with its status (measured / pending + reason), inputs and the frozen tau
   x1_per_seed.csv     cohort, seed, arm, reward (pending empty)
-  x1_staged.tex       per cohort: arm means; Staged-SR, Staged-Alignment, Staged-best (paired 95% t CI, W/T/L)
+  x1_staged.tex       per cohort: arm means (Random, Staged, SR, Alignment); Staged-SR, Staged-Alignment, Staged-best,
+                      Staged-Random (paired 95% t CI, W/T/L)
   tau_sweep.tex       OLMo MATH bank: mean reward per tau (the selection basis and the other basis)
   x2_budget.tex       equal compute at B = mean Staged cost: Staged@275, SR@B, Alignment@B (+ paired deltas)
   x3_horizon.tex      Alignment / SR / Staged at 275 and 400 (+ paired deltas at 400)
@@ -85,7 +86,7 @@ def x1_tables(tau, items):
         arms = by.get(cohort, {})
         seeds = [5, 6, 7, 8, 9]
         vals = {a: {s: (arms.get(a, {}).get(s) or {}).get("value") if (arms.get(a, {}).get(s) or {}).get("state") == "done"
-                    else None for s in seeds} for a in ("staged", "sr", "alignment")}
+                    else None for s in seeds} for a in ("staged", "sr", "alignment", "random")}
         for a in vals:
             for s in seeds:
                 it = arms.get(a, {}).get(s)
@@ -102,18 +103,22 @@ def x1_tables(tau, items):
             "best_rule": "the single-selector arm (SR or Alignment) with the higher seed mean in this cohort",
             "staged_minus_sr": contrast(vals["staged"], vals["sr"], seeds, "Staged - SR"),
             "staged_minus_alignment": contrast(vals["staged"], vals["alignment"], seeds, "Staged - Alignment"),
+            "staged_minus_random": contrast(vals["staged"], vals["random"], seeds, "Staged - Random"),
             "staged_minus_best": contrast(vals["staged"], vals[best], seeds, f"Staged - best ({best})") if best else
             {"status": "pending", "n_training_seeds": 0, "reason": "best arm needs SR and Alignment on every seed"},
             "per_seed": vals}
-    lines = [PREAMBLE, f"% X1: Staged(tau={tau}) vs SR vs Alignment at update 275; mean reward (\\%), "
+    lines = [PREAMBLE, f"% X1: Random vs Staged(tau={tau}) vs SR vs Alignment at update 275; mean reward (\\%), "
              "paired difference in pp [95\\% paired-t CI] (wins/ties/losses over seeds 5--9)",
-             "\\begin{tabular}{lrrrlll}", "\\toprule",
-             "Cohort & Staged & SR & Alignment & Staged$-$SR & Staged$-$Alignment & Staged$-$best \\\\", "\\midrule"]
+             "\\begin{tabular}{lrrrrllll}", "\\toprule",
+             "Cohort & Random & Staged & SR & Alignment & Staged$-$SR & Staged$-$Alignment & Staged$-$best & "
+             "Staged$-$Random \\\\", "\\midrule"]
     for cohort in env.X1_COHORTS:
         o = out[cohort]
-        lines.append(f"{NAMES[cohort]} & {fmt_pct(pct(o['means']['staged']), 'X1')} & {fmt_pct(pct(o['means']['sr']), 'X1')} & "
+        lines.append(f"{NAMES[cohort]} & {fmt_pct(pct(o['means']['random']), 'X1')} & "
+                     f"{fmt_pct(pct(o['means']['staged']), 'X1')} & {fmt_pct(pct(o['means']['sr']), 'X1')} & "
                      f"{fmt_pct(pct(o['means']['alignment']), 'X1')} & {fmt_delta(o['staged_minus_sr'], 'X1')} & "
-                     f"{fmt_delta(o['staged_minus_alignment'], 'X1')} & {fmt_delta(o['staged_minus_best'], 'X1')} \\\\")
+                     f"{fmt_delta(o['staged_minus_alignment'], 'X1')} & {fmt_delta(o['staged_minus_best'], 'X1')} & "
+                     f"{fmt_delta(o['staged_minus_random'], 'X1')} \\\\")
     lines += ["\\bottomrule", "\\end{tabular}", ""]
     return out, rows, "\n".join(lines)
 

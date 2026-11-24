@@ -386,7 +386,7 @@ def work(stages):
     while not STOP["flag"]:
         rounds += 1
         progressed = False
-        seen = []
+        seen, late = [], []
         beat(state="choosing", doing="choosing the next task")
         for stage in stages:
             if STOP["flag"]:
@@ -411,6 +411,8 @@ def work(stages):
             seen += items
             ready = [it for it in items if it["state"] == "ready" and it.get("task") and
                      task_id(it["task"]) not in attempted]
+            late += [(stage, it) for it in ready if it.get("late")]
+            ready = [it for it in ready if not it.get("late")]
             for it in ready:
                 if STOP["flag"]:
                     break
@@ -428,6 +430,24 @@ def work(stages):
                 say(f"{stage}: task {tid} FAILED rc={rc} (attempt kept; rerunning resumes)")
             if progressed:
                 break
+        # late tasks (X1 Random) only when no other stage had a ready task this round
+        for stage, it in ([] if progressed or STOP["flag"] else late):
+            if STOP["flag"]:
+                break
+            tid = task_id(it["task"])
+            if tid in attempted:
+                continue
+            attempted.add(tid)
+            rc = launch(stage, it)
+            if rc == 0:
+                progressed = progressed_once = True
+                break
+            if rc == 75 or STOP["flag"]:
+                say(f"{stage}: {tid} busy on another node or interrupted (resumable)")
+                continue
+            record_failure(tid, f"exit code {rc}")
+            failed.append(f"{stage}:{tid}")
+            say(f"{stage}: task {tid} FAILED rc={rc} (attempt kept; rerunning resumes)")
         if progressed or STOP["flag"]:
             last_wait, passes = None, 0
             continue

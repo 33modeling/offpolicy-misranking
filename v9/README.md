@@ -25,7 +25,7 @@ sh v9/run.sh
 ## 단계
 
 - **freeze-tau** (CPU, write-once, `$WORK/v9/frozen/tau.json`). OLMo MATH V8 Branch Bank(seed 5–9)만 읽는다. 후보 τ는 bank grid에서 25를 뺀 {50, 75, …, 250}(τ=25 분기는 SR 자체다). 두 기준을 모두 계산해 기록한다. (a) 같은 예산: V8 olmo_math의 고정 예산(평가 전 비용만으로 고정됨, 모든 τ에 공통) 아래 예산 endpoint의 보상. (b) matched update: update 275 보상. 사전 규칙상 (a)가 모든 τ·seed에서 계산되면 (a)를, 아니면 (b)를 쓴다. 고른 기준에서 최고 평균의 0.5 pp 이내인 가장 이른 τ를 고른다. 규칙 문장, τ별 평균, seed별 값, τ별 평균 Staged 비용, 다른 기준의 평균과 그 기준이 고를 τ, 입력 파일 sha256을 남긴다. V9 집계 파일(`$WORK/v9/paper`, `*/analysis`)이 이미 있으면 고정을 거부한다. collect와 x1–x4는 tau.json이 없으면 막힌다. 이후 모든 단계는 tau.json의 τ로 `bank_sr_t{τ}`를 쓴다(코드에 τ 값이 박혀 있지 않다).
-- **x1**. OLMo MATH·OLMo MBPP·Qwen MATH·Qwen MBPP: Staged(τ)=V8 `bank_sr_t{τ}`, SR=`bank_sr_t025`, Alignment=V8 On 궤적, 모두 update 275의 V8 eval-final을 읽기만 한다. 평가가 없으면 `waiting for V8 eval-final`, 분기가 없으면 `waiting for V8 branch …`. Llama MATH·MBPP: 원래 실행(seed 5–9)의 25-update prefix에서 On 궤적(275, 25마다 스냅샷), 그 τ 스냅샷에서 SR 분기(275), prefix에서 SR(275)을 새로 학습하고 275에서 평가한다. 아래 "Llama" 참고.
+- **x1**. OLMo MATH·OLMo MBPP·Qwen MATH·Qwen MBPP: Staged(τ)=V8 `bank_sr_t{τ}`, SR=`bank_sr_t025`, Alignment=V8 On 궤적, 모두 update 275의 V8 eval-final을 읽기만 한다. 평가가 없으면 `waiting for V8 eval-final`, 분기가 없으면 `waiting for V8 branch …`. Llama MATH·MBPP: 원래 실행(seed 5–9)의 25-update prefix에서 On 궤적(275, 25마다 스냅샷), 그 τ 스냅샷에서 SR 분기(275), prefix에서 SR(275)을 새로 학습하고 275에서 평가한다. 아래 "Llama" 참고. **Random 열**(모든 X1 cohort, seed 5–9): V8은 Random(`uniform_early`)을 test seed 10–14에서만 돌리므로, V9가 각 seed의 25-update prefix에서 275까지 새로 학습하고(매 update 후보 40개 중 무작위 4개) 275에서 평가한다. 이 작업은 다른 단계에 준비된 작업이 하나도 없을 때만 노드가 가져간다(부록 열만 채우므로 맨 뒤).
 - **x2** (OLMo MATH, OLMo MBPP). 예산 B = Staged(τ) 연속 비용의 seed 평균(V8 `freeze_budget`과 같은 범위·규칙, 정책만 `fixed_sr_t{τ}`, 평가 파일은 읽지 않음, `$WORK/v9/<cohort>/frozen/budget.json`, write-once). SR(`bank_sr_t025`, τ보다 이른 다른 분기가 있으면 그것도)의 275 상태를 B까지 연장(V8 budget-extension 로직, hard cap 400). 평가: SR@B endpoint, Alignment@B(On 궤적에서 B 안의 마지막 스냅샷), Staged@B(비용이 B를 넘는 seed는 B 안의 마지막 스냅샷). V8에 같은 스냅샷·같은 spec 평가가 있으면 다시 하지 않고 읽는다.
 - **x5** (측정, 학습 없음). OLMo MATH seed 5–9, 다른 V8 cohort는 첫 seed. On 궤적 스냅샷 {25(prefix), 50, 100, 175, 275}마다 후보 400개를 기존 scoring 경로(`backend.score_gradients`, group 4 LOO)로 4응답씩 두 번 점수 매긴다. 같은 rollout으로 (a) ρ_on(split-half Pearson·Spearman, Spearman-Brown), σ_on, ‖v‖(검증 50문항 8응답), (b) ρ_SR(p 추정치 split-half, 캐시 4/4 split-half도), (c) p_t(8 rollout)와 캐시 p_β의 차, (d) KL(π_t‖β) = π_t 표본에서 log π_t − log β의 수열 합 평균과 토큰 평균. β는 SR 캐시를 만든 정책 = adapter 없는 사전학습 기반 모델(`srgc_rebuttal/build_cache.py` 설명, `import_pair_inputs.py`의 "initial-policy behavior rollouts")이고, log β는 같은 forward를 PEFT `disable_adapter()`로 계산한다. 번들의 캐시 출처를 요약에 함께 적는다. 40문항 묶음마다 `rows.jsonl`에 쓰고 재개 시 건너뛴다.
 - **x3** (OLMo MATH). 275 스냅샷에서 Alignment(On), SR(`bank_sr_t025`), Staged(`bank_sr_t{τ}`)를 고정 횟수로 400까지 연장(25마다 스냅샷), 400에서 평가.
@@ -37,7 +37,7 @@ sh v9/run.sh
 | 파일 | 내용 |
 |---|---|
 | `results.json` | 모든 칸과 상태(measured/pending+이유), tau.json 전체, 열린 항목 목록 |
-| `x1_staged.tex` | cohort별 Staged·SR·Alignment 평균, Staged−SR, Staged−Alignment, Staged−best: 평균 pp [95% paired-t] (승/무/패). best = 그 cohort에서 평균이 높은 단일 선택기(SR 또는 Alignment) |
+| `x1_staged.tex` | cohort별 Random·Staged·SR·Alignment 평균, Staged−SR, Staged−Alignment, Staged−best, Staged−Random: 평균 pp [95% paired-t] (승/무/패). best = 그 cohort에서 평균이 높은 단일 선택기(SR 또는 Alignment) |
 | `x1_per_seed.csv` | cohort, seed, arm, reward_fraction, status, reason |
 | `tau_sweep.tex` | OLMo MATH τ별 평균(선택 기준 행 + 다른 기준 행, 고른 τ 굵게) |
 | `x2_budget.tex` | B(GPU-h), Staged@275, SR@B, Alignment@B, Staged@B의 보상·평균 endpoint update·평균 비용, Staged@275 − 각 arm |
@@ -59,6 +59,7 @@ sh v9/run.sh
 |---|---|---|
 | X1 OLMo/Qwen | 학습 없음 (V8 결과 읽기) | 0 |
 | X1 Llama | seed당 On 250 update(19.7+선택 6.5) + Staged 200 SR(15.4) + SR 250(19.2) ≈ 61, ×5 seed ×2 데이터셋. Llama 기록 비용이 없어 OLMo 값을 대신 씀(8B라 더 클 수 있음) | ≈ 610 + 평가 30회 |
+| X1 Random | seed당 Random 250 update ≈ 19.2(OLMo 값, Qwen·Llama는 더 클 수 있음) ×5 seed ×6 cohort. 다른 단계가 다 빈 뒤에만 돈다 | ≈ 580 + 평가 30회 |
 | X2 | seed당 SR 연장 (B − SR 비용)/0.0768 update ≈ 20–70 update ≈ 1.5–5, ×5 ×2 cohort | ≈ 15–50 + 평가 약 40회 |
 | X5 | 스냅샷당 450문항×8응답 scoring(On 갱신 90문항 0.653 기준 ≈ 3.3) + log-prob forward 2회 ≈ 4; OLMo MATH 25회 + 다른 cohort 15회(Qwen은 수 배) | ≈ 100 (OLMo) + 60–200 |
 | X3 | (On 125 update 13.1 + SR 9.6 + Staged 9.6) ×5 seed | ≈ 160 + 평가 15회 |
