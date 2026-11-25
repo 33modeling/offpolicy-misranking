@@ -26,7 +26,7 @@ from . import env
 KST = timezone(timedelta(hours=9))
 STALE_SECONDS = 1800
 BEAT_LIVE_SECONDS = 300
-STATES = ("done", "running", "ready", "blocked", "failed")
+STATES = ("done", "running", "ready", "retrying", "blocked", "failed")   # V8: retrying = restarts by itself, failed = needs you
 COLOR = False   # set by main() only when stdout is a terminal (never in logs, pipes or tests)
 STYLE = {"done": "34", "ok": "32", "run": "1;32", "bad": "1;31", "warn": "33", "dim": "2", "head": "1", "info": "36"}
 
@@ -268,7 +268,7 @@ STAGE_TITLES = {
 }
 COHORT_NAMES = {"olmo_math": "OLMo MATH", "olmo_mbpp": "OLMo MBPP", "qwen_math": "Qwen MATH",
                 "qwen_mbpp": "Qwen MBPP", "llama_math": "Llama MATH", "llama_mbpp": "Llama MBPP", "all": "all"}
-CELL = {"done": "✓", "running": "▶", "ready": "ready", "blocked": "wait", "failed": "FAIL"}
+CELL = {"done": "✓", "running": "▶", "ready": "ready", "retrying": "retry", "blocked": "wait", "failed": "FAIL"}
 WIDTH = 118
 
 
@@ -357,16 +357,17 @@ def stage_eta(its, times, nodes):
 
     Measured: the median wall time of finished V9 tasks of the same stage and cohort (else the same stage).
     low = running tasks' own estimate + the rest spread over `nodes` working nodes; high = the rest on one node."""
-    rest = [i for i in its if i["state"] in ("ready", "blocked", "failed")]
+    rest = [i for i in its if i["state"] in ("ready", "retrying", "blocked", "failed")]
     run = [i for i in its if i["state"] == "running"]
     if not rest and not run:
         return 0.0, 0.0, "finished"
     if not run and not any(i["state"] == "ready" for i in rest):
         v8 = sum(1 for i in rest if "V8" in (i.get("reason") or ""))
         failed = sum(1 for i in rest if i["state"] == "failed")
+        again = sum(1 for i in rest if i["state"] == "retrying")
         parts = ([f"{v8} wait for V8 results"] if v8 else []) + \
-                ([f"{len(rest) - v8 - failed} wait for an earlier step"] if len(rest) - v8 - failed else []) + \
-                ([f"{failed} stopped"] if failed else [])
+                ([f"{len(rest) - v8 - failed - again} wait for an earlier step"] if len(rest) - v8 - failed - again else []) + \
+                ([f"{again} restart by themselves"] if again else []) + ([f"{failed} stopped, need you"] if failed else [])
         return None, None, "no task of this stage can start now (" + ", ".join(parts) + ")"
     work, unknown = 0.0, []
     stage_all = [x for (st, _), v in times.items() if st == (its[0]["stage"] if its else "") for x in v]
@@ -414,6 +415,10 @@ def check_screen(by_stage, tasks, working_rows, counted):
 def render(plan, task_id, out=print, gpus=None):
     now = time.time()
     items, errors, running = collect_items(plan, task_id)
+    for i in items:   # V8 rule: a task the worker restarts by itself is not drawn as a dead end
+        if (i["state"] == "failed" and "no more automatic retries" not in (i.get("reason") or "")) or \
+                (i["state"] == "ready" and i.get("retry_note")):
+            i["state"], i["reason"] = "retrying", i.get("retry_note") or i.get("reason")
     stages = [s for s in env.STAGES if s not in ("freeze-tau", "collect")]
     by_stage = {s: [i for i in items if i["stage"] == s] for s in env.STAGES}
     tasks = [i for s in stages for i in by_stage[s]]
@@ -503,7 +508,8 @@ def render(plan, task_id, out=print, gpus=None):
                 shown[st] += c[st]
             total += len(rows)
             parts = [f"done {c['done']} of {len(rows)}"] + [paint(f"{c[st]} {w}", sty) for st, w, sty in
-                     (("running", "running", "run"), ("ready", "can start", "info"), ("blocked", "waiting", "dim"),
+                     (("running", "running", "run"), ("ready", "can start", "info"),
+                      ("retrying", "restart by themselves", "warn"), ("blocked", "waiting", "dim"),
                       ("failed", "STOPPED", "bad")) if c[st]]
             out(f"     {cname(cohort):<12}" + " · ".join(parts))
         counted[s] = (total, shown)
@@ -518,11 +524,10 @@ def render(plan, task_id, out=print, gpus=None):
             continue
         out("")
         out(paint(f" {STAGE_TITLES[s]}: not finished {len(its)} of {len(by_stage[s])}", "head"))
-        failed = [i for i in its if i["state"] == "failed"]
-        stuck = [i for i in failed if "no more automatic retries" in (i.get("reason") or "")]
-        auto = [i for i in failed if i not in stuck]
+        stuck = [i for i in its if i["state"] == "failed"]
+        auto = [i for i in its if i["state"] == "retrying"]
         if auto:
-            out(paint(f"   stopped, restarts by itself ({len(auto)}):", "warn"))
+            out(paint(f"   failed, restart by themselves ({len(auto)}):", "warn"))
             for i in auto[:12]:
                 wrap(f"{task_name(i)}: {i['reason']}", "     ", "       ", lambda t: out(paint(t, "warn")))
         if stuck:
@@ -557,11 +562,6 @@ def render(plan, task_id, out=print, gpus=None):
                 (f" · {n_late} Random task(s) wait until no other stage has a ready task" if first and n_late else ""))
             wrap(", ".join(task_name(i) for i in ready[:10]) + (f" … +{len(ready) - 10}" if len(ready) > 10 else ""),
                  "     ", "       ", out)
-            again = [i for i in ready if i.get("retry_note")]
-            if again:
-                out(paint(f"   failed before, retried by itself ({len(again)}):", "warn"))
-                for i in again[:12]:
-                    wrap(f"{task_name(i)}: {i['retry_note']}", "     ", "       ", lambda t: out(paint(t, "warn")))
         wait = [i for i in its if i["state"] == "blocked"]
         if wait:
             out(f"   waiting for an earlier step ({len(wait)}):")
@@ -595,7 +595,13 @@ def render(plan, task_id, out=print, gpus=None):
             cell = {}
             for i in rows:
                 sd, c, _ = split_key(i["key"])
-                cell.setdefault((sd, c), []).append(CELL.get(i["state"], i["state"]))
+                mark = CELL.get(i["state"], i["state"])
+                if i["state"] == "running":   # V8: 187▶ = running at update 187
+                    m = re.match(r"(?:update|step|question|prompt|batch) (\d+) of (\d+)", progress(i["run"]))
+                    if m:
+                        mark = (f"{m.group(1)}▶" if m.group(0).startswith(("update", "step")) else
+                                f"{100 * int(m.group(1)) // int(m.group(2))}%▶")
+                cell.setdefault((sd, c), []).append(mark)
             texts = {k: ",".join(v) for k, v in cell.items()}
             width = {c: max([len(c)] + [len(texts.get((sd, c), "-")) for sd in seeds]) + 2 for c in cols}
             out("")
@@ -605,8 +611,9 @@ def render(plan, task_id, out=print, gpus=None):
                 out("   " + f"{sd:<10}" + "".join(f"{texts.get((sd, c), '-'):<{width[c]}}" for c in cols))
             grids = True
     if grids:
-        out(paint("   cells: ✓ done · ▶ running · ready = can start now · wait = needs an earlier step or V8 result · "
-                  "FAIL = stopped · - = no such task", "dim"))
+        wrap("cells: ✓ done · 187▶ running at update 187 (eval 36%▶ = questions answered) · ready = can start now · "
+             "wait = needs an earlier step or a V8 result · retry = restarts by itself · FAIL = stopped, needs you · "
+             "- = no such task", "   ", "     ", lambda t: out(paint(t, "dim")))
 
     # 5. nodes: live heartbeats (worker logs for older code)
     out("")
@@ -665,6 +672,10 @@ def main(plan, task_id, argv=()):
     args = ap.parse_args(list(argv))
     global COLOR
     COLOR = sys.stdout.isatty() and not os.environ.get("NO_COLOR") and os.environ.get("TERM") != "dumb"
+    global WIDTH
+    if sys.stdout.isatty():   # V8: the terminal width, kept between 80 and 160
+        import shutil
+        WIDTH = max(80, min(shutil.get_terminal_size((120, 40)).columns, 160))
     if args.watch is None:
         render(plan, task_id)
         return 0

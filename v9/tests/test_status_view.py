@@ -189,5 +189,6 @@ def test_ready_task_that_crashed_before_says_so(tmp_path, monkeypatch):
             return [item("x3", "olmo_math", "s9.alignment.train", "ready", task={"run_id": "h-s9"}, retry_note=note)]
         return fake_plan("none")(stage)
     text = render(plan)
-    assert "failed before, retried by itself (1):" in text
+    assert "failed, restart by themselves (1):" in text
     assert "OLMo MATH s9.alignment.train: failed 1 time(s)" in text and "SIGSEGV" in text
+    assert "1 restart by themselves" in text and "retry" in text
