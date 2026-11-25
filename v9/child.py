@@ -54,7 +54,7 @@ def v8_entry_fixes(root, task_id, *, repairs=True):
     - V8's runtime repairs (checkpoint, memory and MBPP checker launch fixes; no scoring change), OLMo/Qwen only.
     V8_PERIODIC_STACK_DUMP=1 keeps the old periodic dump. Returns the names of the fixes applied."""
     import faulthandler
-    sys.path.insert(0, str(env.code_root() / "scripts"))
+    sys.path.insert(0, str(env.REPO / "scripts"))   # this checkout's entry (the V8 launcher uses its own sibling)
     import v8_task_entry as entry
     os.environ.setdefault("SRGC_PROGRESS_DIR", str(Path(root) / ".state" / "progress" / task_id))
     entry.install_native_fault_handler()

@@ -344,7 +344,7 @@ def crash_place(directory, token):
     import hashlib
     key = hashlib.sha256(token.encode()).hexdigest()[:24]
     try:
-        sys.path.insert(0, str(env.code_root() / "scripts"))
+        sys.path.insert(0, str(env.REPO / "scripts"))
         from v8_status import fault_text, native_crash_frames
     except Exception:  # noqa: BLE001 - no parser: say nothing rather than guess
         return None

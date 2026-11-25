@@ -67,14 +67,22 @@ def ensure_locator(cohort):
         atomic_write_json(dst, dict(v8, v9_copied_from=str(src)))
         return read_json(dst)
     v9 = read_json(dst)
+    added = []
     for seed, rec in v8["seeds"].items():
         mine = v9["seeds"].get(seed)
         if mine is None:
+            # a seed the V8 queue located after V9 made its copy: take it over (V9-only seeds such as the X4 test
+            # seeds 10-14 stay as they are); without this its tasks would wait for a prefix forever
+            v9["seeds"][seed] = rec
+            added.append(seed)
             continue
         diff = [k for k in SEED_FIELDS_CHECKED if rec.get(k) != mine.get(k)]
         if diff:
             raise Blocked(f"V8 locator seed {seed} changed after V9 copied it (fields {diff}); "
                           f"move {dst} aside after checking the V8 queue")
+    if added:
+        v9.setdefault("v9_seeds_added_from_v8", []).extend(sorted(added, key=int))
+        atomic_write_json(dst, v9)
     return v9
 
 

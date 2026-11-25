@@ -88,3 +88,26 @@ def test_x1_table_has_random_column_and_contrast():
     assert "Cohort & Random & Staged & SR & Alignment" in tex and "Staged$-$Random" in tex
     assert sum(1 for r in rows if r["arm"] == "random" and r["cohort"] == "olmo_math") == 5
     assert out["qwen_mbpp"]["staged_minus_random"]["status"] == "pending"
+
+
+def test_v9_locator_copy_takes_over_seeds_v8_located_later(tmp_path, monkeypatch):
+    import json
+    from v9lib.common import ensure_locator
+    monkeypatch.setenv("V8_ROOT", str(tmp_path / "v8"))
+    monkeypatch.setenv("V9_ROOT", str(tmp_path / "v9"))
+    src = tmp_path / "v8" / "olmo_math" / "locator.json"
+    src.parent.mkdir(parents=True)
+    src.write_text(json.dumps({"seeds": {"5": {"prefix_path": "a"}}}))
+    ensure_locator("olmo_math")
+    dst = tmp_path / "v9" / "olmo_math" / "locator.json"
+    v9 = json.loads(dst.read_text())
+    v9["seeds"]["10"] = {"prefix_path": "test"}           # a V9-only X4 seed
+    dst.write_text(json.dumps(v9))
+    src.write_text(json.dumps({"seeds": {"5": {"prefix_path": "a"}, "6": {"prefix_path": "b"}}}))
+    loc = ensure_locator("olmo_math")
+    assert set(loc["seeds"]) == {"5", "6", "10"} and loc["v9_seeds_added_from_v8"] == ["6"]
+    src.write_text(json.dumps({"seeds": {"5": {"prefix_path": "changed"}, "6": {"prefix_path": "b"}}}))
+    import pytest
+    from v9lib.common import Blocked
+    with pytest.raises(Blocked):
+        ensure_locator("olmo_math")

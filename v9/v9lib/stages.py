@@ -112,7 +112,13 @@ def _x1_llama(cohort, tau):
     out = []
     cl = ClusterLocator(root, c)
     for seed in c["seeds"]["training"]:
-        prefix = cl.prefix(seed)
+        try:
+            prefix = cl.prefix(seed)
+        except Exception as exc:  # noqa: BLE001 - one seed without a prefix must not stop the whole X1 stage
+            out += [item("x1", cohort, f"s{seed}.{arm}", "blocked", f"no Llama prefix for this seed: {exc}", seed=seed,
+                         arm=arm, **({"late": True} if arm == "random" else {}))
+                    for arm in ("alignment", "sr", "random", "staged")]
+            continue
         traj = mx.train_task(c, role="v9_x1", seed=seed, method_id="on_continued", parent=prefix, horizon=H,
                              stage="x1-llama")
         runs = {"alignment": traj}
