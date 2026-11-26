@@ -55,3 +55,9 @@
   input:not([type=checkbox]):not([type=radio]):not([type=range]), select, textarea { font-size: 16px !important; }
   details > summary { min-height: 44px !important; box-sizing: border-box; }
 }
+
+/* 2026-11-27 휴대폰·터치 화면만: 누름 영역 44px */
+@media (max-width: 760px), (hover: none) and (pointer: coarse) {
+  button, [role=button], summary, input[type=button], input[type=submit], input[type=reset] { min-height: 44px !important; min-width: 44px !important; box-sizing: border-box; }
+  nav a, a.button, a[role=button] { min-height: 44px !important; min-width: 44px !important; box-sizing: border-box; }
+}
