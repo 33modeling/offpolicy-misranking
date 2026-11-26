@@ -49,3 +49,9 @@
 :root.sk .pcb-comparison>.pcb-impact{padding:12px 16px}
 :root.sk #sort[hidden],:root.sk #scores[hidden]{display:none}
 @media(max-width:700px){:root.sk .pcb-model-grid{grid-template-columns:1fr;gap:14px}:root.sk .pcb-model-grid>div+div{border-top:1px solid var(--sk-line);padding-top:12px}:root.sk .pcb-analysis h2{font-size:20px}:root.sk .pcb-analysis-entry dl,:root.sk .pcb-defaults{grid-template-columns:1fr}:root.sk .pcb-defaults dd{margin-bottom:8px}}
+
+/* 2026-11-27 휴대폰·터치 화면만: 입력칸 16px(아이폰 확대 방지)·펼침 제목 44px */
+@media (max-width: 760px), (hover: none) and (pointer: coarse) {
+  input:not([type=checkbox]):not([type=radio]):not([type=range]), select, textarea { font-size: 16px !important; }
+  details > summary { min-height: 44px !important; box-sizing: border-box; }
+}
