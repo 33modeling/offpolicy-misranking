@@ -176,6 +176,14 @@ task lease는 빼앗지 않고 완료된 ext나 평가도 되풀이하지 않는
 예산 endpoint가 연장 run이나 전환 전 trajectory에 있으면 그 위치에서 평가한다.
 선택한 checkpoint가 없거나 달라졌으면 실패로 기록한다.
 
+## 결과 뽑기
+
+```sh
+git pull && sh scripts/v8_export.sh
+```
+
+파일 하나(`$WORK/v8-export/v8-export-<노드>-<시각>.tar.gz`와 `.sha256`)에 다음이 모두 들어간다: worker가 만든 cohort별 report.md 모음(`v8-results.txt`), 현재 코드로 다시 집계한 비용·예산 시점(`v8-recount.txt`, 한글 풀이 `v8-explain.txt`, `recount-analysis/`), 원자료 harvest(체크포인트·rollout 캐시 제외), 단계별 종료 코드(`steps.txt`)와 로그. V8_ROOT는 읽기만 한다. 한 단계가 실패해도 나머지를 묶고 끝에 실패한 단계를 출력한다(종료 코드 1).
+
 ## 현황과 재개
 
 ```sh
