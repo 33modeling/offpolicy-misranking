@@ -280,6 +280,7 @@ REQUIRED = {
     "sampled_time_sr": {"on_selection", "training", "sr_preparation", "cache_build", "prefix"},
     "sr_refreshed": {"training", "sr_preparation", "cache_build", "cache_refresh", "prefix"},
     "fixed_uniform": {"on_selection", "training", "prefix"},
+    "dynamic_sampling": {"on_selection", "training", "prefix"},  # V9 X11: the filter rollouts are selection cost
     # V9 X8 hold methods: same components as the per-update method they hold
     "sr_hold": {"training", "sr_preparation", "cache_build", "prefix"},
     "uniform_hold": {"training", "prefix"},

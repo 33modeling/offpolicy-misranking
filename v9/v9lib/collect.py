@@ -25,6 +25,10 @@ $V9_ROOT/paper/
                       online SR - cached SR, Staged - online SR, online SR - Alignment
   x10_budget.tex      X10 tau-rule sensitivity: mean reward by tau at fractions of the V8 budget, the rule's tau,
                       Staged(tau0) - Alignment and Staged(tau0) - SR at each budget
+  x11_dynamic.tex     X11 DAPO-style dynamic sampling (first 4 mixed-reward candidates of each 40-candidate draw): mean,
+                      incremental cost, Staged - dynamic sampling and dynamic sampling - Random / Alignment / SR
+  x12_bench.tex       X12 public benchmarks of the update-275 snapshots (MATH cohorts: MATH-500, AIME 2024, AIME 2025,
+                      AMC23; MBPP cohorts: HumanEval): arm means and Staged - Alignment, Staged - SR
   x6_ledger.tex       appendix E.3 / Table 3 Cache: per cohort and seed per-refresh, incremental, cold-start
                       (prefix + cache) costs, cache cost; Llama times exclude restarted work
 A cell is a number only when every seed it needs was measured; otherwise it is \\pending{Xk}.
@@ -468,6 +472,83 @@ def x10_tables(tau, items):
     return out, "\n".join(lines)
 
 
+# ------------------------------------------------------------------ X11 / X12
+def x11_tables(x1, items):
+    from . import costs as cost_mod
+    out = {}
+    lines = [PREAMBLE, "% X11: DAPO-style dynamic sampling, update 275, seeds 5--9: each update keeps the first four of "
+             "the 40 drawn candidates whose current-policy rollouts (8 responses) have mixed rewards; the filter "
+             "rollouts are selection cost and are not reused for training.",
+             "\\begin{tabular}{llr}", "\\toprule", "Cohort & Arm or contrast & Value \\\\", "\\midrule"]
+    for cohort in env.X11_COHORTS:
+        new, meta = _arm_values([i for i in items if i["cohort"] == cohort], ("dynamic_sampling",))
+        old = x1.get(cohort, {}).get("per_seed", {})
+        v = {**{a: old.get(a, {s: None for s in SEEDS}) for a in ("random", "alignment", "sr", "staged")}, **new}
+        cost = {s: (cost_mod.run_cost(v9c(cohort), (meta["dynamic_sampling"][s] or {}).get("run_id"))
+                    if (meta["dynamic_sampling"][s] or {}).get("run_id") else None) for s in SEEDS}
+        res = {"per_seed": v, "means": {a: _complete_mean(x) for a, x in v.items()},
+               "dynamic_sampling_cost_gpu_seconds": _complete_mean(cost)}
+        for a, b in (("staged", "dynamic_sampling"), ("dynamic_sampling", "random"), ("dynamic_sampling", "alignment"),
+                     ("dynamic_sampling", "sr")):
+            res[f"{a}_minus_{b}"] = contrast(v[a], v[b], SEEDS, f"{a} - {b}")
+        out[cohort] = res
+        m = res["means"]["dynamic_sampling"]
+        c = res["dynamic_sampling_cost_gpu_seconds"]
+        lines.append(f"{NAMES[cohort]} & dynamic sampling, mean reward (\\%) & {fmt_pct(pct(m), 'X11')} \\\\")
+        lines.append(f"{NAMES[cohort]} & dynamic sampling, incremental GPU-h & "
+                     f"{fmt_pct(None if c is None else c / 3600, 'X11')} \\\\")
+        for a, b in (("staged", "dynamic_sampling"), ("dynamic_sampling", "random"), ("dynamic_sampling", "alignment"),
+                     ("dynamic_sampling", "sr")):
+            lines.append(f"{NAMES[cohort]} & {a.replace('_', ' ')} $-$ {b.replace('_', ' ')} & "
+                         f"{fmt_delta(res[f'{a}_minus_{b}'], 'X11')} \\\\")
+    lines += ["\\bottomrule", "\\end{tabular}", ""]
+    return out, "\n".join(lines)
+
+
+X12_ARMS = ("random", "alignment", "sr", "staged", "dynamic_sampling")
+
+
+def x12_tables(items):
+    from . import bench
+    out = {}
+    lines = [PREAMBLE, "% X12: public benchmarks at update 275, seeds 5--9, mean reward (\\%) over questions and "
+             "responses (avg@k: MATH-500 k=4, AIME 2024/2025 and AMC23 k=16, HumanEval k=8); dynamic sampling only "
+             "on the X11 cohorts. Contrasts are paired over seeds.",
+             "\\begin{tabular}{llrrrrrll}", "\\toprule",
+             "Cohort & Benchmark & Random & Alignment & SR & Staged & Dyn. & Staged $-$ Alignment & Staged $-$ SR \\\\",
+             "\\midrule"]
+    names = {"math500": "MATH-500", "aime24": "AIME 2024", "aime25": "AIME 2025", "amc23": "AMC23",
+             "humaneval": "HumanEval"}
+    for cohort in env.X1_COHORTS:
+        mine = [i for i in items if i["cohort"] == cohort]
+        if not mine:
+            continue
+        out[cohort] = {}
+        for suite in bench.suites_for(cohort):
+            v = {a: {s: None for s in SEEDS} for a in X12_ARMS}
+            n_q = None
+            for i in mine:
+                if i.get("suite") == suite and i["state"] == "done" and i.get("seed") in SEEDS and i.get("arm") in v:
+                    v[i["arm"]][i["seed"]] = i.get("value")
+                    if i.get("result_file") and n_q is None:
+                        n_q = read_json(i["result_file"]).get("n_questions")
+            res = {"per_seed": v, "means": {a: _complete_mean(x) for a, x in v.items()}, "n_questions": n_q}
+            for b in ("alignment", "sr", "random", "dynamic_sampling"):
+                res[f"staged_minus_{b}"] = contrast(v["staged"], v[b], SEEDS, f"Staged - {b}")
+            out[cohort][suite] = res
+            cells = []
+            for a in X12_ARMS:
+                if a == "dynamic_sampling" and cohort not in env.X11_COHORTS:
+                    cells.append("--")
+                else:
+                    cells.append(fmt_pct(pct(res["means"][a]), "X12"))
+            lines.append(f"{NAMES[cohort]} & {names[suite]}{'' if n_q is None else f' ({n_q})'} & " + " & ".join(cells)
+                         + f" & {fmt_delta(res['staged_minus_alignment'], 'X12')} & "
+                           f"{fmt_delta(res['staged_minus_sr'], 'X12')} \\\\")
+    lines += ["\\bottomrule", "\\end{tabular}", ""]
+    return out, "\n".join(lines)
+
+
 # ------------------------------------------------------------------ X3
 def x3_tables(x1, items):
     seeds = [5, 6, 7, 8, 9]
@@ -678,7 +759,7 @@ def collect():
     rec = read_json(tau_path())
     tau = rec["tau"]
     items = {}
-    for s in ("x1", "x2", "x3", "x4", "x5", "x8", "x9", "x10"):
+    for s in ("x1", "x2", "x3", "x4", "x5", "x8", "x9", "x10", "x11", "x12"):
         try:
             items[s] = stages.PLANNERS[s]()
         except Exception as exc:  # noqa: BLE001 - one stage's planning error leaves its cells pending
@@ -699,6 +780,8 @@ def collect():
     x8, x8_tex = x8_tables(x1, items["x8"])
     x9, x9_tex = x9_tables(x1, items["x9"], costs)
     x10, x10_tex = x10_tables(tau, items["x10"])
+    x11, x11_tex = x11_tables(x1, items["x11"])
+    x12, x12_tex = x12_tables(items["x12"])
     written = [write("p0_tau.tex", tau_table(rec)), write("x1_cohorts.tex", x1_tex),
                write("x1_cohorts.dat", x1_cohorts_dat(x1)), write("x1_seeds.tex", x1_seeds_tex(x1)),
                write("x1_cost.tex", x1_cost_tex(costs)), write("x2_budget.tex", x2_tex + x2x_tex),
@@ -706,6 +789,7 @@ def collect():
                write("x5_rho.dat", x5_rho_dat(x5_rows)), write("x5_drift.dat", x5_drift_dat(x5_prompts)),
                write("x6_ledger.tex", x6_ledger_tex(costs)),
                write("x8_refresh.tex", x8_tex), write("x9_online.tex", x9_tex), write("x10_budget.tex", x10_tex),
+               write("x11_dynamic.tex", x11_tex), write("x12_bench.tex", x12_tex),
                write_csv("x1_seeds.csv", x1_rows, ["cohort", "seed", "arm", "reward_fraction", "status", "reason"]),
                write_csv("x5_summary.csv", x5_rows, ["cohort", "seed", "update", "status", *X5_FIELDS, *X5_EXTRA, "reason"])]
     atomic_write_json(paper_dir() / "x5_summary.json", {"per_seed": x5_rows, "seed_means": x5_summary})
@@ -715,7 +799,7 @@ def collect():
     blocked = {s: sorted({f"{i['cohort']}: {i['reason']}" for i in its if i["state"] in ("blocked", "failed")})
                for s, its in items.items()}
     results = {"generated_at": utc_now(), "tau": rec, "x1": x1, "x2": x2, "x2_extra": x2x,
-               "costs_gpu_seconds": {c: {str(k): v for k, v in r.items()} for c, r in costs.items()}, "x3": x3, "x4": x4, "x8": x8, "x9": x9, "x10": x10,
+               "costs_gpu_seconds": {c: {str(k): v for k, v in r.items()} for c, r in costs.items()}, "x3": x3, "x4": x4, "x8": x8, "x9": x9, "x10": x10, "x11": x11, "x12": x12,
                "x5": {"seed_means": x5_summary, "rows": len(x5_rows)}, "open_items": blocked,
                "units": "reward fractions in [0,1]; deltas in percentage points; costs in GPU-seconds unless named",
                "pending_rule": "a cell is pending until every seed it needs is measured; nothing is estimated"}

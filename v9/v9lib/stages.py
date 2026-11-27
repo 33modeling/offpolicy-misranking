@@ -7,7 +7,7 @@ task dicts executed by v9/child.py inside torchrun; their outputs go under $V9_R
 from __future__ import annotations
 
 from . import env
-from .common import (Blocked, bank, cfg, ensure_locator, eval_item, eval_records, frozen_tau, is_complete,
+from .common import (Blocked, bank, cfg, ensure_locator, eval_item, eval_records, eval_task, frozen_tau, is_complete,
                      item, read_json, run_state, v8c, v9c)
 
 
@@ -565,6 +565,111 @@ def _x9_cohort(cohort):
     return out
 
 
+# ================================================================ X11 (dynamic-sampling baseline)
+def x11_items():
+    try:
+        frozen_tau()
+    except Blocked as exc:
+        return [item("x11", c, "all", "blocked", str(exc)) for c in env.X11_COHORTS]
+    out = []
+    for cohort in env.X11_COHORTS:
+        try:
+            out += _x11_cohort(cohort)
+        except Blocked as exc:
+            out.append(item("x11", cohort, "all", "blocked", str(exc)))
+    return out
+
+
+def _x11_cohort(cohort):
+    """DAPO-style dynamic sampling from each seed's 25-update prefix to 275: each update keeps the first four of the
+    40 drawn candidates whose current-policy rollouts have mixed rewards (V8 method dynsample_early)."""
+    from switching import matrix as mx
+    from switching.cluster import ClusterLocator
+    loc = ensure_locator(cohort)
+    c = cfg(cohort)
+    root = v9c(cohort)
+    H = c["training"]["matched_update_endpoint"]
+    cl = ClusterLocator(root, c)
+    out = []
+    for seed in c["seeds"]["training"]:
+        key = f"s{seed}.dynamic_sampling"
+        try:
+            prefix = cl.prefix(seed)
+        except Exception:  # noqa: BLE001
+            out.append(item("x11", cohort, key, "blocked", "waiting for the V8 prefix of this seed", seed=seed,
+                            arm="dynamic_sampling"))
+            continue
+        task = mx.train_task(c, role="v9_x11", seed=seed, method_id="dynsample_early", parent=prefix, horizon=H,
+                             stage="x11-dynamic", interval=cl.interval)
+        out += _train_then_eval("x11", cohort, root, task, H, key, seed=seed, arm="dynamic_sampling", loc=loc)
+    return out
+
+
+# ================================================================ X12 (public benchmarks)
+def _x12_snapshot(it):
+    """The update-275 snapshot behind an X1/X11 result: from its evaluation item, or (V8 bank arms, read-only)
+    the snapshot of the V8 run at the matched endpoint; None while the run has not reached it."""
+    if it.get("snapshot"):
+        return it["snapshot"]
+    if it["state"] != "done" or not it.get("run_id") or str(it["key"]).endswith((".train", ".eval")):
+        return None
+    cohort = it["cohort"]
+    H = cfg(cohort)["training"]["matched_update_endpoint"]
+    try:
+        t = eval_task(cohort, v8c(cohort), it["run_id"], H)
+    except Blocked:
+        return None
+    return {"root": str(v8c(cohort)), "run_id": it["run_id"], "update": H, "path": t["snapshot_path"],
+            "sha256": t["snapshot_sha256"], "training_seed": t["training_seed"]}
+
+
+def x12_items():
+    from . import bench
+    from switching.common import sha256_json
+    out = []
+    for src_stage, arms in env.X12_ARMS.items():
+        try:
+            items = PLANNERS[src_stage]()
+        except Exception as exc:  # noqa: BLE001
+            out.append(item("x12", "all", f"{src_stage}.all", "blocked", f"{src_stage} planning error: {exc}"))
+            continue
+        for it in items:
+            k = str(it["key"])
+            if it.get("arm") not in arms or it.get("seed") is None:
+                continue
+            if k.endswith(".train") and it["state"] == "done":
+                continue  # its .eval item carries the snapshot
+            cohort, seed, arm = it["cohort"], it.get("seed"), it["arm"]
+            snap, why = _x12_snapshot(it), f"waiting for the {src_stage} {arm} run to reach 275"
+            for suite in bench.suites_for(cohort):
+                key = f"s{seed}.{arm}.{suite}"
+                if snap is None:
+                    out.append(item("x12", cohort, key, "blocked", why, seed=seed, arm=arm, suite=suite))
+                    continue
+                try:
+                    loc = read_json(v9c(cohort) / "locator.json")
+                except OSError:
+                    loc = ensure_locator(cohort)
+                seed_rec = loc["seeds"][str(seed)]
+                n = bench.SUITES[suite]["responses"]
+                spec = {"spec": bench.BENCH_SPEC, "suite": suite, "responses": n, "seed_purpose": f"x12-{suite}",
+                        "source": {k: bench.SUITES[suite][k] for k in ("repo", "revision", "file")}}
+                task = {"kind": "bench", "task_id": f"x12.{suite}.{snap['sha256'][:12]}.{snap['run_id'].split('.')[-1][:6]}",
+                        "cohort_id": cohort, "run_id": snap["run_id"], "training_seed": snap["training_seed"],
+                        "completed_update": snap["update"], "snapshot_path": snap["path"],
+                        "snapshot_sha256": snap["sha256"], "suite": suite, "responses": n,
+                        "bench_spec_hash": sha256_json(spec), "bench_spec": spec, "source_stage": src_stage, "arm": arm,
+                        "bundles": sorted({r["input_bundle"] for r in loc["seeds"].values() if r.get("input_bundle")}),
+                        "fake": bool(seed_rec.get("fake"))}
+                f = bench.result_path(v9c(cohort), task)
+                if f.is_file():
+                    out.append(item("x12", cohort, key, "done", value=read_json(f)["reward_fraction"], seed=seed,
+                                    arm=arm, suite=suite, result_file=str(f)))
+                else:
+                    out.append(item("x12", cohort, key, "ready", task=task, seed=seed, arm=arm, suite=suite))
+    return out
+
+
 # ================================================================ X10 (budget sensitivity of the tau rule)
 def x10_budgets(cohort):
     """{tag: GPU-seconds} at env.X10_FRACTIONS of the frozen V8 budget (cost-only, frozen before evaluation)."""
@@ -674,5 +779,5 @@ def _x10_endpoint(cohort, c, b, loc, B, family, t, man, key, extra):
     return [item("x10", cohort, key + ".train", "done", **extra), ev]
 
 
-PLANNERS = {"x1": x1_items, "x2": x2_items, "x3": x3_items, "x4": x4_items, "x5": x5_items, "x8": x8_items,
+PLANNERS = {"x11": x11_items, "x12": x12_items, "x1": x1_items, "x2": x2_items, "x3": x3_items, "x4": x4_items, "x5": x5_items, "x8": x8_items,
             "x9": x9_items, "x10": x10_items}

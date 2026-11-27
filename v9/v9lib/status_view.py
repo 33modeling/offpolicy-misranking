@@ -267,6 +267,8 @@ STAGE_TITLES = {
     "x8": "X8 refresh-frequency control (hold arms)",
     "x9": "X9 online SR baseline",
     "x10": "X10 budget sensitivity of the tau rule",
+    "x11": "X11 dynamic-sampling baseline",
+    "x12": "X12 public benchmarks",
     "collect": "result files",
 }
 COHORT_NAMES = {"olmo_math": "OLMo MATH", "olmo_mbpp": "OLMo MBPP", "qwen_math": "Qwen MATH",

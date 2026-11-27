@@ -68,5 +68,8 @@ def main(args, task, seed_loc):
             return runner.execute_eval(task, ctx)
         if task["kind"] == "measure":
             return execute_measure(task, ctx, beta=beta)
+        if task["kind"] == "bench":
+            from v9lib.bench import execute_bench
+            return execute_bench(task, ctx)
         return runner.execute_train(task, ctx)
     runner.run_child_task(run, is_primary=True, task_id=task_id)

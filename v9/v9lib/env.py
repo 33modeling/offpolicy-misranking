@@ -37,7 +37,11 @@ X9_COHORT = "olmo_math"
 # frozen V8 OLMo-3 MATH budget (fixed before any V9 result; 1.0 is the manuscript's B).
 X10_COHORT = "olmo_math"
 X10_FRACTIONS = (0.75, 1.25)
-STAGES = ("freeze-tau", "x1", "x2", "x5", "x3", "x4", "x8", "x9", "x10", "collect")
+# X11 baseline: DAPO-style dynamic sampling (V8 method dynsample_early) from each seed's 25-update prefix.
+X11_COHORTS = ("olmo_math", "olmo_mbpp")
+# X12 public benchmarks (v9lib/bench.py): the update-275 snapshots of these arms in every cohort.
+X12_ARMS = {"x1": ("random", "alignment", "sr", "staged"), "x11": ("dynamic_sampling",)}
+STAGES = ("freeze-tau", "x1", "x2", "x5", "x3", "x4", "x8", "x9", "x10", "x11", "x12", "collect")
 
 
 def work():

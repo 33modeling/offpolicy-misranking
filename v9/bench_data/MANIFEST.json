@@ -1,0 +1,58 @@
+{
+ "aime24": {
+  "columns": [
+   "id",
+   "problem",
+   "answer"
+  ],
+  "jsonl_sha256": "75dbc9e7fdf39fef1fde074601b5434ebb20db9fa770d84e9237d5f6c204994e",
+  "rows": 30,
+  "source_file": "data/train-00000-of-00001.parquet",
+  "source_sha256": "26139847601a5037c237d5928b195e7260ca8074cf4f264b794af42847f79ccf"
+ },
+ "aime25": {
+  "columns": [
+   "problem_idx",
+   "problem",
+   "answer"
+  ],
+  "jsonl_sha256": "09b440693357bab600c9e023c5d6cb9947c06d6ea274d70d68a22e87723f9ab6",
+  "rows": 30,
+  "source_file": "data/train-00000-of-00001.parquet",
+  "source_sha256": "9f9066ff48ad2e31f9bf1b1ac6d5e80693195f987985f2859f89dd25ffa51c2d"
+ },
+ "amc23": {
+  "columns": [
+   "id",
+   "question",
+   "answer"
+  ],
+  "jsonl_sha256": "12c442ddd73acf164c1cbc6e580743baa12290adaa7052b986fb1fb43b1bb049",
+  "rows": 40,
+  "source_file": "test-00000-of-00001.parquet",
+  "source_sha256": "b696e87ba47be4e879a60fd4ef1d4aa522ba78c5ae013c6aff5cc9788a397c5e"
+ },
+ "humaneval": {
+  "columns": [
+   "task_id",
+   "prompt",
+   "canonical_solution",
+   "test",
+   "entry_point"
+  ],
+  "jsonl_sha256": "b19293e42932e70278b8e5ed83f8c82879cf34e0d3a44cc580f060b7cdaba4f8",
+  "rows": 164,
+  "source_file": "openai_humaneval/test-00000-of-00001.parquet",
+  "source_sha256": "2f2871a15fbc95b6c683043359f4ed8e144c5a1c4f24f25f66bc51f598dfcfb6"
+ },
+ "math500": {
+  "columns": [
+   "problem",
+   "answer"
+  ],
+  "jsonl_sha256": "2d348bb164407ad8341547bf28073fd0d413c64b73ca1b94a666782ffbde308a",
+  "rows": 500,
+  "source_file": "test.jsonl",
+  "source_sha256": "35dc41080a3680858b27fa7e0533d2d547825316fc5dafe5d316f4ccc5a06132"
+ }
+}

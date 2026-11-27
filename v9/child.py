@@ -7,6 +7,7 @@ Task kinds:
   train     V8 execute_train (fork from a retained V8/V9 state, resumable from latest.pt)
   evaluate  V8 execute_eval  (immutable final-split evaluation of one retained snapshot)
   measure   v9lib.measure.execute_measure (X5; scoring and log-probs only, no optimizer step)
+  bench     v9lib.bench.execute_bench (X12; public-benchmark evaluation of one retained snapshot)
 
 OLMo/Qwen cohorts reuse v8/experiments/cluster_child.py unchanged (model loading, LoRA, verifier
 runtime, attention, protected rollouts); only the task dispatch is extended to `measure`.
@@ -37,6 +38,9 @@ def dispatch_factory(original_train, beta=None):
     def dispatch(task, ctx):
         if task.get("kind") == "measure":
             return execute_measure(task, ctx, beta=beta)
+        if task.get("kind") == "bench":
+            from v9lib.bench import execute_bench
+            return execute_bench(task, ctx)
         return original_train(task, ctx)
     return dispatch
 

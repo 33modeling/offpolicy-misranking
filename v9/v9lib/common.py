@@ -151,10 +151,13 @@ def eval_item(stage, cohort, out_root, run_id, update, key, *, loc=None):
         t = eval_task(cohort, out_root, run_id, update, loc=loc)
     except Blocked as exc:
         return item(stage, cohort, key, "blocked", str(exc))
+    # where the evaluated snapshot lives (X12 benchmark evaluation reads the same snapshot)
+    snap = {"root": str(out_root), "run_id": run_id, "update": update, "path": t["snapshot_path"],
+            "sha256": t["snapshot_sha256"], "training_seed": t["training_seed"]}
     f = eval_file_for(cohort, t)
     if f is not None:
-        return item(stage, cohort, key, "done", value=read_json(f)["reward_fraction"], eval_file=str(f))
-    return item(stage, cohort, key, "ready", task=t)
+        return item(stage, cohort, key, "done", value=read_json(f)["reward_fraction"], eval_file=str(f), snapshot=snap)
+    return item(stage, cohort, key, "ready", task=t, snapshot=snap)
 
 
 def is_complete(root, run_id):

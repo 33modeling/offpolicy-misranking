@@ -79,6 +79,9 @@ def make_engine_class(srgc):
             # V9 X8 hold methods: the SR / Uniform batch chosen at a refresh is reused until the next refresh
             self.hold_interval = int(method.get("hold_interval") or 0)
             self.held = None  # {"step": refresh update, "train_ids": [...], "candidate_ids": [...]}
+            # V9 X11 dynamic sampling: the batch filtered before this update's training (stateless across updates)
+            self.dynamic_filter = method.get("dynamic_filter")
+            self._dyn = None
             c = config
             interval = method.get("check_interval", c.check_interval)
             first = method.get("first_check", c.first_check)
@@ -137,6 +140,10 @@ def make_engine_class(srgc):
 
         def _training_batch(self, selector, candidates):
             actual = {"sr": "sr", "uniform": "random"}.get(self.phase, selector)
+            if self.dynamic_filter and self.phase == "uniform":
+                if self._dyn is None or self._dyn["step"] != self.step or list(candidates) != self._dyn["candidate_ids"]:
+                    raise ValueError(f"dynamic sampling at update {self.step} has no filtered batch for this draw")
+                return tuple(self._dyn["train_ids"])
             if self.hold_interval and self.phase in ("sr", "uniform"):
                 if self.step % self.hold_interval == 0:
                     ids = super()._training_batch(actual, candidates)
@@ -223,6 +230,42 @@ def make_engine_class(srgc):
                     if cp.get("refresh_failure", "retain_previous_and_log") != "retain_previous_and_log":
                         raise
 
+        def _dynamic_filter(self, t):
+            """DAPO-style dynamic sampling over this update's 40-candidate draw: roll out the candidates in draw order
+            with the current policy (chunks of `chunk`, config.responses each) and keep the first
+            training_prompts with mixed rewards (0 < mean < 1). If fewer are found among all 40, the batch is filled
+            with the remaining candidates in draw order (unscored first, then rejected) and the count is recorded.
+            The filter rollouts are charged to selection; training draws its own rollouts as in every other arm."""
+            c, f = self.config, self.dynamic_filter
+            candidates = list(self._draw_candidates())
+            chunk = int(f.get("chunk", 8))
+            kept, means = [], {}
+            meter = getattr(self.backend, "cost_meter", None)
+
+            def scan():
+                for k in range(0, len(candidates), chunk):
+                    ids = candidates[k:k + chunk]
+                    got = dict(self.backend.evaluate(ids, responses=c.responses,
+                                                     seed=stream_seed(c.seed, t, f"dynamic-filter-{k // chunk}")))
+                    for i in ids:
+                        means[i] = float(got[i])
+                        if 0.0 < means[i] < 1.0 and len(kept) < c.training_prompts:
+                            kept.append(i)
+                    if len(kept) >= c.training_prompts:
+                        return
+            if meter is not None:
+                with meter.phase("selection", t, self.backend.gpu_count):
+                    scan()
+            else:
+                scan()
+            filled = []
+            if len(kept) < c.training_prompts:
+                rest = [i for i in candidates if i not in means] + [i for i in candidates if i in means and i not in kept]
+                filled = rest[:c.training_prompts - len(kept)]
+            self._dyn = {"step": t, "candidate_ids": candidates, "train_ids": kept + filled,
+                         "scored": len(means), "kept": len(kept), "filled": len(filled),
+                         "scored_means": {i: means[i] for i in candidates if i in means}}
+
         def update(self):
             t, c = self.step, self.config
             if self.phase == "on_policy":
@@ -238,7 +281,15 @@ def make_engine_class(srgc):
             self.arm = "switch" if needs_d else BASE_ARM[self.phase]
             self._check_step, self._stash, self._sr_tail = (t if needs_d else None), {}, None
             self._maybe_refresh_cache(t)
+            if self.dynamic_filter and self.phase == "uniform":
+                self._dynamic_filter(t)
             record = super().update()
+            if self.dynamic_filter and self.phase == "uniform":
+                d = self._dyn
+                record.update(dynamic_filter={"scored_prompts": d["scored"], "kept_mixed": d["kept"],
+                                              "filled": d["filled"], "scored_means": d["scored_means"],
+                                              "responses_per_prompt": c.responses})
+                self._dyn = None
             # The base names "sr" for any non-On training; report the v8 destination instead.
             if self.hold_interval and self.phase in ("sr", "uniform") and self.held is not None:
                 # the candidates that chose this batch (the 40 drawn at the refresh), not this update's unused draw

@@ -38,6 +38,12 @@ def method(method_id: str, *, frozen: dict | None = None, interval: int = 25, pr
         dest = method_id.split("_")[0]
         m = dict(initial_selector=dest, destination=None, policy={"policy": "never"},
                  family=f"{dest}_hold", hold_interval=int(method_id[-3:]))
+    elif method_id == "dynsample_early":
+        # V9 X11 baseline: DAPO-style dynamic sampling. Each update the 40 drawn candidates are rolled out with the
+        # current policy in draw order (chunks of 8, 8 responses); the first 4 with mixed rewards (0 < p < 1) train.
+        m = dict(initial_selector="uniform", destination=None, policy={"policy": "never"}, family="dynamic_sampling",
+                 dynamic_filter={"rule": "first_mixed_in_draw_order", "chunk": 8, "responses": "config",
+                                 "fill": "unscored_then_rejected_in_draw_order"})
     elif re.fullmatch(r"bank_srhold_t\d{3}", method_id):
         # V9 X8 Staged-hold: branch of the On trajectory after update t that continues with SR-hold.
         m = dict(initial_selector="sr", destination=None, policy={"policy": "never"}, family="fixed_srhold",
@@ -108,6 +114,8 @@ def equivalent_key(m: dict, *, start_update: int):
         core["check"] = (m.get("check_interval"), m.get("first_check"))
     if m.get("hold_interval"):  # only hold methods carry the key, so every earlier key is unchanged
         core["hold_interval"] = m["hold_interval"]
+    if m.get("dynamic_filter"):
+        core["dynamic_filter"] = m["dynamic_filter"]
     return sha256_json(core)
 
 
@@ -119,4 +127,6 @@ def method_hash(m: dict) -> str:
     fields = {k: m.get(k) for k in EXECUTION_FIELDS}
     if m.get("hold_interval"):  # added only for hold methods: the hashes of all earlier methods stay the same
         fields["hold_interval"] = m["hold_interval"]
+    if m.get("dynamic_filter"):  # same rule: only the X11 baseline carries it
+        fields["dynamic_filter"] = m["dynamic_filter"]
     return sha256_json(fields)
