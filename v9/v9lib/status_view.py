@@ -264,6 +264,9 @@ STAGE_TITLES = {
     "x5": "X5 measurements",
     "x3": "X3 horizon 400",
     "x4": "X4 fresh seeds 10-14",
+    "x8": "X8 refresh-frequency control (hold arms)",
+    "x9": "X9 online SR baseline",
+    "x10": "X10 budget sensitivity of the tau rule",
     "collect": "result files",
 }
 COHORT_NAMES = {"olmo_math": "OLMo MATH", "olmo_mbpp": "OLMo MBPP", "qwen_math": "Qwen MATH",

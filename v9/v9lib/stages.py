@@ -473,4 +473,206 @@ def x5_items():
     return out
 
 
-PLANNERS = {"x1": x1_items, "x2": x2_items, "x3": x3_items, "x4": x4_items, "x5": x5_items}
+# ================================================================ X8 (refresh-frequency control)
+DONE_STATUS = ("completed_horizon", "completed_budget")
+
+
+def x8_items():
+    try:
+        tau = frozen_tau()
+    except Blocked as exc:
+        return [item("x8", c, "all", "blocked", str(exc)) for c in env.X8_COHORTS]
+    out = []
+    for cohort in env.X8_COHORTS:
+        try:
+            out += _x8_cohort(cohort, tau)
+        except Blocked as exc:
+            out.append(item("x8", cohort, "all", "blocked", str(exc)))
+    return out
+
+
+def _x8_cohort(cohort, tau):
+    """SR-hold and Random-hold from each seed's 25-update prefix; Staged-hold from the V8 On trajectory at tau.
+    The candidates of a hold refresh are the draw of the Alignment refresh at the same update (same stream seed)."""
+    from switching import matrix as mx
+    from switching.cluster import ClusterLocator
+    loc = ensure_locator(cohort)
+    c = cfg(cohort)
+    root, src = v9c(cohort), v8c(cohort)
+    H = c["training"]["matched_update_endpoint"]
+    cl = ClusterLocator(root, c)
+    k = cl.interval
+    out = []
+    for seed in c["seeds"]["training"]:
+        try:
+            prefix = cl.prefix(seed)
+        except Exception:  # noqa: BLE001 - no prefix recorded for this seed yet
+            out += [item("x8", cohort, f"s{seed}.{a}", "blocked", "waiting for the V8 prefix of this seed", seed=seed, arm=a)
+                    for a in ("sr_hold", "random_hold")]
+            prefix = None
+        if prefix is not None:
+            for arm, mid in (("sr_hold", f"sr_hold{k:03d}"), ("random_hold", f"uniform_hold{k:03d}")):
+                task = mx.train_task(c, role="v9_x8", seed=seed, method_id=mid, parent=prefix, horizon=H,
+                                     stage="x8-hold", interval=k)
+                out += _train_then_eval("x8", cohort, root, task, H, f"s{seed}.{arm}", seed=seed, arm=arm, loc=loc)
+        key = f"s{seed}.staged_hold"
+        try:
+            b = bank(cohort, seed)
+        except Exception as exc:  # noqa: BLE001
+            out.append(item("x8", cohort, key, "blocked", f"V8 bank unreadable: {exc}", seed=seed, arm="staged_hold"))
+            continue
+        snap = None if b.traj is None else mx.parent_from_snapshot(src, b.traj["run_id"], tau)
+        if snap is None:
+            out.append(item("x8", cohort, key, "blocked", f"waiting for the V8 trajectory snapshot at {tau}",
+                            seed=seed, arm="staged_hold"))
+            continue
+        task = mx.train_task(c, role="v9_x8", seed=seed, method_id=f"bank_srhold_t{tau:03d}", parent=snap, horizon=H,
+                             stage="x8-hold", interval=k, deps=[])
+        out += _train_then_eval("x8", cohort, root, task, H, key, seed=seed, arm="staged_hold", loc=loc)
+    return out
+
+
+# ================================================================ X9 (online SR baseline)
+def x9_items():
+    cohort = env.X9_COHORT
+    try:
+        frozen_tau()
+        return _x9_cohort(cohort)
+    except Blocked as exc:
+        return [item("x9", cohort, "all", "blocked", str(exc))]
+
+
+def _x9_cohort(cohort):
+    """SR with its cache rebuilt from the current policy at every refresh (pool x 8 responses), from the prefix."""
+    from switching import matrix as mx
+    from switching.cluster import ClusterLocator
+    loc = ensure_locator(cohort)
+    c = cfg(cohort)
+    root = v9c(cohort)
+    H = c["training"]["matched_update_endpoint"]
+    cl = ClusterLocator(root, c)
+    out = []
+    for seed in c["seeds"]["training"]:
+        try:
+            prefix = cl.prefix(seed)
+        except Exception:  # noqa: BLE001
+            out.append(item("x9", cohort, f"s{seed}.online_sr", "blocked", "waiting for the V8 prefix of this seed",
+                            seed=seed, arm="online_sr"))
+            continue
+        task = mx.train_task(c, role="v9_x9", seed=seed, method_id=f"sr_early_refreshed_k{cl.interval:03d}",
+                             parent=prefix, horizon=H, stage="x9-online", interval=cl.interval)
+        out += _train_then_eval("x9", cohort, root, task, H, f"s{seed}.online_sr", seed=seed, arm="online_sr", loc=loc)
+    return out
+
+
+# ================================================================ X10 (budget sensitivity of the tau rule)
+def x10_budgets(cohort):
+    """{tag: GPU-seconds} at env.X10_FRACTIONS of the frozen V8 budget (cost-only, frozen before evaluation)."""
+    path = v8c(cohort) / "frozen" / "budget.json"
+    if not path.is_file():
+        raise Blocked("V8 budget of this cohort is not frozen")
+    base = read_json(path)["value"]
+    return {f"b{round(100 * f):03d}": base * f for f in env.X10_FRACTIONS}, base
+
+
+def x10_items():
+    cohort = env.X10_COHORT
+    try:
+        frozen_tau()
+        return _x10_cohort(cohort)
+    except Blocked as exc:
+        return [item("x10", cohort, "all", "blocked", str(exc))]
+
+
+def _x10_cohort(cohort):
+    loc = ensure_locator(cohort)
+    c = cfg(cohort)
+    P = c["training"]["prefix_updates"]
+    budgets, _ = x10_budgets(cohort)
+    taus = sorted(set(c["bank"]["core_grid"]) | set(c["bank"]["extended_grid"]) | {P})
+    out = []
+    for tag, B in budgets.items():
+        for seed in c["seeds"]["training"]:
+            try:
+                b = bank(cohort, seed)
+            except Exception as exc:  # noqa: BLE001
+                out.append(item("x10", cohort, f"{tag}.s{seed}", "blocked", f"V8 bank unreadable: {exc}", seed=seed))
+                continue
+            arms = [("alignment", "on_continued", None, None)]
+            arms += [("sr" if t == P else f"switch{t:03d}", "fixed_sr", t, b.branches.get(("sr", t))) for t in taus]
+            for arm, family, t, man in arms:
+                extra = dict(seed=seed, arm=arm, budget=tag, tau=t)
+                out += _x10_endpoint(cohort, c, b, loc, B, family, t, man, f"{tag}.s{seed}.{arm}", extra)
+    return out
+
+
+def _x10_endpoint(cohort, c, b, loc, B, family, t, man, key, extra):
+    """Reward at the last saved state within B. V8 runs (trajectory, branch, V8 budget extension) are read from
+    metadata; when they end with budget left (no snapshot past B) and below the update cap, a V9 extension with
+    budget cap B continues from their last saved state."""
+    import math
+    from switching import matrix as mx
+    from switching.budget import select_endpoint
+    root, src = v9c(cohort), v8c(cohort)
+    cap = c["training"]["hard_safety_update_cap"]
+    if b.traj is None or (family == "fixed_sr" and (man is None or man["status"] not in DONE_STATUS)):
+        what = "trajectory" if b.traj is None else f"branch bank_sr_t{t:03d}"
+        return [item("x10", cohort, key, "blocked", f"waiting for V8 {what}", **extra)]
+    be = b.budget_endpoint(family, t, man, B, include_check=False)
+    last = b.budget_endpoint(family, t, man, math.inf, include_check=False).get("endpoint")
+    if be.get("status") == "selected" and (be.get("overshoot") is not None or
+                                          be["endpoint"]["completed_update"] >= cap):
+        ep = be["endpoint"]
+        ev = eval_item("x10", cohort, src, ep["run_id"], ep["completed_update"], key + ".eval", loc=loc)
+        ev.update(extra, endpoint_update=ep["completed_update"], cost=ep["cumulative_cost"])
+        return [ev]
+    if last is None or last.get("cumulative_cost") is None:
+        return [item("x10", cohort, key, "blocked", f"budget endpoint {be.get('status')} (unmeasured cost)", **extra)]
+    if last["cumulative_cost"] > B:
+        return [item("x10", cohort, key, "blocked", f"budget endpoint {be.get('status')}", **extra)]
+    # the recorded runs end below B: continue from their last saved state with budget cap B
+    u0, rid0 = last["completed_update"], last["run_id"]
+    if u0 >= cap:
+        ev = eval_item("x10", cohort, src, rid0, u0, key + ".eval", loc=loc)
+        ev.update(extra, endpoint_update=u0, cost=last["cumulative_cost"], note="update cap")
+        return [ev]
+    snap = mx.parent_from_snapshot(src, rid0, u0)
+    m0 = mx.manifest(src, rid0)
+    own = mx.snapshot_index(src, rid0).get(u0, {}).get("own_continuation_gpu_seconds")
+    if snap is None or m0 is None or own is None:
+        return [item("x10", cohort, key, "blocked", f"V8 run {rid0} has no retained snapshot or cost at {u0}", **extra)]
+    per_update = own / max(1, u0 - m0["task"]["parent"]["completed_update"])
+    if last["cumulative_cost"] + per_update > B:  # not one more update fits: the last state is the endpoint
+        ev = eval_item("x10", cohort, src, rid0, u0, key + ".eval", loc=loc)
+        ev.update(extra, endpoint_update=u0, cost=last["cumulative_cost"], note="no further update fits in B")
+        return [ev]
+    if family == "on_continued":
+        mid, mextra = "on_continued", {"extension_of": rid0, "v9_budget_sha": B}
+    else:
+        mid, mextra = f"bank_sr_t{t:03d}", {"initial_selector": "sr", "policy": {"policy": "never"},
+                                             "extension_of": rid0, "v9_budget_sha": B}
+    task = mx.train_task(c, role="v9_x10", seed=extra["seed"], method_id=mid, parent=snap, horizon=cap,
+                         stage="x10-extension", budget_cap=B, cost_offset=last["cumulative_cost"], extra=mextra)
+    task["est_update_gpu_seconds"] = per_update
+    if not is_complete(root, task["run_id"]):
+        st = run_state(root, task["run_id"])
+        note = f"previous attempt {st}; resumes" if st and st.startswith("failed") else None
+        return [item("x10", cohort, key + ".train", "ready", note, task=task, **extra)]
+    rows = [dict(last, root="v8")]
+    for u, s in mx.snapshot_index(root, task["run_id"]).items():
+        if u > u0:
+            o = s.get("own_continuation_gpu_seconds")
+            rows.append({"completed_update": u, "run_id": task["run_id"], "root": "v9",
+                         "cumulative_cost": None if o is None else last["cumulative_cost"] + o})
+    sel = select_endpoint(rows, B)
+    if sel["status"] != "selected":
+        return [item("x10", cohort, key, "blocked", f"budget endpoint {sel['status']}", **extra)]
+    ep = sel["endpoint"]
+    ev = eval_item("x10", cohort, src if ep["root"] == "v8" else root, ep["run_id"], ep["completed_update"],
+                   key + ".eval", loc=loc)
+    ev.update(extra, endpoint_update=ep["completed_update"], cost=ep["cumulative_cost"])
+    return [item("x10", cohort, key + ".train", "done", **extra), ev]
+
+
+PLANNERS = {"x1": x1_items, "x2": x2_items, "x3": x3_items, "x4": x4_items, "x5": x5_items, "x8": x8_items,
+            "x9": x9_items, "x10": x10_items}

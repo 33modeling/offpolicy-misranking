@@ -28,7 +28,16 @@ X5_UPDATES = (25, 50, 100, 175, 275)
 DEV_COHORT = "olmo_math"           # tau is selected on this cohort only
 TAU_TOLERANCE_PP = 0.5
 HORIZON_X3 = 400
-STAGES = ("freeze-tau", "x1", "x2", "x5", "x3", "x4", "collect")
+# X8 refresh-frequency control: SR-hold, Random-hold (from the 25-update prefix), Staged-hold (from the On
+# trajectory at tau0); the batch chosen at each Alignment refresh is held for the same 25 updates.
+X8_COHORTS = ("olmo_math", "olmo_mbpp")
+# X9 online SR: SR whose reward cache is rebuilt from the current policy at every refresh (V8 sr_early_refreshed).
+X9_COHORT = "olmo_math"
+# X10 budget sensitivity of the switch-time rule: every tau, SR and Alignment scored at these fractions of the
+# frozen V8 OLMo-3 MATH budget (fixed before any V9 result; 1.0 is the manuscript's B).
+X10_COHORT = "olmo_math"
+X10_FRACTIONS = (0.75, 1.25)
+STAGES = ("freeze-tau", "x1", "x2", "x5", "x3", "x4", "x8", "x9", "x10", "collect")
 
 
 def work():

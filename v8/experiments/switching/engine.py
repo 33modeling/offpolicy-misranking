@@ -76,6 +76,9 @@ def make_engine_class(srgc):
             self.primary = primary or (lambda fn: fn())
             self.cache_state = {"version": "initial", "source_policy_update": 0, "cache_id": None}
             self._check_step, self._stash, self._sr_tail = None, {}, None
+            # V9 X8 hold methods: the SR / Uniform batch chosen at a refresh is reused until the next refresh
+            self.hold_interval = int(method.get("hold_interval") or 0)
+            self.held = None  # {"step": refresh update, "train_ids": [...], "candidate_ids": [...]}
             c = config
             interval = method.get("check_interval", c.check_interval)
             first = method.get("first_check", c.first_check)
@@ -134,6 +137,14 @@ def make_engine_class(srgc):
 
         def _training_batch(self, selector, candidates):
             actual = {"sr": "sr", "uniform": "random"}.get(self.phase, selector)
+            if self.hold_interval and self.phase in ("sr", "uniform"):
+                if self.step % self.hold_interval == 0:
+                    ids = super()._training_batch(actual, candidates)
+                    self.held = {"step": self.step, "train_ids": list(ids), "candidate_ids": list(candidates)}
+                    return ids
+                if self.held is None or not 0 < self.step - self.held["step"] < self.hold_interval:
+                    raise ValueError(f"hold method at update {self.step} has no saved batch from the last refresh")
+                return tuple(self.held["train_ids"])
             return super()._training_batch(actual, candidates)
 
         def _on_check(self, step, d):
@@ -229,6 +240,10 @@ def make_engine_class(srgc):
             self._maybe_refresh_cache(t)
             record = super().update()
             # The base names "sr" for any non-On training; report the v8 destination instead.
+            if self.hold_interval and self.phase in ("sr", "uniform") and self.held is not None:
+                # the candidates that chose this batch (the 40 drawn at the refresh), not this update's unused draw
+                record.update(hold_selection_step=self.held["step"],
+                              training_candidate_ids=list(self.held["candidate_ids"]))
             record.update(selector="on_policy" if record.get("selector") == "on_policy" else self.phase,
                           v8_phase=self.phase, transition_update=self.transition_update,
                           sr_comparison=self._sr_tail, cache_version=self.cache_state["version"])
@@ -247,6 +262,8 @@ def make_engine_class(srgc):
                        "monitor": self.monitor, "stats": self.stats.state_dict(),
                        "signals": list(self.signal_log), "decisions": list(self.decision_log),
                        "cache_log": list(self.cache_log), "cache_state": dict(self.cache_state)}
+            if self.hold_interval:
+                s["v8"]["held"] = None if self.held is None else dict(self.held)
             return s
 
         def load_state_dict(self, state, *, fork_arm=None):
@@ -270,6 +287,8 @@ def make_engine_class(srgc):
                 self.signal_log, self.decision_log = list(v8["signals"]), list(v8["decisions"])
                 self.cache_log, self.cache_state = list(v8["cache_log"]), dict(v8["cache_state"])
                 self.arm = BASE_ARM[self.phase]
+                if self.hold_interval:
+                    self.held = None if v8.get("held") is None else dict(v8["held"])
             else:
                 self.stats = parent_stats  # training rewards before the branch are observable history
                 self.signal_log, self.decision_log, self.cache_log = [], [], []

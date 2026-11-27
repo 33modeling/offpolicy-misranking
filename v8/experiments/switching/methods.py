@@ -32,6 +32,16 @@ def method(method_id: str, *, frozen: dict | None = None, interval: int = 25, pr
             raise ValueError("fixed_sr_tuned requires frozen_tuning.json (development-selected tau)")
         m = dict(initial_selector="on_policy", destination="sr", policy={"policy": "fixed", "fixed_update": tau},
                  family="fixed_sr", tuned_from=frozen.get("tuning_hash"))
+    elif re.fullmatch(r"(sr|uniform)_hold\d{3}", method_id):
+        # V9 X8 refresh-frequency control: draw 40 candidates and pick 4 every `hold` updates (the draw of the
+        # Alignment refresh at the same update), then train on the same 4 until the next refresh.
+        dest = method_id.split("_")[0]
+        m = dict(initial_selector=dest, destination=None, policy={"policy": "never"},
+                 family=f"{dest}_hold", hold_interval=int(method_id[-3:]))
+    elif re.fullmatch(r"bank_srhold_t\d{3}", method_id):
+        # V9 X8 Staged-hold: branch of the On trajectory after update t that continues with SR-hold.
+        m = dict(initial_selector="sr", destination=None, policy={"policy": "never"}, family="fixed_srhold",
+                 branch_update=int(method_id[-3:]), hold_interval=interval)
     elif re.fullmatch(r"bank_(sr|uniform)_t\d{3}", method_id):
         dest = method_id.split("_")[1]
         m = dict(initial_selector=dest, destination=None, policy={"policy": "never"},
@@ -96,6 +106,8 @@ def equivalent_key(m: dict, *, start_update: int):
         core = {k: m[k] for k in ("initial_selector", "destination", "policy", "cache")}
         core["start"] = start_update
         core["check"] = (m.get("check_interval"), m.get("first_check"))
+    if m.get("hold_interval"):  # only hold methods carry the key, so every earlier key is unchanged
+        core["hold_interval"] = m["hold_interval"]
     return sha256_json(core)
 
 
@@ -104,4 +116,7 @@ EXECUTION_FIELDS = ("initial_selector", "destination", "policy", "cache", "monit
 
 
 def method_hash(m: dict) -> str:
-    return sha256_json({k: m.get(k) for k in EXECUTION_FIELDS})
+    fields = {k: m.get(k) for k in EXECUTION_FIELDS}
+    if m.get("hold_interval"):  # added only for hold methods: the hashes of all earlier methods stay the same
+        fields["hold_interval"] = m["hold_interval"]
+    return sha256_json(fields)

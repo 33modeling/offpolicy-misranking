@@ -18,6 +18,13 @@ $V9_ROOT/paper/
   x5_rho.dat          Fig. 3(a): OLMo MATH per update: mean and SE over seeds of the split-half rho of Alignment and SR
   x5_drift.dat        Fig. 3(b): per prompt sqrt(KL_seq/2) (xseq, the figure's x), |p_t - p_beta| and sqrt(D_t/2)
   x5_summary.csv / x5_summary.json   per seed rows behind x5_measure.tex
+  x8_refresh.tex      X8 refresh-frequency control: SR-hold, Random-hold, Staged-hold means; score effect
+                      (SR-hold - Alignment, Staged-hold - Alignment) and frequency effect (SR - SR-hold,
+                      Random - Random-hold, Staged - Staged-hold), paired over seeds 5--9
+  x9_online.tex       X9 online SR (cache rebuilt from the current policy at every refresh): mean, cost, paired
+                      online SR - cached SR, Staged - online SR, online SR - Alignment
+  x10_budget.tex      X10 tau-rule sensitivity: mean reward by tau at fractions of the V8 budget, the rule's tau,
+                      Staged(tau0) - Alignment and Staged(tau0) - SR at each budget
   x6_ledger.tex       appendix E.3 / Table 3 Cache: per cohort and seed per-refresh, incremental, cold-start
                       (prefix + cache) costs, cache cost; Llama times exclude restarted work
 A cell is a number only when every seed it needs was measured; otherwise it is \\pending{Xk}.
@@ -342,6 +349,125 @@ def x2_extra(tau, x2, costs):
                      (f"; B = {r['budget_gpu_seconds'] / 3600:.2f} GPU-h" if r.get("budget_gpu_seconds") else ""))
     return res, "\n".join(lines) + "\n"
 
+# ------------------------------------------------------------------ X8 / X9 / X10
+SEEDS = [5, 6, 7, 8, 9]
+
+
+def _arm_values(items, arms, *, budget=None):
+    vals = {a: {s: None for s in SEEDS} for a in arms}
+    meta = {a: {s: None for s in SEEDS} for a in arms}
+    for i in items:
+        if (i.get("arm") in vals and str(i["key"]).endswith(".eval") and i["state"] == "done"
+                and i.get("seed") in SEEDS and (budget is None or i.get("budget") == budget)):
+            vals[i["arm"]][i["seed"]] = i.get("value")
+            meta[i["arm"]][i["seed"]] = {k: i.get(k) for k in ("endpoint_update", "cost", "run_id")}
+    return vals, meta
+
+
+def _complete_mean(v):
+    return mean(v.values()) if all(x is not None for x in v.values()) else None
+
+
+def x8_tables(x1, items):
+    out, lines = {}, [PREAMBLE, "% X8: refresh-frequency control, update 275, seeds 5--9. Hold arms choose 4 of the 40 "
+                      "candidates drawn at each Alignment refresh and keep them for the next 25 updates.",
+                      "% score effect: SR-hold - Alignment, Staged-hold - Alignment (same refresh frequency); "
+                      "frequency effect: SR - SR-hold, Random - Random-hold, Staged - Staged-hold (same score)",
+                      "\\begin{tabular}{lll}", "\\toprule", "Cohort & Contrast & Mean [95\\% CI] (W/T/L) \\\\",
+                      "\\midrule"]
+    for cohort in env.X8_COHORTS:
+        new, _ = _arm_values([i for i in items if i["cohort"] == cohort], ("sr_hold", "random_hold", "staged_hold"))
+        old = x1.get(cohort, {}).get("per_seed", {})
+        v = {**{a: old.get(a, {s: None for s in SEEDS}) for a in ("alignment", "sr", "staged", "random")}, **new}
+        res = {"per_seed": v, "means": {a: _complete_mean(x) for a, x in v.items()}}
+        pairs = (("sr_hold", "alignment", "score"), ("staged_hold", "alignment", "score"),
+                 ("sr", "sr_hold", "frequency"), ("random", "random_hold", "frequency"),
+                 ("staged", "staged_hold", "frequency"), ("sr", "alignment", "reference"))
+        for a, b, kind in pairs:
+            r = contrast(v[a], v[b], SEEDS, f"{a} - {b}")
+            r["effect"] = kind
+            res[f"{a}_minus_{b}"] = r
+            lines.append(f"{NAMES[cohort]} & {a.replace('_', '-')} $-$ {b.replace('_', '-')} ({kind}) & "
+                         f"{fmt_delta(r, 'X8')} \\\\")
+        out[cohort] = res
+        lines.append("% " + cohort + " means (%): " + ", ".join(
+            f"{a} {'pending' if m is None else f'{100 * m:.2f}'}" for a, m in res["means"].items()))
+    lines += ["\\bottomrule", "\\end{tabular}", ""]
+    return out, "\n".join(lines)
+
+
+def x9_tables(x1, items, costs):
+    from . import costs as cost_mod
+    cohort = env.X9_COHORT
+    new, meta = _arm_values([i for i in items if i["cohort"] == cohort], ("online_sr",))
+    old = x1.get(cohort, {}).get("per_seed", {})
+    v = {**{a: old.get(a, {s: None for s in SEEDS}) for a in ("alignment", "sr", "staged")}, **new}
+    cost = {}
+    for s in SEEDS:
+        rid = (meta["online_sr"][s] or {}).get("run_id")
+        cost[s] = cost_mod.run_cost(v9c(cohort), rid) if rid else None
+    inc = {a: [((costs.get(cohort, {}).get(s) or {}).get("incremental") or {}).get(a) for s in SEEDS]
+           for a in ("alignment", "sr", "staged")}
+    mean_cost = {"online_sr": _complete_mean(cost),
+                 **{a: (mean(x) if all(c is not None for c in x) else None) for a, x in inc.items()}}
+    res = {"per_seed": v, "means": {a: _complete_mean(x) for a, x in v.items()}, "cost_gpu_seconds": mean_cost,
+           "online_sr_minus_sr": contrast(v["online_sr"], v["sr"], SEEDS, "online SR - cached SR"),
+           "staged_minus_online_sr": contrast(v["staged"], v["online_sr"], SEEDS, "Staged - online SR"),
+           "online_sr_minus_alignment": contrast(v["online_sr"], v["alignment"], SEEDS, "online SR - Alignment")}
+    h = lambda x: "\\pending{X9}" if x is None else f"{x / 3600:.2f}"  # noqa: E731
+    lines = [PREAMBLE, f"% X9: {NAMES[cohort]}, update 275, seeds 5--9. Online SR rebuilds the SR cache from the "
+             "current policy (pool x 8 responses) at every refresh; cached SR uses the initial-policy cache.",
+             "\\begin{tabular}{lrr}", "\\toprule", "Arm & Mean reward (\\%) & Incremental GPU-h \\\\", "\\midrule"]
+    for a in ("online_sr", "sr", "staged", "alignment"):
+        lines.append(f"{a.replace('_', ' ')} & {fmt_pct(pct(res['means'][a]), 'X9')} & {h(mean_cost.get(a))} \\\\")
+    lines += ["\\midrule",
+              f"online SR $-$ cached SR & \\multicolumn{{2}}{{l}}{{{fmt_delta(res['online_sr_minus_sr'], 'X9')}}} \\\\",
+              f"Staged $-$ online SR & \\multicolumn{{2}}{{l}}{{{fmt_delta(res['staged_minus_online_sr'], 'X9')}}} \\\\",
+              f"online SR $-$ Alignment & \\multicolumn{{2}}{{l}}{{{fmt_delta(res['online_sr_minus_alignment'], 'X9')}}} \\\\",
+              "\\bottomrule", "\\end{tabular}", ""]
+    return res, "\n".join(lines)
+
+
+def x10_tables(tau, items):
+    from . import stages
+    cohort = env.X10_COHORT
+    try:
+        budgets, base = stages.x10_budgets(cohort)
+    except Blocked as exc:
+        return {"status": str(exc)}, PREAMBLE + f"% X10: {exc}\n"
+    c_taus = sorted({i["tau"] for i in items if i.get("tau") is not None})
+    arms = ["alignment"] + [("sr" if t == 25 else f"switch{t:03d}") for t in c_taus]
+    out = {"v8_budget_gpu_seconds": base, "budgets": {}}
+    lines = [PREAMBLE, f"% X10: {NAMES[cohort]} seeds 5--9, mean reward (\\%) at the last saved state within a "
+             f"fraction of the frozen V8 budget ({base / 3600:.2f} GPU-h); rule = earliest tau in 50--250 within "
+             f"{env.TAU_TOLERANCE_PP} points of the best mean"]
+    for tag, B in budgets.items():
+        mine = [i for i in items if i["cohort"] == cohort and i.get("budget") == tag]
+        vals, meta = _arm_values(mine, arms)
+        means = {a: _complete_mean(v) for a, v in vals.items()}
+        cand = {t: means[f"switch{t:03d}"] for t in c_taus if t >= 50 and f"switch{t:03d}" in means}
+        rule = None
+        if cand and all(m is not None for m in cand.values()):
+            best = max(cand.values())
+            rule = min(t for t, m in cand.items() if 100 * (best - m) <= env.TAU_TOLERANCE_PP + 1e-9)
+        st = f"switch{tau:03d}"
+        r = {"budget_gpu_seconds": B, "fraction": B / base, "means": means, "rule_tau": rule,
+             "endpoint_updates": {a: sorted({(m or {}).get("endpoint_update") for m in meta[a].values()} - {None})
+                                  for a in arms},
+             "staged_minus_alignment": contrast(vals.get(st, {}), vals["alignment"], SEEDS, f"Staged({tau}) - Alignment"),
+             "staged_minus_sr": contrast(vals.get(st, {}), vals.get("sr", {}), SEEDS, f"Staged({tau}) - SR"),
+             "sr_minus_alignment": contrast(vals.get("sr", {}), vals["alignment"], SEEDS, "SR - Alignment")}
+        out["budgets"][tag] = r
+        lines.append(f"% {tag}: B = {B / 3600:.2f} GPU-h ({100 * B / base:.0f}% of the V8 budget); rule tau = "
+                     f"{'pending' if rule is None else rule}")
+        lines.append("% " + tag + " means: " + ", ".join(
+            f"{a} {'pending' if m is None else f'{100 * m:.2f}'}" for a, m in means.items()))
+        for k in ("staged_minus_alignment", "staged_minus_sr", "sr_minus_alignment"):
+            lines.append(f"% {tag} {k}: {fmt_delta(r[k], 'X10')}")
+    lines.append("")
+    return out, "\n".join(lines)
+
+
 # ------------------------------------------------------------------ X3
 def x3_tables(x1, items):
     seeds = [5, 6, 7, 8, 9]
@@ -552,7 +678,7 @@ def collect():
     rec = read_json(tau_path())
     tau = rec["tau"]
     items = {}
-    for s in ("x1", "x2", "x3", "x4", "x5"):
+    for s in ("x1", "x2", "x3", "x4", "x5", "x8", "x9", "x10"):
         try:
             items[s] = stages.PLANNERS[s]()
         except Exception as exc:  # noqa: BLE001 - one stage's planning error leaves its cells pending
@@ -570,12 +696,16 @@ def collect():
                          "cache_detail": {"status": f"cost error: {type(exc).__name__}: {exc}"}, "cold_start": {}}
                      for s in (5, 6, 7, 8, 9)} for c in env.X1_COHORTS}
     x2x, x2x_tex = x2_extra(tau, x2, costs)
+    x8, x8_tex = x8_tables(x1, items["x8"])
+    x9, x9_tex = x9_tables(x1, items["x9"], costs)
+    x10, x10_tex = x10_tables(tau, items["x10"])
     written = [write("p0_tau.tex", tau_table(rec)), write("x1_cohorts.tex", x1_tex),
                write("x1_cohorts.dat", x1_cohorts_dat(x1)), write("x1_seeds.tex", x1_seeds_tex(x1)),
                write("x1_cost.tex", x1_cost_tex(costs)), write("x2_budget.tex", x2_tex + x2x_tex),
                write("x3_horizon.tex", x3_tex), write("x4_seeds.tex", x4_tex), write("x5_measure.tex", x5_tex),
                write("x5_rho.dat", x5_rho_dat(x5_rows)), write("x5_drift.dat", x5_drift_dat(x5_prompts)),
                write("x6_ledger.tex", x6_ledger_tex(costs)),
+               write("x8_refresh.tex", x8_tex), write("x9_online.tex", x9_tex), write("x10_budget.tex", x10_tex),
                write_csv("x1_seeds.csv", x1_rows, ["cohort", "seed", "arm", "reward_fraction", "status", "reason"]),
                write_csv("x5_summary.csv", x5_rows, ["cohort", "seed", "update", "status", *X5_FIELDS, *X5_EXTRA, "reason"])]
     atomic_write_json(paper_dir() / "x5_summary.json", {"per_seed": x5_rows, "seed_means": x5_summary})
@@ -585,7 +715,7 @@ def collect():
     blocked = {s: sorted({f"{i['cohort']}: {i['reason']}" for i in its if i["state"] in ("blocked", "failed")})
                for s, its in items.items()}
     results = {"generated_at": utc_now(), "tau": rec, "x1": x1, "x2": x2, "x2_extra": x2x,
-               "costs_gpu_seconds": {c: {str(k): v for k, v in r.items()} for c, r in costs.items()}, "x3": x3, "x4": x4,
+               "costs_gpu_seconds": {c: {str(k): v for k, v in r.items()} for c, r in costs.items()}, "x3": x3, "x4": x4, "x8": x8, "x9": x9, "x10": x10,
                "x5": {"seed_means": x5_summary, "rows": len(x5_rows)}, "open_items": blocked,
                "units": "reward fractions in [0,1]; deltas in percentage points; costs in GPU-seconds unless named",
                "pending_rule": "a cell is pending until every seed it needs is measured; nothing is estimated"}
