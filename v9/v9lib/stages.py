@@ -434,6 +434,33 @@ def x17_items():
     return _measure_items("x17", targets, env.X17_UPDATES)
 
 
+def _prefix_state(stage, cohort, seed, loc, b, P):
+    """The update-25 state of a seed, in this order: the locator prefix checkpoint; the parent snapshot of the V8 On
+    trajectory (the prefix that trajectory was trained from); otherwise a new V9 prefix run (on_continued from the
+    initial model to update 25, role v9_prefix). Returns (snap, source, pending items)."""
+    from switching import matrix as mx
+    rec = loc["seeds"].get(str(seed), {})
+    if rec.get("prefix_sha256") and rec.get("prefix_path"):
+        return {"path": rec["prefix_path"], "sha256": rec["prefix_sha256"]}, {"kind": "prefix", "run_id": None}, []
+    if b is not None and b.traj is not None:
+        par = (mx.manifest(v8c(cohort), b.traj["run_id"]) or {}).get("task", {}).get("parent") or {}
+        if par.get("path") and par.get("sha256") and par.get("completed_update") == P:
+            return ({"path": par["path"], "sha256": par["sha256"]},
+                    {"kind": "trajectory_parent", "run_id": par.get("run_id")}, [])
+    c = cfg(cohort)
+    init = {"kind": "initial", "completed_update": 0, "sha256": None, "path": None, "run_id": None}
+    task = mx.train_task(c, role="v9_prefix", seed=seed, method_id="on_continued", parent=init, horizon=P,
+                         stage=f"{stage}-prefix")
+    root = v9c(cohort)
+    if is_complete(root, task["run_id"]):
+        s = mx.parent_from_snapshot(root, task["run_id"], P)
+        if s is not None:
+            return {"path": s["path"], "sha256": s["sha256"]}, {"kind": "v9_prefix", "run_id": task["run_id"]}, []
+    st = run_state(root, task["run_id"])
+    why = f"previous attempt {st}; resumes" if st and st.startswith("failed") else "no prefix checkpoint: new prefix run"
+    return None, None, [item(stage, cohort, f"s{seed}.prefix.train", "ready", why, task=task, seed=seed)]
+
+
 def _measure_items(stage, targets, updates):
     from switching import matrix as mx
     from switching.common import sha256_json
@@ -455,12 +482,10 @@ def _measure_items(stage, targets, updates):
             for u in updates:
                 key = f"s{seed}.u{u:03d}"
                 if u == P:
-                    rec = loc["seeds"][str(seed)]
-                    if not rec.get("prefix_sha256"):
-                        out.append(item(stage, cohort, key, "blocked", "no prefix checkpoint", seed=seed, update=u))
+                    snap, source, pending = _prefix_state(stage, cohort, seed, loc, b, P)
+                    if snap is None:
+                        out += [dict(i, update=u, key=key + i["key"][len(f"s{seed}.prefix"):]) for i in pending]
                         continue
-                    snap = {"path": rec["prefix_path"], "sha256": rec["prefix_sha256"]}
-                    source = {"kind": "prefix", "run_id": None}
                 else:
                     snap = None
                     if b.traj is not None:
