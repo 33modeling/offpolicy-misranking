@@ -47,7 +47,15 @@ X13_COHORTS = ("olmo_math", "olmo_mbpp")
 X14_COHORTS = ("olmo_math",)
 # X15 scale: 16 prompts per update, 160 candidates per draw, OLMo MATH seeds 5-9, branched design from the initial model.
 X15_COHORT = "olmo_math"
-STAGES = ("freeze-tau", "x1", "x2", "x5", "x3", "x4", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "collect")
+# X16 Staged-refresh (SR cache rebuilt once at the switch) and X17 drift measurement on seeds 6-9; X18 (collect only)
+# applies the rule fixed before the data: rebuild the cache at the switch when the update-25 success gain over the
+# cache exceeds X18_THRESHOLD. Design: paper repo v9/X16_X18_DESIGN.md.
+X16_COHORTS = ("qwen_mbpp", "olmo_math", "qwen_math", "olmo_mbpp")
+X17_COHORTS = ("olmo_mbpp", "qwen_math", "qwen_mbpp")
+X17_UPDATES = (25, 50, 275)
+X18_THRESHOLD = 0.15
+STAGES = ("freeze-tau", "x1", "x2", "x5", "x3", "x4", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16",
+          "x17", "collect")
 
 
 def work():

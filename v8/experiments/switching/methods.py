@@ -48,6 +48,13 @@ def method(method_id: str, *, frozen: dict | None = None, interval: int = 25, pr
         # V9 X8 Staged-hold: branch of the On trajectory after update t that continues with SR-hold.
         m = dict(initial_selector="sr", destination=None, policy={"policy": "never"}, family="fixed_srhold",
                  branch_update=int(method_id[-3:]), hold_interval=interval)
+    elif re.fullmatch(r"bank_srrefresh_t\d{3}", method_id):
+        # V9 X16: branch of the On trajectory after update t that rebuilds the SR cache from the current policy once,
+        # at the switch (pool x responses), and then continues with SR on that cache.
+        m = dict(initial_selector="sr", destination=None, policy={"policy": "never"}, family="fixed_srrefresh",
+                 branch_update=int(method_id[-3:]),
+                 cache={"policy": "periodic_current", "refresh_interval": None, "refresh_origin": "entry_once",
+                        "refresh_failure": "retain_previous_and_log", "max_attempts": 2})
     elif re.fullmatch(r"bank_(sr|uniform)_t\d{3}", method_id):
         dest = method_id.split("_")[1]
         m = dict(initial_selector=dest, destination=None, policy={"policy": "never"},

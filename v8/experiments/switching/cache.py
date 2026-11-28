@@ -97,7 +97,10 @@ class CacheStore:
 
 
 def refresh_due(step, *, entry_update, interval, origin="sr_entry_update"):
-    """origin=sr_entry_update: entry 25, K 50 -> 75, 125, ...; global_clock: multiples of K."""
+    """origin=sr_entry_update: entry 25, K 50 -> 75, 125, ...; global_clock: multiples of K;
+    entry_once (V9 X16): one rebuild at the SR entry update itself, none later."""
+    if origin == "entry_once":
+        return entry_update is not None and step == entry_update
     if interval is None or entry_update is None or step <= entry_update:
         return False
     if origin == "sr_entry_update":

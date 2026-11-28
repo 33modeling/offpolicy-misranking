@@ -1,13 +1,13 @@
 """V9 worker: `sh v9/run.sh [stage]` -> python -m v9lib.orchestrate [stage].
 
-No stage: freeze-tau -> x1 -> x2 -> x5 -> x3 -> x4 -> x8 -> x9 -> x10 -> x11 -> x12 -> x13 -> x14 -> x15 -> collect. GPU tasks are taken in that priority
+No stage: freeze-tau -> x1 -> x2 -> x5 -> x3 -> x4 -> x8 -> x9 -> x10 -> x11 -> x12 -> x13 -> x14 -> x15 -> x16 -> x17 -> collect. GPU tasks are taken in that priority
 order, one at a time; after each finished task the worker starts again from the first stage, so a
 newly unlocked high-priority task goes first. Stages with nothing ready are skipped. A failing
 stage or task is recorded and the worker continues with the rest. When nothing is ready anywhere
 the worker runs collect and exits. The same command on every node: a task is leased (flock) while
 it runs; a run resumes from its latest.pt; finished outputs are never redone.
 
-Words: status | freeze-tau | x1 | x2 | x3 | x4 | x5 | x8 | x9 | x10 | x11 | x12 | x13 | x14 | x15 | collect | retry-failed
+Words: status | freeze-tau | x1 | x2 | x3 | x4 | x5 | x8 | x9 | x10 | x11 | x12 | x13 | x14 | x15 | x16 | x17 | collect | retry-failed
 """
 
 from __future__ import annotations
@@ -428,7 +428,7 @@ def run_collect():
 
 
 # ------------------------------------------------------------------ worker loop
-GPU_STAGES = ("x1", "x2", "x5", "x3", "x4", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15")
+GPU_STAGES = ("x1", "x2", "x5", "x3", "x4", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17")
 
 
 def wait_reason(items):

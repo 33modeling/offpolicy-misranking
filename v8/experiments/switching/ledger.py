@@ -285,6 +285,8 @@ REQUIRED = {
     "sr_hold": {"training", "sr_preparation", "cache_build", "prefix"},
     "uniform_hold": {"training", "prefix"},
     "fixed_srhold": {"on_selection", "training", "sr_preparation", "cache_build", "prefix"},
+    # V9 X16 Staged-refresh: Staged plus one cache rebuild at the switch
+    "fixed_srrefresh": {"on_selection", "training", "sr_preparation", "cache_build", "cache_refresh", "prefix"},
 }
 
 

@@ -271,6 +271,8 @@ STAGE_TITLES = {
     "x13": "X13 Random then SR (warm-up control)",
     "x14": "X14 SR then Alignment (order reversed)",
     "x15": "X15 16 prompts per update",
+    "x16": "X16 Staged with the SR cache rebuilt at the switch",
+    "x17": "X17 drift measurement, seeds 6-9",
     "x12": "X12 public benchmarks",
     "collect": "result files",
 }

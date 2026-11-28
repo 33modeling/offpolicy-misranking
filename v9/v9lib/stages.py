@@ -418,32 +418,46 @@ def x5_targets():
 
 
 def x5_items():
+    targets = x5_targets()
+    if not targets:
+        return [item("x5", "olmo_math", "all", "blocked", "no V8 cohort located yet")]
+    return _measure_items("x5", targets, env.X5_UPDATES)
+
+
+def x17_items():
+    """X17: the X5 measurement on seeds 6-9 of the cohorts that X5 measured on one seed only (updates 25, 50, 275).
+    Tasks and outputs have the X5 form, so collect pools them with X5 per cohort, seed and update."""
+    targets = [(c, s) for c, s in x5_targets() if c in env.X17_COHORTS]
+    targets = [(c, [x for x in cfg(c)["seeds"]["training"] if x not in s]) for c, s in targets]
+    if not targets:
+        return [item("x17", "all", "all", "blocked", "no V8 cohort located yet")]
+    return _measure_items("x17", targets, env.X17_UPDATES)
+
+
+def _measure_items(stage, targets, updates):
     from switching import matrix as mx
     from switching.common import sha256_json
     from .measure import MEASURE_SPEC, HALF
     out = []
-    targets = x5_targets()
-    if not targets:
-        return [item("x5", "olmo_math", "all", "blocked", "no V8 cohort located yet")]
     for cohort, seeds in targets:
         try:
             loc = ensure_locator(cohort)
         except Blocked as exc:
-            out.append(item("x5", cohort, "all", "blocked", str(exc)))
+            out.append(item(stage, cohort, "all", "blocked", str(exc)))
             continue
         P = cfg(cohort)["training"]["prefix_updates"]
         for seed in seeds:
             try:
                 b = bank(cohort, seed)
             except Exception as exc:  # noqa: BLE001
-                out.append(item("x5", cohort, f"s{seed}", "blocked", f"V8 bank unreadable: {exc}"))
+                out.append(item(stage, cohort, f"s{seed}", "blocked", f"V8 bank unreadable: {exc}"))
                 continue
-            for u in env.X5_UPDATES:
+            for u in updates:
                 key = f"s{seed}.u{u:03d}"
                 if u == P:
                     rec = loc["seeds"][str(seed)]
                     if not rec.get("prefix_sha256"):
-                        out.append(item("x5", cohort, key, "blocked", "no prefix checkpoint", seed=seed, update=u))
+                        out.append(item(stage, cohort, key, "blocked", "no prefix checkpoint", seed=seed, update=u))
                         continue
                     snap = {"path": rec["prefix_path"], "sha256": rec["prefix_sha256"]}
                     source = {"kind": "prefix", "run_id": None}
@@ -454,7 +468,7 @@ def x5_items():
                         if s:
                             snap = {"path": str(v8c(cohort) / "runs" / b.traj["run_id"] / s["path"]), "sha256": s["sha256"]}
                     if snap is None:
-                        out.append(item("x5", cohort, key, "blocked", f"waiting for V8 trajectory snapshot {u}",
+                        out.append(item(stage, cohort, key, "blocked", f"waiting for V8 trajectory snapshot {u}",
                                         seed=seed, update=u))
                         continue
                     source = {"kind": "on_trajectory", "run_id": b.traj["run_id"]}
@@ -467,9 +481,9 @@ def x5_items():
                                  "evidence": "srgc_rebuttal/build_cache.py docstring; srgc_rebuttal/import_pair_inputs.py "
                                              "'initial-policy behavior rollouts'", "log_prob": "peft disable_adapter()"}}
                 if (v9c(cohort) / task["out_dir"] / "summary.json").is_file():
-                    out.append(item("x5", cohort, key, "done", seed=seed, update=u))
+                    out.append(item(stage, cohort, key, "done", seed=seed, update=u))
                 else:
-                    out.append(item("x5", cohort, key, "ready", task=task, seed=seed, update=u))
+                    out.append(item(stage, cohort, key, "ready", task=task, seed=seed, update=u))
     return out
 
 
@@ -874,6 +888,74 @@ def _x15_budget_items(cohort, c, root, loc, seeds_runs, tau, H, P):
     return out
 
 
+# ================================================================ X16 (cache rebuilt at the switch)
+def x16_items():
+    try:
+        tau = frozen_tau()
+    except Blocked as exc:
+        return [item("x16", c, "all", "blocked", str(exc)) for c in env.X16_COHORTS]
+    out = []
+    for cohort in env.X16_COHORTS:
+        try:
+            out += _x16_cohort(cohort, tau)
+        except Blocked as exc:
+            out.append(item("x16", cohort, "all", "blocked", str(exc)))
+    return out
+
+
+def _x16_cohort(cohort, tau):
+    """Staged-refresh: branch of the V8 On trajectory at tau that rebuilds the SR cache from the current policy once
+    at the switch (V8 method bank_srrefresh_t{tau}), then SR to 275 (V9 root). Equal compute uses the frozen V8
+    budget B of the cohort: the last retained snapshot whose incremental cost (trajectory [25, tau) + branch,
+    rebuild included) is within B; a run that ends 275 below B is scored at 275 (no extension: conservative)."""
+    from switching import matrix as mx
+    from switching.budget import select_endpoint
+    from switching.cluster import ClusterLocator
+    loc = ensure_locator(cohort)
+    c = cfg(cohort)
+    root, src = v9c(cohort), v8c(cohort)
+    H = c["training"]["matched_update_endpoint"]
+    P = c["training"]["prefix_updates"]
+    k = ClusterLocator(root, c).interval
+    bpath = src / "frozen" / "budget.json"
+    B = read_json(bpath)["value"] if bpath.is_file() else None
+    out = []
+    for seed in c["seeds"]["training"]:
+        key = f"s{seed}.staged_refresh"
+        try:
+            b = bank(cohort, seed)
+        except Exception as exc:  # noqa: BLE001
+            out.append(item("x16", cohort, key, "blocked", f"V8 bank unreadable: {exc}", seed=seed, arm="staged_refresh"))
+            continue
+        snap = None if b.traj is None else mx.parent_from_snapshot(src, b.traj["run_id"], tau)
+        if snap is None:
+            out.append(item("x16", cohort, key, "blocked", f"waiting for the V8 trajectory snapshot at {tau}",
+                            seed=seed, arm="staged_refresh"))
+            continue
+        task = mx.train_task(c, role="v9_x16", seed=seed, method_id=f"bank_srrefresh_t{tau:03d}", parent=snap,
+                             horizon=H, stage="x16-refresh", interval=k)
+        out += _train_then_eval("x16", cohort, root, task, H, key, seed=seed, arm="staged_refresh", loc=loc)
+        if B is None or not is_complete(root, task["run_id"]):
+            continue
+        head = _x15_cost(src, b.traj["run_id"], P, tau)
+        if head is None:
+            out.append(item("x16", cohort, key + "@B", "blocked", "unmeasured trajectory cost", seed=seed,
+                            arm="staged_refresh"))
+            continue
+        rows = _x15_rows(root, task["run_id"], head, tau, H)
+        sel = select_endpoint(rows, B)
+        if sel["status"] != "selected":
+            out.append(item("x16", cohort, key + "@B", "blocked", f"budget endpoint {sel['status']}", seed=seed,
+                            arm="staged_refresh"))
+            continue
+        ep = sel["endpoint"]
+        ev = eval_item("x16", cohort, root, ep["run_id"], ep["completed_update"], key + "@B.eval", loc=loc)
+        ev.update(seed=seed, arm="staged_refresh", budget="B", endpoint_update=ep["completed_update"],
+                  cost=ep["cumulative_cost"], below_budget_at_275=ep["completed_update"] == H)
+        out.append(ev)
+    return out
+
+
 # ================================================================ X12 (public benchmarks)
 def _x12_snapshot(it):
     """The update-275 snapshot behind an X1/X11 result: from its evaluation item, or (V8 bank arms, read-only)
@@ -1049,4 +1131,4 @@ def _x10_endpoint(cohort, c, b, loc, B, family, t, man, key, extra):
 
 
 PLANNERS = {"x11": x11_items, "x12": x12_items, "x1": x1_items, "x2": x2_items, "x3": x3_items, "x4": x4_items, "x5": x5_items, "x8": x8_items,
-            "x9": x9_items, "x10": x10_items, "x13": x13_items, "x14": x14_items, "x15": x15_items}
+            "x9": x9_items, "x10": x10_items, "x13": x13_items, "x14": x14_items, "x15": x15_items, "x16": x16_items, "x17": x17_items}
