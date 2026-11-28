@@ -557,7 +557,10 @@ def x15_tables(items):
     from . import costs as cost_mod
     cohort = env.X15_COHORT
     arms = ("random", "alignment", "sr", "staged")
-    v, meta = _arm_values([i for i in items if i["cohort"] == cohort], arms)
+    mine = [i for i in items if i["cohort"] == cohort]
+    v, meta = _arm_values([i for i in mine if not i.get("budget")], arms)
+    vb, metab = _arm_values(mine, ("alignment", "sr", "staged"), budget="B")
+    B = next((i.get("value") for i in mine if i.get("key") == "budget" and i["state"] == "done"), None)
     P = 25
     cost = {a: {} for a in arms}
     for a in arms:
@@ -576,7 +579,10 @@ def x15_tables(items):
             else:
                 cost[a][s] = cost_mod.run_cost(v9c(cohort), rid)
     res = {"per_seed": v, "means": {a: _complete_mean(x) for a, x in v.items()},
-           "incremental_cost_gpu_seconds": {a: _complete_mean(cost[a]) for a in arms}}
+           "incremental_cost_gpu_seconds": {a: _complete_mean(cost[a]) for a in arms},
+           "budget_gpu_seconds": B, "at_B": {"per_seed": vb, "means": {a: _complete_mean(x) for a, x in vb.items()},
+                                             "endpoint_updates": {a: {s: (metab[a][s] or {}).get("endpoint_update")
+                                                                      for s in SEEDS} for a in vb}}}
     lines = [PREAMBLE, "% X15: OLMo-3 MATH, 16 prompts per update and 160 candidates per draw (X1: 4 and 40), "
              "update 275, seeds 5--9; branched design from the initial model, tau0 as in X1. Cost: incremental "
              "GPU-h from update 25 (Staged = trajectory 25..tau0 + SR branch).",
@@ -590,7 +596,17 @@ def x15_tables(items):
     for a, b in (("staged", "alignment"), ("staged", "sr"), ("sr", "alignment"), ("staged", "random")):
         res[f"{a}_minus_{b}"] = r = contrast(v[a], v[b], SEEDS, f"{a} - {b}")
         lines.append(f"{a} $-$ {b} & \\multicolumn{{2}}{{l}}{{{fmt_delta(r, 'X15')}}} \\\\")
-    lines += ["\\bottomrule", "\\end{tabular}", ""]
+    lines.append("\\midrule")
+    lines.append(f"\\multicolumn{{3}}{{l}}{{Equal compute, $B$ = {fmt_pct(None if B is None else B / 3600, 'X15')} "
+                 f"GPU-h (mean Staged incremental cost)}} \\\\")
+    for a in ("alignment", "sr", "staged"):
+        ups = [u for u in res["at_B"]["endpoint_updates"][a].values() if u is not None]
+        lines.append(f"{a} @$B$ & {fmt_pct(pct(res['at_B']['means'][a]), 'X15')} & "
+                     f"{'--' if not ups else f'{min(ups)}--{max(ups)}'} \\\\")
+    for a, b in (("staged", "alignment"), ("staged", "sr"), ("sr", "alignment")):
+        res["at_B"][f"{a}_minus_{b}"] = r = contrast(vb[a], vb[b], SEEDS, f"{a}@B - {b}@B")
+        lines.append(f"{a}@$B$ $-$ {b}@$B$ & \\multicolumn{{2}}{{l}}{{{fmt_delta(r, 'X15')}}} \\\\")
+    lines += ["\\bottomrule", "\\end{tabular}", "% equal-compute rows: last column = endpoint updates", ""]
     return res, "\n".join(lines)
 
 

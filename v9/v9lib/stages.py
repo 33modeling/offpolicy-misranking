@@ -746,7 +746,7 @@ def _x15_cohort(cohort, tau):
     H = c["training"]["matched_update_endpoint"]
     P = c["training"]["prefix_updates"]
     k = ClusterLocator(root, cfg(cohort)).interval
-    out = []
+    out, seeds_runs = [], {}
     for seed in c["seeds"]["training"]:
         if str(seed) not in loc["seeds"]:
             out.append(item("x15", cohort, f"s{seed}", "blocked", "seed not in the V9 locator", seed=seed))
@@ -771,6 +771,106 @@ def _x15_cohort(cohort, tau):
                             f"waiting for the X15 trajectory at update {tau}", seed=seed, arm="staged"))
         for arm, task in runs.items():
             out += _train_then_eval("x15", cohort, root, task, H, f"s{seed}.{arm}", seed=seed, arm=arm, loc=loc)
+        seeds_runs[seed] = runs
+    out += _x15_budget_items(cohort, c, root, loc, seeds_runs, tau, H, P)
+    return out
+
+
+X15_BUDGET_RULE = ("V9 X15: mean over seeds 5-9 of the incremental algorithm cost (GPU-seconds) of Staged at 16 "
+                   "prompts per update = Alignment trajectory over updates [25, tau) + SR branch from tau to 275; "
+                   "cost-only, evaluation files not read")
+
+
+def _x15_cost(root, rid, lo, hi):
+    from . import costs as cost_mod
+    return cost_mod.run_cost(root, rid, lo=lo, hi=hi)
+
+
+def _x15_rows(root, rid, base, lo, top):
+    """(update, cumulative incremental cost) at every retained snapshot of a run in (lo, top]: base + cost [lo, u)."""
+    from switching import matrix as mx
+    rows = []
+    for u in sorted(mx.snapshot_index(root, rid)):
+        if lo < u <= top:
+            c = _x15_cost(root, rid, lo, u)
+            rows.append({"completed_update": u, "run_id": rid, "cumulative_cost": None if c is None else base + c})
+    return rows
+
+
+def x15_budget(cohort, root, seeds_runs, tau, H, P):
+    """B for X15: frozen once (write-once) when every seed's Staged cost is known; never reads evaluations."""
+    from switching.common import atomic_write_json, utc_now
+    path = root / "frozen" / "x15_budget.json"
+    if path.is_file():
+        return read_json(path)
+    per = {}
+    for seed, runs in seeds_runs.items():
+        st = runs.get("staged")
+        if st is None or not is_complete(root, st["run_id"]):
+            raise Blocked(f"X15 budget waits for the Staged run of seed {seed}")
+        head = _x15_cost(root, runs["alignment"]["run_id"], P, tau)
+        tail = _x15_cost(root, st["run_id"], tau, H)
+        if head is None or tail is None:
+            raise Blocked(f"X15 budget: unmeasured cost for seed {seed}")
+        per[str(seed)] = head + tail
+    b = {"value": sum(per.values()) / len(per), "unit": "gpu_seconds", "per_seed": per, "rule": X15_BUDGET_RULE,
+         "tau": tau, "files_read": [str(root / "runs")], "frozen_at": utc_now()}
+    atomic_write_json(path, b)
+    return b
+
+
+def _x15_budget_items(cohort, c, root, loc, seeds_runs, tau, H, P):
+    """Equal compute at B: each arm is scored at its last retained snapshot whose incremental cost (from update 25)
+    is within B. SR and Staged that end 275 below B continue with SR to B (budget-capped extension, cap 400);
+    Alignment stops on its trajectory (it costs more per update)."""
+    from switching import matrix as mx
+    from switching.budget import select_endpoint
+    try:
+        B = x15_budget(cohort, root, seeds_runs, tau, H, P)["value"]
+    except Blocked as exc:
+        return [item("x15", cohort, "budget", "blocked", str(exc))]
+    out = [item("x15", cohort, "budget", "done", f"B={B / 3600:.3f} GPU-h ({B:.1f} GPU-s), Staged tau={tau}", value=B)]
+    for seed, runs in seeds_runs.items():
+        traj = runs["alignment"]["run_id"]
+        for arm in ("alignment", "sr", "staged"):
+            key = f"s{seed}.{arm}@B"
+            task = runs.get(arm)
+            if task is None or not is_complete(root, task["run_id"]):
+                out.append(item("x15", cohort, key, "blocked", f"waiting for the X15 {arm} run", seed=seed, arm=arm))
+                continue
+            rid = task["run_id"]
+            if arm == "alignment":
+                rows = _x15_rows(root, rid, 0.0, P, H)
+            else:
+                start = task["parent"]["completed_update"]
+                head = 0.0 if arm == "sr" else _x15_cost(root, traj, P, start)
+                if head is None:
+                    out.append(item("x15", cohort, key, "blocked", "unmeasured trajectory cost", seed=seed, arm=arm))
+                    continue
+                rows = _x15_rows(root, rid, head, start, H)
+                at_h = next((r["cumulative_cost"] for r in rows if r["completed_update"] == H), None)
+                snap = mx.parent_from_snapshot(root, rid, H)
+                per_update = None if at_h is None else (at_h - head) / max(1, H - start)
+                if at_h is not None and snap is not None and at_h + per_update <= B:
+                    ext = mx.train_task(c, role="v9_x15_budget", seed=seed, method_id=task["method_id"], parent=snap,
+                                        horizon=H, stage="x15-extension", budget_cap=B, cost_offset=at_h,
+                                        extra={"initial_selector": "sr", "policy": {"policy": "never"},
+                                               "extension_of": rid, "v9_budget_sha": B})
+                    ext["plan_overrides"] = dict(X15_OVERRIDES)
+                    ext["est_update_gpu_seconds"] = per_update
+                    if not is_complete(root, ext["run_id"]):
+                        out.append(item("x15", cohort, key + ".train", "ready", task=ext, seed=seed, arm=arm))
+                        continue
+                    rows += _x15_rows(root, ext["run_id"], at_h, H, c["training"]["hard_safety_update_cap"])
+                    out.append(item("x15", cohort, key + ".train", "done", seed=seed, arm=arm))
+            sel = select_endpoint(rows, B)
+            if sel["status"] != "selected":
+                out.append(item("x15", cohort, key, "blocked", f"budget endpoint {sel['status']}", seed=seed, arm=arm))
+                continue
+            ep = sel["endpoint"]
+            ev = eval_item("x15", cohort, root, ep["run_id"], ep["completed_update"], key + ".eval", loc=loc)
+            ev.update(seed=seed, arm=arm, budget="B", endpoint_update=ep["completed_update"], cost=ep["cumulative_cost"])
+            out.append(ev)
     return out
 
 
