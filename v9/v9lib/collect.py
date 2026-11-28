@@ -26,6 +26,7 @@ $V9_ROOT/paper/
   x10_budget.tex      X10 tau-rule sensitivity: mean reward by tau at fractions of the V8 budget, the rule's tau,
                       Staged(tau0) - Alignment and Staged(tau0) - SR at each budget
   x13_warmup.tex      X13 Random until tau0 then SR against Staged, SR and Random (paired, seeds 5--9), SR-phase cost
+  x15_scale.tex       X15 the four methods at 16 prompts per update (OLMo MATH): means, incremental cost, contrasts
   x14_order.tex       X14 SR until tau0 then Alignment against Staged, Alignment and SR (paired, seeds 5--9)
   x11_dynamic.tex     X11 DAPO-style dynamic sampling (first 4 mixed-reward candidates of each 40-candidate draw): mean,
                       incremental cost, Staged - dynamic sampling and dynamic sampling - Random / Alignment / SR
@@ -46,7 +47,7 @@ import math
 from pathlib import Path
 
 from . import env
-from .common import Blocked, item, read_json, tau_path, v9c
+from .common import Blocked, frozen_tau, item, read_json, tau_path, v9c
 
 NAMES = {"olmo_math": "OLMo-3 7B / MATH", "olmo_mbpp": "OLMo-3 7B / MBPP", "qwen_math": "Qwen3.5 9B / MATH",
          "qwen_mbpp": "Qwen3.5 9B / MBPP", "llama_math": "Llama-3.1 8B / MATH", "llama_mbpp": "Llama-3.1 8B / MBPP"}
@@ -551,6 +552,48 @@ def x14_tables(x1, items):
               "tau0, then Alignment (on_continued from its tau0 snapshot); Staged = Alignment until tau0, then SR.")
 
 
+def x15_tables(items):
+    """X15: the four arms at 16 prompts per update, update 275, seeds 5--9; incremental cost from update 25."""
+    from . import costs as cost_mod
+    cohort = env.X15_COHORT
+    arms = ("random", "alignment", "sr", "staged")
+    v, meta = _arm_values([i for i in items if i["cohort"] == cohort], arms)
+    P = 25
+    cost = {a: {} for a in arms}
+    for a in arms:
+        for s in SEEDS:
+            rid = (meta[a][s] or {}).get("run_id")
+            if not rid:
+                cost[a][s] = None
+            elif a == "alignment":
+                cost[a][s] = cost_mod.run_cost(v9c(cohort), rid, lo=P)
+            elif a == "staged":
+                traj = next((i.get("run_id") for i in items if i.get("arm") == "alignment" and i.get("seed") == s
+                             and str(i["key"]).endswith(".eval") and i["state"] == "done"), None)
+                head = cost_mod.run_cost(v9c(cohort), traj, lo=P, hi=frozen_tau()) if traj else None
+                tail = cost_mod.run_cost(v9c(cohort), rid)
+                cost[a][s] = None if head is None or tail is None else head + tail
+            else:
+                cost[a][s] = cost_mod.run_cost(v9c(cohort), rid)
+    res = {"per_seed": v, "means": {a: _complete_mean(x) for a, x in v.items()},
+           "incremental_cost_gpu_seconds": {a: _complete_mean(cost[a]) for a in arms}}
+    lines = [PREAMBLE, "% X15: OLMo-3 MATH, 16 prompts per update and 160 candidates per draw (X1: 4 and 40), "
+             "update 275, seeds 5--9; branched design from the initial model, tau0 as in X1. Cost: incremental "
+             "GPU-h from update 25 (Staged = trajectory 25..tau0 + SR branch).",
+             "\\begin{tabular}{lrr}", "\\toprule", "Arm & Mean reward (\\%) & Incremental GPU-h \\\\",
+             "\\midrule"]
+    for a in arms:
+        c = res["incremental_cost_gpu_seconds"][a]
+        lines.append(f"{a} & {fmt_pct(pct(res['means'][a]), 'X15')} & "
+                     f"{fmt_pct(None if c is None else c / 3600, 'X15')} \\\\")
+    lines.append("\\midrule")
+    for a, b in (("staged", "alignment"), ("staged", "sr"), ("sr", "alignment"), ("staged", "random")):
+        res[f"{a}_minus_{b}"] = r = contrast(v[a], v[b], SEEDS, f"{a} - {b}")
+        lines.append(f"{a} $-$ {b} & \\multicolumn{{2}}{{l}}{{{fmt_delta(r, 'X15')}}} \\\\")
+    lines += ["\\bottomrule", "\\end{tabular}", ""]
+    return res, "\n".join(lines)
+
+
 X12_ARMS = ("random", "alignment", "sr", "staged", "dynamic_sampling")
 
 
@@ -805,7 +848,7 @@ def collect():
     rec = read_json(tau_path())
     tau = rec["tau"]
     items = {}
-    for s in ("x1", "x2", "x3", "x4", "x5", "x8", "x9", "x10", "x11", "x12", "x13", "x14"):
+    for s in ("x1", "x2", "x3", "x4", "x5", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15"):
         try:
             items[s] = stages.PLANNERS[s]()
         except Exception as exc:  # noqa: BLE001 - one stage's planning error leaves its cells pending
@@ -830,6 +873,7 @@ def collect():
     x12, x12_tex = x12_tables(items["x12"])
     x13, x13_tex = x13_tables(x1, items["x13"])
     x14, x14_tex = x14_tables(x1, items["x14"])
+    x15, x15_tex = x15_tables(items["x15"])
     written = [write("p0_tau.tex", tau_table(rec)), write("x1_cohorts.tex", x1_tex),
                write("x1_cohorts.dat", x1_cohorts_dat(x1)), write("x1_seeds.tex", x1_seeds_tex(x1)),
                write("x1_cost.tex", x1_cost_tex(costs)), write("x2_budget.tex", x2_tex + x2x_tex),
@@ -838,7 +882,7 @@ def collect():
                write("x6_ledger.tex", x6_ledger_tex(costs)),
                write("x8_refresh.tex", x8_tex), write("x9_online.tex", x9_tex), write("x10_budget.tex", x10_tex),
                write("x11_dynamic.tex", x11_tex), write("x12_bench.tex", x12_tex),
-               write("x13_warmup.tex", x13_tex), write("x14_order.tex", x14_tex),
+               write("x13_warmup.tex", x13_tex), write("x14_order.tex", x14_tex), write("x15_scale.tex", x15_tex),
                write_csv("x1_seeds.csv", x1_rows, ["cohort", "seed", "arm", "reward_fraction", "status", "reason"]),
                write_csv("x5_summary.csv", x5_rows, ["cohort", "seed", "update", "status", *X5_FIELDS, *X5_EXTRA, "reason"])]
     atomic_write_json(paper_dir() / "x5_summary.json", {"per_seed": x5_rows, "seed_means": x5_summary})
@@ -848,7 +892,7 @@ def collect():
     blocked = {s: sorted({f"{i['cohort']}: {i['reason']}" for i in its if i["state"] in ("blocked", "failed")})
                for s, its in items.items()}
     results = {"generated_at": utc_now(), "tau": rec, "x1": x1, "x2": x2, "x2_extra": x2x,
-               "costs_gpu_seconds": {c: {str(k): v for k, v in r.items()} for c, r in costs.items()}, "x3": x3, "x4": x4, "x8": x8, "x9": x9, "x10": x10, "x11": x11, "x12": x12, "x13": x13, "x14": x14,
+               "costs_gpu_seconds": {c: {str(k): v for k, v in r.items()} for c, r in costs.items()}, "x3": x3, "x4": x4, "x8": x8, "x9": x9, "x10": x10, "x11": x11, "x12": x12, "x13": x13, "x14": x14, "x15": x15,
                "x5": {"seed_means": x5_summary, "rows": len(x5_rows)}, "open_items": blocked,
                "units": "reward fractions in [0,1]; deltas in percentage points; costs in GPU-seconds unless named",
                "pending_rule": "a cell is pending until every seed it needs is measured; nothing is estimated"}

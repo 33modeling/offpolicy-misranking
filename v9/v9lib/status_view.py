@@ -270,6 +270,7 @@ STAGE_TITLES = {
     "x11": "X11 dynamic-sampling baseline",
     "x13": "X13 Random then SR (warm-up control)",
     "x14": "X14 SR then Alignment (order reversed)",
+    "x15": "X15 16 prompts per update",
     "x12": "X12 public benchmarks",
     "collect": "result files",
 }

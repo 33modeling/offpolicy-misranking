@@ -84,6 +84,41 @@ def v8_entry_fixes(root, task_id, *, repairs=True):
     return done
 
 
+PLAN_OVERRIDE_KEYS = ("training_prompts", "scoring_prompts_per_set")
+
+
+def install_plan_overrides(overrides):
+    """X15: the task changes only the prompts per update and the candidates per draw of the code-repo plan.
+    cluster_child imports srgc_rebuttal.plan.load_plan after activating the code-repo runtime, so the wrapper is
+    installed on that activation; every other plan field is unchanged."""
+    bad = set(overrides) - set(PLAN_OVERRIDE_KEYS)
+    if bad:
+        raise SystemExit(f"plan_overrides: unsupported keys {sorted(bad)}")
+    from switching import coderepo
+
+    def patch():
+        import srgc_rebuttal.plan as plan_mod
+        if getattr(plan_mod.load_plan, "_v9_overrides", False):
+            return
+        load = plan_mod.load_plan
+
+        def load_plan(*pa, **pk):
+            plan = dict(load(*pa, **pk))
+            plan.update(overrides)
+            return plan
+        load_plan._v9_overrides = True
+        plan_mod.load_plan = load_plan
+
+    def wrap(fn):
+        def run(*a, **k):
+            out = fn(*a, **k)
+            patch()  # after activation the (possibly saved) srgc_rebuttal is the one cluster_child imports
+            return out
+        return run
+    coderepo.activate = wrap(coderepo.activate)
+    coderepo.activate_source_runtime = wrap(coderepo.activate_source_runtime)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--cohort", required=True)
@@ -109,6 +144,8 @@ def main():
         return llama_main(args, task_id)
     import cluster_child  # v8/experiments/cluster_child.py (unchanged)
     runner.execute_train = dispatch_factory(runner.execute_train)
+    if task.get("plan_overrides"):
+        install_plan_overrides(task["plan_overrides"])
     sys.argv = [sys.argv[0], "--cohort", args.cohort, "--matrix", str(args.task_file), "--task", task_id,
                 "--v8-root", str(args.root)]
     return cluster_child.main()

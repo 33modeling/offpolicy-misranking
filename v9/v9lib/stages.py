@@ -701,6 +701,79 @@ def _x14_cohort(cohort, tau):
     return out
 
 
+# ================================================================ X15 (16 prompts per update)
+X15_OVERRIDES = {"training_prompts": 16, "scoring_prompts_per_set": 160}
+X15_INITIAL = {"kind": "initial", "completed_update": 0, "sha256": None, "path": None, "run_id": None}
+
+
+def x15_cfg(cohort):
+    """The cohort config with 16 prompts per update and 160 candidates per draw (1 in 10, as in X1); every other
+    field is unchanged. The changed fields enter the protocol hash, so X15 run ids never collide with X1."""
+    import copy
+    c = copy.deepcopy(cfg(cohort))
+    c["training"]["prompts_per_update"] = X15_OVERRIDES["training_prompts"]
+    c["training"]["scoring_prompts_per_set"] = X15_OVERRIDES["scoring_prompts_per_set"]
+    return c
+
+
+def x15_task(c, **kw):
+    from switching import matrix as mx
+    t = mx.train_task(c, role="v9_x15", stage="x15-scale", **kw)
+    t["plan_overrides"] = dict(X15_OVERRIDES)
+    return t
+
+
+def x15_items():
+    try:
+        tau = frozen_tau()
+    except Blocked as exc:
+        return [item("x15", env.X15_COHORT, "all", "blocked", str(exc))]
+    try:
+        return _x15_cohort(env.X15_COHORT, tau)
+    except Blocked as exc:
+        return [item("x15", env.X15_COHORT, "all", "blocked", str(exc))]
+
+
+def _x15_cohort(cohort, tau):
+    """Branched design at 16 prompts per update: one Alignment trajectory per seed from the initial model to 275
+    (snapshots every 25; its update-25 snapshot is the shared prefix), SR and Random from that prefix, Staged = SR
+    branch of the trajectory at tau. Same seeds, evaluation and tau as X1."""
+    from switching import matrix as mx
+    from switching.cluster import ClusterLocator
+    loc = ensure_locator(cohort)
+    c = x15_cfg(cohort)
+    root = v9c(cohort)
+    H = c["training"]["matched_update_endpoint"]
+    P = c["training"]["prefix_updates"]
+    k = ClusterLocator(root, cfg(cohort)).interval
+    out = []
+    for seed in c["seeds"]["training"]:
+        if str(seed) not in loc["seeds"]:
+            out.append(item("x15", cohort, f"s{seed}", "blocked", "seed not in the V9 locator", seed=seed))
+            continue
+        traj = x15_task(c, seed=seed, method_id="on_continued", parent=X15_INITIAL, horizon=H, interval=k)
+        runs = {"alignment": traj}
+        pre = mx.parent_from_snapshot(root, traj["run_id"], P)
+        snap = mx.parent_from_snapshot(root, traj["run_id"], tau)
+        if pre is not None:
+            runs["sr"] = x15_task(c, seed=seed, method_id=f"bank_sr_t{P:03d}", parent=pre, horizon=H, interval=k,
+                                  deps=[traj["run_id"]])
+            runs["random"] = x15_task(c, seed=seed, method_id=RANDOM_METHOD, parent=pre, horizon=H, interval=k,
+                                      deps=[traj["run_id"]])
+        else:
+            out += [item("x15", cohort, f"s{seed}.{a}", "blocked", f"waiting for the X15 trajectory at update {P}",
+                         seed=seed, arm=a) for a in ("sr", "random")]
+        if snap is not None:
+            runs["staged"] = x15_task(c, seed=seed, method_id=f"bank_sr_t{tau:03d}", parent=snap, horizon=H,
+                                      interval=k, deps=[traj["run_id"]])
+        else:
+            out.append(item("x15", cohort, f"s{seed}.staged", "blocked",
+                            f"waiting for the X15 trajectory at update {tau}", seed=seed, arm="staged"))
+        for arm, task in runs.items():
+            out += _train_then_eval("x15", cohort, root, task, H, f"s{seed}.{arm}", seed=seed, arm=arm, loc=loc)
+    return out
+
+
 # ================================================================ X12 (public benchmarks)
 def _x12_snapshot(it):
     """The update-275 snapshot behind an X1/X11 result: from its evaluation item, or (V8 bank arms, read-only)
@@ -876,4 +949,4 @@ def _x10_endpoint(cohort, c, b, loc, B, family, t, man, key, extra):
 
 
 PLANNERS = {"x11": x11_items, "x12": x12_items, "x1": x1_items, "x2": x2_items, "x3": x3_items, "x4": x4_items, "x5": x5_items, "x8": x8_items,
-            "x9": x9_items, "x10": x10_items, "x13": x13_items, "x14": x14_items}
+            "x9": x9_items, "x10": x10_items, "x13": x13_items, "x14": x14_items, "x15": x15_items}

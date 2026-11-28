@@ -62,6 +62,11 @@ def main(args, task, seed_loc):
         root = Path(args.root) / args.cohort
         data = load_bundle(seed_loc["input_bundle"])
         ctx, beta = build_ctx(root, task["training_seed"], seed_loc, data)
+        if task.get("plan_overrides"):  # X15: same overrides as the real child (prompts per update, candidates)
+            import dataclasses
+            o = task["plan_overrides"]
+            ctx.config = dataclasses.replace(ctx.config, training_prompts=o.get("training_prompts", ctx.config.training_prompts),
+                                             scoring_prompts=o.get("scoring_prompts_per_set", ctx.config.scoring_prompts))
         if os.environ.get("V9_FAKE_STOP_AFTER_UPDATE") and task["kind"] == "train":
             task["debug_stop_after_update"] = int(os.environ["V9_FAKE_STOP_AFTER_UPDATE"])
         if task["kind"] == "evaluate":

@@ -45,7 +45,9 @@ X12_ARMS = {"x1": ("random", "alignment", "sr", "staged"), "x11": ("dynamic_samp
 # (V8 SR branch snapshot), then Alignment. Design: paper repo v9/X13_X15_DESIGN.md (decision rules fixed before running).
 X13_COHORTS = ("olmo_math", "olmo_mbpp")
 X14_COHORTS = ("olmo_math",)
-STAGES = ("freeze-tau", "x1", "x2", "x5", "x3", "x4", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "collect")
+# X15 scale: 16 prompts per update, 160 candidates per draw, OLMo MATH seeds 5-9, branched design from the initial model.
+X15_COHORT = "olmo_math"
+STAGES = ("freeze-tau", "x1", "x2", "x5", "x3", "x4", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "collect")
 
 
 def work():
