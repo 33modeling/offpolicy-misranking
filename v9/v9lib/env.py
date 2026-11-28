@@ -41,7 +41,11 @@ X10_FRACTIONS = (0.75, 1.25)
 X11_COHORTS = ("olmo_math", "olmo_mbpp")
 # X12 public benchmarks (v9lib/bench.py): the update-275 snapshots of these arms in every cohort.
 X12_ARMS = {"x1": ("random", "alignment", "sr", "staged"), "x11": ("dynamic_sampling",)}
-STAGES = ("freeze-tau", "x1", "x2", "x5", "x3", "x4", "x8", "x9", "x10", "x11", "x12", "collect")
+# X13 warm-up control: Random until tau0, then SR (branch of the X1 Random run). X14 order reversal: SR until tau0
+# (V8 SR branch snapshot), then Alignment. Design: paper repo v9/X13_X15_DESIGN.md (decision rules fixed before running).
+X13_COHORTS = ("olmo_math", "olmo_mbpp")
+X14_COHORTS = ("olmo_math",)
+STAGES = ("freeze-tau", "x1", "x2", "x5", "x3", "x4", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "collect")
 
 
 def work():

@@ -268,6 +268,8 @@ STAGE_TITLES = {
     "x9": "X9 online SR baseline",
     "x10": "X10 budget sensitivity of the tau rule",
     "x11": "X11 dynamic-sampling baseline",
+    "x13": "X13 Random then SR (warm-up control)",
+    "x14": "X14 SR then Alignment (order reversed)",
     "x12": "X12 public benchmarks",
     "collect": "result files",
 }

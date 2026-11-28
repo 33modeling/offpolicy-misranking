@@ -605,6 +605,102 @@ def _x11_cohort(cohort):
     return out
 
 
+# ================================================================ X13 (Random -> SR warm-up control)
+def x13_items():
+    try:
+        tau = frozen_tau()
+    except Blocked as exc:
+        return [item("x13", c, "all", "blocked", str(exc)) for c in env.X13_COHORTS]
+    out = []
+    for cohort in env.X13_COHORTS:
+        try:
+            out += _x13_cohort(cohort, tau)
+        except Blocked as exc:
+            out.append(item("x13", cohort, "all", "blocked", str(exc)))
+    return out
+
+
+def _x13_cohort(cohort, tau):
+    """Random until tau, then SR to 275: an SR branch (bank_sr_t{tau}) from the update-tau snapshot of the X1 Random
+    run of the same seed (V9 root). Compared with Staged (Alignment until tau, then SR) of the same seed."""
+    from switching import matrix as mx
+    from switching.cluster import ClusterLocator
+    loc = ensure_locator(cohort)
+    c = cfg(cohort)
+    root = v9c(cohort)
+    H = c["training"]["matched_update_endpoint"]
+    cl = ClusterLocator(root, c)
+    out = []
+    for seed in c["seeds"]["training"]:
+        key = f"s{seed}.random_then_sr"
+        try:
+            prefix = cl.prefix(seed)
+        except Exception:  # noqa: BLE001
+            out.append(item("x13", cohort, key, "blocked", "waiting for the V8 prefix of this seed", seed=seed,
+                            arm="random_then_sr"))
+            continue
+        rnd = mx.train_task(c, role="v9_x1", seed=seed, method_id=RANDOM_METHOD, parent=prefix, horizon=H,
+                            stage="x1-random", interval=cl.interval)
+        snap = mx.parent_from_snapshot(root, rnd["run_id"], tau)
+        if snap is None:
+            out.append(item("x13", cohort, key, "blocked", f"waiting for the X1 Random run to reach update {tau}",
+                            seed=seed, arm="random_then_sr"))
+            continue
+        task = mx.train_task(c, role="v9_x13", seed=seed, method_id=f"bank_sr_t{tau:03d}", parent=snap, horizon=H,
+                             stage="x13-warmup", interval=cl.interval)
+        out += _train_then_eval("x13", cohort, root, task, H, key, seed=seed, arm="random_then_sr", loc=loc)
+    return out
+
+
+# ================================================================ X14 (SR -> Alignment, order reversed)
+def x14_items():
+    try:
+        tau = frozen_tau()
+    except Blocked as exc:
+        return [item("x14", c, "all", "blocked", str(exc)) for c in env.X14_COHORTS]
+    out = []
+    for cohort in env.X14_COHORTS:
+        try:
+            out += _x14_cohort(cohort, tau)
+        except Blocked as exc:
+            out.append(item("x14", cohort, "all", "blocked", str(exc)))
+    return out
+
+
+SR_BRANCH = "fixed_sr_t025"  # V8 policy id of the SR arm (branch after update 25, bank_sr_t025)
+
+
+def _x14_cohort(cohort, tau):
+    """SR until tau, then Alignment to 275: on_continued from the update-tau snapshot of the V8 SR branch of the
+    same seed (V8 root, read only); the new run is written to the V9 root."""
+    from switching import matrix as mx
+    from switching.cluster import ClusterLocator
+    loc = ensure_locator(cohort)
+    c = cfg(cohort)
+    root, src = v9c(cohort), v8c(cohort)
+    H = c["training"]["matched_update_endpoint"]
+    k = ClusterLocator(root, c).interval
+    out = []
+    for seed in c["seeds"]["training"]:
+        key = f"s{seed}.sr_then_alignment"
+        try:
+            rows = {r["policy_id"]: r for r in bank(cohort, seed, evals={}).policy_rows()}
+        except Exception as exc:  # noqa: BLE001
+            out.append(item("x14", cohort, key, "blocked", f"V8 bank unreadable: {exc}", seed=seed,
+                            arm="sr_then_alignment"))
+            continue
+        rid = (rows.get(SR_BRANCH) or {}).get("run_id")
+        snap = None if not rid else mx.parent_from_snapshot(src, rid, tau)
+        if snap is None:
+            out.append(item("x14", cohort, key, "blocked", f"waiting for the V8 SR branch snapshot at {tau}",
+                            seed=seed, arm="sr_then_alignment"))
+            continue
+        task = mx.train_task(c, role="v9_x14", seed=seed, method_id="on_continued", parent=snap, horizon=H,
+                             stage="x14-order", interval=k)
+        out += _train_then_eval("x14", cohort, root, task, H, key, seed=seed, arm="sr_then_alignment", loc=loc)
+    return out
+
+
 # ================================================================ X12 (public benchmarks)
 def _x12_snapshot(it):
     """The update-275 snapshot behind an X1/X11 result: from its evaluation item, or (V8 bank arms, read-only)
@@ -780,4 +876,4 @@ def _x10_endpoint(cohort, c, b, loc, B, family, t, man, key, extra):
 
 
 PLANNERS = {"x11": x11_items, "x12": x12_items, "x1": x1_items, "x2": x2_items, "x3": x3_items, "x4": x4_items, "x5": x5_items, "x8": x8_items,
-            "x9": x9_items, "x10": x10_items}
+            "x9": x9_items, "x10": x10_items, "x13": x13_items, "x14": x14_items}
